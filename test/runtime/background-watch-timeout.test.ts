@@ -207,6 +207,56 @@ describe("background watcher timeout budgets", () => {
 		assert.equal(result.exitCode, 1);
 	});
 
+	it("keeps a live Windows child supervised until its real exit", async () => {
+		const sessionFile = makeSession();
+		const child = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 2600)"], {
+			stdio: "ignore",
+		});
+		const running = makeRunning(sessionFile, child, {}, { noSession: true });
+		running.timeoutBudget = undefined;
+		const probedPids: number[] = [];
+		const processProbe: {
+			platform: NodeJS.Platform;
+			kill(pid: number, signal?: NodeJS.Signals | number): true;
+		} = {
+			platform: "linux",
+			kill(pid: number, signal: NodeJS.Signals | number = 0) {
+				probedPids.push(pid);
+				if (pid < 0) {
+					processProbe.platform = "win32";
+					throw Object.assign(new Error("unsupported process group probe"), { code: "EINVAL" });
+				}
+				return process.kill(pid, signal);
+			},
+		};
+		const options = { processProbe };
+		let settled = false;
+		const resultPromise = watchBackgroundSubagent(
+			running,
+			{
+				cleanupNoSessionSessionFile() {},
+				terminateBackgroundChildProcess() {},
+			},
+			new AbortController().signal,
+			options,
+		).then((result) => {
+			settled = true;
+			return result;
+		});
+
+		try {
+			await sleep(1200);
+			assert.equal(settled, false);
+			assert.deepEqual(probedPids, [-child.pid!]);
+			const result = await settleWithin(resultPromise, 2000, "live Windows child exit");
+			assert.ok(probedPids.includes(child.pid!));
+			assert.equal(result.exitCode, 0);
+		} finally {
+			if (child.exitCode === null) child.kill("SIGKILL");
+			await resultPromise;
+		}
+	});
+
 	it("reports the kill even though the dying child publishes a done sidecar", async () => {
 		const sessionFile = makeSession();
 		const child = new EventEmitter() as ChildProcess;
