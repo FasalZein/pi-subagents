@@ -162,8 +162,6 @@ test("a report parked for the operator's next prompt releases its lease on the s
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		assert.equal(h.deliveries.at(-1)?.deliverAs, "nextTurn");
 		assert.equal(runningSubagents.size, 0);
-		// Pi holds a next-turn message out of the model context until the operator
-		// prompts, so no `context` event can ever arrive to release this lease.
 		await h.emit("agent_settled");
 		assert.equal(h.counts.at(-1), 0);
 	} finally {

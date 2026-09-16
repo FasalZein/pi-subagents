@@ -23,7 +23,6 @@ class OutstandingWork {
 		return ids.size;
 	}
 
-	/** Keep a report live until Pi owns it and the parent settles. */
 	delivery(id: string, send: () => void, consumedOnDelivery = false): void {
 		// No consumer means no reporting state to retain (headless/non-Herdr).
 		if (!this.listener) { send(); return; }
