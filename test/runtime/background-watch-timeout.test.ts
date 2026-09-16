@@ -68,6 +68,10 @@ function killSpawnedGroups(): void {
 	}
 }
 
+async function waitForProcessGroupExit(pid: number): Promise<void> {
+	while (isProcessGroupAlive(pid)) await sleep(10);
+}
+
 /**
  * Fail loudly instead of hanging. A regression that stops the watcher settling
  * would otherwise stall the whole run and be reported as a harness timeout
@@ -171,6 +175,36 @@ describe("background watcher timeout budgets", () => {
 	afterEach(() => {
 		killSpawnedGroups();
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("settles when the process group died before the exit listener attached", async () => {
+		const sessionFile = makeSession();
+		const pid = spawnDetachedGroup();
+		process.kill(-pid, "SIGKILL");
+		await settleWithin(waitForProcessGroupExit(pid), 2000, "detached process group exit");
+
+		const child = new EventEmitter() as ChildProcess;
+		Object.defineProperty(child, "pid", { value: pid });
+		const running = makeRunning(sessionFile, child, {}, { noSession: true });
+		running.timeoutBudget = undefined;
+
+		const resultPromise = watchBackgroundSubagent(
+			running,
+			{
+				cleanupNoSessionSessionFile() {},
+				terminateBackgroundChildProcess() {},
+			},
+			new AbortController().signal,
+		);
+		let result;
+		try {
+			result = await settleWithin(resultPromise, 2500, "dead child without exit event");
+		} finally {
+			child.emit("exit", 1);
+			await resultPromise;
+		}
+
+		assert.equal(result.exitCode, 1);
 	});
 
 	it("reports the kill even though the dying child publishes a done sidecar", async () => {

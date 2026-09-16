@@ -44,6 +44,17 @@ Test layout:
 - Avoid generic `shared/`, `utils/`, `helpers/`, or `common/` directories unless there are multiple clear consumers and no better domain name.
 - Barrels are allowed only as public/domain entrypoints. Do not hide unused re-export files behind them.
 
+## Outstanding-work lease contract
+
+`outstandingWork` counts `pending ∪ running` and publishes it as the Herdr badge. A delivered report holds a lease until Pi owns it. The two delivery paths release it differently:
+
+- `deliverAs: "steer"` — Pi starts a continuation, the report reaches a `context` event, `consume()` marks it, and the next idle `agent_settled` releases it.
+- `deliverAs: "nextTurn"` — Pi parks the message until the operator prompts, so no `context` event can arrive. The lease is marked consumed at enqueue and releases on the next idle settle.
+
+Every async launch calls `requestSubagentBatchStop()`, so a child that finishes inside its own launch turn always takes the next-turn path. A test that never resets that flag is exercising the parked path even when its assertions describe a steer. Assert `deliverAs` explicitly.
+
+A background child is removed from `running` on `exit`, `error`, or a dead process group seen by the one-second poll in `background-watch.ts`. The interactive `mux/poll.ts` path has no liveness probe.
+
 ## Validation gates
 
 For ordinary code changes, run:
@@ -59,6 +70,19 @@ For structure/cleanup changes, also run the one-off checks:
 bunx @biomejs/biome check .
 bunx knip
 ```
+
+### Test-run environment (verified 2026-09-16, node 26.3.0, macOS)
+
+- Never run the suite from inside a `pi-subagents` child process. Children inherit `PI_SUBAGENT_AUTO_EXIT=1`, which forces `getCompletedResultDeliveryMode()` to `steer` and hides next-turn delivery regressions. Verify with `env -u PI_SUBAGENT_AUTO_EXIT`.
+- The `test/vf/**` suites provision a Python venv with `uv`. A user-level `~/.config/uv/uv.toml` that sets `require-hashes = true` makes `uv pip install llm-verifier` fail. Prefix the run with `UV_NO_CONFIG=1` instead of editing the user config.
+- Full `npm test` runs past 60 minutes: the fan-out supervisor and reattach suites wait out 120-second deadlines against real processes. The rest of the suite is 970 tests in about 33 seconds:
+
+```bash
+node --test $(grep '^import "\./' test/test.ts | sed 's/^import "\.\///; s/";$//' | grep -v '^vf/' | sed 's|^|test/|') \
+  test/system-prompt-mode.test.ts test/runtime/widget.test.ts test/mux/cmux.test.ts test/live-test-guard.test.ts
+```
+
+- `test/launch/launch-overrides.test.ts` `"delivers forcedCwd, launchEnv, frontmatter env, and source-resolved task expansion to the real child process"` fails on an unmodified `37c375b` checkout. Pre-existing; do not read it as a regression.
 
 `bunx biome` resolves an unrelated npm package named `biome` and exits 0 without checking anything; always use the scoped `@biomejs/biome`. The repo has no `biome.json`, so real Biome reports default-formatting findings across untouched files; compare the touched files against a stash of the baseline rather than expecting a clean run.
 

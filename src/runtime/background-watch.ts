@@ -297,6 +297,10 @@ function watchBackgroundGeneration(
 			const sessionReadable = observeSession(now);
 			checkTimeoutDeadlines(now);
 			armDeadlineTimer();
+			if (processGroupPid && !isChildProcessGroupAlive(running)) {
+				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
+				return;
+			}
 			if (running.timeoutExpiry || (running.timeoutWrapUp && !running.timeoutWrapUpMode)) return;
 			if (!sessionReadable) return;
 			try {
