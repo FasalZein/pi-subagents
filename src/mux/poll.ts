@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { clearSubagentExitSidecar, getSubagentExitSidecarPath } from "../session/exit-sidecar.ts";
+import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { readScreenAsync } from "./io.ts";
 
 export interface PollResult {
@@ -118,6 +119,19 @@ function readDoneSentinel(doneSentinelFile: string): PollResult | null {
 	return fileMatch ? { reason: "sentinel", exitCode: parseInt(fileMatch[1], 10) } : null;
 }
 
+function hasInteractiveProcessExited(doneSentinelFile: string): boolean {
+	const processIdFile = getInteractiveProcessFile(doneSentinelFile);
+	if (!existsSync(processIdFile)) return false;
+	const pid = Number(readFileSync(processIdFile, "utf8").trim());
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return false;
+	} catch {
+		return true;
+	}
+}
+
 export async function pollForExit(
 	surface: string,
 	signal: AbortSignal,
@@ -143,6 +157,13 @@ export async function pollForExit(
 		if (options.doneSentinelFile) {
 			const sentinel = readDoneSentinel(options.doneSentinelFile);
 			if (sentinel) return sentinel;
+			if (hasInteractiveProcessExited(options.doneSentinelFile)) {
+				return {
+					reason: "error",
+					exitCode: 1,
+					errorMessage: "Interactive child process exited without a completion signal.",
+				};
+			}
 		}
 
 		try {

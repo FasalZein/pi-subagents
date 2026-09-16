@@ -1,5 +1,54 @@
-import { __pollForExitTest__ } from "../../src/mux/poll.ts";
-import { assert, describe, it } from "../support/index.ts";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { join } from "node:path";
+import { __pollForExitTest__, pollForExit } from "../../src/mux/poll.ts";
+import {
+	assert,
+	createTestDir,
+	describe,
+	it,
+	ORIGINAL_ENV,
+	rmSync,
+	writeExecutable,
+	writeFileSync,
+} from "../support/index.ts";
+
+describe("pollForExit", () => {
+	it("reports a child process that died without publishing a completion signal", async () => {
+		const dir = createTestDir();
+		const doneSentinelFile = join(dir, "done.txt");
+		writeExecutable(
+			dir,
+			"cmux",
+			`#!/bin/sh
+if [ "$1" = "read-screen" ]; then printf 'clean pane output\\n'; fi
+`,
+		);
+		process.env.PATH = `${dir}:${ORIGINAL_ENV.PATH}`;
+		process.env.PI_SUBAGENT_MUX = "cmux";
+		process.env.CMUX_SOCKET_PATH = "fake-cmux-socket";
+
+		const child = spawn(process.execPath, ["-e", "process.exit(23)"]);
+		await once(child, "exit");
+		writeFileSync(`${doneSentinelFile}.pid`, `${child.pid}\n`);
+		const controller = new AbortController();
+		const abortTimer = setTimeout(() => controller.abort(), 250);
+		try {
+			const result = await pollForExit("surface:dead-child", controller.signal, {
+				interval: 10,
+				doneSentinelFile,
+			});
+			assert.deepEqual(result, {
+				reason: "error",
+				exitCode: 1,
+				errorMessage: "Interactive child process exited without a completion signal.",
+			});
+		} finally {
+			clearTimeout(abortTimer);
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("interpretExitSidecar", () => {
 	const { interpretExitSidecar } = __pollForExitTest__;

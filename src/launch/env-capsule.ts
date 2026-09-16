@@ -23,6 +23,8 @@ export interface EnvCapsule {
 	overrides: Record<string, string>;
 	/** Env name patterns whose values must come from the child pane, not the parent. */
 	paneIdentityKeys: string[];
+	/** Parent-visible liveness record for the pane launcher process. */
+	processIdFile?: string;
 	/** Derive PI_SUBAGENT_SURFACE as `pane:$ZELLIJ_PANE_ID` in the child pane. */
 	deriveZellijPaneSurface?: boolean;
 }
