@@ -304,6 +304,9 @@ function watchBackgroundGeneration(
 			checkTimeoutDeadlines(now);
 			armDeadlineTimer();
 			if (processGroupPid && !isChildProcessGroupAlive(running, processProbe)) {
+				// The exit handler already consumed the sidecar; let its group waiter
+				// finalize the captured result instead of consuming it a second time.
+				if (groupExitPoll) return;
 				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
 				return;
 			}

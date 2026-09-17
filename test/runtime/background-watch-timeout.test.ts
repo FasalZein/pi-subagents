@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync } from "node:fs";
+import { mock } from "node:test";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { stopRunningSubagent } from "../../src/runtime/running-registry.ts";
 import { hasSubagentExitSidecar, writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
@@ -171,6 +172,54 @@ function makeRuntime(
 	};
 }
 
+async function runExitSidecarRace(timerOrder: "group" | "poll"): Promise<Awaited<ReturnType<typeof watchBackgroundSubagent>>> {
+	const sessionFile = makeSession();
+	const child = new EventEmitter() as ChildProcess;
+	Object.defineProperty(child, "pid", { value: 42 });
+	Object.defineProperty(child, "exitCode", { value: 0, writable: true });
+	let probes = 0;
+	const processProbe = {
+		platform: "linux" as const,
+		kill() {
+			probes += 1;
+			// The initial exit handler is probe 1. With the 25ms group poll and
+			// 1000ms watcher poll both due, probe 41 is the watcher poll.
+			if (timerOrder === "poll" && probes >= 41) {
+				throw Object.assign(new Error("process group is gone"), { code: "ESRCH" });
+			}
+			if (timerOrder === "group" && probes === 2) {
+				throw Object.assign(new Error("process group is gone"), { code: "ESRCH" });
+			}
+			return true as const;
+		},
+	};
+	const running = makeRunning(sessionFile, child, {}, { timeoutExpiry: { kind: "timeout", seconds: 1 } });
+	const resultPromise = watchBackgroundSubagent(
+		running,
+		{
+			cleanupNoSessionSessionFile() {},
+			terminateBackgroundChildProcess() {},
+		},
+		new AbortController().signal,
+		{ processProbe },
+	);
+	writeSubagentExitSidecar(sessionFile, {
+		type: "ping",
+		name: "child",
+		message: "needs help",
+		outputTokens: 42,
+		contextTokens: 17,
+		contextWindow: 100,
+	});
+	child.emit("exit", 0);
+	if (timerOrder === "group") {
+		mock.timers.tick(25);
+	} else {
+		mock.timers.tick(1000);
+	}
+	return resultPromise;
+}
+
 describe("background watcher timeout budgets", () => {
 	afterEach(() => {
 		killSpawnedGroups();
@@ -205,6 +254,56 @@ describe("background watcher timeout budgets", () => {
 		}
 
 		assert.equal(result.exitCode, 1);
+	});
+
+	it("keeps the exit sidecar result when group and watcher polls race", async () => {
+		mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 1_000 });
+		try {
+			const groupFirst = await runExitSidecarRace("group");
+			mock.timers.reset();
+			mock.timers.enable({ apis: ["setInterval", "setTimeout", "Date"], now: 1_000 });
+			const pollFirst = await runExitSidecarRace("poll");
+
+			for (const result of [groupFirst, pollFirst]) {
+				assert.equal(result.exitCode, 0);
+				assert.equal(result.timedOut, undefined);
+				assert.deepEqual(result.ping, { name: "child", message: "needs help" });
+				assert.equal(result.outputTokens, 42);
+				assert.equal(result.contextTokens, 17);
+				assert.equal(result.contextWindow, 100);
+				assert.equal(result.summarySource, "runtime");
+				assert.equal(result.errorMessage, undefined);
+				assert.ok(result.sessionFile);
+				assert.equal(hasSubagentExitSidecar(result.sessionFile), false);
+				assert.equal(readSubagentTimeoutSidecar(result.sessionFile), null);
+			}
+			assert.deepEqual(
+				{
+					summary: groupFirst.summary,
+					summarySource: groupFirst.summarySource,
+					exitCode: groupFirst.exitCode,
+					timedOut: groupFirst.timedOut,
+					outputTokens: groupFirst.outputTokens,
+					contextTokens: groupFirst.contextTokens,
+					contextWindow: groupFirst.contextWindow,
+					ping: groupFirst.ping,
+					errorMessage: groupFirst.errorMessage,
+				},
+				{
+					summary: pollFirst.summary,
+					summarySource: pollFirst.summarySource,
+					exitCode: pollFirst.exitCode,
+					timedOut: pollFirst.timedOut,
+					outputTokens: pollFirst.outputTokens,
+					contextTokens: pollFirst.contextTokens,
+					contextWindow: pollFirst.contextWindow,
+					ping: pollFirst.ping,
+					errorMessage: pollFirst.errorMessage,
+				},
+			);
+		} finally {
+			mock.timers.reset();
+		}
 	});
 
 	it("keeps a live Windows child supervised until its real exit", async () => {
