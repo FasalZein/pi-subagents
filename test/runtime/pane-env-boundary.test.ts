@@ -22,6 +22,7 @@ import {
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
 import { testResultsDir } from "../support/result-fixtures.ts";
+import { FAKE_HC, seedFakeHcCaller } from "../mux/fake-hc.ts";
 import "../support/ambient-spawn-grant.ts";
 
 // Old herdr fake: answers the availability probes and one split surface; "pane run" only logs the staged script.
@@ -114,17 +115,32 @@ interface BackendFake {
 	extraFlags: Record<string, "yes" | "no">;
 	/** A required identity name; without it in the surface the launcher must refuse. */
 	required?: string;
+	/** The PI_SUBAGENT_SURFACE that the child derives from its own surface (a direct-program backend). */
+	derivedSurface?: string;
 }
 
-/** The capsule path of the launch command, typed directly or inside a staged script (herdr, cmux). */
+/** The capsule path of the launch command: typed, inside a staged script (herdr, cmux), or a logged argv (herdr-core). */
 function capsuleIn(log: string): string | undefined {
-	const typed = log.match(/run-child\.mjs' '([^']+)'/)?.[1];
+	const typed = log.match(/run-child\.mjs' '([^']+)'/)?.[1] ?? log.match(/run-child\.mjs","([^"]+)"/)?.[1];
 	if (typed) return typed;
 	const staged = log.match(/'([^']*pi-subagent-shell-[^']+\.sh)'/)?.[1];
 	return staged ? capsuleIn(readFileSync(staged, "utf8")) : undefined;
 }
 
 const BACKENDS: BackendFake[] = [
+	// herdr-core: the launcher is the terminal's program; the surface env is the daemon env plus the terminal's identity.
+	{
+		mux: "herdr-core",
+		bin: "hc",
+		script: FAKE_HC,
+		parentEnv: { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/fake/hc-parent.sock", HC_SCOPE: "parent-scope" },
+		surfaceEnv: { HC_TERMINAL_ID: "t2", HC_TERMINAL_SOCKET: "/fake/hc-child.sock", HC_SCOPE: "child-scope", HC_PROBE_PRIVATE: "daemon-only" },
+		identity: ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"],
+		extraMarkers: ["HC_PROBE_PRIVATE"],
+		extraFlags: { HC_PROBE_PRIVATE: "no" },
+		required: "HC_TERMINAL_ID",
+		derivedSurface: "t2",
+	},
 	{
 		mux: "herdr",
 		bin: "herdr",
@@ -201,6 +217,9 @@ const MUX_RUNTIME_KEYS = [
 	"HERDR_PANE_ID",
 	"HERDR_TAB_ID",
 	"HERDR_WORKSPACE_ID",
+	"HC_TERMINAL_ID",
+	"HC_TERMINAL_SOCKET",
+	"HC_SCOPE",
 ];
 
 interface Fixture {
@@ -220,11 +239,17 @@ function useFakeParent(backend: BackendFake): Fixture {
 	const logFile = join(dir, "mux.log");
 	writeFileSync(logFile, "");
 	writeExecutable(binDir, backend.bin, backend.script);
+	const hcState = join(dir, "hc-state");
+	mkdirSync(hcState);
+	seedFakeHcCaller(hcState);
 	const probe = makeProbeDir();
 	const { command, args } = presenceProbeCommand(
 		probe.outFile,
 		[...COMMON_MARKERS, ...backend.extraMarkers],
-		Object.fromEntries(backend.identity.map((name) => [name, backend.surfaceEnv[name]])),
+		{
+			...Object.fromEntries(backend.identity.map((name) => [name, backend.surfaceEnv[name]])),
+			...(backend.derivedSurface ? { PI_SUBAGENT_SURFACE: backend.derivedSurface } : {}),
+		},
 	);
 	const probeScript = join(dir, "probe.cjs");
 	writeFileSync(
@@ -238,6 +263,7 @@ function useFakeParent(backend: BackendFake): Fixture {
 		PATH: `${binDir}:${process.env.PATH ?? ""}`,
 		FAKE_HERDR_LOG: logFile,
 		FAKE_MUX_LOG: logFile,
+		FAKE_TERMINAL_STATE: hcState,
 		PI_SUBAGENT_ENV_CAPSULE_DIR: join(dir, "capsules"),
 		PI_SUBAGENT_PI_COMMAND: `${command} ${probeScript}`,
 		PI_ARTIFACT_PROJECT_ROOT: join(dir, "artifacts"),
@@ -266,7 +292,10 @@ function useFakeParent(backend: BackendFake): Fixture {
 /** Run the launch command's capsule in the child surface; on an exact backend also without a required name. */
 function checkChildEnvironment(fixture: Fixture): void {
 	const { backend } = fixture;
-	const capsulePath = capsuleIn(readFileSync(fixture.logFile, "utf8"));
+	const log = readFileSync(fixture.logFile, "utf8");
+	// herdr-core: the launcher is the program; no shell terminal is opened and nothing is typed.
+	if (backend.mux === "herdr-core") assert.doesNotMatch(log, /^hc (send|run) /m);
+	const capsulePath = capsuleIn(log);
 	assert.ok(capsulePath, "expected the launch to invoke the capsule launcher");
 	const capsule = JSON.parse(readFileSync(capsulePath, "utf8"));
 
@@ -280,6 +309,7 @@ function checkChildEnvironment(fixture: Fixture): void {
 		...COMMON_FLAGS,
 		...backend.extraFlags,
 		...Object.fromEntries(backend.identity.map((name) => [`equal:${name}`, "yes"])),
+		...(backend.derivedSurface ? { "equal:PI_SUBAGENT_SURFACE": "yes" } : {}),
 	});
 
 	if (!backend.required) return;

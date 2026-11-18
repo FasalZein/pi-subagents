@@ -143,7 +143,7 @@ export async function checkProgramPaneExitDuringLivenessQuery(
 ): Promise<void> {
 	assert.ok(adapter.openProgramSession, "the fixture declares openProgramSession; the adapter lacks it");
 	const session = await adapter.openProgramSession();
-	const surface = await session.start("Program Pane", "true");
+	const surface = await session.start("Program Pane", { shellCommand: "true", launcherArgv: ["true"] });
 	const run = startPaneRun(adapter, root, surface, { zellijTarget: session.target });
 	vanish(surface, {
 		path: getSubagentExitSidecarPath(run.running.sessionFile),
