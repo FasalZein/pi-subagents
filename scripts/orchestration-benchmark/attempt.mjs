@@ -5,10 +5,11 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { deliveryAccounting } from "./delivery.mjs";
 import {
+	answerParser,
 	childEnded,
 	childFulfils,
-	deliveredToParent,
 	endsWithProviderError,
 	loadEvidence,
 	parentToolCalls,
@@ -146,6 +147,7 @@ export async function observe({
 	probeDir,
 	submittedAt,
 	deadlineMs,
+	parseAnswer,
 	clock = REAL_CLOCK,
 }) {
 	let errorSince = null;
@@ -155,7 +157,7 @@ export async function observe({
 		if (now - submittedAt >= deadlineMs)
 			return { kind: "verdict", verdict: "timeout" };
 		const events = readEvents(parentFile);
-		const { terminal, answer } = terminalAnswer(events);
+		const { terminal, answer } = terminalAnswer(events, parseAnswer);
 		if (terminal && answer !== null) return { kind: "answered", answer };
 		// A terminal reply without an answer is final only when the parent finished
 		// and no child is pending; a parent that waits for delivery stays observed.
@@ -186,6 +188,7 @@ export function classifyAttempt({
 	cli,
 	scenario,
 	checkoutChanged,
+	workDir,
 }) {
 	const parent = evidence.parent
 		? summarizeParent(evidence.parent.events)
@@ -232,26 +235,40 @@ export function classifyAttempt({
 	) {
 		return { kind: "provider-error", ...metrics };
 	}
+	// A child of a role without a declared result can never support a pass.
+	const childFacts = evidence.children.map((child) => {
+		const summary = summarizeChild(child.events);
+		const contract = scenario.childResults[summary?.role];
+		return {
+			name: summary?.name ?? null,
+			role: summary?.role ?? null,
+			contract,
+			ended: childEnded(child.events),
+			fulfils: contract
+				? childFulfils(child.events, contract, workDir)
+				: { read: false, returned: false },
+		};
+	});
+	// A result counts as delivered only when it reached the parent by the child's own run id.
+	const delivery = deliveryAccounting({
+		parentEvents: evidence.parent.events,
+		children: childFacts,
+		parentReply: terminalAnswer(evidence.parent.events),
+		scenario,
+		workDir,
+	});
+	const childOutcomes = childFacts.map((child, index) => ({
+		...child.fulfils,
+		delivered: delivery.runs[index].delivered,
+	}));
 	if (observed.kind === "verdict")
 		return {
 			kind: "verdict",
 			verdict: observed.verdict,
 			answer: null,
+			delivery,
 			...metrics,
 		};
-	// A child of a role without a declared result can never support a pass.
-	const childOutcomes = evidence.children.map((child) => {
-		const contract = scenario.childResults[summarizeChild(child.events)?.role];
-		if (!contract) return { read: false, returned: false, delivered: false };
-		return {
-			...childFulfils(child.events, contract),
-			delivered: deliveredToParent(
-				evidence.parent.events,
-				contract.returns,
-				scenario.parentToolAllowlist,
-			),
-		};
-	});
 	const verdict = scoreAttempt({
 		answer: observed.answer,
 		childRoles: children.roles,
@@ -264,6 +281,7 @@ export function classifyAttempt({
 		verdict,
 		answer: observed.answer,
 		childOutcomes,
+		delivery,
 		...metrics,
 	};
 }
@@ -376,6 +394,7 @@ export async function runAttempt({
 			probeDir: home.probeDir,
 			submittedAt,
 			deadlineMs,
+			parseAnswer: answerParser(scenario),
 		});
 		const wallTimeMs = Date.now() - submittedAt;
 		let checkoutChanged = false;
@@ -394,6 +413,7 @@ export async function runAttempt({
 				cli,
 				scenario,
 				checkoutChanged,
+				workDir: home.workDir,
 			}),
 		});
 	} finally {

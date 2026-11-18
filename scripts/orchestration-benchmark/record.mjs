@@ -6,8 +6,10 @@
  * checksum so that a rerun can tell a finished sample from a damaged file.
  */
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
-export const RECORD_SCHEMA = 2;
+// 3: final.delivery (outcome classes, transfers by run id), keyed answers.
+export const RECORD_SCHEMA = 3;
 
 /**
  * Verdicts of a completed sample. A completed sample keeps its verdict on rerun.
@@ -283,28 +285,55 @@ export function parentToolCalls(events) {
 	);
 }
 
-/**
- * The parent's terminal reply: the last assistant message, when it ended normally.
- * Its answer is its last non-empty line when that line is `ANSWER: <value>`, else null.
- * @returns {{terminal: boolean, answer: string | null}}
- */
-export function terminalAnswer(events) {
-	const last = assistantMessages(events).at(-1);
-	if (last?.stopReason !== "stop") return { terminal: false, answer: null };
-	const text = (last.content ?? [])
-		.filter((part) => part.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-	const line = text
+const lines = (text) =>
+	text
 		.split("\n")
 		.map((l) => l.trim())
-		.filter(Boolean)
-		.at(-1);
-	const match = line?.match(/^ANSWER:\s*`?([^\s`]+?)`?\.?$/);
-	return { terminal: true, answer: match ? match[1] : null };
+		.filter(Boolean);
+
+/** Single answer: the last non-empty line when it is `ANSWER: <value>`, else null. */
+export function singleAnswer(text) {
+	const match = lines(text)
+		.at(-1)
+		?.match(/^ANSWER:\s*`?([^\s`]+?)`?\.?$/);
+	return match ? match[1] : null;
 }
 
-function textOf(content) {
+/**
+ * Keyed answer: one `<KEY>: <value>` line per key, values by key; null when no key line exists.
+ * A repeated key keeps its last line.
+ * @param {string[]} keys
+ */
+export function keyedAnswer(keys) {
+	return (text) => {
+		const found = {};
+		for (const line of lines(text)) {
+			const match = line.match(/^`?([\w-]+)`?:\s*`?([^\s`]+?)`?\.?$/);
+			if (match && keys.includes(match[1])) found[match[1]] = match[2];
+		}
+		return Object.keys(found).length ? found : null;
+	};
+}
+
+/** The answer parser a scenario declares: keyed by expectedFacts, else a single answer. */
+export function answerParser(scenario) {
+	return scenario.expectedFacts
+		? keyedAnswer(Object.keys(scenario.expectedFacts))
+		: singleAnswer;
+}
+
+/**
+ * The parent's terminal reply: the last assistant message, when it ended normally,
+ * and the answer that parse finds in its text.
+ * @returns {{terminal: boolean, answer: string | object | null}}
+ */
+export function terminalAnswer(events, parse = singleAnswer) {
+	const last = assistantMessages(events).at(-1);
+	if (last?.stopReason !== "stop") return { terminal: false, answer: null };
+	return { terminal: true, answer: parse(textOf(last.content)) };
+}
+
+export function textOf(content) {
 	if (typeof content === "string") return content;
 	return (content ?? [])
 		.map((part) => (part?.type === "text" ? part.text : ""))
@@ -329,20 +358,32 @@ export function childEnded(events) {
 	return assistantMessages(own).at(-1)?.stopReason === "stop";
 }
 
-const baseName = (path) =>
-	String(path ?? "")
-		.split("/")
-		.at(-1);
+// macOS names a temporary folder with or without its /private prefix.
+const withoutPrivate = (path) =>
+	path.replace(/^\/private(?=\/(var|tmp)\/)/, "");
+
+/** A read path resolved against the child's working folder. */
+export function resolveReadPath(path, cwd) {
+	return withoutPrivate(posix.resolve(withoutPrivate(cwd), String(path ?? "")));
+}
+
+/** The result tokens a contract declares: one string or a list. */
+export const resultTokens = (contract) =>
+	Array.isArray(contract.returns) ? contract.returns : [contract.returns];
 
 /**
  * Whether a child met the contract its scenario declares for its role: it read
  * every named fixture file with a successful read call, and its final reply
- * contains the result it must return as a whole token. Only entries after its own launch marker count.
+ * contains every result token it must return as a whole token. Only entries after its own launch marker count.
+ * A read counts by its path inside the fixture copy (workDir), resolved against
+ * the child's session cwd, so a file of the same name elsewhere does not count.
  * @param {object[]} events - the child's session
- * @param {{returns: string, reads: string[]}} contract
+ * @param {{returns: string | string[], reads: string[]}} contract
+ * @param {string} workDir - the fixture copy the attempt runs in
  * @returns {{read: boolean, returned: boolean}}
  */
-export function childFulfils(events, contract) {
+export function childFulfils(events, contract, workDir) {
+	const cwd = events.find((e) => e?.type === "session")?.cwd ?? workDir;
 	const own = events.slice(Math.max(0, launchBoundary(events)));
 	const okResults = new Set(
 		own
@@ -362,38 +403,19 @@ export function childFulfils(events, contract) {
 					part.name === "read" &&
 					okResults.has(part.id),
 			)
-			.map((part) => baseName(part.arguments?.path)),
+			.map((part) => resolveReadPath(part.arguments?.path, cwd)),
 	);
 	const last = assistantMessages(own).at(-1);
 	return {
-		read: contract.reads.every((file) => readFiles.includes(file)),
+		read: contract.reads.every((file) =>
+			readFiles.includes(resolveReadPath(file, workDir)),
+		),
 		returned:
 			last?.stopReason === "stop" &&
-			containsToken(textOf(last.content), contract.returns),
+			resultTokens(contract).every((token) =>
+				containsToken(textOf(last.content), token),
+			),
 	};
-}
-
-/**
- * Whether a text, as a whole token, reached the parent before its terminal reply, through a
- * delivery entry (a custom message) or a result of a tool the parent may call.
- */
-export function deliveredToParent(events, text, parentToolAllowlist) {
-	let lastAssistant = -1;
-	events.forEach((e, index) => {
-		if (e?.type === "message" && e.message?.role === "assistant")
-			lastAssistant = index;
-	});
-	return events.slice(0, Math.max(0, lastAssistant)).some((e) => {
-		if (e?.type === "custom_message")
-			return containsToken(textOf(e.content), text);
-		if (e?.type !== "message") return false;
-		const { role, toolName, content } = e.message ?? {};
-		const viaTool =
-			role === "toolResult" && parentToolAllowlist.includes(toolName);
-		return (
-			(role === "custom" || viaTool) && containsToken(textOf(content), text)
-		);
-	});
 }
 
 /**
@@ -412,9 +434,13 @@ export function scoreAttempt({
 	childOutcomes,
 	scenario,
 }) {
-	if (answer !== scenario.expectedAnswer) return "wrong-answer";
+	if (!answerMatches(answer, scenario)) return "wrong-answer";
+	// A batch launch has no fixed order; scenario.childOrder "any" compares the sorted roles.
+	const order = (roles) =>
+		scenario.childOrder === "any" ? [...roles].sort() : roles;
 	const sameChildren =
-		canonicalJson(childRoles) === canonicalJson(scenario.expectedChildRoles);
+		canonicalJson(order(childRoles)) ===
+		canonicalJson(order(scenario.expectedChildRoles));
 	const allowed = parentTools.every((name) =>
 		scenario.parentToolAllowlist.includes(name),
 	);
@@ -424,6 +450,14 @@ export function scoreAttempt({
 	return sameChildren && allowed && childrenDelivered
 		? "pass"
 		: "wrong-delegation";
+}
+
+/** The oracle: a keyed answer matches when every expected key has its value. */
+export function answerMatches(answer, scenario) {
+	if (!scenario.expectedFacts) return answer === scenario.expectedAnswer;
+	return Object.entries(scenario.expectedFacts).every(
+		([key, value]) => answer?.[key] === value,
+	);
 }
 
 /** True when the last parent request ended with a provider error. */

@@ -18,6 +18,9 @@
  * - Nothing else touches that checkout while a sample runs.
  * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
  *
+ * Scenarios: smoke (launcher check) and recon (G2.1 scenario (a): 6 children, 7 keyed facts).
+ * The record keeps delivery accounting by run id in final.delivery (see delivery.mjs).
+ *
  * Known limits (accepted for version 1):
  * - F4: two launchers that create one claim at the same moment can both start the sample.
  * - F14: a checkout switched and restored during a run can publish other code under its commit.
@@ -142,7 +145,12 @@ async function loadScenario(name) {
 	).default;
 	for (const role of definition.expectedChildRoles) {
 		const contract = definition.childResults?.[role];
-		if (typeof contract?.returns !== "string" || !Array.isArray(contract.reads))
+		const returns = [contract?.returns].flat();
+		if (
+			!returns.length ||
+			returns.some((token) => typeof token !== "string") ||
+			!Array.isArray(contract.reads)
+		)
 			throw new BenchError(
 				`scenario ${name} declares no result for child ${role}`,
 			);
@@ -276,7 +284,7 @@ async function main() {
 					? "provider error after one retry"
 					: last.infraReason,
 		answer: {
-			expected: scenario.expectedAnswer,
+			expected: scenario.expectedFacts ?? scenario.expectedAnswer,
 			observed: last.answer ?? null,
 		},
 		attemptCount: attempts.length,
@@ -287,6 +295,8 @@ async function main() {
 			parentToolAttributed: last.parent?.toolAttributed ?? null,
 			childRoles: last.children?.roles ?? null,
 			childCost: last.children?.cost ?? null,
+			// Outcome classes and results duplicated, lost and parked, by run id.
+			delivery: last.delivery ?? null,
 		},
 		allAttempts: sumAttempts(attempts),
 		checkout: { path: cli.checkout, commit: checkout.commit },

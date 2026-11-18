@@ -192,7 +192,7 @@ const readCall = (path) => ({
 		],
 	},
 });
-const toolResult = (toolName, isError = false) => ({
+const toolResult = (toolName, isError = false, details = undefined) => ({
 	type: "message",
 	message: {
 		role: "toolResult",
@@ -200,27 +200,33 @@ const toolResult = (toolName, isError = false) => ({
 		toolName,
 		isError,
 		content: [],
+		details,
 	},
 });
+// The child's working folder: the fixture copy. A read path resolves against it.
+const WORK = "/r/work";
+const RUN = "run-1";
 const childSession = (
 	stopReasons,
 	{ text = `CODE WORD: ${CODE}`, read = "note.txt" } = {},
 ) => ({
 	file: "/r/c.jsonl",
 	events: [
+		{ type: "session", cwd: WORK },
 		{
 			type: "custom",
 			customType: "pi-subagents_launch_metadata",
-			data: { agent: "reader" },
+			data: { agent: "reader", name: "reader-1" },
 		},
 		...(read ? [readCall(read), toolResult("read")] : []),
 		...stopReasons.map((s) => reply(s, text)),
 	],
 });
-const delivery = (text) => ({
+const delivery = (text, runId = RUN) => ({
 	type: "custom_message",
 	customType: "subagent_result",
 	content: text,
+	details: { id: runId },
 });
 const CLI = { checkout: "/c", model: "p/m", thinking: "high" };
 const SCENARIO = {
@@ -247,10 +253,16 @@ const probes = [
 		tools: [{ name: "subagent_done", path: "/c/src/d.ts" }],
 	},
 ];
-const parentEvents = (delivered = `CODE WORD: ${CODE}`) => [
+const parentEvents = (delivered = `CODE WORD: ${CODE}`, runId = RUN) => [
 	reply("toolUse", "", ["subagent"]),
-	toolResult("subagent"),
-	...(delivered ? [delivery(delivered)] : []),
+	toolResult("subagent", false, {
+		status: "started",
+		children: [
+			{ id: RUN, name: "reader-1" },
+			{ id: "run-2", name: "reader-2" },
+		],
+	}),
+	...(delivered ? [delivery(delivered, runId)] : []),
 	reply("stop", `ANSWER: ${CODE}`),
 ];
 const evidence = (child, extra = {}) => ({
@@ -270,6 +282,7 @@ const classify = (ev, observed = { kind: "answered", answer: CODE }) =>
 		cli: CLI,
 		scenario: SCENARIO,
 		checkoutChanged: false,
+		workDir: WORK,
 	});
 
 test("[F6][F7] classification: pass needs the child; missing load proof is infra", () => {
@@ -320,6 +333,31 @@ test("[F6] a pass needs the child's own result, from its read of the fixture, de
 		"wrong-delegation",
 	);
 	assert.equal(verdict(childSession(["stop"])), "pass");
+});
+
+test("[review] a read counts only for the fixture path, not for a file of the same name elsewhere", () => {
+	const verdict = (read) =>
+		classify(evidence(childSession(["stop"], { read }))).verdict;
+	assert.equal(verdict("/etc/note.txt"), "wrong-delegation");
+	assert.equal(verdict("archive/note.txt"), "wrong-delegation");
+	assert.equal(verdict("../note.txt"), "wrong-delegation");
+	assert.equal(verdict(`${WORK}/note.txt`), "pass");
+	assert.equal(verdict("./note.txt"), "pass");
+});
+
+test("[review] a delivered result counts only when it carries the child's own run id", () => {
+	const verdict = (events) =>
+		classify(
+			evidence(childSession(["stop"]), {
+				parent: { file: "/r/p.jsonl", events },
+			}),
+		).verdict;
+	// The right text arrives, but bound to another run: not this child's handover.
+	assert.equal(
+		verdict(parentEvents(`CODE WORD: ${CODE}`, "run-2")),
+		"wrong-delegation",
+	);
+	assert.equal(verdict(parentEvents(`CODE WORD: ${CODE}`, undefined)), "pass");
 });
 
 test("[F6] the expected result matches as a whole token, not as a substring", () => {
