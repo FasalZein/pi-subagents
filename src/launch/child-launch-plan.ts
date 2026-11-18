@@ -13,6 +13,7 @@ import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import { generateSubagentSessionFile, type ResumeMode } from "../session/session-files.ts";
 import { addToolModeDeniedNames, resolveDenyTools } from "../tools/policy.ts";
 import type { SubagentParamsInput } from "../types.ts";
+import { dropMissingExtensionEntries } from "./extension-entries.ts";
 import { resolveConfiguredExtensionSources } from "./extensions.ts";
 import { resolveSubagentExtensions, resolveSubagentNoSession } from "./policy.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentRuntimePaths } from "./runtime-paths.ts";
@@ -32,6 +33,8 @@ interface ChildCapabilityPlan {
 	skills?: string;
 	injectSkills?: string;
 	extensions?: string[];
+	/** Entries of the extension list that do not resolve and that this launch drops (D10). */
+	droppedExtensions: string[];
 	denySet: Set<string>;
 	skillLaunchPlan: SkillLaunchPlan;
 }
@@ -342,12 +345,22 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 	const skills = params.skills ?? agentDefs?.skills;
 	const injectSkills = agentDefs?.injectSkills;
 	const extensionSources = resolveSubagentExtensions(agentDefs);
-	const extensions = resolveConfiguredExtensionSources(extensionSources, {
-		cwd: runtimePaths.effectiveCwd ?? parentCwd,
+	const extensionCwd = runtimePaths.effectiveCwd ?? parentCwd;
+	const configuredExtensions = resolveConfiguredExtensionSources(extensionSources, {
+		cwd: extensionCwd,
 		agentDir: runtimePaths.effectiveAgentConfigDir,
 		agentDefs,
 		mode: options.mode ?? "background",
 	});
+	// No list keeps the inherited set; a list keeps only the entries that resolve (D10).
+	const entryCheck =
+		configuredExtensions === undefined
+			? { kept: undefined, dropped: [] }
+			: dropMissingExtensionEntries(configuredExtensions, {
+					cwd: extensionCwd,
+					agentDir: runtimePaths.effectiveAgentConfigDir,
+				});
+	const extensions = entryCheck.kept;
 	const denySet = addToolModeDeniedNames(resolveDenyTools(agentDefs), tools);
 	const skillLaunchPlan = await buildSkillLaunchPlan(
 		skills,
@@ -370,6 +383,7 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			skills,
 			injectSkills,
 			extensions,
+			droppedExtensions: entryCheck.dropped,
 			denySet,
 			skillLaunchPlan,
 		},

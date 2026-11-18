@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
@@ -15,6 +16,7 @@ import {
 	splitModelRefThinking,
 } from "../launch/child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
+import { dropMissingExtensionEntries } from "../launch/extension-entries.ts";
 import { parseEnvString } from "../launch/env.ts";
 import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
@@ -329,7 +331,16 @@ async function resumeSubagentSessionWithoutWidth(
 	// run that times out again writes a fresh one. A failed resume puts them back (D6).
 	const discardPreviousVerdicts = setAsidePreviousVerdicts(sessionFile, undo);
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
-	const savedExtensions = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
+	const savedList = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
+	// A resume keeps its saved list minus the entries that no longer resolve (D10).
+	const entryCheck =
+		savedList === undefined
+			? { kept: undefined, dropped: [] }
+			: dropMissingExtensionEntries(savedList, {
+					cwd: targetCwd,
+					agentDir: invocationMetadata?.agentConfigDir ?? getAgentDir(),
+				});
+	const savedExtensions = entryCheck.kept;
 	const extensionArgs =
 		invocationMetadata !== undefined || savedExtensions !== undefined
 			? getExtensionLaunchArgs(savedExtensions, subagentDonePath, narrowedSpawnBudget > 0)
@@ -457,6 +468,7 @@ async function resumeSubagentSessionWithoutWidth(
 		modelContextWindow: runtime.getContextWindow(invocationMetadata?.modelRef),
 		modelRef: invocationMetadata?.modelRef,
 		launchMetadata: resumedInvocationMetadata,
+		droppedExtensions: entryCheck.dropped,
 		resultTarget: { store: sessionResultStore(input.resultsDir), reservation, ...input.parent },
 	};
 

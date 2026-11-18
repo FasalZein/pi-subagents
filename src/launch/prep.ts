@@ -80,6 +80,8 @@ export interface PreparedSubagentLaunch {
 	sessionTitle?: string;
 	denySet: Set<string>;
 	effectiveExtensions?: string[];
+	/** Extension entries dropped because they do not resolve; the launch reply names them (D10). */
+	droppedExtensions: string[];
 	identity: string;
 	identityInSystemPrompt: boolean;
 	/** Original agent-level auto-exit, preserved before any headless-mode override. */
@@ -150,6 +152,7 @@ export async function prepareSubagentLaunch(
 		injectSkills: effectiveInjectSkills,
 		denySet,
 		extensions: effectiveExtensions,
+		droppedExtensions,
 		skillLaunchPlan,
 	} = childLaunchPlan.capability;
 	const identity = buildIdentityBlock(agentDefs, params.systemPrompt);
@@ -170,6 +173,7 @@ export async function prepareSubagentLaunch(
 		sessionTitle,
 		denySet,
 		effectiveExtensions,
+		droppedExtensions,
 		identity,
 		identityInSystemPrompt,
 		agentAutoExit,

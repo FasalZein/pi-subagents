@@ -2,6 +2,7 @@ import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-ag
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
+import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
@@ -169,13 +170,16 @@ export function registerSubagentResumeTool(
 
 			forceSynchronousResumeIfNeeded(running, ctx.hasUI);
 
+			// D10: dropped entries are named outside the result frame, once per reply.
+			const dropped = droppedExtensionLines(running.droppedExtensions ?? []).join("\n");
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
-				if (!warning || isRenderedResult(result)) return result;
+				const prefix = [isRenderedResult(result) ? "" : warning, dropped].filter(Boolean).join("\n\n");
+				if (!prefix) return result;
 				return {
 					...result,
-					content: [{ type: "text" as const, text: warning }, ...result.content],
+					content: [{ type: "text" as const, text: prefix }, ...result.content],
 				};
 			}
 
@@ -184,7 +188,7 @@ export function registerSubagentResumeTool(
 				content: [
 					{
 						type: "text" as const,
-						text: warning ? `${warning}\n\nSession "${running.name}" resumed.` : `Session "${running.name}" resumed.`,
+						text: [warning, dropped, `Session "${running.name}" resumed.`].filter(Boolean).join("\n\n"),
 					},
 				],
 				details: {
