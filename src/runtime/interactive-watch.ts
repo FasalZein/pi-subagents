@@ -413,7 +413,7 @@ function getSummary(
 	running: RunningSubagent,
 	pollResult: PollResult,
 ): { summary: string; summarySource: SubagentSummarySource } {
-	if ((!running.noSession || running.timeoutWarnThreshold !== undefined) && existsSync(running.sessionFile)) {
+	if (existsSync(running.sessionFile)) {
 		const output = findLastSubagentOutputWithSource(getNewEntries(running.sessionFile, running.launchEntryCount ?? 0));
 		if (output) return output;
 	}

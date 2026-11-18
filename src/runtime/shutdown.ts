@@ -11,6 +11,7 @@ export interface ShutdownRuntime {
 	parentCloseEscalationMs: number;
 	updateWidget(): void;
 	closeRunningSurface(running: RunningSubagent): Promise<void>;
+	cleanupNoSessionSessionFile(running: RunningSubagent): void;
 }
 
 export function terminateBackgroundChildProcess(running: RunningSubagent, signal: NodeJS.Signals): void {
@@ -69,6 +70,12 @@ export async function shutdownSubagentsForParentExit(
 		agent.deliveryState = "detached";
 
 		if (agent.parentClosePolicy === "continue") {
+			// D13, orderly detach: a no-session child is not watched any more, so it gets no result and
+			// its temporary session file goes now. A parent crash skips this and can leave the file.
+			if (agent.noSession) {
+				agent.resultTarget = undefined;
+				runtime.cleanupNoSessionSessionFile(agent);
+			}
 			actions.push({
 				id: agent.id,
 				policy: agent.parentClosePolicy,

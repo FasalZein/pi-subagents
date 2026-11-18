@@ -41,6 +41,7 @@ describe("subagent shutdown policy", () => {
 			completedSubagentResults: new Map(),
 			parentCloseEscalationMs: 10,
 			updateWidget() {},
+			cleanupNoSessionSessionFile() {},
 			async closeRunningSurface(subagent) {
 				assert.equal(subagent, running);
 				await Promise.resolve();

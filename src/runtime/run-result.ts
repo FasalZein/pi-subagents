@@ -25,6 +25,10 @@ export interface ResultTarget {
 export const CONTEXT_PRESSURE_RESUME_REASON =
 	"stopped early by its context-warning policy and its context window is spent; launch a fresh sub-agent for unfinished work";
 
+/** D13: why a no-session run cannot resume: its temporary session file is deleted after the result. */
+export const NO_SESSION_RESUME_REASON =
+	"a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
+
 /**
  * True for a tool result that carries a published rendering (its details name the run id, as the
  * wait path sets them only then); its text already holds the launch warnings.
@@ -70,8 +74,9 @@ export interface WatchedEnd {
  * D13 and D14: assembles, publishes and renders the result of a headless or pane child that exited
  * on its own with code 0, also after a context-pressure wrap-up, and of an operator-closed manual
  * pane that answered. Returns undefined for any other end: time-limit, error and ping ends keep their
- * own texts until their tickets move them here (T09), and a no-session child has no session to
- * assemble from (T08b).
+ * own texts until their tickets move them here (T09). A no-session child is assembled from its
+ * temporary session file, which the watcher deletes after this returns, so its record names no
+ * session file and says that it cannot be resumed.
  */
 export function publishRunResult(running: RunningSubagent, end: WatchedEnd): PublishedResult | undefined {
 	const target = running.resultTarget;
@@ -81,7 +86,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		!end.pinged &&
 		!end.errorMessage &&
 		!running.timeoutWrapUp;
-	if (!target || running.noSession || !endedOnItsOwn || !existsSync(running.sessionFile)) return undefined;
+	if (!target || !endedOnItsOwn || !existsSync(running.sessionFile)) return undefined;
 	const { contextUsage } = end;
 	const assembled = assembleResult({
 		runId: target.reservation.runId,
@@ -89,7 +94,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		agent: running.agent ?? "",
 		title: running.title,
 		modelRef: running.modelRef,
-		sessionFile: running.sessionFile,
+		sessionFile: running.noSession ? undefined : running.sessionFile,
 		startedAt: running.startTime,
 		endedAt: Date.now(),
 		end: { kind: "exited", code: end.exitCode },
@@ -100,9 +105,11 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 			contextUsage.contextTokens !== undefined
 				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
 				: undefined,
-		resume: contextUsage.contextWarned
-			? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
-			: { resumable: true },
+		resume: running.noSession
+			? { resumable: false, reason: NO_SESSION_RESUME_REASON }
+			: contextUsage.contextWarned
+				? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
+				: { resumable: true },
 	});
 	const noText = !assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
 	// A nonzero end without an answer is a crash, not an operator close: it keeps its failure text.

@@ -284,6 +284,7 @@ function getShutdownRuntime(): ShutdownRuntime {
 		parentCloseEscalationMs: 5000,
 		updateWidget,
 		closeRunningSurface,
+		cleanupNoSessionSessionFile,
 	};
 }
 
