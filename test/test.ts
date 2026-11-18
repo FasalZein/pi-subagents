@@ -98,6 +98,7 @@ import "./runtime/interactive-watch-takeover.test.ts";
 import "./runtime/pane-result-outcome.test.ts";
 import "./runtime/resume-grant.test.ts";
 import "./runtime/spawn-width.test.ts";
+import "./runtime/launch-cap.test.ts";
 import "./runtime/mixed-batch-classifier.test.ts";
 import "./launch/helpers.test.ts";
 import "./mux/mux.test.ts";
