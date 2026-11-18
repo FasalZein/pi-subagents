@@ -554,10 +554,17 @@ export function loadEvidence(
 	const unmatchedProbes =
 		probes.filter((probe) => !sessionFiles.has(probe.sessionFile)).length +
 		(probes.length - bySession.size);
+	// A probe whose session file is no file of the attempt: Pi writes a session
+	// file only at the first message, so a child that never got its task has none.
+	const attemptFiles = new Set([parentFile, ...childFiles, ...otherFiles]);
+	const unfiledProbes = [...bySession.keys()].filter(
+		(file) => !attemptFiles.has(file),
+	).length;
 	return {
 		checkout,
 		missingProbes: missing.length,
 		unmatchedProbes,
+		unfiledProbes,
 		parentLoadedCheckout: fromCheckout(parent, parentTool),
 		childrenLoadedCheckout: children.every((child) =>
 			fromCheckout(child.probe, childTool),

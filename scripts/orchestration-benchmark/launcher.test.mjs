@@ -442,15 +442,24 @@ test("[F8] probes and session files match one to one: either side alone is infra
 // T04 diagnosis, doubt 2: at the deadline a launched child can have its probe
 // (session_start) but no session file yet (Pi writes the file at the first user
 // or assistant message). G2.1 makes a sample without an answer in 10 minutes a
-// timeout; today the F8 join turns it into infra, and an infra sample reruns.
-test("[T04] a deadline timeout with a child probe but no child session file stays a timeout", {
-	todo: true,
-}, () => {
+// timeout, so the F8 join must not turn it into infra (an infra sample reruns).
+test("[T04] a deadline timeout with a child probe but no child session file stays a timeout", () => {
 	const result = classify(evidence(null), {
 		kind: "verdict",
 		verdict: "timeout",
 	});
-	assert.deepEqual([result.kind, result.verdict], ["verdict", "timeout"]);
+	assert.deepEqual(
+		[result.kind, result.verdict, result.load.unfiledProbes],
+		["verdict", "timeout", 1],
+	);
+	// Other unsound joins stay infra on a timeout: two probes claim one file.
+	assert.equal(
+		classify(
+			evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }),
+			{ kind: "verdict", verdict: "timeout" },
+		).infraReason,
+		"probe without its session file",
+	);
 });
 
 test("[F8] every session file enters the join: an empty or header-only file without a probe is infra", () => {

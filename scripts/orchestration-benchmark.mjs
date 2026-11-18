@@ -32,6 +32,8 @@
  * - F13: provider settings edited between the fingerprint read and the launch read mix inputs.
  * - F2: a hard kill during root removal can leave credentials in a root without its owner tag.
  * - F12: an answer written in the last poll interval before the deadline counts as a timeout.
+ * - T04: on a timeout, a child probe without a session file (no task arrived) keeps the
+ *   timeout verdict; the record counts it as load.unfiledProbes, not as infra.
  * - F11: a child provider error can cause both a native recovery and a harness retry.
  * - Revisit all of these before parallel benchmark jobs run on one checkout.
  * - Namesakes: children join their run ids by launch name. A scenario must give
