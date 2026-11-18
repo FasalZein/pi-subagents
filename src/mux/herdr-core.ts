@@ -11,6 +11,7 @@ import {
 	LabelExitWatch,
 	readFinishedTerminal,
 } from "./herdr-core-exit.ts";
+import { placeChildTerminal } from "./herdr-core-placement.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
@@ -126,7 +127,7 @@ function hcRequest(method: string, params: Record<string, unknown>): Promise<Rpc
  * because herdr-core would add its daemon environment to it. The exit watch subscribes first.
  * No name: hc's name rule rejects Pi titles, and the label already identifies the launch.
  */
-async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
+async function startLauncherTerminal(launch: ProgramLaunch, warn: (warning: string) => void): Promise<string> {
 	const label = `launch-${randomUUID()}`;
 	const watch = new LabelExitWatch(label);
 	await watch.subscribe();
@@ -143,6 +144,7 @@ async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 		if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
 		watch.attach(address);
 		exitWatches.set(address, watch);
+		await placeChildTerminal(address, callerTerminal(), warn);
 		return address;
 	} catch (error) {
 		watch.stop();
@@ -170,7 +172,7 @@ async function closeTerminal(surface: string): Promise<void> {
 	await execFileAsync(HC_COMMAND, ["rm", surface], { encoding: "utf8" });
 }
 
-/** herdr-core (the `hc` CLI inside an herdr-core terminal). Placement in the Herdr app is not part of T45. */
+/** herdr-core (the `hc` CLI inside an herdr-core terminal). A direct-program child gets a pane (D27). */
 export const herdrCoreBackend: MuxBackendAdapter = {
 	id: "herdr-core",
 	isAvailable: () =>
@@ -201,7 +203,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 		target: { sessionName: callerTerminal(), parentPaneId: 0 },
 		childEnv: {},
 		surfaceFromEnv: { name: "HC_TERMINAL_ID", prefix: "" },
-		start: (_name, launch) => startLauncherTerminal(launch),
+		start: (_name, launch, options) => startLauncherTerminal(launch, options?.onPlacementWarning ?? (() => {})),
 	}),
 	checkExit: async (surface) => {
 		const watch = exitWatches.get(surface);

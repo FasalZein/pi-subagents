@@ -207,12 +207,20 @@ async function startInteractiveSubagent(
 	// Until the pane receives the command, nothing consumes the capsule: a failed
 	// launch deletes it rather than leaving credentials on disk.
 	undo.add(dispose);
-	const surface = ordinarySurface ?? (await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
+	// A live child is never rolled back for its placement: a placement failure becomes a warning on its result.
+	const placementWarnings: string[] = [];
+	const surface =
+		ordinarySurface ??
+		(await programSession!.start(surfaceName, programLaunch, {
+			zellij: zellijContext,
+			onPlacementWarning: (warning) => placementWarnings.push(warning),
+		}));
 	traceSubagentLaunch("interactive.surface", {
 		id,
 		name: params.name,
 		surface,
 		surfacePreCreated,
+		placementWarnings,
 	});
 	if (!surfacePreCreated && !programSession) {
 		await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
@@ -253,6 +261,11 @@ async function startInteractiveSubagent(
 		launchMetadata: launch.launchMetadata,
 		doneSentinelFile,
 		zellijTarget: programSession?.target,
-		resultTarget: { store, reservation, parentCwd: ctx.cwd, warnings: ctx.resultWarnings ?? [] },
+		resultTarget: {
+			store,
+			reservation,
+			parentCwd: ctx.cwd,
+			warnings: [...(ctx.resultWarnings ?? []), ...placementWarnings],
+		},
 	};
 }
