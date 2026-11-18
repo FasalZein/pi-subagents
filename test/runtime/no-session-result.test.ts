@@ -97,6 +97,7 @@ try { (await import(process.env.FAKE_HOOK)).deleteMarkedSessionFileOnProcessExit
 const pidFile = process.env.FAKE_PID_FILE;
 if (pidFile) writeFileSync(pidFile, process.pid + "\\n");
 const lastWrite = () => setTimeout(() => {
+	writeFileSync(session + ".exit", JSON.stringify({ type: "done" }));
 	appendFileSync(session, JSON.stringify({ type: "custom", customType: "shutdown-write" }) + "\\n");
 	if (pidFile) rmSync(pidFile, { force: true });
 	process.exit(0);
@@ -232,6 +233,7 @@ describe("no-session child results", () => {
 		assert.equal(child.exitCode, 0, "the child made its last write and exited");
 		assert.equal(existsSync(running.sessionFile), false, "no file remains after the child's last write");
 		assert.equal(existsSync(`${running.sessionFile}.delete-on-exit`), false);
+		assert.equal(existsSync(`${running.sessionFile}.exit`), false, "no unconsumed exit record remains");
 		assert.equal(store.read(runId), undefined);
 	});
 

@@ -1,4 +1,5 @@
 import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { getSubagentExitSidecarPath } from "./exit-sidecar.ts";
 
 /**
  * D13, continue detach: the parent quits while a no-session child keeps running and appending to
@@ -15,11 +16,15 @@ export function markSessionFileForDeletionOnExit(sessionFile: string): void {
 	writeFileSync(getDeleteOnExitMarkerPath(sessionFile), "", { mode: 0o600 });
 }
 
-/** Deletes the session file and its marker when the marker exists; safe to call more than once. */
+/**
+ * Deletes the session file, the exit record no watcher consumes any more, and the marker, when the
+ * marker exists; safe to call more than once.
+ */
 export function deleteSessionFileMarkedForDeletion(sessionFile: string): void {
 	const marker = getDeleteOnExitMarkerPath(sessionFile);
 	if (!existsSync(marker)) return;
 	rmSync(sessionFile, { force: true });
+	rmSync(getSubagentExitSidecarPath(sessionFile), { force: true });
 	rmSync(marker, { force: true });
 }
 
