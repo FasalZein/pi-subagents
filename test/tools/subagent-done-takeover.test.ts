@@ -1,88 +1,10 @@
 import { mock } from "node:test";
-import {
-	assert,
-	clearPublishedRunningSubagentCountForTest,
-	createTestDir,
-	describe,
-	existsSync,
-	it,
-	join,
-	readFileSync,
-	resetSubagentStateForTest,
-	rmSync,
-	subagentDoneExtension,
-	writeFileSync,
-} from "../support/index.ts";
+import { assert, describe, it } from "../support/index.ts";
+import { cleanupPaneChild as cleanup, loadPaneChild as loadChild } from "../support/pane-child.ts";
 
 // D11: after a person typed or pressed Esc in a pane child, nothing in the
 // child requests shutdown; the ended run is shown in the pane. The takeover
 // cases are bugpath replays 6a and 6b (red on cf6dbf4).
-const ENV_KEYS = ["PI_SUBAGENT_SESSION", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS"];
-
-function loadChild(options: { autoExit: boolean; pane: boolean }) {
-	const handlers = new Map<string, any>();
-	const tools = new Map<string, any>();
-	const notices: string[] = [];
-	let shutdowns = 0;
-	const dir = createTestDir();
-	const sessionFile = join(dir, "child.jsonl");
-	writeFileSync(sessionFile, "");
-	process.env.PI_SUBAGENT_SESSION = sessionFile;
-	if (options.autoExit) process.env.PI_SUBAGENT_AUTO_EXIT = "1";
-	if (options.pane) process.env.PI_SUBAGENT_SURFACE = "fake-pane";
-	// Below the 10 s floor, so each recovery window is 10 s of mocked time.
-	process.env.PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS = "10,10,10";
-	subagentDoneExtension({
-		getAllTools: () => [],
-		getActiveTools: () => [],
-		setActiveTools() {},
-		registerTool(definition: { name: string }) {
-			tools.set(definition.name, definition);
-			return definition;
-		},
-		registerCommand() {},
-		on(event: string, handler: any) {
-			handlers.set(event, handler);
-		},
-		sendUserMessage() {},
-		appendEntry() {},
-		registerShortcut() {},
-	} as any);
-	const ctx = {
-		isIdle: () => true,
-		ui: { setStatus() {}, notify(message: string) { notices.push(message); } },
-		shutdown() {
-			shutdowns += 1;
-		},
-	};
-	const exitFile = `${sessionFile}.exit`;
-	return {
-		ctx,
-		dir,
-		notices,
-		tools,
-		emit(event: string, payload: unknown) {
-			handlers.get(event)?.(payload, ctx);
-		},
-		takeOver() {
-			handlers.get("agent_start")?.({}, ctx);
-			handlers.get("input")?.({ source: "interactive", text: "hold on" }, ctx);
-		},
-		get shutdowns() {
-			return shutdowns;
-		},
-		readExit: () => (existsSync(exitFile) ? JSON.parse(readFileSync(exitFile, "utf8")) : null),
-	};
-}
-
-function cleanup(dir: string) {
-	clearPublishedRunningSubagentCountForTest();
-	resetSubagentStateForTest();
-	for (const key of ENV_KEYS) delete process.env[key];
-	mock.timers.reset();
-	rmSync(dir, { recursive: true, force: true });
-}
-
 const authErrorEnd = {
 	messages: [{ role: "assistant", stopReason: "error", errorMessage: "401 Unauthorized: invalid api key" }],
 };
@@ -181,4 +103,196 @@ describe("subagent-done.ts operator takeover (D11)", () => {
 			cleanup(child.dir);
 		}
 	});
+});
+
+const contextOverflowEnd = {
+	messages: [
+		{
+			role: "assistant",
+			provider: "openai",
+			model: "gpt-test",
+			stopReason: "error",
+			errorMessage: "Your input exceeds the context window of this model",
+		},
+	],
+};
+const answerEnd = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed." }] }] };
+const ESCAPE = "\x1b";
+
+function startOverflowCompaction(child: ReturnType<typeof loadChild>) {
+	const compaction = new AbortController();
+	child.emit("agent_end", contextOverflowEnd);
+	child.emit("session_before_compact", { reason: "overflow", willRetry: true, signal: compaction.signal });
+	return compaction;
+}
+
+function quitPane(child: ReturnType<typeof loadChild>) {
+	child.emit("session_shutdown", { reason: "quit" });
+	return child.readExit();
+}
+
+// Fix round 1 of the T32 review: each case is red on ecf4fb2.
+describe("subagent-done.ts takeover without a submitted input (finding 1)", () => {
+	it("Esc during overflow compaction keeps the pane open and shows the error", () => {
+		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		const child = loadChild({ autoExit: true, pane: true });
+		try {
+			child.emit("agent_start", {});
+			const compaction = startOverflowCompaction(child);
+			// Pi's TUI runs extension key listeners before the editor's Escape
+			// handler calls abortCompaction().
+			child.press(ESCAPE);
+			compaction.abort();
+			mock.timers.tick(5);
+			assert.equal(child.shutdowns, 0);
+			assert.equal(child.readExit(), null);
+			assert.ok(child.notices.includes("Your input exceeds the context window of this model"));
+			assert.match(quitPane(child)?.errorMessage ?? "", /exceeds the context window/);
+		} finally {
+			cleanup(child.dir);
+		}
+	});
+
+	it("a compaction abort without a pane key still ends the child with the error", () => {
+		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		const child = loadChild({ autoExit: true, pane: true });
+		try {
+			child.emit("agent_start", {});
+			startOverflowCompaction(child).abort();
+			mock.timers.tick(5);
+			assert.equal(child.shutdowns, 1);
+			assert.equal(child.readExit()?.type, "error");
+		} finally {
+			cleanup(child.dir);
+		}
+	});
+
+	it("Esc during a recovery countdown stops the nudges and keeps the pane open", () => {
+		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		const child = loadChild({ autoExit: true, pane: true });
+		try {
+			child.emit("agent_start", {});
+			child.emit("agent_end", retryableErrorEnd);
+			child.press(ESCAPE);
+			mock.timers.tick(40_000);
+			assert.deepEqual(child.nudges, []);
+			assert.equal(child.shutdowns, 0);
+			assert.equal(child.readExit(), null);
+			assert.equal(quitPane(child)?.errorMessage, "503 service unavailable");
+		} finally {
+			cleanup(child.dir);
+		}
+	});
+
+	it("typing before Enter takes over the pane", () => {
+		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		const child = loadChild({ autoExit: true, pane: true });
+		try {
+			child.emit("agent_start", {});
+			child.press("h");
+			endWithAuthError(child);
+			assert.equal(child.shutdowns, 0);
+			assert.equal(child.readExit(), null);
+		} finally {
+			cleanup(child.dir);
+		}
+	});
+
+	for (const report of [
+		{ name: "a focus report", data: "\x1b[I" },
+		{ name: "a mouse report", data: "\x1b[<0;10;5M" },
+	]) {
+		it(`${report.name} is not a takeover`, () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild({ autoExit: true, pane: true });
+			try {
+				child.emit("agent_start", {});
+				child.press(report.data);
+				endWithAuthError(child);
+				assert.equal(child.shutdowns, 1);
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+	}
+});
+
+describe("subagent-done.ts kept error after a takeover (finding 2)", () => {
+	const cases = [
+		{ name: "three tool-call endings", run: endThreeTimesAtToolCall, error: /3 consecutive tool-use boundary endings/ },
+		{ name: "provider-recovery exhaustion", run: exhaustProviderRecovery, error: /recovery exhausted after 3 .*503 service unavailable/ },
+		{ name: "a 401 error", run: endWithAuthError, error: /401 Unauthorized/ },
+	];
+	for (const testCase of cases) {
+		it(`closing the pane after ${testCase.name} writes that error`, () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild({ autoExit: true, pane: true });
+			try {
+				child.takeOver();
+				testCase.run(child);
+				const exit = quitPane(child);
+				assert.equal(exit?.type, "error");
+				assert.match(exit?.errorMessage ?? "", testCase.error);
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+	}
+
+	it("a later successful answer clears the kept error", () => {
+		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		const child = loadChild({ autoExit: true, pane: true });
+		try {
+			child.takeOver();
+			endThreeTimesAtToolCall(child);
+			child.emit("agent_end", answerEnd);
+			assert.equal(quitPane(child)?.type, "done");
+		} finally {
+			cleanup(child.dir);
+		}
+	});
+});
+
+describe("subagent-done.ts deferred error shutdown (finding 3)", () => {
+	const cases = [
+		{ name: "a 401 error", end: (child: ReturnType<typeof loadChild>) => child.emit("agent_end", authErrorEnd) },
+		{
+			name: "the third tool-call ending",
+			end: (child: ReturnType<typeof loadChild>) => {
+				for (let i = 0; i < 3; i++) child.emit("agent_end", toolUseEnd);
+			},
+		},
+	];
+	for (const testCase of cases) {
+		it(`operator input after ${testCase.name} and before the deferred shutdown keeps the pane`, () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild({ autoExit: true, pane: true });
+			try {
+				child.emit("agent_start", {});
+				testCase.end(child);
+				child.emit("input", { source: "interactive", text: "wait", streamingBehavior: undefined });
+				mock.timers.tick(5);
+				assert.equal(child.shutdowns, 0);
+				assert.equal(child.readExit(), null);
+				assert.equal(quitPane(child)?.type, "error");
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+
+		it(`operator input before ${testCase.name} keeps the pane`, () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild({ autoExit: true, pane: true });
+			try {
+				child.takeOver();
+				testCase.end(child);
+				mock.timers.tick(5);
+				assert.equal(child.shutdowns, 0);
+				assert.equal(child.readExit(), null);
+				assert.equal(quitPane(child)?.type, "error");
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+	}
 });

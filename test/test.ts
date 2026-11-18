@@ -83,6 +83,7 @@ import "./runtime/resume-headless-await.test.ts";
 import "./runtime/final-context-usage.test.ts";
 import "./runtime/interactive-watch-usage-source.test.ts";
 import "./runtime/interactive-watch-timeout.test.ts";
+import "./runtime/interactive-watch-takeover.test.ts";
 import "./runtime/resume-grant.test.ts";
 import "./runtime/spawn-width.test.ts";
 import "./runtime/mixed-batch-classifier.test.ts";

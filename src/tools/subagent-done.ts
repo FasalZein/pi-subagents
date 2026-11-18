@@ -12,9 +12,9 @@ import { installSubagentContextReminders } from "./context-reminders.ts";
 import { createExitSignalWriter } from "./exit-signal.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
+import { createPaneTakeover, requestShutdown } from "./pane-takeover.ts";
 import { isMissingOptionalDependency, optionalRequire } from "./optional-dependency.ts";
 import {
-	type ErrorExitPayload,
 	ProviderErrorRecoveryController,
 	resolveProviderRecoveryDelaysMs,
 } from "./provider-error-recovery.ts";
@@ -55,6 +55,10 @@ export function shouldRegisterSubagentDone(autoExit: boolean, deniedTools: strin
 	if (isInteractive) return false;
 	return true;
 }
+
+type PaneUiContext = {
+	ui: { setStatus(key: string, message?: string): void; notify(message: string, tone?: string): void };
+};
 
 type ToolControlAPI = Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "setActiveTools" | "registerTool">;
 
@@ -116,16 +120,6 @@ export default function (pi: ExtensionAPI) {
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 
-	function requestShutdown(ctx: { shutdown: () => void }) {
-		setTimeout(() => {
-			try {
-				ctx.shutdown();
-			} catch {
-				// Context may already be stale after session shutdown/reload.
-			}
-		}, 0);
-	}
-
 	const writeExitSignal = createExitSignalWriter({
 		pi,
 		getFinalContextUsage: () => finalContextUsage,
@@ -135,24 +129,10 @@ export default function (pi: ExtensionAPI) {
 	// D11: set when a person types or presses Escape in the pane after the run
 	// started; only /auto-exit clears it. While set, the person owns the pane:
 	// nothing here requests shutdown or writes an exit record before it closes.
-	let operatorTookOver = false;
-
-	function endRunWithError(ctx: Parameters<typeof requestShutdown>[0], payload: ErrorExitPayload) {
-		if (operatorTookOver) {
-			showEndedRunInPane(ctx, payload.errorMessage);
-			return;
-		}
-		writeExitSignal(payload);
-		requestShutdown(ctx);
-	}
-
-	function showEndedRunInPane(ctx: unknown, message: string) {
-		try {
-			(ctx as { ui: { notify(message: string, tone?: string): void } }).ui.notify(message, "error");
-		} catch {
-			// Context may already be stale after session shutdown/reload.
-		}
-	}
+	const takeover = createPaneTakeover({ writeExitSignal });
+	const endRunWithError = takeover.endRunWithError;
+	// Set by the auto-exit or manual branch below; raw pane keys reach it.
+	let onOperatorKeystroke: (ctx: PaneUiContext) => void = () => {};
 
 	const subagentName = process.env.PI_SUBAGENT_NAME ?? "";
 	const subagentAgent = process.env.PI_SUBAGENT_AGENT ?? "";
@@ -189,7 +169,7 @@ export default function (pi: ExtensionAPI) {
 		token: number;
 		errorMessage: string;
 		stopReason: "error";
-		ctx: Parameters<typeof requestShutdown>[0];
+		ctx: { shutdown: () => void };
 		timer?: ReturnType<typeof setTimeout>;
 	};
 	let pendingPiRecovery: PendingPiRecovery | null = null;
@@ -224,7 +204,7 @@ export default function (pi: ExtensionAPI) {
 
 	function deferToPiNativeRecovery(
 		errorInfo: { errorMessage: string; stopReason: "error" },
-		ctx: Parameters<typeof requestShutdown>[0],
+		ctx: { shutdown: () => void },
 	) {
 		cancelPendingPiRecovery();
 		pendingPiRecovery = { token: piRecoveryGeneration, ...errorInfo, ctx };
@@ -244,6 +224,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		enforceDeniedTools();
+		if (isInteractive) takeover.watchPaneKeys(ctx.ui, () => onOperatorKeystroke(ctx));
 		setTimeout(() => enforceDeniedTools(), 0);
 		setTimeout(() => enforceDeniedTools(), 250);
 
@@ -300,8 +281,15 @@ export default function (pi: ExtensionAPI) {
 	// If the run ended on an unrecovered provider error, surface that instead of a
 	// phony "done" so the parent learns it was a failure, not a clean completion.
 	pi.on("session_shutdown", () => {
+		takeover.stopWatchingPaneKeys();
 		providerErrorRecovery.cancelPendingRecovery();
 		cancelPendingPiRecovery();
+		// A run that ended on an error and was never recovered reports that error,
+		// also when a person closes a taken-over pane (D12).
+		if (takeover.unrecoveredError) {
+			writeExitSignal(takeover.unrecoveredError);
+			return;
+		}
 		if (pendingProviderError) {
 			writeExitSignal({
 				type: "error",
@@ -352,13 +340,10 @@ export default function (pi: ExtensionAPI) {
 		// no input event). Notifying at the disable moment — not from an agent_end
 		// branch gated on operatorInputQueuedThisRun, which a follow-up/idle prompt's
 		// new agent_start clears — keeps follow-ups and idle prompts from going silent.
-		const disableAutoExitByOperator = (
-			ctx: { ui: { setStatus(key: string, message?: string): void; notify(message: string, tone?: string): void } },
-		) => {
-			const alreadyDisabled = operatorTookOver;
-			operatorTookOver = true;
+		const disableAutoExitByOperator = (ctx: PaneUiContext) => {
+			const started = takeover.markTakenOver();
 			suppressCallerPingExit(callerPingState);
-			if (alreadyDisabled) return;
+			if (!started) return;
 			if (!isInteractive) return;
 			ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, AUTO_EXIT_DISABLED_MSG);
 			ctx.ui.notify(AUTO_EXIT_DISABLED_MSG, "warning");
@@ -368,6 +353,16 @@ export default function (pi: ExtensionAPI) {
 			agentStarted = true;
 			operatorInputHoldCount = 0;
 		});
+
+		onOperatorKeystroke = (ctx) => {
+			// Before the first run, after a re-arm, or once taken over, a key changes nothing.
+			if (!agentStarted || autoExitReArmed || takeover.tookOver) return;
+			disableAutoExitByOperator(ctx);
+			// The person owns the pane: no automatic "continue" nudge. A kept
+			// provider error still reports on close. Pi's own compaction recovery
+			// keeps running; its abort reaches failPendingPiRecovery.
+			providerErrorRecovery.cancelPendingRecovery();
+		};
 
 		pi.on("turn_start", () => {
 			// Each queued input holds auto-exit once. Release one at the first
@@ -405,7 +400,7 @@ export default function (pi: ExtensionAPI) {
 					// A fresh interactive prompt consumes the re-arm.
 					autoExitReArmed = false;
 				}
-			} else if (!operatorTookOver) {
+			} else if (!takeover.tookOver) {
 				operatorInputHoldCount += 1;
 				disableAutoExitByOperator(ctx);
 			}
@@ -479,6 +474,7 @@ export default function (pi: ExtensionAPI) {
 			const errorInfo = findLatestAssistantError(messages);
 			if (errorInfo) {
 				pendingProviderError = errorInfo;
+				takeover.clearUnrecoveredError();
 				if (errorInfo.recoveryKind === "pi") {
 					// Context overflow is recoverable by Pi's native compaction path,
 					// which runs after extension agent_end handlers. Do not enqueue a
@@ -496,22 +492,24 @@ export default function (pi: ExtensionAPI) {
 					// Defer stamping the failure while Pi's in-flight retry may still
 					// recover. If the child really dies, session_shutdown reports it
 					// from pendingProviderError, also when the person closes a taken-over pane.
-					if (operatorTookOver) showEndedRunInPane(ctx, errorInfo.errorMessage);
-					else requestShutdown(ctx);
+					takeover.shutdownAfterError(ctx, errorInfo.errorMessage);
 					return;
 				}
 				cancelPendingPiRecovery();
 				providerErrorRecovery.handleProviderError(errorInfo, ctx);
 				return;
 			}
+			// A successful answer supersedes any earlier error, also when the
+			// child stays open for queued messages or live children.
+			pendingProviderError = null;
+			takeover.clearUnrecoveredError();
 			if (ctx.hasPendingMessages?.()) return;
 			// Keep the coordinator alive until every live child has reported back.
 			if (getPublishedRunningSubagentCount() > 0) return;
-			pendingProviderError = null;
 			consecutiveToolBoundaryEnds = 0;
 			providerErrorRecovery.cancelPendingRecovery(true);
 			cancelPendingPiRecovery();
-			if (operatorTookOver) return;
+			if (takeover.tookOver) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});
@@ -520,11 +518,11 @@ export default function (pi: ExtensionAPI) {
 		pi.registerCommand?.("auto-exit", {
 			description: "Re-enable auto-exit after operator interaction",
 			handler: async (_args, ctx) => {
-				if (!operatorTookOver) {
+				if (!takeover.tookOver) {
 					ctx.ui.notify("Auto-exit is already enabled.", "info");
 					return;
 				}
-				operatorTookOver = false;
+				takeover.release();
 				autoExitReArmed = true;
 				rearmCallerPingExitAfterReenable(callerPingState);
 				ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, undefined);
@@ -538,9 +536,12 @@ export default function (pi: ExtensionAPI) {
 		pi.on("agent_start", () => {
 			agentStarted = true;
 		});
+		onOperatorKeystroke = () => {
+			if (agentStarted) takeover.markTakenOver();
+		};
 		pi.on("input", (event) => {
 			if (!isOperatorInput((event as { source?: unknown }).source)) return;
-			if (shouldMarkUserTookOver(agentStarted, event.streamingBehavior)) operatorTookOver = true;
+			if (shouldMarkUserTookOver(agentStarted, event.streamingBehavior)) takeover.markTakenOver();
 		});
 	}
 
@@ -562,7 +563,7 @@ export default function (pi: ExtensionAPI) {
 				"Your LAST assistant message before calling this becomes the summary returned to the caller.",
 			parameters: doneParams,
 			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-				if (operatorTookOver) {
+				if (takeover.tookOver) {
 					// D11/D12: the result stays in this session; the pane closes only
 					// when the person closes it.
 					return {
