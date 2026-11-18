@@ -32,7 +32,7 @@ export interface VerifierFooter {
 	detail?: string;
 }
 
-const OUTCOME_WORDS: Record<ResultOutcome, string> = {
+export const OUTCOME_WORDS: Record<ResultOutcome, string> = {
 	done: "done",
 	partial: "partial",
 	blocked: "blocked",

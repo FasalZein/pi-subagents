@@ -12,6 +12,7 @@ import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
 import {
 	CANCELLED_SUMMARY,
+	isDeadlineEnforceable,
 	isStopRequested,
 	publishedResultFields,
 	publishRunResult,
@@ -234,6 +235,8 @@ async function watchInteractiveGeneration(
 				running.entries = entries;
 			}
 		} catch {}
+		// D7: a stop that came first decides the end, also while the surface closes asynchronously.
+		if (!isDeadlineEnforceable(signal)) return;
 		const expired = checkSubagentTimeout(running, now);
 		if (expired) {
 			// A child that already published its own outcome finished on its own

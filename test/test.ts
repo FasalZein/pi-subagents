@@ -98,6 +98,8 @@ import "./runtime/interactive-watch-timeout.test.ts";
 import "./runtime/interactive-watch-takeover.test.ts";
 import "./runtime/pane-result-outcome.test.ts";
 import "./runtime/end-outcomes.test.ts";
+import "./runtime/end-outcome-order.test.ts";
+import "./tools/end-outcome-display.test.ts";
 import "./runtime/resume-grant.test.ts";
 import "./runtime/spawn-width.test.ts";
 import "./runtime/launch-cap.test.ts";

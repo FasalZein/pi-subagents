@@ -8,6 +8,7 @@ import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummary
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
 import {
 	CANCELLED_SUMMARY,
+	isDeadlineEnforceable,
 	isStopRequested,
 	publishedResultFields,
 	publishRunResult,
@@ -246,6 +247,8 @@ function watchBackgroundGeneration(
 		// A spent hard budget must terminate the child even when it has no
 		// session file to poll, so this runs outside the session-stat block.
 		const enforceTimeoutBudget = (now: number): boolean => {
+			// D7: a stop that came first decides the end; the still-armed deadline does not replace it.
+			if (!isDeadlineEnforceable(signal)) return false;
 			const expired = checkSubagentTimeout(running, now);
 			if (!expired) return false;
 			// The only honest moment to ask whether the child beat the deadline is
@@ -259,6 +262,7 @@ function watchBackgroundGeneration(
 		};
 
 		const enforceTimeoutWrapUp = (now: number): boolean => {
+			if (!isDeadlineEnforceable(signal)) return false;
 			const due = checkSubagentTimeoutWrapUp(running, now);
 			if (!due || running.timeoutWrapUpMode) return false;
 			if (hasSubagentExitSidecar(running.sessionFile)) return false;

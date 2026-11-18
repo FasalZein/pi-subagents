@@ -2,6 +2,7 @@ import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-ag
 import { keyHint } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { formatFinalContextUsage } from "../runtime/final-context-usage.ts";
+import { OUTCOME_WORDS } from "../runtime/result-render.ts";
 import type { SubagentPingMessageDetails, SubagentResultMessageDetails } from "../types.ts";
 
 type ThemeLike = Parameters<Parameters<ExtensionAPI["registerMessageRenderer"]>[1]>[2];
@@ -100,6 +101,8 @@ function extractSummary(
 	details: (SubagentResultMessageDetails & { summary?: string; status?: string }) | undefined,
 	elapsed: string,
 ): string {
+	// D14: a published result shows its rendered text (with its guidance), not the bare summary.
+	if (typeof details?.runId === "string") return rawContent;
 	if (typeof details?.summary === "string") return details.summary;
 	const name = details?.name ?? "subagent";
 	const exitCode = details?.exitCode ?? 0;
@@ -146,13 +149,37 @@ function formatSubagentCompletionHeader(
 	fallbackAgent?: string,
 ): string {
 	const name = details?.name ?? fallbackName;
-	const errorMessage = details?.errorMessage;
-	const exitCode = details?.exitCode ?? 0;
 	const elapsed = details?.elapsed != null ? formatElapsed(details.elapsed) : "?";
 	const agent = details?.agent ?? fallbackAgent;
 	const agentTag = agent ? theme.fg("dim", ` (${agent})`) : "";
+	const verdict = completionVerdict(details);
+	const icon =
+		verdict.tone === "help"
+			? theme.fg("accent", "?")
+			: verdict.tone === "failed"
+				? theme.fg("error", "✗")
+				: theme.fg("success", "✓");
+	const status = verdict.label;
+	return `${icon} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} ${status} ${theme.fg("dim", `(${elapsed})`)}`;
+}
+
+/**
+ * D14: the published outcome decides the header; the exit facts decide it only for a result without
+ * a published record (an old message or a run without a result store).
+ */
+function completionVerdict(
+	details: (SubagentResultMessageDetails & { status?: string }) | undefined,
+): { label: string; tone: "ok" | "failed" | "help" } {
+	const outcome = details?.outcome;
+	if (outcome) {
+		const tone = outcome === "done" || outcome === "partial" ? "ok" : outcome === "blocked" ? "help" : "failed";
+		return { label: OUTCOME_WORDS[outcome], tone };
+	}
+	if (details?.status === "pinged") return { label: "needs help", tone: "help" };
+	const errorMessage = details?.errorMessage;
+	const exitCode = details?.exitCode ?? 0;
 	const failed = !!errorMessage || exitCode !== 0;
-	const status =
+	const label =
 		details?.status === "cancelled"
 			? "cancelled"
 			: errorMessage
@@ -160,8 +187,7 @@ function formatSubagentCompletionHeader(
 				: exitCode === 0
 					? "completed"
 					: `failed (exit ${exitCode})`;
-	const icon = failed ? theme.fg("error", "✗") : theme.fg("success", "✓");
-	return `${icon} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} ${status} ${theme.fg("dim", `(${elapsed})`)}`;
+	return { label, tone: failed ? "failed" : "ok" };
 }
 
 export function formatSubagentCompletionLines(
@@ -223,6 +249,11 @@ export function formatSubagentBatchLines(
 	return lines;
 }
 
+/** A waited launch reply that holds a finished run, a waiting ping included, renders as a completion. */
+export function isFinishedStatus(status: string | undefined): boolean {
+	return status === "completed" || status === "failed" || status === "cancelled" || status === "pinged";
+}
+
 export function renderSubagentCompletionText(
 	result: AgentToolResult<unknown>,
 	options: RenderOptions,
@@ -244,8 +275,7 @@ export function registerSubagentMessageRenderers(pi: ExtensionAPI, formatElapsed
 		return {
 			invalidate() {},
 			render(width: number): string[] {
-				const errorMessage = typeof details.errorMessage === "string" ? details.errorMessage : "";
-				const failed = !!errorMessage || (details.exitCode ?? 0) !== 0;
+				const failed = completionVerdict(details).tone === "failed";
 				const bgFn = failed
 					? (text: string) => theme.bg("toolErrorBg", text)
 					: (text: string) => theme.bg("toolSuccessBg", text);
@@ -275,8 +305,11 @@ export function registerSubagentMessageRenderers(pi: ExtensionAPI, formatElapsed
 				const name = details.name ?? "subagent";
 				const elapsed = details.elapsed != null ? formatElapsed(details.elapsed) : "?";
 				const agentTag = details.agent ? theme.fg("dim", ` (${details.agent})`) : "";
-				const header = `${theme.fg("accent", "?")} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} needs help ${theme.fg("dim", `(${elapsed})`)}`;
-				const rawMessage = details.message ?? (typeof message.content === "string" ? message.content : "");
+				const label = details.outcome ? OUTCOME_WORDS[details.outcome] : "needs help";
+				const header = `${theme.fg("accent", "?")} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} ${label} ${theme.fg("dim", `(${elapsed})`)}`;
+				const content = typeof message.content === "string" ? message.content : "";
+				// D14: a published ping shows its rendered record, the same text the model reads.
+				const rawMessage = details.runId ? content : (details.message ?? content);
 				const body = stripSessionRef(rawMessage);
 				const contentLines = [header];
 
