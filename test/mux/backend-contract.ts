@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
+import type { MuxBackendAdapter, ProgramLaunch } from "../../src/mux/backend.ts";
 import { closeSurfaceAsync } from "../../src/mux/io.ts";
 import { createSurface, getMuxBackend, readScreen, sendCommand } from "../../src/mux.ts";
 
@@ -49,8 +49,8 @@ export interface MuxBackendContractFixture {
 export interface DirectProgramFixture {
 	/** True when the backend must also have checkExit for its direct-program surfaces. */
 	checkExit: boolean;
-	/** The exact argv that the adapter must start for the shell command line. */
-	expectedProgram(command: string): string[];
+	/** The exact argv that the adapter must start for the launch (its shell command line or its launcher argv). */
+	expectedProgram(launch: ProgramLaunch): string[];
 	/** The argv that the fake started as the surface's own process, or undefined when the surface has none. */
 	startedProgram(stateDir: string, surface: string): string[] | undefined;
 	/** All text that the fake saw typed into the surface, submitted or not. */
@@ -58,6 +58,11 @@ export interface DirectProgramFixture {
 }
 
 const SCREEN_LINES = 50;
+
+/** A launch whose shell command line and argv both run the command. */
+function programLaunch(command: string): ProgramLaunch {
+	return { shellCommand: command, launcherArgv: ["/bin/sh", "-c", command] };
+}
 const PROGRAM_RUN_TIMEOUT_MS = 10_000;
 
 export function runMuxBackendContract(fixture: MuxBackendContractFixture): void {
@@ -217,12 +222,12 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 
 		if (directProgram) {
 			it("starts the requested command as the surface's own process, with no typed input", async () => {
-				const command = "echo direct-start";
+				const launch = programLaunch("echo direct-start");
 				const session = await requireOpenProgramSession()();
-				const surface = await session.start("Contract Program", command);
+				const surface = await session.start("Contract Program", launch);
 				const program = directProgram.startedProgram(stateDir, surface);
 				assert.ok(program, "the surface has no program of its own");
-				assert.deepEqual(program, directProgram.expectedProgram(command));
+				assert.deepEqual(program, directProgram.expectedProgram(launch));
 				const [file, ...args] = program;
 				const run = spawnSync(file!, args, { encoding: "utf8", timeout: PROGRAM_RUN_TIMEOUT_MS });
 				assert.equal(run.status, 0, run.stderr);
@@ -236,7 +241,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 				assert.ok(adapter.checkExit, "the fixture declares checkExit; the adapter lacks it");
 				const checkExit = adapter.checkExit.bind(adapter);
 				const session = await requireOpenProgramSession()();
-				const surface = await session.start("Contract Exit", "echo exit-check");
+				const surface = await session.start("Contract Exit", programLaunch("echo exit-check"));
 				assert.equal(await checkExit(surface, session.target), null);
 				await adapter.closeSurface(surface, session.target);
 				const exit = await checkExit(surface, session.target);

@@ -5,16 +5,17 @@ import type { WorkReporter, WorkReporterSession } from "../runtime/work-reportin
 import type { MuxBackendAdapter } from "./backend.ts";
 import { cmuxBackend } from "./cmux.ts";
 import { herdrBackend } from "./herdr-backend.ts";
+import { herdrCoreBackend } from "./herdr-core.ts";
 import { tmuxBackend } from "./tmux.ts";
 import { weztermBackend } from "./wezterm.ts";
 import { zellijBackend } from "./zellij.ts";
 
 export const execFileAsync = promisify(execFile);
 
-export type MuxBackend = "cmux" | "tmux" | "zellij" | "wezterm" | "herdr";
+export type MuxBackend = "cmux" | "tmux" | "zellij" | "wezterm" | "herdr" | "herdr-core";
 
 /** Every backend, in detection order without a forced backend (spec D29). */
-const DETECTION_ORDER: readonly MuxBackend[] = ["herdr", "cmux", "tmux", "zellij", "wezterm"];
+const DETECTION_ORDER: readonly MuxBackend[] = ["herdr-core", "herdr", "cmux", "tmux", "zellij", "wezterm"];
 
 function muxPreference(): MuxBackend | null {
 	const pref = (process.env.PI_SUBAGENT_MUX ?? "").trim().toLowerCase();
@@ -60,6 +61,8 @@ export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter {
 			return zellijBackend;
 		case "herdr":
 			return herdrBackend;
+		case "herdr-core":
+			return herdrCoreBackend;
 	}
 }
 
