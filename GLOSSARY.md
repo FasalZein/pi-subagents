@@ -7,7 +7,7 @@ A Pi extension that lets one Pi session start other Pi sessions from agent defin
 ### Sessions and runs
 
 **Parent**:
-The Pi session that launches children and receives their results.
+The Pi session that launches children and gets their results.
 _Avoid_: main session, orchestrator, caller, coordinator
 
 **Child**:
@@ -21,6 +21,10 @@ _Avoid_: agent type, role, persona
 **Run**:
 One execution of a child, from its launch or resume to its result. A resume starts a new run on the same child session.
 _Avoid_: job, task, invocation
+
+**Run id**:
+The short name of one run. Replies, waits, resume and stop use it in place of a session path.
+_Avoid_: handle, session reference
 
 **Batch**:
 The runs that one launch call starts.
@@ -41,8 +45,12 @@ _Avoid_: operator mode, manual mode
 ### Results
 
 **Result**:
-The record that a run ends with: an outcome, a summary and a report file.
+The record that a run ends with: an outcome, a summary and a report file. A run has a result only when it ends while its parent process watches it.
 _Avoid_: completion, output, response
+
+**Generation**:
+The number of one result within its run. A retry of a verified fan-out makes a new generation; every other run has one.
+_Avoid_: version, attempt
 
 **Outcome**:
 The one-word state of a result: done, partial, blocked, failed, timed out or cancelled.
@@ -68,19 +76,21 @@ The file that holds one run's report.
 _Avoid_: handle, artifact (an artifact is a file the child chose to write)
 
 **Delivery**:
-The transfer of one result to the parent, either through a wait or in a message.
+The handover of one result to the parent: a wait returns it, or a message that carries it is committed to the parent session. A delivered result is not yet received.
+_Avoid_: receipt
 
-**Consumed**:
-A delivered result is consumed when the parent has finished a turn after it received the result.
+**Received**:
+A delivered result is received when a model request of the parent contains it, or contains the result of the workflow script that waited for it and that script ended without error.
+_Avoid_: consumed, acknowledged, seen
 
 **Stub**:
-The one line that replaces a consumed result in the parent's context: name, outcome and report file.
+The one line that replaces a received result in the parent's context: name, outcome, report file and run id.
 _Avoid_: tombstone, placeholder
 
 ### Orchestration
 
 **Wait**:
-The parent's blocking request for the results of named runs.
+The parent's blocking request for the results of named runs. A wait holds the runs it claims until it returns or stops.
 _Avoid_: join, await, blocking launch
 
 **Turn boundary**:
@@ -94,7 +104,7 @@ _Avoid_: workflow, pipeline, orchestration script
 The text that a workflow script returns to the parent.
 
 **Launch cap**:
-The largest number of runs one parent session may start.
+The largest number of runs a parent may start between two session starts.
 
 ### Finding agents
 
