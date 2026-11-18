@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
+import type { WorkReporter, WorkReporterSession } from "../runtime/work-reporting.ts";
 import type { MuxBackendAdapter } from "./backend.ts";
 import { cmuxBackend } from "./cmux.ts";
 import { herdrBackend } from "./herdr-backend.ts";
@@ -66,6 +67,19 @@ export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter {
 export function currentMuxAdapter(): MuxBackendAdapter | undefined {
 	const backend = getMuxBackend();
 	return backend ? muxBackendAdapter(backend) : undefined;
+}
+
+/**
+ * The first status ability that accepts the session, without launch detection.
+ * Each reporter checks its own eligibility with bounded asynchronous probes, so session start
+ * never blocks, and its binary choice does not depend on pane-launch availability (spec D29).
+ */
+export async function connectMuxWorkReporter(session: WorkReporterSession): Promise<WorkReporter | undefined> {
+	for (const backend of DETECTION_ORDER) {
+		const reporter = await muxBackendAdapter(backend).connectWorkReporter?.(session);
+		if (reporter) return reporter;
+	}
+	return undefined;
 }
 
 export function isMuxAvailable(): boolean {

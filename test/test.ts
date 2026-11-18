@@ -109,4 +109,5 @@ import "./agents/registration-gating.test.ts";
 import "./agents/malformed-agent.test.ts";
 
 import "./runtime/outstanding-work.test.ts";
+import "./runtime/work-reporting-startup.test.ts";
 import "./mux/herdr-work.test.ts";

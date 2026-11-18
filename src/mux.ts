@@ -1,4 +1,5 @@
 export {
+	connectMuxWorkReporter,
 	currentMuxAdapter,
 	exitStatusVar,
 	getMuxBackend,
