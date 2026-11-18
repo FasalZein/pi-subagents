@@ -7,7 +7,7 @@
  *   3. overrides       — frontmatter `env:` plus PI_* control variables
  *
  * `deny-env` (agent frontmatter) and PI_SUBAGENT_ENV_DENY (parent env) filter
- * layer 2 only. They never strip pane identity or overrides, so they cannot
+ * layer 1 only. They never strip pane identity or overrides, so they cannot
  * break the launch contract itself. Patterns are exact names or `*` wildcards;
  * patterns that match nothing are silently ignored.
  */
@@ -81,6 +81,20 @@ export function withoutExactIdentityEnv(
 	const names = new Set([...policy.required, ...policy.optional]);
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !names.has(key)));
 }
+
+/** Pane-scoped names of the prefix backends: the pane or surface that a process runs in. */
+const PREFIX_BACKEND_PANE_ENV_KEYS = ["CMUX_SURFACE_ID", "TMUX_PANE", "WEZTERM_PANE", "ZELLIJ_PANE_ID"] as const;
+
+/**
+ * The pane identity names of every backend. A headless child has no pane, so it
+ * gets none of the parent's (D34). Session-level names such as TMUX stay.
+ */
+const HEADLESS_DROPPED_IDENTITY_ENV_KEYS: ReadonlySet<string> = new Set([
+	...[HERDR_PANE_IDENTITY, HERDR_CORE_PANE_IDENTITY, REX_PANE_IDENTITY].flatMap((policy) =>
+		policy.kind === "exact" ? [...policy.required, ...policy.optional] : [],
+	),
+	...PREFIX_BACKEND_PANE_ENV_KEYS,
+]);
 
 /** Shell-relative bookkeeping that is meaningless outside the shell that set it. */
 const VOLATILE_SHELL_ENV_KEYS = ["OLDPWD", "PWD", "SHLVL", "_"] as const;
@@ -172,4 +186,14 @@ export function buildParentEnvSnapshot(
 		if (typeof value === "string") present[key] = value;
 	}
 	return stripVolatileShellEnv(filterDeniedEnv(present, denyPatterns));
+}
+
+/** The parent env snapshot for a headless child (background, verified candidate): no pane identity. */
+export function buildHeadlessParentEnvSnapshot(
+	env: Record<string, string | undefined> = process.env,
+	denyPatterns: string[] = [],
+): Record<string, string> {
+	const snapshot = buildParentEnvSnapshot(env, denyPatterns);
+	for (const key of HEADLESS_DROPPED_IDENTITY_ENV_KEYS) delete snapshot[key];
+	return snapshot;
 }

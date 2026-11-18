@@ -257,6 +257,8 @@ function useFakeParent(backend: BackendFake): Fixture {
 				else process.env[key] = value;
 			}
 			probe.dispose();
+			// The fixture holds capsules, which carry a parent env snapshot: none may stay on disk.
+			rmSync(dir, { recursive: true, force: true });
 		},
 	};
 }
@@ -267,7 +269,6 @@ function checkChildEnvironment(fixture: Fixture): void {
 	const capsulePath = capsuleIn(readFileSync(fixture.logFile, "utf8"));
 	assert.ok(capsulePath, "expected the launch to invoke the capsule launcher");
 	const capsule = JSON.parse(readFileSync(capsulePath, "utf8"));
-	const missingCapsule = writeEnvCapsule(capsule, join(fixture.dir, "capsules"));
 
 	const run = runLauncherInSurface(
 		capsulePath,
@@ -283,6 +284,7 @@ function checkChildEnvironment(fixture: Fixture): void {
 
 	if (!backend.required) return;
 	rmSync(fixture.outFile);
+	const missingCapsule = writeEnvCapsule(capsule, join(fixture.dir, "capsules"));
 	const { [backend.required]: _dropped, ...withoutRequired } = backend.surfaceEnv;
 	const refused = runLauncherInSurface(missingCapsule, withoutRequired, fixture.outFile);
 	assert.equal(refused.status, 2);
@@ -347,7 +349,7 @@ for (const backend of BACKENDS)
 					boundarySystemPrompt: false,
 				});
 				await resumeSubagentSession(
-					{ resultsDir: testResultsDir(), sessionFile, task: "Probe." },
+					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Probe." },
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,
