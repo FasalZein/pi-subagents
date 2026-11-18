@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,13 +18,15 @@ import {
 	runHerdrPaneCommand,
 	sendHerdrPaneEnter,
 } from "./herdr.ts";
+import { cmuxBackend } from "./cmux.ts";
 import { tmuxBackend } from "./tmux.ts";
+import { weztermBackend } from "./wezterm.ts";
 import { closeZellijSurface } from "./zellij-runtime.ts";
 
 export function sendCommand(surface: string, command: string): void {
 	const backend = requireMuxBackend();
 	if (backend === "cmux") {
-		execSync(`cmux send --surface ${shellEscape(surface)} ${shellEscape(`${command}\n`)}`, { encoding: "utf8" });
+		cmuxBackend.sendCommand(surface, command);
 		return;
 	}
 	if (backend === "tmux") {
@@ -32,9 +34,7 @@ export function sendCommand(surface: string, command: string): void {
 		return;
 	}
 	if (backend === "wezterm") {
-		execFileSync("wezterm", ["cli", "send-text", "--pane-id", surface, "--no-paste", `${command}\n`], {
-			encoding: "utf8",
-		});
+		weztermBackend.sendCommand(surface, command);
 		return;
 	}
 	if (backend === "zellij") {
@@ -82,16 +82,9 @@ export function sendShellCommand(surface: string, command: string): void {
 
 export function readScreen(surface: string, lines = 50): string {
 	const backend = requireMuxBackend();
-	if (backend === "cmux") {
-		return execSync(`cmux read-screen --surface ${shellEscape(surface)} --lines ${lines}`, { encoding: "utf8" });
-	}
+	if (backend === "cmux") return cmuxBackend.readScreen(surface, lines);
 	if (backend === "tmux") return tmuxBackend.readScreen(surface, lines);
-	if (backend === "wezterm") {
-		const raw = execFileSync("wezterm", ["cli", "get-text", "--pane-id", surface], {
-			encoding: "utf8",
-		});
-		return tailLines(raw, lines);
-	}
+	if (backend === "wezterm") return weztermBackend.readScreen(surface, lines);
 	if (backend === "zellij") {
 		const raw = execFileSync("zellij", ["action", "dump-screen", "--pane-id", zellijPaneId(surface)], {
 			encoding: "utf8",
@@ -104,17 +97,9 @@ export function readScreen(surface: string, lines = 50): string {
 
 export async function readScreenAsync(surface: string, lines = 50): Promise<string> {
 	const backend = requireMuxBackend();
-	if (backend === "cmux") {
-		const { stdout } = await execFileAsync("cmux", ["read-screen", "--surface", surface, "--lines", String(lines)], {
-			encoding: "utf8",
-		});
-		return stdout;
-	}
+	if (backend === "cmux") return cmuxBackend.readScreenAsync(surface, lines);
 	if (backend === "tmux") return tmuxBackend.readScreenAsync(surface, lines);
-	if (backend === "wezterm") {
-		const { stdout } = await execFileAsync("wezterm", ["cli", "get-text", "--pane-id", surface], { encoding: "utf8" });
-		return tailLines(stdout, lines);
-	}
+	if (backend === "wezterm") return weztermBackend.readScreenAsync(surface, lines);
 	if (backend === "zellij") {
 		const { stdout } = await execFileAsync("zellij", ["action", "dump-screen", "--pane-id", zellijPaneId(surface)], {
 			encoding: "utf8",
@@ -139,9 +124,7 @@ export async function closeSurfaceAsync(
 export function closeSurface(surface: string): void {
 	const backend = requireMuxBackend();
 	if (backend === "cmux") {
-		execSync(`cmux close-surface --surface ${shellEscape(surface)}`, {
-			encoding: "utf8",
-		});
+		cmuxBackend.closeSurface(surface);
 		return;
 	}
 	if (backend === "tmux") {
@@ -149,9 +132,7 @@ export function closeSurface(surface: string): void {
 		return;
 	}
 	if (backend === "wezterm") {
-		execFileSync("wezterm", ["cli", "kill-pane", "--pane-id", surface], {
-			encoding: "utf8",
-		});
+		weztermBackend.closeSurface(surface);
 		return;
 	}
 	if (backend === "zellij") {
