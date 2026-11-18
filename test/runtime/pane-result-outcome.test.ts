@@ -3,8 +3,17 @@ import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent } from "../../src/types.ts";
+import {
+	afterEach,
+	assert,
+	beforeEach,
+	createSessionFile,
+	createTestDir,
+	describe,
+	it,
+	rmSync,
+} from "../support/index.ts";
 import { assistantText, LONG_ANSWER, messageText, waitText } from "../support/result-delivery.ts";
-import { afterEach, assert, beforeEach, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
 
 const dirs: string[] = [];
 let savedMux: string | undefined;

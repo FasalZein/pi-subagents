@@ -104,8 +104,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 			? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
 			: { resumable: true },
 	});
-	const noText =
-		!assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
+	const noText = !assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
 	// A nonzero end without an answer is a crash, not an operator close: it keeps its failure text.
 	if (end.exitCode !== 0 && noText) return undefined;
 	const record = target.store.publish(target.reservation, assembled);

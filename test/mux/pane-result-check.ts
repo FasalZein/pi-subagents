@@ -124,7 +124,9 @@ export async function checkManualPaneCloseWithNonzeroStatus(adapter: MuxBackendA
 
 	await assertCappedWithReport(result, run.running, root);
 	assert.equal(result.exitCode, 1, "the result keeps the shell's exit code");
-	const record = run.store.read(run.running.resultTarget!.reservation.runId);
+	const target = run.running.resultTarget;
+	assert.ok(target);
+	const record = target.store.read(target.reservation.runId);
 	assert.equal(record?.exit.code, 1, "the record keeps the shell's exit code");
 	assert.equal(record?.outcome, "done");
 }
