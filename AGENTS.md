@@ -9,6 +9,8 @@ Read `README.md` before doing anything. It documents the model, frontmatter, pla
 - One-off checks (`tsc`, `biome`, `knip`) run via `bunx` so no extra deps are declared.
 - `bun.lock` is the only tracked lockfile; `package-lock.json` is gitignored.
 - Do not use `git stash` in a linked worktree: the stash list is shared with the main checkout, so a pop can apply another session's entry.
+- A new linked worktree can start without `node_modules`; `bunx tsc --noEmit` then fails with TS2688 and tests with `ERR_MODULE_NOT_FOUND`. Run `bun install --frozen-lockfile` there first.
+- When a test spawns `node --test`, pass it a clean `env`: an inherited test-runner context can make the child exit 0 on failing tests (see `visibleTestPasses` in `scripts/orchestration-benchmark/scenarios/review-fix/oracle.mjs`).
 
 ## Project structure contract
 
