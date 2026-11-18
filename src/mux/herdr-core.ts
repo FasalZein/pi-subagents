@@ -14,6 +14,8 @@ import {
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
+/** Bound of the detection call: the same 2,000 ms as old herdr's bounded CLI calls (runHerdrJsonAsync). */
+const APP_CHECK_TIMEOUT_MS = 2_000;
 /** Label that carries the title of the caller terminal; herdr-core has no tab or workspace of its own. */
 const TITLE_LABEL_KEY = "pi-subagents.title";
 
@@ -28,6 +30,26 @@ function callerTerminal(): string {
 
 function hcSync(args: string[]): string {
 	return execFileSync(HC_COMMAND, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/**
+ * The Herdr app answers (D27): `hc get` on the caller terminal, bounded. Inherited HC markers outside a
+ * running app must not shadow another backend (D29).
+ */
+function appAnswers(caller: string): boolean {
+	try {
+		const terminal = JSON.parse(
+			execFileSync(HC_COMMAND, ["get", caller, "--json"], {
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "ignore"],
+				timeout: APP_CHECK_TIMEOUT_MS,
+				killSignal: "SIGKILL",
+			}),
+		) as { address?: unknown };
+		return typeof terminal.address === "string";
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -142,7 +164,10 @@ async function closeTerminal(surface: string): Promise<void> {
 export const herdrCoreBackend: MuxBackendAdapter = {
 	id: "herdr-core",
 	isAvailable: () =>
-		!!process.env.HC_TERMINAL_ID && !!process.env.HC_TERMINAL_SOCKET && defaultMuxRuntimeProbe.hasCommand(HC_COMMAND),
+		!!process.env.HC_TERMINAL_ID &&
+		!!process.env.HC_TERMINAL_SOCKET &&
+		defaultMuxRuntimeProbe.hasCommand(HC_COMMAND) &&
+		appAnswers(process.env.HC_TERMINAL_ID),
 	setupHint: () => "Start pi in a terminal of the Herdr app (herdr-core), with `hc` on PATH.",
 	createSurface: async () => runShellTerminal(),
 	createSplit: () => runShellTerminal(),
