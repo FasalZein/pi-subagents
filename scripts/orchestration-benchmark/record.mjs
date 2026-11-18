@@ -11,7 +11,8 @@ import { posix } from "node:path";
 // 3: final.delivery (outcome classes, transfers by run id), keyed answers.
 // 4: transport apart from correctness, availableToAnswer, undelivered with subClass,
 //    extraCopies (was duplicated), carrierEvents and answeredAt.
-export const RECORD_SCHEMA = 4;
+// 5: launchedAt and deliveredAt per run, handoffInOrder, phase facts per child.
+export const RECORD_SCHEMA = 5;
 
 /**
  * Verdicts of a completed sample. A completed sample keeps its verdict on rerun.
@@ -308,13 +309,22 @@ export function singleAnswer(text) {
  */
 export function keyedAnswer(keys) {
 	return (text) => {
-		const found = {};
-		for (const line of lines(text)) {
-			const match = line.match(/^`?([\w-]+)`?:\s*`?([^\s`]+?)`?\.?$/);
-			if (match && keys.includes(match[1])) found[match[1]] = match[2];
-		}
-		return Object.keys(found).length ? found : null;
+		const found = Object.entries(keyedValues(keys, text));
+		return found.length
+			? Object.fromEntries(found.map(([key, values]) => [key, values.at(-1)]))
+			: null;
 	};
+}
+
+/** Every value of each key, in line order. */
+function keyedValues(keys, text) {
+	const found = {};
+	for (const line of lines(text)) {
+		const match = line.match(/^`?([\w-]+)`?:\s*`?([^\s`]+?)`?\.?$/);
+		if (match && keys.includes(match[1]))
+			found[match[1]] = [...(found[match[1]] ?? []), match[2]];
+	}
+	return found;
 }
 
 /** The answer parser a scenario declares: keyed by expectedFacts, else a single answer. */
@@ -381,12 +391,16 @@ export const resultTokens = (contract) =>
  * True when text holds the contract's result. A keyed contract (facts: KEY to
  * value) needs each value on its own `KEY: value` line, so a value under
  * another key does not count; else every result token as a whole token.
+ * A keyed contract with anyLine accepts the value on any line of its key (a
+ * report of several findings); else the last line of the key decides.
  */
 export function holdsResult(text, contract) {
 	if (contract.facts) {
-		const found = keyedAnswer(Object.keys(contract.facts))(text);
-		return Object.entries(contract.facts).every(
-			([key, value]) => found?.[key] === value,
+		const found = keyedValues(Object.keys(contract.facts), text);
+		return Object.entries(contract.facts).every(([key, value]) =>
+			contract.anyLine
+				? Boolean(found[key]?.includes(value))
+				: found[key]?.at(-1) === value,
 		);
 	}
 	const tokens = resultTokens(contract);
@@ -447,8 +461,12 @@ export function childFulfils(events, contract, workDir) {
  * role declares (scenario.childResults) and that result must have reached the parent.
  * A scenario with a workspace oracle (scenario.inspectWorkspace) also needs its
  * held-out test to pass and its fixture test files unchanged; else the work is wrong.
+ * A scenario with serialHandoff needs each launch after the previous result arrived
+ * (handoffInOrder, see delivery.mjs); a child of a role with a phase gate needs
+ * its phase facts to match (phase).
  * @param {{answer: string | null, childRoles: string[], parentTools: string[],
- *   childOutcomes: Array<{read: boolean, returned: boolean, delivered: boolean}>,
+ *   childOutcomes: Array<{read: boolean, returned: boolean, delivered: boolean, phase?: boolean}>,
+ *   handoffInOrder?: boolean | null,
  *   workspace?: {heldOutPassed: boolean, changedTestFiles: string[]} | null,
  *   scenario: {expectedAnswer: string, expectedChildRoles: string[], parentToolAllowlist: string[]}}} input
  */
@@ -458,6 +476,7 @@ export function scoreAttempt({
 	parentTools,
 	childOutcomes,
 	workspace = null,
+	handoffInOrder = null,
 	scenario,
 }) {
 	if (!answerMatches(answer, scenario)) return "wrong-answer";
@@ -476,9 +495,11 @@ export function scoreAttempt({
 		scenario.parentToolAllowlist.includes(name),
 	);
 	const childrenDelivered = childOutcomes.every(
-		(child) => child.read && child.returned && child.delivered,
+		(child) =>
+			child.read && child.returned && child.delivered && child.phase !== false,
 	);
-	return sameChildren && allowed && childrenDelivered
+	const handoff = !scenario.serialHandoff || handoffInOrder === true;
+	return sameChildren && allowed && childrenDelivered && handoff
 		? "pass"
 		: "wrong-delegation";
 }

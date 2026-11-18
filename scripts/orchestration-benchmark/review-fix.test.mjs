@@ -5,7 +5,6 @@
  * build plus review plus fix passes the held-out test.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
 	cpSync,
 	mkdtempSync,
@@ -22,7 +21,9 @@ import {
 	FIXTURE_DIR,
 	HELD_OUT_TEST,
 	heldOutPasses,
+	inspectPhase,
 	inspectWorkspace,
+	visibleTestPasses,
 } from "./scenarios/review-fix/oracle.mjs";
 import scenario from "./scenarios/review-fix/scenario.mjs";
 
@@ -55,20 +56,6 @@ const FIX = [
 	'export function lineTotal(priceCents, quantity) {\n\tif (!Number.isInteger(quantity) || quantity < 1)\n\t\tthrow new RangeError("quantity must be a positive integer");\n',
 ];
 
-function visibleTestPasses(dir) {
-	try {
-		execFileSync(process.execPath, ["--test", "test/cart.test.mjs"], {
-			cwd: dir,
-			// A clean env: an inherited test-runner context changes the exit code.
-			env: { PATH: process.env.PATH },
-			stdio: "ignore",
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
 describe("review-fix fixture", () => {
 	test("the fixture test fails before the build and passes after it", () => {
 		assert.equal(visibleTestPasses(workspace()), false);
@@ -87,6 +74,17 @@ describe("review-fix fixture", () => {
 		const dir = workspace(BUILD, FIX);
 		assert.equal(heldOutPasses(dir), true);
 		assert.equal(visibleTestPasses(dir), true);
+	});
+
+	test("phase facts tell the build state from the fixed state", () => {
+		const facts = (visibleTestPassed, findingFixed) => ({
+			visibleTestPassed,
+			findingFixed,
+		});
+		assert.deepEqual(inspectPhase(workspace()), facts(false, false));
+		assert.deepEqual(inspectPhase(workspace(BUILD)), facts(true, false));
+		assert.deepEqual(inspectPhase(workspace(FIX)), facts(false, true));
+		assert.deepEqual(inspectPhase(workspace(BUILD, FIX)), facts(true, true));
 	});
 
 	test("the held-out test is outside the workspace the children get", () => {
@@ -139,6 +137,7 @@ describe("review-fix verdicts", () => {
 		parentTools: ["subagent", "subagent", "subagent"],
 		childOutcomes: [ok, ok, ok],
 		workspace: { heldOutPassed: true, changedTestFiles: [] },
+		handoffInOrder: true,
 		scenario,
 	};
 	const score = (change) => scoreAttempt({ ...good, ...change });
@@ -202,6 +201,18 @@ describe("review-fix verdicts", () => {
 				},
 			}),
 			"wrong-answer",
+		);
+	});
+
+	test("a launch before the previous result arrived fails", () => {
+		assert.equal(score({ handoffInOrder: false }), "wrong-delegation");
+		assert.equal(score({ handoffInOrder: null }), "wrong-delegation");
+	});
+
+	test("a child that missed its phase gate fails", () => {
+		assert.equal(
+			score({ childOutcomes: [{ ...ok, phase: false }, ok, ok] }),
+			"wrong-delegation",
 		);
 	});
 

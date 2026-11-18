@@ -5,6 +5,7 @@
  * - heldOutPassed: the held-out test (outside the copied workspace) passes on the
  *   workspace the children left behind;
  * - changedTestFiles: fixture test files whose checksum differs from the fixture.
+ * inspectPhase reports the phase facts the launcher takes when each child ends.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -35,10 +36,14 @@ export function changedTestFiles(workDir, fixtureDir = FIXTURE_DIR) {
 		);
 }
 
-/** True when the held-out test passes against the module in workDir. */
-export function heldOutPasses(workDir) {
+// Held-out tests of the planted finding: their names start with "R-2".
+const FINDING_TESTS = "^R-2";
+
+/** True when the held-out test (or its tests whose name matches pattern) passes against workDir. */
+export function heldOutPasses(workDir, pattern = null) {
+	const filter = pattern ? [`--test-name-pattern=${pattern}`] : [];
 	try {
-		execFileSync(process.execPath, ["--test", HELD_OUT_TEST], {
+		execFileSync(process.execPath, ["--test", ...filter, HELD_OUT_TEST], {
 			env: {
 				PATH: process.env.PATH ?? "/usr/bin:/bin",
 				BENCH_WORKDIR: workDir,
@@ -50,6 +55,38 @@ export function heldOutPasses(workDir) {
 	} catch {
 		return false;
 	}
+}
+
+/** True when the visible fixture test passes in workDir. */
+export function visibleTestPasses(workDir) {
+	try {
+		execFileSync(
+			process.execPath,
+			["--test", join(TEST_DIR, "cart.test.mjs")],
+			{
+				cwd: workDir,
+				// A clean env: an inherited test-runner context changes the exit code.
+				env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+				stdio: "ignore",
+				timeout: HELD_OUT_TIMEOUT_MS,
+			},
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Phase facts, taken when a child ends: whether the visible test passes and
+ * whether the planted finding R-2 is fixed.
+ * @returns {{visibleTestPassed: boolean, findingFixed: boolean}}
+ */
+export function inspectPhase(workDir) {
+	return {
+		visibleTestPassed: visibleTestPasses(workDir),
+		findingFixed: heldOutPasses(workDir, FINDING_TESTS),
+	};
 }
 
 /** @returns {{heldOutPassed: boolean, changedTestFiles: string[]}} */
