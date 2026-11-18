@@ -199,10 +199,10 @@ function cleanup() {
 try {
 	// The e2e parent must behave like a top-level pi even when this script is
 	// run from inside a subagent: inherited spawn grants, timeouts, and
-	// orchestrator flags would otherwise reshape the launch under test.
+	// denied tools would otherwise reshape the launch under test.
 	const parentEnv = { ...process.env };
 	for (const key of Object.keys(parentEnv)) {
-		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS" || key === "PI_ORCHESTRATOR_MODE") {
+		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS") {
 			delete parentEnv[key];
 		}
 	}

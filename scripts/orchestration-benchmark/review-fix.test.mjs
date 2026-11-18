@@ -13,9 +13,10 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { after, describe, test } from "node:test";
-import { holdsResult, scoreAttempt } from "./record.mjs";
+import { pathToFileURL } from "node:url";
+import { answerParser, holdsResult, scoreAttempt } from "./record.mjs";
 import {
 	changedTestFiles,
 	FIXTURE_DIR,
@@ -89,6 +90,82 @@ describe("review-fix fixture", () => {
 
 	test("the held-out test is outside the workspace the children get", () => {
 		assert.ok(relative(FIXTURE_DIR, HELD_OUT_TEST).startsWith(".."));
+	});
+});
+
+// T04 diagnosis, doubt 1: after a correct build, a careful review child read
+// R-1 as broken too (a fractional quantity gives fractional cents), so a faithful
+// parent relay of "R-1, R-2" scored wrong-answer. Only R-2 may be broken then.
+describe("review-fix checklist", () => {
+	const checklist = readFileSync(
+		join(dirname(FIXTURE_DIR), "agents", "bench-review.md"),
+		"utf8",
+	);
+	const rules = Object.fromEntries(
+		[...checklist.matchAll(/^- (R-\d+): (.+)$/gm)].map((m) => [m[1], m[2]]),
+	);
+	// One check per rule, as a reviewer applies the rule text to the code.
+	const checks = {
+		// The quantities R-1 covers: every number, unless R-1 itself limits them
+		// to positive integers (a bad quantity is then R-2 only).
+		"R-1": async (dir) => {
+			const quantities = /positive integer quantit/i.test(rules["R-1"])
+				? [1, 2, 3, 7]
+				: [1, 1.5, 2.5, 7];
+			const cart = await import(
+				pathToFileURL(join(dir, "src", "cart.mjs")).href
+			);
+			const results = [];
+			for (const price of [1, 99, 250, 999])
+				for (const quantity of quantities) {
+					results.push(cart.lineTotal(price, quantity));
+					results.push(cart.cartTotal([{ priceCents: price, quantity }]));
+				}
+			for (const total of [0, 1, 99, 999, 1000])
+				for (let percent = 0; percent <= 100; percent++)
+					results.push(cart.applyDiscount(total, percent));
+			return results.every(Number.isInteger);
+		},
+		"R-2": async (dir) => heldOutPasses(dir, "^R-2"),
+		"R-3": async (dir) =>
+			!/console\.|process\.env/.test(
+				readFileSync(join(dir, "src", "cart.mjs"), "utf8"),
+			),
+	};
+	const broken = async (dir) => {
+		const ids = [];
+		for (const id of Object.keys(rules))
+			if (!(await checks[id](dir))) ids.push(id);
+		return ids;
+	};
+
+	test("the checklist holds the rules R-1 to R-3", () => {
+		assert.deepEqual(Object.keys(rules), ["R-1", "R-2", "R-3"]);
+	});
+
+	test("after a correct build only R-2 is broken; after the fix none is", async () => {
+		assert.deepEqual(await broken(workspace(BUILD)), ["R-2"]);
+		assert.deepEqual(await broken(workspace(BUILD, FIX)), []);
+	});
+
+	test("a relay of two findings still scores wrong-answer: the oracle stays strict", () => {
+		const parse = answerParser(scenario);
+		const ok = { read: true, returned: true, delivered: true };
+		const score = (reply) =>
+			scoreAttempt({
+				answer: parse(reply),
+				childRoles: ["bench-build", "bench-review", "bench-fix"],
+				parentTools: ["subagent", "subagent", "subagent"],
+				childOutcomes: [ok, ok, ok],
+				workspace: { heldOutPassed: true, changedTestFiles: [] },
+				handoffInOrder: true,
+				scenario,
+			});
+		assert.equal(
+			score("TESTS: pass\nFINDING: R-1, R-2\nFIXED: R-1, R-2"),
+			"wrong-answer",
+		);
+		assert.equal(score("TESTS: pass\nFINDING: R-2\nFIXED: R-2"), "pass");
 	});
 });
 
