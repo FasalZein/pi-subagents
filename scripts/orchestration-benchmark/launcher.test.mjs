@@ -433,6 +433,26 @@ test("[F8] every session file enters the join: an empty or header-only file with
 	}
 });
 
+test("[guard] two launched children with one launch name end the attempt as infra", () => {
+	const events = parentEvents();
+	events[1] = toolResult("subagent", false, {
+		status: "started",
+		children: [
+			{ id: RUN, name: "reader-1" },
+			{ id: "run-2", name: "reader-1" },
+		],
+	});
+	const result = classify(
+		evidence(childSession(["stop"]), {
+			parent: { file: "/r/p.jsonl", events },
+		}),
+	);
+	assert.deepEqual(
+		[result.kind, result.infraReason],
+		["infra", "two launched children share a launch name"],
+	);
+});
+
 test("[F11] a child provider error makes the attempt a counted provider error", () => {
 	assert.equal(
 		classify(evidence(childSession(["error", "stop"]))).kind,

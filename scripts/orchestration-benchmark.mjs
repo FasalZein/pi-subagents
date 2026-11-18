@@ -29,6 +29,17 @@
  * - F12: an answer written in the last poll interval before the deadline counts as a timeout.
  * - F11: a child provider error can cause both a native recovery and a harness retry.
  * - Revisit all of these before parallel benchmark jobs run on one checkout.
+ * - Namesakes: children join their run ids by launch name. A scenario must give
+ *   its children unique launch names; an attempt where two launched children
+ *   share a name ends as an infrastructure error. Revisit when a scenario needs
+ *   repeated names (join each child session to its run id by session file).
+ * - Duplicate work is attributed by the parent's requested read paths, not by
+ *   facts observed in successful tool results (a failed read counts, a bash read
+ *   does not). It feeds the duplicate outcome class only, never the verdict.
+ * - Candidate adapters (grouped result messages, lookups, capped report
+ *   references, workflow digests of the candidate release) are left to T03.
+ * - Undelivered results have the sub-class unknown on v2.9.2: its session files
+ *   record no queue or drop evidence (see delivery.mjs).
  */
 import { execFileSync } from "node:child_process";
 import {

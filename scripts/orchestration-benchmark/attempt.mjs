@@ -5,7 +5,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { deliveryAccounting } from "./delivery.mjs";
+import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	answerParser,
 	childEnded,
@@ -225,6 +225,12 @@ export function classifyAttempt({
 	if (parent.missingUsage + children.missingUsage > 0)
 		return infra("request without usage");
 	if (load.missingProbes > 0) return infra("load probe missing");
+	// Children join their run ids by launch name, so names must be unique (a known limit).
+	const names = launchedRuns(evidence.parent.events, scenario.parentLoadTool)
+		.map((run) => run.name)
+		.filter(Boolean);
+	if (new Set(names).size !== names.length)
+		return infra("two launched children share a launch name");
 	if (load.unmatchedProbes > 0) return infra("probe without its session file");
 	if (!load.parentLoadedCheckout || !load.childrenLoadedCheckout)
 		return infra("extension did not load from the checkout");
