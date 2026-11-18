@@ -139,7 +139,11 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		const surface = await start();
 		await herdrCoreBackend.closeSurface(surface, target);
 		const calls = readFakeHcCalls(stateDir).filter((call) => !call.startsWith("events") && !call.startsWith("connect"));
-		assert.deepEqual(calls, [`kill ${surface}`, `get ${surface} --json`, `rm ${surface}`]);
+		// The exit facts come from the finished event of the kill or, when the event is not in yet, from one read.
+		const expected = calls.includes(`get ${surface} --json`)
+			? [`kill ${surface}`, `get ${surface} --json`, `rm ${surface}`]
+			: [`kill ${surface}`, `rm ${surface}`];
+		assert.deepEqual(calls, expected);
 		const exit = await checkExit(surface);
 		assert.equal(exit?.exitCode, 1);
 	});
