@@ -227,7 +227,10 @@ describe("Herdr interactive launch parity", () => {
 			const launchScript = readFileSync(launchScriptPath, "utf8");
 			const command = launchScript.split("\n").slice(1).join("\n").trim();
 
+			// The shell stands in for the child pane w1:p2: the launcher requires herdr's pane identity there
+			// (spec D34), which must not come from the env that runs the tests.
 			const shell = spawn("/bin/sh", [], {
+				env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p2" },
 				stdio: ["pipe", "ignore", "ignore"],
 			});
 			try {
@@ -330,7 +333,8 @@ describe("Herdr interactive launch parity", () => {
 		const sessionIndex = capsule.args.indexOf("--session");
 		assert.notEqual(sessionIndex, -1);
 		assert.equal(capsule.args[sessionIndex + 1], running.sessionFile);
-		assert.ok(capsule.args.includes("--no-session"));
+		// D13 (T08b): a no-session child writes its temporary session file.
+		assert.ok(!capsule.args.includes("--no-session"));
 		assert.ok(capsule.args.includes("--approve"));
 		assert.equal(capsule.overrides.CUSTOM_ENV, "from-agent");
 		assert.equal(capsule.overrides.PI_SUBAGENT_SURFACE, "w1:p2");

@@ -383,7 +383,6 @@ function watchBackgroundGeneration(
 			if (published) {
 				({ summary, summarySource } = published);
 			} else if (
-				(!running.noSession || running.timeoutWarnThreshold !== undefined) &&
 				existsSync(running.sessionFile)
 			) {
 				const allEntries = getNewEntries(running.sessionFile, running.launchEntryCount ?? 0);
