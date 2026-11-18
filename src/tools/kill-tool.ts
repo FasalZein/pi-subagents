@@ -24,7 +24,6 @@ export function registerSubagentKillTool(
 		label: "Kill Subagent",
 		description: "Stop a running subagent, pane or headless, by its run id or name.",
 		parameters: SubagentKillParams,
-		exposure: grant.exposure,
 		execute: async (_toolCallId, params) => {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_KILL_TOOL_NAME));
 			const match = findRunningSubagent(params.id);

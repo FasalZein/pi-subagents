@@ -44,7 +44,6 @@ export function registerSubagentAgentsTool(
 		label: "Subagent Agents",
 		description:
 			"Look up the agents you may launch: one full definition by name, the best matches for a query, or the count.",
-		exposure: grant.exposure,
 		parameters: Type.Object({
 			name: Type.Optional(Type.String({ description: "Exact agent name for its full definition." })),
 			query: Type.Optional(Type.String({ description: "Words to match against agent names and descriptions." })),

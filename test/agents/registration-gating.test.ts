@@ -3,7 +3,6 @@ import { buildResumeSpawnEnv } from "../../src/spawn/policy.ts";
 import {
 	afterEach,
 	assert,
-	beforeEach,
 	createTestDir,
 	describe,
 	it,
@@ -29,7 +28,8 @@ interface CapturedRegistrations {
 /**
  * A Pi stand-in that binds the active tool list only at session start, as Pi
  * does: reading it while the extension loads throws. Registering a direct tool
- * activates it; a deferred tool stays inactive (Pi docs, "Tool Exposure").
+ * activates it. Declarations per loadout are checked against real Pi in
+ * test/tools/management-tool-loadout.test.ts.
  */
 function createCapturingPi(loadout: readonly string[] = ["read", "bash"]) {
 	const captured: CapturedRegistrations = {
@@ -86,28 +86,24 @@ function createCapturingPi(loadout: readonly string[] = ["read", "bash"]) {
 			},
 		);
 	};
-	/** The tools a request declares: the active ones (Pi's active set is the declared set). */
-	const declared = () => [...active].filter((name) => registered.has(name)).sort();
-	return { captured, api, registered, startSession, declared };
+	return { captured, api, registered, startSession, active };
 }
 
 const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume"];
-const ENV_KEYS = ["PI_DENY_TOOLS", "PI_SUBAGENT_AGENT", "PI_SUBAGENT_SPAWN_BUDGET", "PI_SUBAGENT_SPAWNABLE"] as const;
 
 /** Load the extension with one worker agent in a fresh config root and return the bound session. */
-function loadWithWorker(loadout?: readonly string[]) {
+function loadWithWorker() {
 	const dir = createTestDir();
 	const configDir = join(dir, "agent-root");
 	writeGlobalAgent(configDir, "name: worker\ndescription: Worker for gating tests");
 	process.env.PI_CODING_AGENT_DIR = configDir;
-	const session = createCapturingPi(loadout);
+	const session = createCapturingPi();
 	const prevCwd = process.cwd();
 	process.chdir(dir);
 	try {
 		subagentsExtension(session.api);
-		const atLoad = [...session.captured.tools].sort();
 		session.startSession(dir);
-		return { ...session, dir, atLoad };
+		return { ...session, dir };
 	} finally {
 		process.chdir(prevCwd);
 	}
@@ -120,19 +116,8 @@ function writeGlobalAgent(configDir: string, frontmatter: string): void {
 }
 
 describe("extension registration gating", () => {
-	const saved = new Map<string, string | undefined>();
-	beforeEach(() => {
-		for (const key of ENV_KEYS) {
-			saved.set(key, process.env[key]);
-			delete process.env[key];
-		}
-	});
+	// test/support/env.ts restores the PI_* keys these tests set.
 	afterEach(() => {
-		for (const key of ENV_KEYS) {
-			const value = saved.get(key);
-			if (value === undefined) delete process.env[key];
-			else process.env[key] = value;
-		}
 		resetSubagentStateForTest();
 	});
 
@@ -168,9 +153,9 @@ describe("extension registration gating", () => {
 		try {
 			const { captured, api, startSession } = createCapturingPi();
 			subagentsExtension(api);
-			// D21: only the launch tool is registered while the extension loads; the
-			// mock throws on the active tool list until the session starts.
-			assert.deepEqual([...captured.tools], ["subagent"]);
+			// D21: all four register while the extension loads, so Pi's startup
+			// decides which are active; the mock throws on the active tool list until the session starts.
+			assert.deepEqual([...captured.tools].sort(), ["subagent", "subagent_agents", "subagent_kill", "subagent_resume"]);
 			startSession(dir);
 			assert.deepEqual([...captured.tools].sort(), ["subagent", "subagent_agents", "subagent_kill", "subagent_resume"]);
 			assert.deepEqual(captured.commands, ["subagents"]);
@@ -235,41 +220,10 @@ describe("extension registration gating", () => {
 		}
 	});
 
-	it("declares the management tools as D21 says for each loadout", () => {
-		const loadouts = [
-			// Codemode on and codemode only have the same active list; codemode.mode
-			// changes only how the codemode tool presents the declared tools.
-			{ name: "codemode on", tools: ["read", "bash", "codemode"], exposure: "deferred" },
-			{ name: "codemode only", tools: ["read", "bash", "codemode"], exposure: "deferred" },
-			{ name: "tool search only", tools: ["read", "bash", "tool_search"], exposure: "deferred" },
-			{ name: "neither", tools: ["read", "bash"], exposure: "direct" },
-		];
-		for (const loadout of loadouts) {
-			const { registered, declared, atLoad } = loadWithWorker(loadout.tools);
-			assert.deepEqual(atLoad, ["subagent"], `${loadout.name}: only the launch tool at load`);
-			assert.equal(registered.get("subagent")?.exposure ?? "direct", "direct", `${loadout.name}: launch tool`);
-			for (const name of MANAGEMENT_TOOLS) {
-				assert.equal(registered.get(name)?.exposure ?? "direct", loadout.exposure, `${loadout.name}: ${name}`);
-			}
-			const expected = loadout.exposure === "direct" ? ["subagent", ...MANAGEMENT_TOOLS] : ["subagent"];
-			assert.deepEqual(
-				declared().filter((name) => name.startsWith("subagent")),
-				expected,
-				`${loadout.name}: declared tools`,
-			);
-		}
-	});
-
-	it("refuses a deferred tool that is not active when the child may not launch", async () => {
-		// deny-tools: subagent reaches the child as PI_DENY_TOOLS; the deferred
-		// tools stay callable from a codemode script, so each checks at call time.
-		process.env.PI_SUBAGENT_AGENT = "worker";
-		process.env.PI_DENY_TOOLS = "subagent";
-		const { registered, declared, dir } = loadWithWorker(["read", "codemode"]);
-		assert.deepEqual(
-			declared().filter((name) => name.startsWith("subagent")),
-			[],
-		);
+	it("refuses the management tools at call time once launch is revoked after registration", async () => {
+		// A deferred tool stays callable from a codemode script while it is not
+		// active, so each tool reads the launch grant when called, not when registered.
+		const { registered, active, dir } = loadWithWorker();
 		const tool = (name: string): RegisteredTool => {
 			const found = registered.get(name);
 			assert.ok(found, `${name} is registered`);
@@ -277,12 +231,29 @@ describe("extension registration gating", () => {
 		};
 		const ctx = { cwd: dir, hasUI: false, sessionManager: { getSessionId: () => "gating" } };
 		const refusal = /This session may not launch agents/;
-		await assert.rejects(
-			() => tool("subagent_resume").execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx),
-			refusal,
-		);
-		await assert.rejects(() => tool("subagent_kill").execute("call-2", { id: "worker" }), refusal);
-		const agents = await tool("subagent_agents").execute("call-3", {}, undefined, undefined, ctx);
-		assert.match(agents.content[0].text, refusal);
+		const callAll = () =>
+			Promise.all([
+				tool("subagent_resume")
+					.execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx)
+					.then(
+						(result: { content: { text: string }[] }) => result.content[0]?.text ?? "",
+						(error: Error) => error.message,
+					),
+				tool("subagent_kill")
+					.execute("call-2", { id: "worker" })
+					.then(
+						(result: { content: { text: string }[] }) => result.content[0]?.text ?? "",
+						(error: Error) => error.message,
+					),
+				tool("subagent_agents")
+					.execute("call-3", {}, undefined, undefined, ctx)
+					.then((result: { content: { text: string }[] }) => result.content[0]?.text ?? ""),
+			]);
+		for (const text of await callAll()) assert.doesNotMatch(text, refusal, "launch granted");
+		// The operator deactivates the launch tool after the management tools registered.
+		active.delete("subagent");
+		for (const text of await callAll()) assert.match(text, refusal, "launch revoked");
+		active.add("subagent");
+		for (const text of await callAll()) assert.doesNotMatch(text, refusal, "launch restored");
 	});
 });

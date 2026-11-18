@@ -74,7 +74,7 @@ function registerResumeTool() {
 		} as never,
 		() => true,
 		runtime as never,
-		{ exposure: "direct", mayLaunch: () => true },
+		{ mayLaunch: () => true },
 	);
 	return { tool: tools.get("subagent_resume")!, awaited };
 }

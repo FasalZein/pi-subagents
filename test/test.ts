@@ -17,6 +17,7 @@ import "./vf/delivery-protocol.test.ts";
 import "./vf/capability-gate.test.ts";
 import "./vf/apply-gate.test.ts";
 import "./tools/tool-policy.test.ts";
+import "./tools/management-tool-loadout.test.ts";
 import "./tools/subagent-done-autoexit-notify.test.ts";
 import "./tools/subagent-context-reminders.test.ts";
 import "./tools/timeout-reminders.test.ts";

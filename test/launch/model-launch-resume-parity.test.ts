@@ -139,7 +139,7 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 			getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "completed" }], details: {} }),
 			modelRegistry,
 		} as any,
-		{ exposure: "direct", mayLaunch: () => true },
+		{ mayLaunch: () => true },
 	);
 	const original = { command: process.env.PI_SUBAGENT_PI_COMMAND, args: process.env.ARGS_FILE };
 	process.env.PI_SUBAGENT_PI_COMMAND = bin;

@@ -66,7 +66,6 @@ export function registerSubagentResumeTool(
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
 		description: "Continue an earlier child session from its session file, optionally with a follow-up task.",
-		exposure: grant.exposure,
 		parameters: Type.Object({
 			sessionFile: Type.String({
 				description: "Path to the session .jsonl file to resume",
