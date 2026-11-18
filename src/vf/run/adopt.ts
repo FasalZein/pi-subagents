@@ -5,7 +5,6 @@ import { runningSubagents, moduleAbortController } from "../../runtime/state.ts"
 import {
 	claimSpawnWidthSlot,
 	getSpawnWidthLimit,
-	releaseSlots,
 	releaseSpawnWidthSlotOnCompletion,
 	tryAcquireSlots,
 } from "../../runtime/spawn-width.ts";
@@ -167,8 +166,8 @@ function registerAdoptedWatcher(
 	// is full stays the lesser evil — and never releases slots it did not
 	// acquire.
 	const acquireCount = authorized ? manifest.request.candidateCount : 0;
-	const slotsAcquired = acquireCount > 0 && tryAcquireSlots(acquireCount, getSpawnWidthLimit());
-	const reserved = slotsAcquired ? manifest.request.candidateCount - 1 : 0;
+	const extraSlots = acquireCount > 0 ? tryAcquireSlots(acquireCount, getSpawnWidthLimit()) : null;
+	const ownerSlot = extraSlots?.split(1);
 	const running: RunningSubagent = {
 		id: manifest.runId.slice(-8),
 		name: manifest.request.name,
@@ -243,13 +242,13 @@ function registerAdoptedWatcher(
 				}
 				return result;
 			} finally {
-				if (reserved > 0) releaseSlots(reserved);
+				extraSlots?.release();
 				runningSubagents.delete(running.id);
 				options.updateWidget?.();
 			}
 		})(),
 	);
-	if (slotsAcquired) claimSpawnWidthSlot(running);
+	if (ownerSlot) claimSpawnWidthSlot(running, ownerSlot);
 	runningSubagents.set(running.id, running);
 	options.updateWidget?.();
 }

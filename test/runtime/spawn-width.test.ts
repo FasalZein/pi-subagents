@@ -5,7 +5,6 @@ import {
 	getEffectiveSpawnWidthLimit,
 	getLiveSlotCount,
 	initializeSpawnWidthForSession,
-	releaseSlots,
 	tryAcquireSlots,
 } from "../../src/runtime/spawn-width.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -100,15 +99,21 @@ const child = (name: string) => ({
 describe("spawn width semaphore", () => {
 	afterEach(() => resetSubagentStateForTest());
 
-	it("counts acquired slots and releases them without going below zero", () => {
-		assert.equal(tryAcquireSlots(2, 3), true);
+	it("counts leased slots, and a lease gives back only its own slots, once", () => {
+		const first = tryAcquireSlots(2, 3);
+		assert.ok(first);
 		assert.equal(getLiveSlotCount(), 2);
-		assert.equal(tryAcquireSlots(2, 3), false);
-		releaseSlots(1);
-		assert.equal(getLiveSlotCount(), 1);
-		assert.equal(tryAcquireSlots(2, 3), true);
+		assert.equal(tryAcquireSlots(2, 3), null);
+		const part = first.split(1);
+		part.release();
+		part.release();
+		assert.equal(getLiveSlotCount(), 1, "a second release of the same lease frees nothing");
+		const second = tryAcquireSlots(2, 3);
+		assert.ok(second);
 		assert.equal(getLiveSlotCount(), 3);
-		releaseSlots(99);
+		first.release();
+		assert.equal(getLiveSlotCount(), 2, "the other holder keeps its slots");
+		second.release();
 		assert.equal(getLiveSlotCount(), 0);
 	});
 
@@ -120,14 +125,14 @@ describe("spawn width semaphore", () => {
 		delete process.env.PI_SUBAGENT_SPAWN_WIDTH;
 		initializeSpawnWidthForSession();
 		assert.equal(getEffectiveSpawnWidthLimit(), MAX_SPAWN_WIDTH);
-		assert.equal(tryAcquireSlots(MAX_SPAWN_WIDTH, getEffectiveSpawnWidthLimit()), true);
-		assert.equal(tryAcquireSlots(1, getEffectiveSpawnWidthLimit()), false);
+		assert.ok(tryAcquireSlots(MAX_SPAWN_WIDTH, getEffectiveSpawnWidthLimit()));
+		assert.equal(tryAcquireSlots(1, getEffectiveSpawnWidthLimit()), null);
 	});
 
 	it("returns a recoverable refusal with a kill remedy at the live limit", async () => {
 		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
 		initializeSpawnWidthForSession();
-		assert.equal(tryAcquireSlots(1, getEffectiveSpawnWidthLimit()), true);
+		assert.ok(tryAcquireSlots(1, getEffectiveSpawnWidthLimit()));
 		let launches = 0;
 		const tool = registerToolWithRuntime({
 			launchBackgroundSubagent: async (params) => {
@@ -192,9 +197,10 @@ describe("spawn width semaphore", () => {
 	});
 
 	it("releases a claimed slot through the completion routing path", () => {
-		assert.equal(tryAcquireSlots(1, 1), true);
+		const slot = tryAcquireSlots(1, 1);
+		assert.ok(slot);
 		const running = makeRunning("completed-child");
-		claimSpawnWidthSlot(running);
+		claimSpawnWidthSlot(running, slot);
 		setRunningSubagentForTest(running);
 		routeSubagentOutcome({
 			pi: { sendMessage() {} },
