@@ -67,7 +67,6 @@ import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
 	getSpawnWidthLimit,
-	releaseSlots,
 	releaseSpawnWidthSlot,
 	releaseSpawnWidthSlotOnCompletion,
 	tryAcquireSlots,
@@ -221,7 +220,8 @@ export async function resumeSubagentSession(
 		);
 	}
 	const widthLimit = getSpawnWidthLimit();
-	if (!tryAcquireSlots(1, widthLimit)) {
+	const slot = tryAcquireSlots(1, widthLimit);
+	if (!slot) {
 		throw new Error(
 			`Spawn width limit reached (${getLiveSlotCount()}/${widthLimit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
 		);
@@ -230,7 +230,7 @@ export async function resumeSubagentSession(
 	let claimedRunning: RunningSubagent | undefined;
 	try {
 		const running = await resumeSubagentSessionWithoutWidth(input, runtime);
-		claimSpawnWidthSlot(running);
+		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
 			running.completionPromise = releaseSpawnWidthSlotOnCompletion(running, running.completionPromise);
@@ -238,7 +238,7 @@ export async function resumeSubagentSession(
 		return running;
 	} catch (error) {
 		if (claimedRunning) releaseSpawnWidthSlot(claimedRunning);
-		else releaseSlots(1);
+		slot.release();
 		throw error;
 	}
 }

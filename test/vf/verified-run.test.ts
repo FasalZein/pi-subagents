@@ -23,7 +23,14 @@ import {
 	writeVerifiedRunManifest,
 } from "../../src/vf/run/types.ts";
 import { resolveAuthorizedRecipients } from "../../src/vf/run/launch.ts";
-import { getLiveSlotCount, initializeSpawnWidthForSession, resetSpawnWidthForTest } from "../../src/runtime/spawn-width.ts";
+import {
+	claimSpawnWidthSlot,
+	getLiveSlotCount,
+	initializeSpawnWidthForSession,
+	resetSpawnWidthForTest,
+	tryAcquireSlots,
+} from "../../src/runtime/spawn-width.ts";
+import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { resetSubagentStateForTest, runningSubagents, stopRunningSubagent } from "../../src/runtime/wiring.ts";
 import { moduleAbortController } from "../../src/runtime/state.ts";
 import { assert, createTestDir, sleep } from "../support/index.ts";
@@ -311,6 +318,35 @@ describe("verified fan-out orchestrator (one logical child)", () => {
 		const siblings = readdirSync(parent).filter((name) => name.includes("-vf-"));
 		assert.deepEqual(siblings, [], "no worktrees created");
 		rmSync(artifactRoot, { recursive: true, force: true });
+	});
+
+	it("a failed fan-out launch gives back only its own slots, not another child's", async () => {
+		const { ctx } = setupProject("description: vf test agent\nllm-as-a-verifier: true\nllm-as-a-verifier-candidates: 3\n");
+		const repo = (ctx as { cwd: string }).cwd;
+		process.env.PI_ARTIFACT_PROJECT_ROOT = createTestDir();
+		const otherChild = {};
+		const otherSlot = tryAcquireSlots(1, 16);
+		assert.ok(otherSlot);
+		claimSpawnWidthSlot(otherChild, otherSlot);
+		// The candidate command is parsed after the slots are reserved, so the
+		// launch fails inside the fan-out with its N slots already taken.
+		process.env.PI_SUBAGENT_PI_COMMAND = "'unterminated";
+		const tools = new Map<string, any>();
+		const pi = { registerTool: (def: any) => tools.set(def.name, def), getThinkingLevel: () => "low", sendMessage() {} };
+		const runtime = {
+			loadAgentDefaults: (agent: string, cwd: string) => loadAgentDefaults(agent, undefined, cwd, resolveSubagentCwd),
+			resolveEffectiveSessionMode: () => "lineage-only",
+			resolveTaskSessionMode: () => "lineage-only",
+		} as unknown as SubagentToolRuntime;
+		registerSubagentCoreTools(pi as never, () => true, runtime);
+		const params = { name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker" };
+		await assert.rejects(
+			tools.get("subagent").execute("c1", params, undefined, undefined, { ...(ctx as object), hasUI: false }),
+			/unterminated quote/,
+		);
+		assert.equal(getLiveSlotCount(), 1, "subagent tool: the other child keeps its slot");
+		await assert.rejects(launchVerifiedFanOut(params, loadVfAgent(repo)!, ctx as never), /unterminated quote/);
+		assert.equal(getLiveSlotCount(), 1, "direct launch: the fan-out gives back all N slots it reserved");
 	});
 
 	it("freezes authorized recipients (origin plus ancestors) into the launch request", async () => {
