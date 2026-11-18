@@ -106,6 +106,19 @@ export function loadAgentDefaults(
 	return loadAgentDefaultsFromDefinitions(agentName, cwdHint, baseCwd, resolveSubagentCwd);
 }
 
+/**
+ * Agent defaults for a hook that only classifies a call. A malformed agent is
+ * not launchable here, so one bad target cannot stop the classification of its
+ * siblings; the launch itself reports the parse error (D24).
+ */
+function loadLaunchableAgentDefaults(agentName: string, cwdHint?: string): AgentDefaults | null {
+	try {
+		return loadAgentDefaults(agentName, cwdHint);
+	} catch {
+		return null;
+	}
+}
+
 function getAgentListEntries(baseCwd = process.cwd()): AgentListEntry[] {
 	const callerEnv = parseSpawnEnv(process.env);
 	return getAgentListEntriesFromDefinitions(baseCwd, resolveTaskSessionMode, {
@@ -126,7 +139,10 @@ function resolveTaskSessionMode(agentDefs: AgentDefaults | null): SubagentSessio
 }
 
 let lastAmbientRosterSignature: string | null = null;
-let malformedAgentNoticeShown = false;
+// Pi reloads extension modules without a cache, so module state does not
+// survive /reload. The session that saw the malformed-agent notice is kept on
+// globalThis, so a reload of that session shows no second notice (D24).
+const MALFORMED_AGENT_NOTICE_SESSION_KEY = Symbol.for("pi-subagents/malformed-agent-notice-session");
 let pendingAmbientRoster: {
 	signature: string;
 	content: string;
@@ -184,11 +200,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		applySubagentLineage(ctx);
 		attachWidgetContext(ctx);
 		orchestrator.handleSessionStart(ctx);
-		// One notice per session (D24); a reload stays in the same session.
-		if (event.reason !== "reload") malformedAgentNoticeShown = false;
+		// One notice per session (D24). In print mode the notice is not shown:
+		// Pi has no print-mode notice channel and its fallback notify is a no-op.
+		// The launch refusal still names the file and its error. Revisit if Pi
+		// adds a print-mode notice channel.
 		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd).malformedFiles);
-		if (malformedNotice && !malformedAgentNoticeShown) {
-			malformedAgentNoticeShown = true;
+		const noticeSession = ctx.sessionManager.getSessionId?.() ?? "";
+		const globalState = globalThis as Record<PropertyKey, unknown>;
+		if (malformedNotice && globalState[MALFORMED_AGENT_NOTICE_SESSION_KEY] !== noticeSession) {
+			globalState[MALFORMED_AGENT_NOTICE_SESSION_KEY] = noticeSession;
 			ctx.ui.notify(malformedNotice, "warning");
 		}
 		// Verified fan-outs outlive their parent session: deliver finished
@@ -315,7 +335,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		// switch with the existing coordinator-only-turn behavior.
 		const message = event?.message;
 		if (!message) return;
-		classifyAssistantMessageForMixedBatch(message, (agent, cwd) => (agent ? loadAgentDefaults(agent, cwd) : null));
+		classifyAssistantMessageForMixedBatch(message, (agent, cwd) =>
+			agent ? loadLaunchableAgentDefaults(agent, cwd) : null,
+		);
 	});
 
 	pi.on("tool_call", (event) => {
@@ -325,7 +347,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		const input = event.input as Partial<SubagentParamsInput>;
 		const agentDefs =
 			typeof input.agent === "string"
-				? loadAgentDefaults(input.agent, typeof input.cwd === "string" ? input.cwd : undefined)
+				? loadLaunchableAgentDefaults(input.agent, typeof input.cwd === "string" ? input.cwd : undefined)
 				: null;
 		const agentError = getSubagentAgentRequirementError(input, agentDefs);
 		const agentOverrideError = getSubagentAgentOverrideError(input, agentDefs);

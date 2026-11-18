@@ -115,7 +115,8 @@ function parseAgentDefinition(
 		const definition = parseAgentDefinitionContent(content, path, source, cwdBase, includeDisabled);
 		return definition ? { kind: "agent", definition } : null;
 	} catch (error) {
-		const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+		// An unterminated header has no closing line: read its keys to the end of the file.
+		const frontmatter = content.match(/^---\r?\n([\s\S]*?)(?:\n---|$)/)?.[1] ?? "";
 		const get = (key: string) => frontmatter.match(new RegExp(`^${key}:[ \\t]*(.+)$`, "m"))?.[1].trim();
 		// A disabled file is never launched, so its parse error is not news.
 		if (get("enabled") === "false") return null;
@@ -132,7 +133,13 @@ function parseAgentDefinitionContent(
 	includeDisabled: boolean,
 ): ResolvedAgentDefinition | null {
 	const match = content.match(/^---\n([\s\S]*?)\n---/);
-	if (!match) return null;
+	if (!match) {
+		// Plain Markdown is not an agent file. A file that opens a frontmatter
+		// header is one: skipping it would let a global agent of the same name
+		// launch in its place (D24).
+		if (!/^---\r?\n/.test(content)) return null;
+		throw new Error('Frontmatter that opens with "---" needs a key line and a closing "---" line (LF line endings).');
+	}
 	const frontmatter = match[1];
 	const get = (key: string) => {
 		const m = frontmatter.match(new RegExp(`^${key}:[ \\t]*(.+)$`, "m"));
