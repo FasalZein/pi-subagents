@@ -1,7 +1,7 @@
 import { getArtifactProjectName, getArtifactStorageRoot } from "../../artifact-storage.ts";
 import { readFileSync } from "node:fs";
 import type { AgentDefaults } from "../../agents/definitions.ts";
-import { buildParentEnvSnapshot } from "../../launch/child-env.ts";
+import { buildHeadlessParentEnvSnapshot } from "../../launch/child-env.ts";
 import { buildBackgroundLaunchPlan } from "../../launch/background.ts";
 import { dirname, join } from "node:path";
 import type { SubagentLaunchContext } from "../../launch/prep.ts";
@@ -224,7 +224,7 @@ export async function launchVerifiedFanOut(
 				piCommandArgs = invocationArgs.slice(0, invocationArgs.length - plan.args.length);
 				denyPatterns = plan.denyPatterns;
 				modelRef = plan.launch.prepared.effectiveModelRef;
-				baseEnv = buildParentEnvSnapshot(process.env, denyPatterns);
+				baseEnv = buildHeadlessParentEnvSnapshot(process.env, denyPatterns);
 			} else if (plan.fullTask !== fullTask) {
 				throw new VerifiedLaunchError(
 					`candidate ${index} prompt diverged from candidate 1 (${plan.fullTask.length} vs ${fullTask.length} chars)`,

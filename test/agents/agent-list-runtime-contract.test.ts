@@ -7,7 +7,7 @@ import {
 	it,
 	join,
 	mkdirSync,
-	renderAgentListReminderForTest,
+	renderAgentDetailsForTest,
 	resetSubagentStateForTest,
 	writeFileSync,
 } from "../support/index.ts";
@@ -38,69 +38,62 @@ function writeAgent(agentsDir: string, name: string, frontmatter: string): void 
 	);
 }
 
-function blockFor(reminder: string, name: string): string {
-	return reminder.match(new RegExp("^- `" + name + "`:[\\s\\S]*?(?=\\n\\n|\\n</subagent-roster>)", "m"))?.[0] ?? "";
+function blockFor(details: string, name: string): string {
+	return details.split("\n\n").find((block) => block.startsWith(`${name} (`)) ?? "";
 }
 
-describe("agent-list runtime contract", () => {
+// The roster is gone (D19); the full definition view of subagent_agents (D20)
+// states the same launch contract per agent.
+describe("agent detail runtime contract", () => {
 	afterEach(() => resetSubagentStateForTest());
 
-	it("describes explicit async contracts separately from the await-all session override", () => {
+	it("describes the explicit async contract of each agent", () => {
 		const { baseCwd, agentsDir } = createAgentRoot();
 		writeAgent(agentsDir, "sync-worker", "async: false");
 		writeAgent(agentsDir, "async-worker", "async: true");
 		writeAgent(agentsDir, "default-worker", "");
 
 		withAgentRoot(agentsDir, () => {
-			const entries = getAgentListEntriesForTest(baseCwd);
-			const reminder = renderAgentListReminderForTest(entries);
-			assert.match(blockFor(reminder, "sync-worker"), /tool_return: wait_here/);
-			assert.match(blockFor(reminder, "async-worker"), /tool_return: later_message/);
-			assert.match(blockFor(reminder, "default-worker"), /tool_return: later_message/);
-
-			const awaitedReminder = renderAgentListReminderForTest(entries, { awaitAllLaunches: true });
-			for (const name of ["sync-worker", "async-worker", "default-worker"]) {
-				assert.match(blockFor(awaitedReminder, name), /tool_return: wait_here/);
-			}
+			const details = renderAgentDetailsForTest(getAgentListEntriesForTest(baseCwd));
+			assert.match(blockFor(details, "sync-worker"), /launch waits for the result/);
+			assert.match(blockFor(details, "async-worker"), /launch returns at once/);
+			assert.match(blockFor(details, "default-worker"), /launch returns at once/);
 		});
 	});
 
-	it("includes model guidance when an agent allows overrides without a default model", () => {
+	it("accepts any model ref when an agent allows overrides without a list", () => {
 		const { baseCwd, agentsDir } = createAgentRoot();
 		writeAgent(agentsDir, "open-model", "allow-model-override: true");
 
 		withAgentRoot(agentsDir, () => {
-			const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(baseCwd));
-			assert.match(reminder, /models: any model ref/);
-			assert.match(reminder, /`models:` lists accepted overrides/);
+			const details = renderAgentDetailsForTest(getAgentListEntriesForTest(baseCwd));
+			assert.match(details, /^default model: the parent's model\nmodels: any model ref$/m);
 		});
 	});
 
-	it("includes model guidance for a default model even when overrides are disabled", () => {
+	it("names the default model and no choices when overrides are disabled", () => {
 		const { baseCwd, agentsDir } = createAgentRoot();
 		writeAgent(agentsDir, "pinned-model", "model: provider/model\nallow-model-override: false");
 
 		withAgentRoot(agentsDir, () => {
-			const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(baseCwd));
-			assert.match(reminder, /default_model: provider\/model/);
-			assert.match(reminder, /`models:` lists accepted overrides/);
-			assert.doesNotMatch(blockFor(reminder, "pinned-model"), /\n {2}models:/);
+			const block = blockFor(renderAgentDetailsForTest(getAgentListEntriesForTest(baseCwd)), "pinned-model");
+			assert.match(block, /^default model: provider\/model\nmodels: the default only \(overrides are ignored\)$/m);
 		});
 	});
 
-	it("adds verifier handling guidance only when a roster entry is marked for fan-out", () => {
+	it("names a verified fan-out only when an agent is marked for it", () => {
 		const marked = createAgentRoot();
 		writeAgent(marked.agentsDir, "verified-worker", "llm-as-a-verifier: true");
 		withAgentRoot(marked.agentsDir, () => {
-			const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(marked.baseCwd));
-			assert.match(reminder, /`llm-as-a-verifier: true` means one launch/);
+			const details = renderAgentDetailsForTest(getAgentListEntriesForTest(marked.baseCwd));
+			assert.match(details, /verified fan-out \(\d+ attempts\)/);
 		});
 
 		const plain = createAgentRoot();
 		writeAgent(plain.agentsDir, "plain-worker", "");
 		withAgentRoot(plain.agentsDir, () => {
-			const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(plain.baseCwd));
-			assert.doesNotMatch(reminder, /`llm-as-a-verifier: true` means one launch/);
+			const details = renderAgentDetailsForTest(getAgentListEntriesForTest(plain.baseCwd));
+			assert.doesNotMatch(details, /verified fan-out/);
 		});
 	});
 });

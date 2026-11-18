@@ -8,7 +8,7 @@ import {
 	join,
 	loadAgentDefaults,
 	mkdirSync,
-	renderAgentListReminderForTest,
+	renderAgentDetailsForTest,
 	resetSubagentStateForTest,
 	writeFileSync,
 } from "../support/index.ts";
@@ -34,10 +34,9 @@ function writeRosterAgent(frontmatter: string): void {
 	);
 }
 
-function rosterTesterBlock(): string {
+function testerDetail(): string {
 	const entries = getAgentListEntriesForTest("/tmp");
-	const reminder = renderAgentListReminderForTest(entries);
-	return reminder.match(/- `tester`: Do(?:.|\n)*?(?=\n\n- `|<\/subagent-roster>)/)?.[0] ?? "";
+	return renderAgentDetailsForTest(entries.filter((entry) => entry.name === "tester"));
 }
 
 describe("llm-as-a-verifier field split (candidates/model/criteria)", () => {
@@ -95,19 +94,19 @@ describe("llm-as-a-verifier field split (candidates/model/criteria)", () => {
 		assert.equal(both?.llmAsVerifierCriteria, "code-change");
 	});
 
-	it("renders the resolved candidate count in the roster line", () => {
+	it("renders the resolved candidate count in the agent detail", () => {
 		writeRosterAgent("llm-as-a-verifier: true\nllm-as-a-verifier-candidates: 5");
-		assert.match(rosterTesterBlock(), /llm-as-a-verifier: true \(5 attempts\)/);
+		assert.match(testerDetail(), /verified fan-out \(5 attempts\)/);
 
 		writeRosterAgent("llm-as-a-verifier: true");
-		assert.match(rosterTesterBlock(), /llm-as-a-verifier: true \(3 attempts\)/);
+		assert.match(testerDetail(), /verified fan-out \(3 attempts\)/);
 
 		process.env[VERIFIER_CANDIDATES_ENV_VAR] = "4";
-		assert.match(rosterTesterBlock(), /llm-as-a-verifier: true \(4 attempts\)/);
+		assert.match(testerDetail(), /verified fan-out \(4 attempts\)/);
 
 		process.env[VERIFIER_CANDIDATES_ENV_VAR] = "1";
-		const block = rosterTesterBlock();
-		assert.match(block, /llm-as-a-verifier: true \(/);
+		const block = testerDetail();
+		assert.match(block, /verified fan-out \(/);
 		assert.match(block, new RegExp(VERIFIER_CANDIDATES_ENV_VAR));
 	});
 });

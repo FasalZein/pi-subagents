@@ -3,7 +3,14 @@ import { fileURLToPath } from "node:url";
 import { shellEscape } from "../mux.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { getPiInvocation } from "./child-command.ts";
-import { buildParentEnvSnapshot, PANE_IDENTITY_ENV_PATTERNS, resolveDenyEnvPatterns } from "./child-env.ts";
+import {
+	buildParentEnvSnapshot,
+	type PaneIdentityPolicy,
+	PREFIX_PANE_IDENTITY,
+	paneIdentityCapsuleFields,
+	resolveDenyEnvPatterns,
+	withoutExactIdentityEnv,
+} from "./child-env.ts";
 import { disposeEnvCapsule, writeEnvCapsule } from "./env-capsule.ts";
 import { buildInteractiveSentinelShellCommands } from "./interactive-sentinel.ts";
 import { buildShellChangeDirectoryPrefix } from "./resume.ts";
@@ -19,6 +26,8 @@ export interface InteractiveShellCommandInput {
 	doneSentinelFile: string;
 	/** Derive PI_SUBAGENT_SURFACE from the child pane's ZELLIJ_PANE_ID. */
 	deriveZellijPaneSurface?: boolean;
+	/** Identity names of the child's surface (the backend adapter's paneIdentity); undefined: v2.9.2 prefixes. */
+	paneIdentity: PaneIdentityPolicy | undefined;
 }
 
 export interface InteractiveShellCommand {
@@ -46,13 +55,17 @@ export function getRunChildLauncherPath(): string {
  */
 export function buildInteractiveShellCommand(input: InteractiveShellCommandInput): InteractiveShellCommand {
 	const invocation = getPiInvocation(input.piArgs);
+	const paneIdentity = input.paneIdentity ?? PREFIX_PANE_IDENTITY;
 	const capsulePath = writeEnvCapsule({
 		command: invocation.command,
 		args: invocation.args,
 		...(input.cwd ? { cwd: input.cwd } : {}),
-		parentEnv: buildParentEnvSnapshot(process.env, resolveDenyEnvPatterns(input.denyEnv)),
+		parentEnv: withoutExactIdentityEnv(
+			buildParentEnvSnapshot(process.env, resolveDenyEnvPatterns(input.denyEnv)),
+			paneIdentity,
+		),
 		overrides: input.envOverrides,
-		paneIdentityKeys: [...PANE_IDENTITY_ENV_PATTERNS],
+		...paneIdentityCapsuleFields(paneIdentity),
 		processIdFile: getInteractiveProcessFile(input.doneSentinelFile),
 		...(input.deriveZellijPaneSurface ? { deriveZellijPaneSurface: true } : {}),
 	});

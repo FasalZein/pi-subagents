@@ -4,12 +4,11 @@ import {
 	createTestDir,
 	describe,
 	getAgentListEntriesForTest,
-	getAgentListSignatureForTest,
 	it,
 	join,
 	loadAgentDefaults,
 	mkdirSync,
-	renderAgentListReminderForTest,
+	renderAgentDetailsForTest,
 	resetSubagentStateForTest,
 	writeFileSync,
 } from "../support/index.ts";
@@ -75,7 +74,7 @@ describe("llm-as-a-verifier field", () => {
 		assert.equal(marked?.llmAsVerifierCandidates, 5);
 	});
 
-	it("surfaces a verified marker in the ambient roster only for marked definitions", () => {
+	it("surfaces a verified fan-out in the agent detail only for marked definitions", () => {
 		writeRosterAgents(true);
 		const entries = getAgentListEntriesForTest("/tmp");
 		const tester = entries.find((entry) => entry.name === "tester");
@@ -83,16 +82,10 @@ describe("llm-as-a-verifier field", () => {
 		assert.equal(tester?.llmAsVerifier, true);
 		assert.equal(plain?.llmAsVerifier, undefined);
 
-		const reminder = renderAgentListReminderForTest(entries);
-		const plainBlock = reminder.match(/- `plain`: Do(?:.|\n)*?(?=\n\n- `|<\/subagent-roster>)/)?.[0] ?? "";
-		assert.match(reminder, /- `tester`: Does verified work\n(?:[^\n]*\n)* {2}llm-as-a-verifier: true/);
-		assert.ok(!plainBlock.includes("verified-fan-out"), `plain block must not carry the marker:\n${plainBlock}`);
-		assert.match(reminder, /`llm-as-a-verifier: true` means one launch/);
-		assert.ok(JSON.stringify(getAgentListSignatureForTest(entries)).includes("llmAsVerifier"));
+		assert.match(renderAgentDetailsForTest(tester ? [tester] : []), /verified fan-out \(/);
+		assert.doesNotMatch(renderAgentDetailsForTest(plain ? [plain] : []), /verified fan-out/);
 
 		writeRosterAgents(false);
-		const unmarked = renderAgentListReminderForTest(getAgentListEntriesForTest("/tmp"));
-		assert.doesNotMatch(unmarked, /verified-fan-out/);
-		assert.ok(!JSON.stringify(getAgentListSignatureForTest(getAgentListEntriesForTest("/tmp"))).includes("llmAsVerifier"));
+		assert.doesNotMatch(renderAgentDetailsForTest(getAgentListEntriesForTest("/tmp")), /verified fan-out/);
 	});
 });

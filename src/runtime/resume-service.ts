@@ -550,6 +550,7 @@ async function resumeSubagentSessionWithoutWidth(
 			piArgs,
 			envOverrides: resumeEnvVars,
 			denyEnv: invocationMetadata?.denyEnv,
+			paneIdentity: adapter?.paneIdentity,
 			doneSentinelFile,
 			...(programSession ? { deriveZellijPaneSurface: true } : {}),
 		});
