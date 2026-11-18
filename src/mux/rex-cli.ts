@@ -47,8 +47,6 @@ function requireRexBinary(): string {
 
 /** Accepted revisions by binary path: read once per binary, at first use (D28). */
 const revisionByBinary = new Map<string, number>();
-/** The hint of the last rejected revision, for setupHint. */
-let revisionHint: string | undefined;
 
 /** The binary answers rex whoami with a tested API revision; the call is bounded like herdr-core's app check. */
 export function rexRevisionAccepted(binary: string): boolean {
@@ -70,15 +68,18 @@ export function rexRevisionAccepted(binary: string): boolean {
 			return false;
 		}
 	}
-	if (REX_TESTED_API_REVISIONS.includes(revision)) return true;
-	revisionHint =
-		`Rex API revision ${revision} is not supported: pi-subagents is tested with revision ${REX_TESTED_API_REVISIONS.join(", ")}. ` +
-		"Update pi-subagents or Rex, or set PI_SUBAGENT_MUX to another backend.";
-	return false;
+	return REX_TESTED_API_REVISIONS.includes(revision);
 }
 
+/** The hint for the current rex binary when its API revision was read and is not tested. */
 export function rexRevisionHint(): string | undefined {
-	return revisionHint;
+	const binary = resolveRexBinary();
+	const revision = binary === undefined ? undefined : revisionByBinary.get(binary);
+	if (revision === undefined || REX_TESTED_API_REVISIONS.includes(revision)) return undefined;
+	return (
+		`Rex API revision ${revision} is not supported: pi-subagents is tested with revision ${REX_TESTED_API_REVISIONS.join(", ")}. ` +
+		"Update pi-subagents or Rex, or set PI_SUBAGENT_MUX to another backend."
+	);
 }
 
 function callError(args: readonly string[], error: unknown): RexCallError {

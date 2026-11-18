@@ -23,6 +23,10 @@ import {
 } from "../support/index.ts";
 import { testResultsDir } from "../support/result-fixtures.ts";
 import { FAKE_HC, seedFakeHcCaller } from "../mux/fake-hc.ts";
+import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION } from "../mux/fake-rex.ts";
+
+/** The first block that the fake rex creates in a fresh state: the child's own block. */
+const FAKE_REX_FIRST_CHILD = "block:01a1ee5b-1f99-7a29-88d3-000000000002";
 import "../support/ambient-spawn-grant.ts";
 
 // Old herdr fake: answers the availability probes and one split surface; "pane run" only logs the staged script.
@@ -141,6 +145,19 @@ const BACKENDS: BackendFake[] = [
 		required: "HC_TERMINAL_ID",
 		derivedSurface: "t2",
 	},
+	// Rex: the launch command is typed into the new block; the block's shell has REX_PROBE_PRIVATE (T48, moved from T44).
+	{
+		mux: "rex",
+		bin: "rex",
+		script: FAKE_REX,
+		parentEnv: { REX_SESSION: FAKE_REX_SESSION, REX_BLOCK: FAKE_REX_PARENT },
+		surfaceEnv: { REX_SESSION: FAKE_REX_SESSION, REX_BLOCK: FAKE_REX_FIRST_CHILD, REX_PROBE_PRIVATE: "shell-only" },
+		identity: ["REX_SESSION", "REX_BLOCK"],
+		extraMarkers: ["REX_PROBE_PRIVATE"],
+		extraFlags: { REX_PROBE_PRIVATE: "no" },
+		required: "REX_BLOCK",
+		derivedSurface: FAKE_REX_FIRST_CHILD,
+	},
 	{
 		mux: "herdr",
 		bin: "herdr",
@@ -220,6 +237,9 @@ const MUX_RUNTIME_KEYS = [
 	"HC_TERMINAL_ID",
 	"HC_TERMINAL_SOCKET",
 	"HC_SCOPE",
+	"REX_SESSION",
+	"REX_BLOCK",
+	"REX_BIN_DIR",
 ];
 
 interface Fixture {
@@ -295,6 +315,11 @@ function checkChildEnvironment(fixture: Fixture): void {
 	const log = readFileSync(fixture.logFile, "utf8");
 	// herdr-core: the launcher is the program; no shell terminal is opened and nothing is typed.
 	if (backend.mux === "herdr-core") assert.doesNotMatch(log, /^hc (send|run) /m);
+	// Rex: one line of text into the child's own block, then Enter as a key.
+	if (backend.mux === "rex") {
+		const target = `-s ${FAKE_REX_SESSION} -b ${FAKE_REX_FIRST_CHILD}`;
+		assert.match(log, new RegExp(`^rex send ${target} trap [^\\n]*run-child\\.mjs[^\\n]*\\nrex send-key ${target} enter$`, "m"));
+	}
 	const capsulePath = capsuleIn(log);
 	assert.ok(capsulePath, "expected the launch to invoke the capsule launcher");
 	const capsule = JSON.parse(readFileSync(capsulePath, "utf8"));
