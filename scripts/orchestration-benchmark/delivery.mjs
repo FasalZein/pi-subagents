@@ -13,8 +13,10 @@
  * observation ended), not to the last assistant stop. availableToAnswer is
  * separate: an own carrier holding the expected result came before the scored
  * reply. The row field delivered, which the verdict uses, is availableToAnswer.
- * - digest: no own carrier, but another carrier or allowed tool result holds the
- *   result (a deliberate digest, for example a workflow script). It is not lost.
+ * - digest: no own carrier, but the result of a digest-producing operation that
+ *   the scenario declares (scenario.digestOperations: tool name and the launch
+ *   names it covers) holds the result. A scenario without that declaration has
+ *   no digest class, so a sibling's quote never hides a missing handover.
  * - undelivered: no carrier, but the child ended its turn. This is the gate class:
  *   the spec gates on zero lost AND zero parked, so their sum is the gate.
  *   Its subClass comes only from positive evidence, never from stopReason:
@@ -62,14 +64,14 @@ export function launchedRuns(events, launchTool) {
  * Entries of the parent that hold child output, in order: result messages and
  * results of allowed tools, one row per finished run an entry names. runId is
  * null when the entry names no finished run.
- * @returns {Array<{index: number, runId: string | null, text: string}>}
+ * @returns {Array<{index: number, runId: string | null, tool: string | null, text: string}>}
  */
 export function carriers(events, parentToolAllowlist) {
 	const found = [];
 	events.forEach((e, index) => {
 		if (e?.type === "custom_message" && e.customType === RESULT_MESSAGE) {
 			const runId = typeof e.details?.id === "string" ? e.details.id : null;
-			found.push({ index, runId, text: textOf(e.content) });
+			found.push({ index, runId, tool: null, text: textOf(e.content) });
 			return;
 		}
 		const m = e?.type === "message" ? e.message : null;
@@ -85,7 +87,8 @@ export function carriers(events, parentToolAllowlist) {
 		const text = textOf(m.content);
 		// An entry without a run is a digest candidate. A single run owns the entry's
 		// text; a batch result binds each run to its own summary, not the joined text.
-		if (runs.length === 0) found.push({ index, runId: null, text });
+		if (runs.length === 0)
+			found.push({ index, runId: null, tool: m.toolName, text });
 		for (const run of runs) {
 			const own =
 				runs.length === 1 && !Array.isArray(m.details?.children)
@@ -93,7 +96,7 @@ export function carriers(events, parentToolAllowlist) {
 					: typeof run.summary === "string"
 						? run.summary
 						: "";
-			found.push({ index, runId: run.id, text: own });
+			found.push({ index, runId: run.id, tool: m.toolName, text: own });
 		}
 	});
 	return found;
@@ -120,9 +123,17 @@ function terminalIndex(events) {
 /**
  * Handover class of one run (see the module header).
  * @param {{runId: string | null, contract: object | undefined, ended: boolean, carried: object[],
- *   answeredAt: number}} input - answeredAt: entry index of the scored reply
+ *   digests: object[], answeredAt: number}} input - answeredAt: entry index of the
+ *   scored reply; digests: results of declared digest operations that cover this run
  */
-export function handover({ runId, contract, ended, carried, answeredAt }) {
+export function handover({
+	runId,
+	contract,
+	ended,
+	carried,
+	digests,
+	answeredAt,
+}) {
 	const holds = (c) => Boolean(contract) && holdsResult(c.text, contract);
 	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
 	const own = carried.filter((c) => c.runId === runId);
@@ -130,7 +141,7 @@ export function handover({ runId, contract, ended, carried, answeredAt }) {
 	if (own.length > 1)
 		return { handover: "duplicate-carrier", transfers: own.length, correct };
 	if (own.length === 1) return { handover: "delivered", transfers: 1, correct };
-	if (carried.some(holds))
+	if (digests.some(holds))
 		return { handover: "digest", transfers: 0, correct: false };
 	if (!ended) return { handover: "no-result", transfers: 0, correct: false };
 	return {
@@ -149,7 +160,8 @@ export function handover({ runId, contract, ended, carried, answeredAt }) {
  * @param {Array<{name: string | null, role: string | null, contract: object | undefined,
  *   ended: boolean, fulfils: {read: boolean, returned: boolean}}>} input.children
  * @param {{terminal: boolean}} input.parentReply
- * @param {{parentToolAllowlist: string[], parentLoadTool: string}} input.scenario
+ * @param {{parentToolAllowlist: string[], parentLoadTool: string,
+ *   digestOperations?: Array<{toolName: string, covers: string[]}>}} input.scenario
  * @param {string} input.workDir
  */
 export function deliveryAccounting({
@@ -175,11 +187,17 @@ export function deliveryAccounting({
 	const rows = children.map((child) => {
 		const named = runs.filter((run) => run.name && run.name === child.name);
 		const runId = named.length === 1 ? named[0].runId : null;
+		const digests = carried.filter((c) =>
+			(scenario.digestOperations ?? []).some(
+				(op) => op.toolName === c.tool && op.covers.includes(child.name),
+			),
+		);
 		const { correct, ...result } = handover({
 			runId,
 			contract: child.contract,
 			ended: child.ended,
 			carried,
+			digests,
 			answeredAt,
 		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>

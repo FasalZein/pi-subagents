@@ -37,4 +37,6 @@ export default {
 	parentToolAllowlist: ["subagent"],
 	parentLoadTool: "subagent",
 	childLoadTool: "caller_ping",
+	// No digest-producing operation: every result must arrive by its own run id.
+	digestOperations: [],
 };

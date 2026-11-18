@@ -214,36 +214,61 @@ test("transfers count by run id: repeated text in later requests is no transfer"
 	assert.equal(record.duplicated, 0);
 });
 
-test("a duplicate carrier, a deliberate digest and a missing handover are told apart", () => {
-	const record = account(
-		[
-			launch([
-				["r1", "a"],
-				["r2", "b"],
-				["r3", "c"],
-				["r4", "d"],
-			]),
-			result("r1", "x-1"),
-			result("r1", "x-1 again"),
-			// A digest: one carrier of run r3 holds the result of run r2 as well.
-			result("r3", "z-3, digest of b: y-2"),
-			assistant("stop", "x-1 y-2 z-3"),
-		],
-		[
-			child("a", "x-1"),
-			child("b", "y-2"),
-			child("c", "z-3"),
-			child("d", "w-4"),
-		],
-	);
+test("[T02b-7] a duplicate carrier, a declared digest and a missing handover are told apart; a sibling's quote is no digest", () => {
+	const events = [
+		launch([
+			["r1", "a"],
+			["r2", "b"],
+			["r3", "c"],
+			["r4", "d"],
+		]),
+		result("r1", "x-1"),
+		result("r1", "x-1 again"),
+		// A sibling quotes the result of b; b's own carrier never arrives.
+		result("r3", "z-3, quote of b: y-2"),
+		assistant("stop", "x-1 y-2 z-3"),
+	];
+	const children = [
+		child("a", "x-1"),
+		child("b", "y-2"),
+		child("c", "z-3"),
+		child("d", "w-4"),
+	];
+	const record = account(events, children);
 	assert.deepEqual(
 		record.runs.map((r) => r.handover),
-		["duplicate-carrier", "digest", "delivered", "undelivered"],
+		["duplicate-carrier", "undelivered", "delivered", "undelivered"],
 	);
 	assert.deepEqual(
 		[record.transfers, record.duplicated, record.digests, record.undelivered],
-		[3, 1, 1, 1],
+		[3, 1, 0, 2],
 	);
+	// Only a scenario that declares a digest-producing operation and the runs it
+	// covers gets the digest class, and only from that operation's result.
+	const digest = {
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "workflow",
+			content: [{ type: "text", text: "digest: y-2" }],
+		},
+	};
+	const declared = deliveryAccounting({
+		parentEvents: [...events.slice(0, -1), digest, events.at(-1)],
+		children,
+		parentReply: terminalAnswer(events),
+		scenario: {
+			...SCENARIO,
+			parentToolAllowlist: ["subagent", "workflow"],
+			digestOperations: [{ toolName: "workflow", covers: ["b"] }],
+		},
+		workDir: WORK,
+	});
+	assert.deepEqual(
+		declared.runs.map((r) => r.handover),
+		["duplicate-carrier", "digest", "delivered", "undelivered"],
+	);
+	assert.deepEqual([declared.digests, declared.undelivered], [1, 1]);
 	// Only a result that came by its own run id is a clean yield.
 	assert.deepEqual(
 		record.runs.map((r) => r.outcome),
