@@ -18,9 +18,18 @@ export interface RenderOptions {
 	homeDir: string;
 	warnings?: readonly string[];
 	/** Verified fan-out footer (D18), kept inside the frame. */
-	verifierFooter?: string;
+	verifierFooter?: VerifierFooter;
 	/** True when the agent asks for the context usage line. */
 	showContextUsage?: boolean;
+}
+
+/**
+ * D18: the winner fact survives every cap; the descriptive text (for example the provenance) gets the
+ * room the other required fields leave.
+ */
+export interface VerifierFooter {
+	winner: "staged" | "not applied";
+	detail?: string;
 }
 
 const OUTCOME_WORDS: Record<ResultOutcome, string> = {
@@ -62,24 +71,57 @@ function headerLine(record: ResultRecord): string {
 	return parts.join(" · ");
 }
 
-function reportLine(record: ResultRecord, options: RenderOptions): string {
-	if (!record.report.saved) return cutText(`report not saved: ${record.report.error}`, FACT_MAX_CHARS);
-	return `report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}`;
+/**
+ * One required footer line: the fact always stays; the detail after ": " gets at most `max`
+ * characters of the room the facts leave, in `priority` order (lower first).
+ */
+interface RequiredLine {
+	fact: string;
+	detail?: { text: string; max: number; priority: number };
+}
+
+/** Separates a fact from its detail. */
+const DETAIL_SEPARATOR = ": ";
+
+function reportLine(record: ResultRecord, options: RenderOptions): RequiredLine {
+	if (!record.report.saved) {
+		return { fact: "report not saved", detail: { text: record.report.error, max: FACT_MAX_CHARS, priority: 1 } };
+	}
+	return { fact: `report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}` };
 }
 
 /**
  * Footer lines D14 and D18 require: the report file, the run id, why a run cannot resume, the verifier
- * footer (its staged or not-applied fact must survive the cap), requested context usage.
+ * footer (its staged or not-applied fact must survive the cap), requested context usage. The resume
+ * reason gets room first, then the storage diagnostic, then the verifier's descriptive text.
  */
-function requiredLines(record: ResultRecord, options: RenderOptions): string[] {
-	const lines = [reportLine(record, options), `run: ${record.runId}`];
-	if (!record.resume.resumable) lines.push(cutText(`not resumable: ${record.resume.reason}`, FACT_MAX_CHARS));
-	if (options.verifierFooter) lines.push(options.verifierFooter);
+function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLine[] {
+	const lines: RequiredLine[] = [reportLine(record, options), { fact: `run: ${record.runId}` }];
+	if (!record.resume.resumable) {
+		lines.push({ fact: "not resumable", detail: { text: record.resume.reason, max: FACT_MAX_CHARS, priority: 0 } });
+	}
+	const verifier = options.verifierFooter;
+	if (verifier) {
+		const fact = `verifier: winner ${verifier.winner}`;
+		lines.push({ fact, detail: verifier.detail ? { text: verifier.detail, max: FRAME_MAX_CHARS, priority: 2 } : undefined });
+	}
 	if (options.showContextUsage && record.contextUsage) {
 		const { tokens, window } = record.contextUsage;
-		lines.push(window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens`);
+		lines.push({ fact: window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens` });
 	}
 	return lines;
+}
+
+/** Fits the details of the required lines into the room left within FRAME_MAX_CHARS. */
+function fitRequiredLines(lines: readonly RequiredLine[], frameLength: (lines: readonly string[]) => number): string[] {
+	const text = lines.map((line) => line.fact);
+	const details = lines.flatMap((line, i) => (line.detail ? [{ i, ...line.detail }] : []));
+	for (const { i, text: detail, max } of details.sort((a, b) => a.priority - b.priority)) {
+		const room = Math.min(max, FRAME_MAX_CHARS - frameLength(text)) - DETAIL_SEPARATOR.length;
+		if (room <= CUT_MARK.length) continue;
+		text[i] = `${lines[i].fact}${DETAIL_SEPARATOR}${cutText(detail, room)}`;
+	}
+	return text;
 }
 
 /** Footer lines that get only the room the required fields leave, in order. */
@@ -96,9 +138,9 @@ function optionalLines(options: RenderOptions): string[] {
  */
 export function renderResult(record: ResultRecord, options: RenderOptions): string {
 	const header = headerLine(record);
-	const footer = requiredLines(record, options);
 	// Two newlines join header, summary and footer; one more joins each footer line.
 	const frameLength = (lines: readonly string[]) => header.length + 2 + lines.reduce((n, l) => n + l.length + 1, -1);
+	const footer = fitRequiredLines(requiredLines(record, options), frameLength);
 	for (const line of optionalLines(options)) {
 		const room = FRAME_MAX_CHARS - frameLength(footer) - 1;
 		if (room <= CUT_MARK.length) break;

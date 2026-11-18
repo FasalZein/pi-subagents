@@ -299,6 +299,46 @@ describe("result assembler: completion facts (D12, D14)", () => {
 			assert.equal(record.typed, false);
 		});
 	}
+
+	// Pi omits nested arguments over 8 KiB per call (NESTED_CALL_LIMITS); 3,000 CJK characters are 9,000 UTF-8 bytes.
+	const longQuestion = "どのデータベースを使いますか".repeat(215).slice(0, 3_000);
+	const omittedPing = () => [
+		sessionHeader(),
+		assistant("I need a decision."),
+		toolCall("codemode", { code: "await tools.caller_ping(...)" }, "k1"),
+		toolResult("codemode", "k1", "script done", false, [{ id: "k1/1", name: PING, status: "ok", argumentsBytes: 9_015 }]),
+	];
+
+	it("a nested ping whose arguments Pi omitted keeps its accepted message as a typed blocked report", () => {
+		const { record, report } = assembleResult(
+			facts(omittedPing(), { acceptedCall: { toolCallId: "k1/1", args: { message: longQuestion } } }),
+		);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "blocked");
+		assert.equal(report, longQuestion, "the full ping message is the report (D12)");
+		assert.equal(record.summary, longQuestion.slice(0, SUMMARY_MAX_CHARS - CUT_MARK.length) + CUT_MARK);
+	});
+
+	it("a nested done call whose arguments Pi omitted is typed from its accepted payload", () => {
+		const summary = "s".repeat(9_000);
+		const entries = [
+			sessionHeader(),
+			assistant("Nested report."),
+			toolCall("codemode", { code: "..." }, "k1"),
+			toolResult("codemode", "k1", "ok", false, [{ id: "k1/2", name: DONE, status: "ok", argumentsBytes: 9_040 }]),
+		];
+		const { record, report } = assembleResult(
+			facts(entries, { acceptedCall: { toolCallId: "k1/2", args: { outcome: "partial", summary } } }),
+		);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.equal(report, `${summary}\n\nNested report.`);
+	});
+
+	it("an accepted payload of another call does not type a call whose arguments Pi omitted", () => {
+		const { record } = assembleResult(facts(omittedPing(), { acceptedCall: { toolCallId: "k9/1", args: { message: "other" } } }));
+		assert.equal(record.typed, false);
+	});
 });
 
 describe("result assembler: end precedence (D7, D12)", () => {

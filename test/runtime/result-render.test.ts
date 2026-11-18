@@ -10,6 +10,7 @@ import {
 	RESULT_TEXT_MAX_CHARS,
 	renderResult,
 	shortestReadLocator,
+	type VerifierFooter,
 } from "../../src/runtime/result-render.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult } from "../support/result-fixtures.ts";
@@ -18,7 +19,8 @@ import { assert, describe, it } from "../support/index.ts";
 const HOME = homedir();
 const CWD = "/tmp/parent-work";
 const SESSION_FILE = "/tmp/sessions/child-session-file.jsonl";
-const VERIFIER_FOOTER = "verifier: winner attempt 2 of 3, staged, not applied; full provenance in the report";
+const VERIFIER_FOOTER: VerifierFooter = { winner: "staged", detail: "attempt 2 of 3; full provenance in the report" };
+const VERIFIER_LINE = "verifier: winner staged: attempt 2 of 3; full provenance in the report";
 const WARNINGS = ["dropped missing extension: npm:pi-missing-ext", "context at 91% of the window"];
 
 function recordFor(reportLength: number, typed: boolean, report: ReportStorage): ResultRecord {
@@ -69,6 +71,7 @@ describe("result renderer: G1.3 bounded text", () => {
 				assert.ok(frameLength(text, record.summary) <= FRAME_MAX_CHARS, `frame ${frameLength(text, record.summary)}`);
 				assert.match(text.split("\n")[0], typed ? / · partial · .* · typed · data error$/ : / · done · .* · untyped$/);
 				assert.ok(text.includes("run: r-0001"));
+				assert.ok(text.includes(VERIFIER_LINE), "the whole verifier footer fits with a short locator");
 				assert.ok(text.includes("context: 91000/100000 tokens"), "the requested context line stays");
 				assert.ok(text.includes("report: ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
 				assert.ok(!text.includes(SESSION_FILE), "no session path");
@@ -87,7 +90,7 @@ describe("result renderer: G1.3 bounded text", () => {
 		const locator = `~/${path.slice(HOME.length + 1)}`;
 		assert.ok(text.includes(`report: ${locator}\n`), "the footer names the whole ~ locator");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
-		assert.ok(text.includes(VERIFIER_FOOTER), "the verifier footer is a required field (D18)");
+		assert.ok(text.includes("\nverifier: winner staged"), "the verifier's staged fact is a required field (D18)");
 		for (const warning of WARNINGS) assert.ok(!text.includes(warning), "warnings get no room beyond 400 characters");
 		const summary = renderedSummary(text);
 		assert.ok(frameLength(text, summary) <= FRAME_MAX_CHARS + locator.length, "only the locator widens the frame");
@@ -168,6 +171,34 @@ describe("result renderer: frame budget (D14)", () => {
 		const text = renderResult(record(), { cwd: CWD, homeDir: HOME, warnings: [warning], showContextUsage: true });
 		assert.ok(text.includes("context: 91000/100000 tokens"), text);
 		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS);
+	});
+
+	// Review R2-1: a failed report write has no locator, so no D14 exception widens the frame.
+	const saveError = `EACCES: permission denied, open '${HOME}/${"deep/".repeat(40)}report.md'`;
+	const unsaved = () => ({ ...recordFor(1_500, true, { saved: false, error: saveError }), summary: "s".repeat(1_500) });
+
+	it("a failed report write with every required field keeps the frame within 400", () => {
+		const options = { cwd: CWD, homeDir: HOME, warnings: WARNINGS, verifierFooter: VERIFIER_FOOTER, showContextUsage: true };
+		const text = renderResult(unsaved(), options);
+		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
+		assert.ok(text.includes("s".repeat(1_500)), "the whole summary stays");
+		assert.ok(text.includes("\nreport not saved: EACCES"), "the storage fact stays");
+		assert.ok(text.includes("\nrun: r-0001\n"));
+		assert.ok(text.includes("\nnot resumable: no-session child"), "the resume reason stays");
+		assert.ok(text.includes("\nverifier: winner staged"), "the staged fact stays (D18)");
+		assert.ok(text.includes("\ncontext: 91000/100000 tokens"));
+	});
+
+	it("a verifier text over 1,900 characters keeps the frame and the total within their caps", () => {
+		const detail = `provenance ${"p".repeat(1_950)}`;
+		for (const report of [{ saved: false as const, error: saveError }, { saved: true as const, path: "/tmp/r.md" }]) {
+			const record = { ...recordFor(1_500, true, report), summary: "s".repeat(1_500) };
+			const text = renderResult(record, { cwd: CWD, homeDir: HOME, verifierFooter: { winner: "not applied", detail }, showContextUsage: true });
+			assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
+			assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
+			assert.ok(text.includes("\nverifier: winner not applied: provenance "), "the not-applied fact stays (D18)");
+			assert.ok(text.includes("\ncontext: 91000/100000 tokens"));
+		}
 	});
 
 	it("a watcher error that names the session file never reaches the text", () => {

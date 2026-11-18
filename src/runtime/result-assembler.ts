@@ -44,6 +44,12 @@ export interface RunFacts {
 	launchEntryCount: number;
 	/** Index in `entries` of the missing-call nudge message, when one was sent. */
 	nudgeEntryIndex?: number;
+	/**
+	 * The arguments of the completion call as the child's completion tool accepted them, by tool call id
+	 * (D12). Pi omits nested-call arguments over 8 KiB per call or 32 KiB per result
+	 * (NESTED_CALL_LIMITS), so this is the payload source for such a call; recorded arguments win.
+	 */
+	acceptedCall?: { toolCallId: string; args: Record<string, unknown> };
 	/** Set when the accepted completion call carried data that failed its schema twice (D12). */
 	dataError?: string;
 	contextUsage?: ContextUsage;
@@ -72,10 +78,12 @@ type CompletionTool = "done" | "ping";
 /**
  * A completion call that ran and succeeded: a direct call with its successful tool result, or a
  * nested call (for example from a codemode script) that Pi recorded with status ok. `args` is
- * undefined when Pi omitted oversize nested arguments; such a call ends the run untyped.
+ * undefined when Pi omitted oversize nested arguments; the accepted payload of the same call
+ * (RunFacts.acceptedCall) then supplies them, and without it the call ends the run untyped.
  */
 interface CompletionCall {
 	tool: CompletionTool;
+	id: string;
 	at: Position;
 	args: Record<string, unknown> | undefined;
 }
@@ -108,9 +116,9 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 	if (!isRecord(nested) || !Array.isArray(nested.calls)) return [];
 	const calls: CompletionCall[] = [];
 	nested.calls.forEach((record: unknown, index) => {
-		if (!isRecord(record) || record.status !== "ok") return;
+		if (!isRecord(record) || record.status !== "ok" || typeof record.id !== "string") return;
 		const tool = completionTool(record.name);
-		if (tool) calls.push({ tool, at: [entry, index], args: isRecord(record.arguments) ? record.arguments : undefined });
+		if (tool) calls.push({ tool, id: record.id, at: [entry, index], args: isRecord(record.arguments) ? record.arguments : undefined });
 	});
 	return calls;
 }
@@ -140,7 +148,7 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 				texts.push({ at: [i, b], text: block.text });
 			} else if (block.type === "toolCall" && typeof block.id === "string") {
 				const tool = completionTool(block.name);
-				if (tool) requested.set(block.id, { tool, at: [i, b], args: isRecord(block.arguments) ? block.arguments : {} });
+				if (tool) requested.set(block.id, { tool, id: block.id, at: [i, b], args: isRecord(block.arguments) ? block.arguments : {} });
 			}
 		});
 	}
@@ -268,9 +276,15 @@ interface Body {
 	artifacts: string[];
 }
 
+/** The call's recorded arguments, else the accepted payload of the same call. */
+function callArgs(call: CompletionCall, accepted: RunFacts["acceptedCall"]): Record<string, unknown> | undefined {
+	return call.args ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
+}
+
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */
-function typedBody(call: CompletionCall, text: string | undefined, dataError: string | undefined): Body | undefined {
-	const args = call.args;
+function typedBody(call: CompletionCall, text: string | undefined, facts: RunFacts): Body | undefined {
+	const args = callArgs(call, facts.acceptedCall);
+	const dataError = facts.dataError;
 	if (!args) return undefined;
 	if (call.tool === "ping") {
 		const message = nonBlankString(args.message);
@@ -323,7 +337,7 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 	const { texts, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const text = reportText(texts, call, facts.nudgeEntryIndex);
 	const typing = call && !textAfterCall(texts, call) && !endOverridesCall(facts.end);
-	const body = (typing ? typedBody(call, text, facts.dataError) : undefined) ?? untypedBody(facts, text);
+	const body = (typing ? typedBody(call, text, facts) : undefined) ?? untypedBody(facts, text);
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,
