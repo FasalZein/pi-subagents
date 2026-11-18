@@ -61,6 +61,7 @@ function loadExtension(cwd: string): {
 		registerShortcut() {},
 		registerMessageRenderer() {},
 		sendMessage() {},
+		appendEntry() {},
 		getThinkingLevel: () => "low",
 	} as unknown as ExtensionAPI;
 	const prevCwd = process.cwd();
