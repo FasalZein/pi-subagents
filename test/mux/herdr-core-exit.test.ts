@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { MuxSessionTarget, ProgramLaunch } from "../../src/mux/backend.ts";
-import { HERDR_CORE_LAUNCH_LABEL_KEY } from "../../src/mux/herdr-core-exit.ts";
 import { herdrCoreBackend } from "../../src/mux/herdr-core.ts";
+import { HERDR_CORE_LAUNCH_LABEL_KEY } from "../../src/mux/herdr-core-exit.ts";
 import { writeExecutable } from "../support/index.ts";
 import {
 	FAKE_HC,
@@ -24,7 +24,10 @@ const LAUNCH: ProgramLaunch = {
 };
 const WAIT_MS = 5_000;
 
-async function eventually<T>(read: () => Promise<T | null | undefined> | T | null | undefined, what: string): Promise<T> {
+async function eventually<T>(
+	read: () => Promise<T | null | undefined> | T | null | undefined,
+	what: string,
+): Promise<T> {
 	const deadline = Date.now() + WAIT_MS;
 	while (Date.now() < deadline) {
 		const value = await read();
@@ -82,7 +85,9 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		const second = await start();
 		const requests = readFakeHcRequests(stateDir);
 		assert.equal(requests.length, 2);
-		const labels = requests.map((request) => (request.params.labels as Record<string, string>)[HERDR_CORE_LAUNCH_LABEL_KEY]);
+		const labels = requests.map(
+			(request) => (request.params.labels as Record<string, string>)[HERDR_CORE_LAUNCH_LABEL_KEY],
+		);
 		assert.notEqual(labels[0], labels[1]);
 		for (const [index, request] of requests.entries()) {
 			assert.equal(request.method, "terminal.run");
@@ -112,7 +117,11 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		finishFakeTerminal(stateDir, surface, 7);
 		const exit = await eventually(() => checkExit(surface), "the finished event");
 		assert.equal(exit.exitCode, 7);
-		assert.equal(readFakeHcCalls(stateDir).some((call) => call.startsWith("get ")), false, "the event alone ends the watch");
+		assert.equal(
+			readFakeHcCalls(stateDir).some((call) => call.startsWith("get ")),
+			false,
+			"the event alone ends the watch",
+		);
 	});
 
 	it("after a dropped stream subscribes again first, then reads the state once", async () => {

@@ -162,11 +162,21 @@ export function seedFakeHcCaller(stateDir: string): void {
 export function finishFakeTerminal(stateDir: string, address: string, exitCode: number, emitEvent = true): void {
 	const path = join(stateDir, `term-${address}.json`);
 	const term = JSON.parse(readFileSync(path, "utf8"));
-	Object.assign(term, { state: "finished", exit_code: exitCode, reason: "exited", signal: null, finished_ms: Date.now() });
+	Object.assign(term, {
+		state: "finished",
+		exit_code: exitCode,
+		reason: "exited",
+		signal: null,
+		finished_ms: Date.now(),
+	});
 	writeFileSync(path, JSON.stringify(term));
 	if (!emitEvent) return;
 	const data = { exit_code: exitCode, finished_ms: term.finished_ms, reason: "exited", signal: null };
-	const line = JSON.stringify({ jsonrpc: "2.0", method: "event", params: { data, seq: 900, terminal: address, type: "finished" } });
+	const line = JSON.stringify({
+		jsonrpc: "2.0",
+		method: "event",
+		params: { data, seq: 900, terminal: address, type: "finished" },
+	});
 	appendFileSync(join(stateDir, "events"), `${JSON.stringify({ labels: term.labels, line })}\n`);
 }
 

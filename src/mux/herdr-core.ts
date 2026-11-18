@@ -5,10 +5,10 @@ import { HERDR_CORE_PANE_IDENTITY } from "../launch/child-env.ts";
 import type { DirectProgramSession, MuxBackendAdapter, ProgramLaunch } from "./backend.ts";
 import { execFileAsync, tailLines } from "./core.ts";
 import {
+	exitFactsResult,
 	HC_COMMAND,
 	HERDR_CORE_LAUNCH_LABEL_KEY,
 	LabelExitWatch,
-	exitFactsResult,
 	readFinishedTerminal,
 } from "./herdr-core-exit.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
