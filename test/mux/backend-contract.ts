@@ -33,6 +33,8 @@ export interface MuxBackendContractFixture {
 	 * "any-suffices": one key alone makes it available; without all of them it is unavailable.
 	 */
 	runtimeEnvKeysRule?: "each-required" | "any-suffices";
+	/** False when the backend renames no tab, so renameCurrentTab records nothing (Rex: no call targets the parent block). Default true. */
+	renamesTab?: boolean;
 	/** False when the backend has no workspace to rename, so renameWorkspace records nothing. Default true. */
 	renamesWorkspace?: boolean;
 	/** Titles that the fake recorded from renameCurrentTab and renameWorkspace, in call order. */
@@ -222,7 +224,10 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		it("renames the current tab and the workspace", () => {
 			adapter.renameCurrentTab("Contract Tab");
 			adapter.renameWorkspace("Contract Workspace");
-			const expected = fixture.renamesWorkspace === false ? ["Contract Tab"] : ["Contract Tab", "Contract Workspace"];
+			const expected = [
+				...(fixture.renamesTab === false ? [] : ["Contract Tab"]),
+				...(fixture.renamesWorkspace === false ? [] : ["Contract Workspace"]),
+			];
 			assert.deepEqual(fixture.recordedTitles(stateDir), expected);
 		});
 

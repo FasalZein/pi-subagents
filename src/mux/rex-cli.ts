@@ -13,11 +13,10 @@ export const REX_CAPTURE_MAX_BYTES = 256 * 1024;
 
 /** A failed rex call; stderr tells a connect timeout from a request timeout (live check 13). */
 export class RexCallError extends Error {
-	constructor(
-		message: string,
-		readonly stderr: string,
-	) {
+	readonly stderr: string;
+	constructor(message: string, stderr: string) {
 		super(message);
+		this.stderr = stderr;
 	}
 }
 
@@ -127,7 +126,7 @@ function readCappedTail(fd: number): string {
  */
 async function withCaptureFile(run: (fd: number) => Promise<void> | void): Promise<string> {
 	const path = join(tmpdir(), `pi-rex-capture-${randomUUID()}`);
-	const fd = openSync(path, "wx", 0o600);
+	const fd = openSync(path, "wx+", 0o600);
 	try {
 		await run(fd);
 		return readCappedTail(fd);
@@ -139,7 +138,7 @@ async function withCaptureFile(run: (fd: number) => Promise<void> | void): Promi
 
 function withCaptureFileSync(run: (fd: number) => void): string {
 	const path = join(tmpdir(), `pi-rex-capture-${randomUUID()}`);
-	const fd = openSync(path, "wx", 0o600);
+	const fd = openSync(path, "wx+", 0o600);
 	try {
 		run(fd);
 		return readCappedTail(fd);
