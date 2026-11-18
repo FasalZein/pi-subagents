@@ -28,10 +28,9 @@ import {
 import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
-import { createZellijCommandSurface } from "../mux/zellij-placement.ts";
-import { getZellijShellCommand, resolveZellijTarget } from "../mux/zellij-runtime.ts";
 import {
 	createSurface,
+	currentMuxAdapter,
 	getMuxBackend,
 	muxSetupHint,
 	resolveHerdrPlacementPolicy,
@@ -512,8 +511,8 @@ async function resumeSubagentSessionWithoutWidth(
 						policy: configuredZellijPolicy,
 					}
 				: undefined;
-		const zellijTarget = backend === "zellij" ? await resolveZellijTarget() : undefined;
-		const ordinarySurface = zellijTarget
+		const programSession = await currentMuxAdapter()?.openProgramSession?.();
+		const ordinarySurface = programSession
 			? undefined
 			: await createSurface(surfaceName, {
 					herdr: herdrContext,
@@ -526,7 +525,7 @@ async function resumeSubagentSessionWithoutWidth(
 			const taskPath = writeResumeTaskArtifact(name, expandedTask, sessionFile, resumeCwd ?? process.cwd());
 			piArgs.push(`@${taskPath}`);
 		}
-		if (zellijTarget) resumeEnvVars.ZELLIJ_SESSION_NAME = zellijTarget.sessionName;
+		if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 		if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
 		const { command, dispose } = buildInteractiveShellCommand({
 			cwd: resumeCwd ?? undefined,
@@ -534,19 +533,19 @@ async function resumeSubagentSessionWithoutWidth(
 			envOverrides: resumeEnvVars,
 			denyEnv: invocationMetadata?.denyEnv,
 			doneSentinelFile,
-			...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
+			...(programSession ? { deriveZellijPaneSurface: true } : {}),
 		});
 		try {
 			const surface =
 				ordinarySurface ??
-				(await createZellijCommandSurface(surfaceName, zellijTarget!, getZellijShellCommand(command), zellijContext));
-			if (!zellijTarget) {
+				(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+			if (!programSession) {
 				await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
 				sendShellCommand(surface, command);
 			}
 			running.surface = surface;
 			running.doneSentinelFile = doneSentinelFile;
-			running.zellijTarget = zellijTarget;
+			running.zellijTarget = programSession?.target;
 		} catch (error) {
 			// Nothing consumed the capsule; do not leave credentials behind.
 			dispose();
