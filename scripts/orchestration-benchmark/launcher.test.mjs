@@ -2,7 +2,13 @@
 // Checks of ownership, credentials, cleanup and attempt classification. No model, no Pi.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
@@ -396,6 +402,59 @@ test("[F12] the deadline counts from submission and wins over a late answer", as
 		deadlineMs,
 	});
 	assert.deepEqual(inTime, { kind: "answered", answer: "w" });
+});
+
+test("[premature] a waiting parent stays under observation while a launched child has not ended", async () => {
+	const root = scratch();
+	const probeDir = join(root, "probes");
+	mkdirSync(probeDir);
+	const parentFile = join(root, "p.jsonl");
+	const childFile = join(root, "c.jsonl");
+	const jsonl = (events) =>
+		`${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+	// The async parent launched one child and yielded with a terminal reply.
+	writeFileSync(
+		parentFile,
+		jsonl([
+			reply("toolUse", "", ["subagent"]),
+			toolResult("subagent"),
+			reply("stop", "Waiting for the child."),
+		]),
+	);
+	// The child started (probe and launch marker) but is in a slow request.
+	writeFileSync(
+		join(probeDir, "c.json"),
+		JSON.stringify({ sessionFile: childFile, agent: "reader" }),
+	);
+	writeFileSync(childFile, jsonl(childSession([]).events));
+	const fakeClock = () => {
+		let now = Date.now();
+		return {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+			alive: () => true,
+		};
+	};
+	const run = (clock) =>
+		observe({
+			parent: {},
+			parentFile,
+			root,
+			probeDir,
+			submittedAt: clock.now(),
+			deadlineMs: 600_000,
+			clock,
+		});
+	// 60 s of silence while the child is pending: no verdict before the deadline.
+	assert.deepEqual(await run(fakeClock()), {
+		kind: "verdict",
+		verdict: "timeout",
+	});
+	// Once the child has ended, the quiet rule applies again.
+	writeFileSync(childFile, jsonl(childSession(["stop"]).events));
+	assert.deepEqual(await run(fakeClock()), { kind: "answered", answer: null });
 });
 
 test("[F14] a checkout with an untracked file is refused", () => {

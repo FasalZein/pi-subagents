@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+	childEnded,
 	childFulfils,
 	deliveredToParent,
 	endsWithProviderError,
@@ -100,30 +101,76 @@ function lastActivity(root) {
 	return latest;
 }
 
-/** Watch the parent from prompt submission until an outcome. Deadline is checked first. */
+// The launch tool of the extension under test; its successful results count launches.
+const LAUNCH_TOOL = "subagent";
+
+/**
+ * Number of launched children that have not ended. A child counts as launched
+ * from the first trace it leaves: a successful launch tool result in the parent,
+ * a child probe or a child session file. A half-written probe counts as pending.
+ */
+function pendingChildren(parentEvents, root, probeDir) {
+	let evidence;
+	try {
+		evidence = collectEvidence(root, probeDir);
+	} catch {
+		return 1;
+	}
+	const launchResults = parentEvents.filter(
+		(e) =>
+			e?.type === "message" &&
+			e.message?.role === "toolResult" &&
+			e.message.toolName === LAUNCH_TOOL &&
+			!e.message.isError,
+	).length;
+	const launched = Math.max(
+		launchResults,
+		evidence.probes.filter((probe) => probe.agent).length,
+		evidence.children.length,
+	);
+	const ended = evidence.children.filter((c) => childEnded(c.events)).length;
+	return launched - ended;
+}
+
+const REAL_CLOCK = { now: () => Date.now(), sleep, alive: isAlive };
+
+/**
+ * Watch the parent from prompt submission until an outcome. Deadline is checked first.
+ * @param {object} input
+ * @param {{now: () => number, sleep: (ms: number) => Promise<void>, alive: (parent: object) => boolean}} [input.clock] - injected by tests
+ */
 export async function observe({
 	parent,
 	parentFile,
 	root,
+	probeDir,
 	submittedAt,
 	deadlineMs,
+	clock = REAL_CLOCK,
 }) {
 	let errorSince = null;
 	while (true) {
-		await sleep(POLL_MS);
-		if (Date.now() - submittedAt >= deadlineMs)
+		await clock.sleep(POLL_MS);
+		const now = clock.now();
+		if (now - submittedAt >= deadlineMs)
 			return { kind: "verdict", verdict: "timeout" };
 		const events = readEvents(parentFile);
 		const { terminal, answer } = terminalAnswer(events);
 		if (terminal && answer !== null) return { kind: "answered", answer };
-		if (terminal && Date.now() - lastActivity(root) >= QUIET_MS)
+		// A terminal reply without an answer is final only when the parent finished
+		// and no child is pending; a parent that waits for delivery stays observed.
+		if (
+			terminal &&
+			now - lastActivity(root) >= QUIET_MS &&
+			pendingChildren(events, root, probeDir) <= 0
+		)
 			return { kind: "answered", answer: null };
 		if (endsWithProviderError(events)) {
-			errorSince ??= Date.now();
-			if (Date.now() - errorSince >= PROVIDER_ERROR_SETTLE_MS)
+			errorSince ??= now;
+			if (now - errorSince >= PROVIDER_ERROR_SETTLE_MS)
 				return { kind: "provider-error" };
 		} else errorSince = null;
-		if (!isAlive(parent))
+		if (!clock.alive(parent))
 			return { kind: "infra", infraReason: "parent exited before a verdict" };
 	}
 }
@@ -325,6 +372,7 @@ export async function runAttempt({
 			parent,
 			parentFile,
 			root,
+			probeDir: home.probeDir,
 			submittedAt,
 			deadlineMs,
 		});

@@ -306,6 +306,12 @@ function textOf(content) {
 		.join("\n");
 }
 
+/** True when the child's own last reply ended its turn normally. */
+export function childEnded(events) {
+	const own = events.slice(Math.max(0, launchBoundary(events)) + 1);
+	return assistantMessages(own).at(-1)?.stopReason === "stop";
+}
+
 const baseName = (path) =>
 	String(path ?? "")
 		.split("/")
