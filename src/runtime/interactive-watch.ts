@@ -9,6 +9,7 @@ import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
+import { publishedResultFields, publishRunResult } from "./run-result.ts";
 import {
 	checkSubagentTimeout,
 	checkSubagentTimeoutWrapUp,
@@ -285,10 +286,22 @@ async function watchInteractiveGeneration(
 			return { kind: "restart" };
 		}
 		const elapsed = Math.floor((Date.now() - startTime) / 1000);
-		const { summary, summarySource } = getSummary(running, pollResult);
+		let { summary, summarySource } = getSummary(running, pollResult);
 		const errorMessage = pollResult.reason === "error" ? pollResult.errorMessage : undefined;
 		const finalContextUsage = resolveFinalContextUsage(running, pickFinalUsageSource(pollResult, exitSignal));
 		const timeoutFields = recordTimeoutOutcome(running, pollResult);
+		// D14: a pane child that ended on its own gets the same assembled, published and rendered
+		// result as a headless child. The poll result is the exit record when the poller consumed it.
+		const ping = pollResult.ping ?? exitSignal?.ping;
+		const published = publishRunResult(running, {
+			exitCode: pollResult.exitCode,
+			timedOut: Boolean(timeoutFields.timedOut),
+			pinged: pollResult.reason === "ping" || Boolean(ping),
+			errorMessage,
+			exitSignal: pollResult.acceptedCall ? pollResult : exitSignal,
+			contextUsage: finalContextUsage,
+		});
+		if (published) ({ summary, summarySource } = published);
 		cleanupDoneSentinel(running);
 		try {
 			await runtime.closeRunningSurface(running);
@@ -309,8 +322,9 @@ async function watchInteractiveGeneration(
 				...finalContextUsage,
 				...timeoutFields,
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				ping: pollResult.ping ?? exitSignal?.ping,
+				ping,
 				errorMessage,
+				...publishedResultFields(published),
 			},
 		};
 	} catch (err: unknown) {

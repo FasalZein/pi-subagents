@@ -1,13 +1,14 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
-import type { RunningSubagent, SubagentSummarySource } from "../types.ts";
+import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { assembleResult, NO_REPORT_LINE } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
 
-/** Where a headless run publishes its result: the store of its parent session and its reserved id. */
+/** Where a watched run publishes its result: the store of its parent session and its reserved id. */
 export interface ResultTarget {
 	store: ResultStore;
 	reservation: Reservation;
@@ -40,7 +41,7 @@ export function launchWarningLines(warning: string): string[] {
 		.filter(Boolean);
 }
 
-export interface HeadlessResult {
+export interface PublishedResult {
 	record: ResultRecord;
 	/** The parent's text (D14); the message path and the wait path both show it. */
 	text: string;
@@ -48,17 +49,34 @@ export interface HeadlessResult {
 	summarySource: SubagentSummarySource;
 }
 
+/** How a watched child ended, as its watcher saw it; only a clean end of its own is published here. */
+export interface WatchedEnd {
+	exitCode: number;
+	timedOut: boolean;
+	pinged: boolean;
+	errorMessage?: string;
+	/** The exit record that carries the completion call, if any. */
+	exitSignal: PollResult | null | undefined;
+	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean; errorMessage?: string };
+}
+
 /**
- * D13 and D14: assembles, publishes and renders the result of a headless child that exited on its
- * own with code 0, also after a context-pressure wrap-up. Time-limit, error and ping ends keep their
- * own texts until their tickets move them here (T09).
+ * D13 and D14: assembles, publishes and renders the result of a headless or pane child that exited
+ * on its own with code 0, also after a context-pressure wrap-up. Returns undefined for any other
+ * end: time-limit, error and ping ends keep their own texts until their tickets move them here (T09),
+ * and a no-session child has no session to assemble from (T08b).
  */
-export function publishHeadlessResult(
-	running: RunningSubagent,
-	target: ResultTarget,
-	exitSignal: PollResult | null,
-	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean },
-): HeadlessResult {
+export function publishRunResult(running: RunningSubagent, end: WatchedEnd): PublishedResult | undefined {
+	const target = running.resultTarget;
+	const endedOnItsOwn =
+		end.exitCode === 0 &&
+		!end.timedOut &&
+		!end.pinged &&
+		!end.errorMessage &&
+		!end.contextUsage.errorMessage &&
+		!running.timeoutWrapUp;
+	if (!target || running.noSession || !endedOnItsOwn || !existsSync(running.sessionFile)) return undefined;
+	const { contextUsage } = end;
 	const assembled = assembleResult({
 		runId: target.reservation.runId,
 		name: running.name,
@@ -71,7 +89,7 @@ export function publishHeadlessResult(
 		end: { kind: "exited", code: 0 },
 		entries: getEntries(running.sessionFile),
 		launchEntryCount: running.launchEntryCount ?? 0,
-		acceptedCall: exitSignal?.acceptedCall,
+		acceptedCall: end.exitSignal?.acceptedCall,
 		contextUsage:
 			contextUsage.contextTokens !== undefined
 				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
@@ -89,4 +107,16 @@ export function publishHeadlessResult(
 	});
 	const noText = !record.typed && assembled.report === `${record.summary}\n\n${NO_REPORT_LINE}`;
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
+}
+
+/** The SubagentResult fields that carry a published rendering to the message and wait paths. */
+export function publishedResultFields(
+	published: PublishedResult | undefined,
+): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile"> {
+	if (!published) return {};
+	return {
+		resultText: published.text,
+		resultRunId: published.record.runId,
+		...(published.record.report.saved ? { reportFile: published.record.report.path } : {}),
+	};
 }

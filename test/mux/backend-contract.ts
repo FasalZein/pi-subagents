@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
 import { closeSurfaceAsync } from "../../src/mux/io.ts";
 import { createSurface, getMuxBackend, readScreen, sendCommand } from "../../src/mux.ts";
+import { checkPaneResultThroughAssembler } from "./pane-result-check.ts";
 
 /**
  * One backend plus its fake CLI. The contract suite knows nothing about the
@@ -131,6 +132,10 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			mkdirSync(emptyDir);
 			setEnv("PATH", emptyDir);
 			assert.equal(adapter.isAvailable(), false);
+		});
+
+		it("delivers a pane child's 20,000-character answer capped, with a report file, the same on both paths", async () => {
+			await checkPaneResultThroughAssembler(adapter, root);
 		});
 
 		it("gives a setup hint", () => {

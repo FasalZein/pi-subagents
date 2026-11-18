@@ -6,7 +6,7 @@ import { findLastSubagentOutputWithSource, getEntries, getEntryCount, getNewEntr
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
-import { type HeadlessResult, publishHeadlessResult } from "./headless-result.ts";
+import { publishedResultFields, publishRunResult } from "./run-result.ts";
 import {
 	TIMEOUT_KILL_ESCALATION_MS,
 	checkSubagentTimeout,
@@ -388,18 +388,15 @@ function watchBackgroundGeneration(
 				summary = `Background agent exited with code ${exitCode}\n\n${stderr}`;
 			}
 			// D14: a run that ended on its own gets the assembled, published and rendered result.
-			let published: HeadlessResult | undefined;
-			const endedOnItsOwn =
-				exitCode === 0 &&
-				!timedOut &&
-				!exitSignal?.ping &&
-				!errorMessage &&
-				!finalContextUsage.errorMessage &&
-				!running.timeoutWrapUp;
-			if (running.resultTarget && !running.noSession && endedOnItsOwn && existsSync(running.sessionFile)) {
-				published = publishHeadlessResult(running, running.resultTarget, exitSignal, finalContextUsage);
-				({ summary, summarySource } = published);
-			}
+			const published = publishRunResult(running, {
+				exitCode,
+				timedOut: Boolean(timedOut),
+				pinged: Boolean(exitSignal?.ping),
+				errorMessage,
+				exitSignal,
+				contextUsage: finalContextUsage,
+			});
+			if (published) ({ summary, summarySource } = published);
 			if (timedOut) {
 				if (!running.noSession) {
 					writeSubagentTimeoutSidecar(running.sessionFile, {
@@ -431,13 +428,7 @@ function watchBackgroundGeneration(
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
 				ping: exitSignal?.ping,
 				errorMessage,
-				...(published
-					? {
-							resultText: published.text,
-							resultRunId: published.record.runId,
-							...(published.record.report.saved ? { reportFile: published.record.report.path } : {}),
-						}
-					: {}),
+				...publishedResultFields(published),
 				},
 			});
 		};
