@@ -6,16 +6,17 @@ import type { MuxBackendAdapter } from "./backend.ts";
 import { cmuxBackend } from "./cmux.ts";
 import { herdrBackend } from "./herdr-backend.ts";
 import { herdrCoreBackend } from "./herdr-core.ts";
+import { rexBackend } from "./rex.ts";
 import { tmuxBackend } from "./tmux.ts";
 import { weztermBackend } from "./wezterm.ts";
 import { zellijBackend } from "./zellij.ts";
 
 export const execFileAsync = promisify(execFile);
 
-export type MuxBackend = "cmux" | "tmux" | "zellij" | "wezterm" | "herdr" | "herdr-core";
+export type MuxBackend = "cmux" | "tmux" | "zellij" | "wezterm" | "herdr" | "herdr-core" | "rex";
 
 /** Every backend, in detection order without a forced backend (spec D29). */
-const DETECTION_ORDER: readonly MuxBackend[] = ["herdr-core", "herdr", "cmux", "tmux", "zellij", "wezterm"];
+const DETECTION_ORDER: readonly MuxBackend[] = ["herdr-core", "rex", "herdr", "cmux", "tmux", "zellij", "wezterm"];
 
 function muxPreference(): MuxBackend | null {
 	const pref = (process.env.PI_SUBAGENT_MUX ?? "").trim().toLowerCase();
@@ -63,6 +64,8 @@ export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter {
 			return herdrBackend;
 		case "herdr-core":
 			return herdrCoreBackend;
+		case "rex":
+			return rexBackend;
 	}
 }
 
@@ -92,7 +95,9 @@ export function isMuxAvailable(): boolean {
 export function muxSetupHint(): string {
 	const pref = muxPreference();
 	if (pref) return muxBackendAdapter(pref).setupHint();
-	return "Start pi inside Herdr (`herdr`, then run `pi`), cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
+	// In a Rex block the Rex hint names why Rex was not selected, for example an untested API revision (D28).
+	if (process.env.REX_SESSION && process.env.REX_BLOCK) return rexBackend.setupHint();
+	return "Start pi inside Herdr (`herdr`, then run `pi`), a Rex block, cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
 }
 
 export function requireMuxBackend(): MuxBackend {

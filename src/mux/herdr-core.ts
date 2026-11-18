@@ -15,7 +15,7 @@ import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
 /** Bound of the detection call: the same 2,000 ms as old herdr's bounded CLI calls (runHerdrJsonAsync). */
-const APP_CHECK_TIMEOUT_MS = 2_000;
+export const APP_CHECK_TIMEOUT_MS = 2_000;
 /** Label that carries the title of the caller terminal; herdr-core has no tab or workspace of its own. */
 const TITLE_LABEL_KEY = "pi-subagents.title";
 
