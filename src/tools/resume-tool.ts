@@ -13,6 +13,7 @@ import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
+import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 
 export interface ResumeToolRuntime extends ResumeServiceRuntime {
@@ -58,6 +59,7 @@ export function registerSubagentResumeTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
 	runtime: ResumeToolRuntime,
+	grant: ManagementToolGrant,
 ): void {
 	if (!shouldRegister(SUBAGENT_RESUME_TOOL_NAME)) return;
 	pi.registerTool({
@@ -143,6 +145,7 @@ export function registerSubagentResumeTool(
 			return component;
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_RESUME_TOOL_NAME));
 			const sessionFile = params.sessionFile;
 			if (!sessionFile) throw new Error("Session file is required.");
 			assertResumeAllowed(sessionFile);

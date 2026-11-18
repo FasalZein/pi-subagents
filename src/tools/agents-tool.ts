@@ -9,6 +9,7 @@ import {
 } from "../agents/launchable-agents.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
 import type { ParsedSpawnEnv } from "../spawn/policy.ts";
+import type { ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_AGENTS_TOOL_NAME } from "./tool-names.ts";
 
 /** Parse the tool parameters into one request; name and query together are refused. */
@@ -22,8 +23,6 @@ function parseAgentsRequest(params: { name?: string; query?: string; limit?: num
 }
 
 interface AgentsToolRuntime {
-	/** Whether this session may call the launch tool: the check the index makes. */
-	mayLaunch(): boolean;
 	spawnEnv(): ParsedSpawnEnv;
 	/** The agents this session may launch, read from the current files. */
 	listLaunchableAgents(cwd: string, spawnEnv: ParsedSpawnEnv): LaunchableAgent[];
@@ -37,6 +36,7 @@ export function registerSubagentAgentsTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
 	runtime: AgentsToolRuntime,
+	grant: ManagementToolGrant,
 ): void {
 	if (!shouldRegister(SUBAGENT_AGENTS_TOOL_NAME)) return;
 	pi.registerTool({
@@ -52,7 +52,7 @@ export function registerSubagentAgentsTool(
 			),
 		}),
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-			const request = runtime.mayLaunch() ? parseAgentsRequest(params) : LAUNCH_DENIED;
+			const request = grant.mayLaunch() ? parseAgentsRequest(params) : LAUNCH_DENIED;
 			const spawnEnv = runtime.spawnEnv();
 			const text =
 				typeof request === "string"

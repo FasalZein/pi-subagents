@@ -31,6 +31,24 @@ function makeRunningSubagent(index: number): RunningSubagent {
 }
 
 describe("widget manager direct module tests", () => {
+	// Example test: this is a lifecycle sequence on one object, which no property,
+	// differential or e2e check reaches more directly.
+	it("does not read the ended session's ctx after reset", () => {
+		let stale = false;
+		const ctx = {
+			get hasUI() {
+				// Pi's runner throws on any ctx read after session_shutdown.
+				if (stale) throw new Error("ctx is stale");
+				return false;
+			},
+		};
+		const widget = new SubagentWidgetManager(() => [makeRunningSubagent(1)]);
+		widget.attachContext(ctx as never);
+		widget.reset();
+		stale = true;
+		assert.doesNotThrow(() => widget.update());
+	});
+
 	it("renders nothing when no subagents are running", () => {
 		const widget = new SubagentWidgetManager(() => []);
 		assert.deepEqual(widget.renderForTest(), []);

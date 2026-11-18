@@ -12,6 +12,10 @@ export const SUBAGENT_KILL_TOOL_NAME = "subagent_kill";
 export const SUBAGENT_AGENTS_TOOL_NAME = "subagent_agents";
 export const SET_TAB_TITLE_TOOL_NAME = "set_tab_title";
 
+// Pi's built-in tools that reach tools not yet declared (D21):
+export const CODEMODE_TOOL_NAME = "codemode";
+export const TOOL_SEARCH_TOOL_NAME = "tool_search";
+
 // Child-side protocol tools provided by the bundled subagent extension:
 export const CALLER_PING_TOOL_NAME = "caller_ping";
 export const SUBAGENT_DONE_TOOL_NAME = "subagent_done";
