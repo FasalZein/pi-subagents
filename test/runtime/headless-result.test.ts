@@ -6,20 +6,20 @@ import { join, resolve } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
-import { deliverCompletedSubagentResult } from "../../src/runtime/result-router.ts";
-import { buildCompletedSubagentResult } from "../../src/runtime/state.ts";
-import { waitForSubagentResult } from "../../src/runtime/wait-result.ts";
-import { withToolWarningForTest } from "../../src/testing/test-helpers.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
+import {
+	assistantText,
+	END_MARKER,
+	LONG_ANSWER,
+	messageText,
+	START_MARKER,
+	waitText,
+} from "../support/result-delivery.ts";
 import { testResultsDir } from "../support/result-fixtures.ts";
 
 const dirs: string[] = [];
-const START_MARKER = "<<T07-START>>";
-const END_MARKER = "<<T07-END>>";
-/** The ticket's long answer: a 20,000-character last message with a marker at each end. */
-const LONG_ANSWER = `${START_MARKER}${"lorem ipsum dolor sit amet\n".repeat(800).slice(0, 20_000 - START_MARKER.length - END_MARKER.length)}${END_MARKER}`;
 const TOOL_OUTPUT = "UNRELATED-TOOL-OUTPUT secret listing";
 
 interface TargetOptions {
@@ -70,27 +70,6 @@ async function finishHeadless(
 	);
 	child.emit("exit", 0);
 	return { running, result: await promise };
-}
-
-function assistantText(text: string) {
-	return { type: "message", id: "a1", message: { role: "assistant", content: [{ type: "text", text }] } };
-}
-
-function messageText(result: SubagentResult, running: RunningSubagent): string {
-	const sent: Array<{ content: string }> = [];
-	const completed = buildCompletedSubagentResult(running, result);
-	deliverCompletedSubagentResult({ sendMessage: (message) => sent.push(message as { content: string }) }, completed, String);
-	assert.equal(sent.length, 1);
-	return sent[0].content;
-}
-
-async function waitText(result: SubagentResult, running: RunningSubagent, launchWarning = ""): Promise<string> {
-	const cached = buildCompletedSubagentResult(running, result);
-	const reply = await waitForSubagentResult({ id: running.id }, { findTrackedSubagent: () => ({ cached }) } as never);
-	// The launch tool wraps the waited reply with its launch warning (subagent-tools, resume-tool).
-	const content = withToolWarningForTest(reply, launchWarning).content as Array<{ type: string; text?: string }>;
-	assert.equal(content.length, 1, "the waiting launch returns one text block");
-	return content[0].text ?? "";
 }
 
 describe("headless results through the assembler (T07)", () => {

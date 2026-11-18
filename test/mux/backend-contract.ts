@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
 import { closeSurfaceAsync } from "../../src/mux/io.ts";
 import { createSurface, getMuxBackend, readScreen, sendCommand } from "../../src/mux.ts";
+import {
+	checkManualPaneCloseWithNonzeroStatus,
+	checkPaneResultThroughAssembler,
+	checkProgramPaneExitDuringLivenessQuery,
+} from "./pane-result-check.ts";
 
 /**
  * One backend plus its fake CLI. The contract suite knows nothing about the
@@ -55,6 +60,11 @@ export interface DirectProgramFixture {
 	startedProgram(stateDir: string, surface: string): string[] | undefined;
 	/** All text that the fake saw typed into the surface, submitted or not. */
 	typedText(stateDir: string, surface: string): string;
+	/**
+	 * With checkExit: arms the fake so that its next liveness query writes the file and drops the
+	 * surface before it answers, as a child that exits while the query is in flight.
+	 */
+	vanishDuringLivenessQuery?(stateDir: string, surface: string, file: { path: string; content: string }): void;
 }
 
 const SCREEN_LINES = 50;
@@ -131,6 +141,14 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			mkdirSync(emptyDir);
 			setEnv("PATH", emptyDir);
 			assert.equal(adapter.isAvailable(), false);
+		});
+
+		it("delivers a pane child's 20,000-character answer capped, with a report file, the same on both paths", async () => {
+			await checkPaneResultThroughAssembler(adapter, root);
+		});
+
+		it("delivers an operator-closed manual pane's answer with a report, keeping its nonzero exit code", async () => {
+			await checkManualPaneCloseWithNonzeroStatus(adapter, root);
 		});
 
 		it("gives a setup hint", () => {
@@ -243,6 +261,14 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 				assert.ok(exit, "no exit after close");
 				assert.ok(Number.isInteger(exit.exitCode));
 				assert.ok(exit.reason.length > 0);
+			});
+
+			it("lets a done record written during the liveness query decide the result, not the pane's death", async () => {
+				const { vanishDuringLivenessQuery } = directProgram;
+				assert.ok(vanishDuringLivenessQuery, "a checkExit fixture arms its fake for the liveness race");
+				await checkProgramPaneExitDuringLivenessQuery(adapter, root, (surface, file) =>
+					vanishDuringLivenessQuery(stateDir, surface, file),
+				);
 			});
 		}
 

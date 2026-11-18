@@ -18,7 +18,8 @@ import "../support/ambient-spawn-grant.ts";
 
 async function readNonEmptyFileEventually(path: string): Promise<string> {
 	let lastText = "";
-	for (let attempt = 0; attempt < 50; attempt++) {
+	// Up to 5 s, as in headless-env-boundary: a spawned child can take over 0.5 s to write under host load.
+	for (let attempt = 0; attempt < 500; attempt++) {
 		if (existsSync(path)) {
 			lastText = readFileSync(path, "utf8");
 			if (lastText.trim().length > 0) return lastText;
