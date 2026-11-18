@@ -10,7 +10,7 @@ inject-skills: design-craft, data-plane, build-rules, browser-checks
 model: synthetic/model-1
 thinking: high
 allow-model-override: true
-allowed-models: synthetic/model-1:xhigh, synthetic/model-2:high
+allowed-models: synthetic/model-2:xhigh, synthetic/model-3:high
 mode: interactive
 auto-exit: false
 trust-project: true

@@ -63,6 +63,18 @@ test("[T03a-6] the shape check fails on a changed description length or model-li
 	assert.notDeepEqual(agentShape(sanitizeAgent(SOURCE)), agentShape(flag));
 });
 
+test("[T03a-9] sanitizing keeps the number of distinct model choices", () => {
+	// Default "realprov/big-model" plus thinking "high" equals the last allowed ref,
+	// so the renderer shows 3 choices, not 4.
+	const source = SOURCE.replace(
+		"realprov/big-model:high, other/small:low, third/mid",
+		"other/small:low, third/mid, realprov/big-model:high",
+	);
+	assert.equal(agentShape(source).choices, 3);
+	assert.equal(agentShape(sanitizeAgent(source)).choices, 3);
+	assert.deepEqual(agentShape(sanitizeAgent(source)), agentShape(source));
+});
+
 test("[T03a-7] filler text has the exact length and no colon", () => {
 	for (const n of [0, 1, 21, 22, 23, 500]) {
 		assert.equal(filler(n).length, n);

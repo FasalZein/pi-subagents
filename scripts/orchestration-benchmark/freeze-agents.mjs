@@ -9,11 +9,19 @@
  * The default source is ~/.pi/agent/agents. freeze rewrites agent-fixture/;
  * check compares the fixture's shape to the source and exits 1 on a difference.
  * Kept: the file count, key order, each description length, every other flag value,
- * each list size of model, allowed-models and extensions, the env line count and the body length.
+ * each list size of model, allowed-models and extensions, the number of distinct model
+ * choices the agent list renders, the env line count and the body length.
  * Replaced: descriptions and bodies by synthetic text of the same length, model refs by
- * synthetic/model-<n> (thinking suffix kept), extension sources and env lines by
+ * synthetic/model-<n>, one n per distinct base model in a file (thinking suffix kept),
+ * extension sources and env lines by
  * synthetic entries. Other flag values are copied verbatim; the privacy check in
  * freeze-agents.test.mjs guards them against home paths and provider refs.
+ *
+ * Known limits:
+ * - A refreeze copies inline env values, unknown fields and leading comments verbatim; the
+ *   shape check does not detect a private value there. Revisit before a refreeze of a changed agent set.
+ * - freeze deletes the old fixture before it reads every source file; a missing or malformed
+ *   source leaves a partial fixture. Revisit if a refreeze fails.
  */
 import {
 	mkdirSync,
@@ -32,6 +40,7 @@ export const FIXTURE_DIR = join(
 	"agent-fixture",
 );
 const LISTS = ["model", "allowed-models", "extensions"];
+const THINKING = /:[a-z]+$/;
 
 /** Frontmatter entries in order: key, the text after "key:", continuation lines; and the body. */
 export function parseAgent(text) {
@@ -73,29 +82,48 @@ export function agentShape(text) {
 			shape.sizes.env = more.filter((line) => line.trim()).length;
 		else shape.flags[key] = [value.trim(), ...more].join("\n");
 	}
+	shape.choices = modelChoices(entries);
 	shape.bodyLength = body.length;
 	return shape;
 }
 
-const synthModel = (ref, n) => {
-	const suffix = ref.match(/:[a-z]+$/)?.[0] ?? "";
-	return `synthetic/model-${n}${suffix}`;
-};
+/**
+ * The model choices the agent list renders: the default ref (model plus the thinking
+ * flag unless the model has a suffix) and allowed-models, after duplicate removal.
+ * Mirrors renderModelsLine in src/agents/agent-list.ts.
+ */
+function modelChoices(entries) {
+	const field = (key) => entries.find((e) => e.key === key)?.value.trim() ?? "";
+	const model = field("model");
+	const thinking = field("thinking");
+	const fallback =
+		model && !THINKING.test(model) && thinking ? `${model}:${thinking}` : model;
+	return new Set([fallback, ...items(field("allowed-models"))].filter(Boolean))
+		.size;
+}
+
+/** Synthetic refs for one file: one id per distinct base model across all model fields. */
+function modelNamer() {
+	const ids = new Map();
+	return (ref) => {
+		const suffix = ref.match(THINKING)?.[0] ?? "";
+		const base = ref.slice(0, ref.length - suffix.length);
+		if (!ids.has(base)) ids.set(base, ids.size + 1);
+		return `synthetic/model-${ids.get(base)}${suffix}`;
+	};
+}
 
 /** The sanitized copy of one agent file. */
 export function sanitizeAgent(text) {
 	const { lead, entries, body } = parseAgent(text);
+	const synthModel = modelNamer();
 	const out = entries.map(({ key, value, more }) => {
 		if (key === "description")
 			return [
 				`description: ${filler(value.trim().length, "synthetic description")}`,
 			];
 		if (key === "model" || key === "allowed-models")
-			return [
-				`${key}: ${items(value)
-					.map((ref, i) => synthModel(ref, i + 1))
-					.join(", ")}`,
-			];
+			return [`${key}: ${items(value).map(synthModel).join(", ")}`];
 		if (key === "extensions")
 			return [
 				`extensions: ${items(value)

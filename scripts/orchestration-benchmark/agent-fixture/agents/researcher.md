@@ -4,7 +4,7 @@ description: synthetic description synthetic description synthetic description s
 model: synthetic/model-1
 thinking: medium
 allow-model-override: true
-allowed-models: synthetic/model-1:low, synthetic/model-2:low, synthetic/model-3:high, synthetic/model-4:xhigh, synthetic/model-5:medium, synthetic/model-6:medium
+allowed-models: synthetic/model-2:low, synthetic/model-3:low, synthetic/model-4:high, synthetic/model-5:xhigh, synthetic/model-4:medium, synthetic/model-6:medium
 extensions: synthetic-extension-1, synthetic-extension-2, synthetic-extension-3, synthetic-extension-4, synthetic-extension-5, synthetic-extension-6, synthetic-extension-7, synthetic-extension-8, synthetic-extension-9
 tools: read,write,grep,find,ls,bash,codemode
 skills: find-standards, context7, exa, firecrawl, tinyfish, convert-documents-to-markdown, technical-writing=auto, principle-build-the-lever=auto, data-plane

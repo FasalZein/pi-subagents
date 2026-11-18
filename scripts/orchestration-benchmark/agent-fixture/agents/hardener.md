@@ -6,7 +6,7 @@ extensions: synthetic-extension-1, synthetic-extension-2, synthetic-extension-3,
 model: synthetic/model-1
 thinking: medium
 allow-model-override: true
-allowed-models: synthetic/model-1:medium, synthetic/model-2:high, synthetic/model-3:medium, synthetic/model-4:medium
+allowed-models: synthetic/model-1:medium, synthetic/model-2:high, synthetic/model-2:medium, synthetic/model-3:medium
 skills: tdd, blast-radius, build-rules, data-plane
 inject-skills: tdd, blast-radius, build-rules, data-plane
 mode: interactive

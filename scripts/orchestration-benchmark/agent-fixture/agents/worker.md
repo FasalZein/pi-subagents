@@ -10,7 +10,7 @@ skills: principle-prove-it-works=manual, principle-type-system-discipline, princ
 model: synthetic/model-1
 thinking: medium
 allow-model-override: true
-allowed-models: synthetic/model-1:medium, synthetic/model-2:medium, synthetic/model-3:medium, synthetic/model-4:medium, synthetic/model-5:high, synthetic/model-6:medium
+allowed-models: synthetic/model-1:medium, synthetic/model-2:medium, synthetic/model-3:medium, synthetic/model-4:medium, synthetic/model-5:high, synthetic/model-5:medium
 mode: background
 timeout: 3600
 timeout-warn-threshold: 80%

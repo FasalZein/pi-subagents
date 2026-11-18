@@ -6,7 +6,7 @@ extensions: synthetic-extension-1, synthetic-extension-2, synthetic-extension-3,
 model: synthetic/model-1
 thinking: high
 allow-model-override: true
-allowed-models: synthetic/model-1:high, synthetic/model-2:medium, synthetic/model-3:low, synthetic/model-4:high, synthetic/model-5:medium, synthetic/model-6:medium
+allowed-models: synthetic/model-1:high, synthetic/model-2:medium, synthetic/model-3:low, synthetic/model-4:high, synthetic/model-4:medium, synthetic/model-5:medium
 skills: wayfinder=manual, to-spec=manual, to-tickets=auto, data-plane
 inject-skills: data-plane
 mode: background

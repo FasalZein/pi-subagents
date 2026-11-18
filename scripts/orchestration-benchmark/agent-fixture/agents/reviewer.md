@@ -8,7 +8,7 @@ tools: read,write,grep,find,ls,bash,codemode
 model: synthetic/model-1
 thinking: high
 allow-model-override: true
-allowed-models: synthetic/model-1:xhigh, synthetic/model-2:high, synthetic/model-3:high, synthetic/model-4:xhigh, synthetic/model-5:high, synthetic/model-6:high, synthetic/model-7:medium, synthetic/model-8:high
+allowed-models: synthetic/model-2:xhigh, synthetic/model-3:high, synthetic/model-4:high, synthetic/model-5:xhigh, synthetic/model-1:high, synthetic/model-6:high, synthetic/model-6:medium, synthetic/model-7:high
 skills: code-review, thermo-nuclear-code-quality-review, ponytail-review=manual, blast-radius=manual, data-plane
 mode: background
 context-warn-threshold: 80%
