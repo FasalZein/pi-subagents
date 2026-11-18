@@ -83,6 +83,21 @@ function mergeEnv(parts) {
 	return env;
 }
 
+// Exact identity names (spec D34): the child must carry its own surface's
+// identity. Refuse to start when the surface lacks one or an override names one.
+// Messages name the variable only, never a value.
+const requiredIdentity = Array.isArray(capsule.requiredPaneIdentityKeys) ? capsule.requiredPaneIdentityKeys : [];
+for (const name of requiredIdentity) {
+	if (capsule.overrides && Object.hasOwn(capsule.overrides, name)) {
+		process.stderr.write(`run-child: env override names the surface identity variable ${name}; refusing to start\n`);
+		process.exit(2);
+	}
+	if (typeof process.env[name] !== "string" || process.env[name] === "") {
+		process.stderr.write(`run-child: the surface does not set the identity variable ${name}; refusing to start\n`);
+		process.exit(2);
+	}
+}
+
 const env = mergeEnv([capsule.parentEnv, pickPaneIdentity(process.env, capsule.paneIdentityKeys), capsule.overrides]);
 if (capsule.deriveZellijPaneSurface && typeof process.env.ZELLIJ_PANE_ID === "string" && process.env.ZELLIJ_PANE_ID) {
 	env.PI_SUBAGENT_SURFACE = `pane:${process.env.ZELLIJ_PANE_ID}`;

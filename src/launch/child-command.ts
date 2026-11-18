@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
-import { buildParentEnvSnapshot } from "./child-env.ts";
+import { buildHeadlessParentEnvSnapshot } from "./child-env.ts";
 
 export interface PiInvocation {
 	command: string;
@@ -85,5 +85,6 @@ export function getSubagentChildProcessEnv(
 ): NodeJS.ProcessEnv {
 	// Background children get the same snapshot policy as interactive ones:
 	// deny-filtered and stripped of shell bookkeeping the child recomputes.
-	return { ...buildParentEnvSnapshot(process.env, denyPatterns), ...envVars };
+	// They run in no pane, so the parent's pane identity is dropped too (D34).
+	return { ...buildHeadlessParentEnvSnapshot(process.env, denyPatterns), ...envVars };
 }

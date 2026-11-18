@@ -1,3 +1,4 @@
+import { HERDR_PANE_IDENTITY } from "../launch/child-env.ts";
 import type { MuxBackendAdapter } from "./backend.ts";
 import {
 	closeHerdrPane,
@@ -33,6 +34,7 @@ export const herdrBackend: MuxBackendAdapter = {
 	renameCurrentTab: renameHerdrCurrentTab,
 	renameWorkspace: renameHerdrCurrentWorkspace,
 	stagesShellCommands: true,
+	paneIdentity: HERDR_PANE_IDENTITY,
 	resolveHerdrPlacementPolicy: (value) => resolveHerdrPlacementPolicy(value),
 	connectWorkReporter: (session) => createHerdrWorkReporter(session),
 };

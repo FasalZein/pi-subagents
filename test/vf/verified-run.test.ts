@@ -240,15 +240,30 @@ describe("verified fan-out driver (one logical child)", () => {
 		assert.equal(agentDefs?.llmAsVerifier, true);
 		const artifactRoot = createTestDir();
 		process.env.PI_ARTIFACT_PROJECT_ROOT = artifactRoot;
-		const { running, runDir, runId } = await launchVerifiedFanOut(
-			{ name: "vf-run", title: "VF run", task: "do the thing now !`date +%s%N`", agent: "vf-worker" },
-			agentDefs!,
-			ctx as never,
-		);
+		// Synthetic parent pane identity: a headless candidate must not carry it (D34).
+		const savedPane = { HERDR_PANE_ID: process.env.HERDR_PANE_ID, TMUX_PANE: process.env.TMUX_PANE };
+		process.env.HERDR_PANE_ID = "w1:p1";
+		process.env.TMUX_PANE = "%1";
+		let launched: Awaited<ReturnType<typeof launchVerifiedFanOut>>;
+		try {
+			launched = await launchVerifiedFanOut(
+				{ name: "vf-run", title: "VF run", task: "do the thing now !`date +%s%N`", agent: "vf-worker" },
+				agentDefs!,
+				ctx as never,
+			);
+		} finally {
+			for (const [key, value] of Object.entries(savedPane)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+		const { running, runDir, runId } = launched;
 		assert.equal(runningSubagents.size, 1, "exactly one logical child registered");
 		assert.equal(running.verifiedRunDir, runDir);
 		const manifest = readVerifiedRunManifest(runDir);
 		assert.equal(manifest.request.candidates.length, 3);
+		assert.equal("HERDR_PANE_ID" in manifest.request.env, false, "candidates get no parent pane identity");
+		assert.equal("TMUX_PANE" in manifest.request.env, false, "candidates get no parent pane identity");
 		const taskArgs = manifest.request.candidates.map((candidate) =>
 			candidate.args.find((arg) => arg.startsWith("@")),
 		);
