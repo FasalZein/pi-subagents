@@ -20,6 +20,14 @@ export const APP_CHECK_TIMEOUT_MS = 2_000;
 /** Label that carries the title of the caller terminal; herdr-core has no tab or workspace of its own. */
 const TITLE_LABEL_KEY = "pi-subagents.title";
 
+/**
+ * Window of the label lookup after a start request without an answer (D27): the same 2,000 ms bound as the
+ * app check. The live drop probes found the terminal, when one was made, in the first lookup after the drop.
+ */
+const LABEL_LOOKUP_WINDOW_MS = APP_CHECK_TIMEOUT_MS;
+/** Pause between label lookups: the 1,000 ms poll of the program-surface exit watcher (interactive-watch). */
+const LABEL_LOOKUP_INTERVAL_MS = 1_000;
+
 /** Exit watches of the direct-program terminals of this process, by terminal address. */
 const exitWatches = new Map<string, LabelExitWatch>();
 
@@ -90,13 +98,16 @@ interface RpcReply {
 	error?: { message?: string; data?: { kind?: string } };
 }
 
+/** The request may have reached the core, but no reply came: the core may or may not have acted on it. */
+class NoReplyError extends Error {}
+
 /** Sends one JSON-RPC request through `hc connect` and returns its reply. */
 function hcRequest(method: string, params: Record<string, unknown>): Promise<RpcReply> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(HC_COMMAND, ["connect"], { stdio: ["pipe", "pipe", "ignore"] });
 		const timer = setTimeout(() => {
 			child.kill();
-			reject(new Error(`hc connect gave no reply to ${method}`));
+			reject(new NoReplyError(`hc connect gave no reply to ${method}`));
 		}, START_REPLY_TIMEOUT_MS);
 		let settled = false;
 		const settle = (fn: () => void) => {
@@ -110,15 +121,67 @@ function hcRequest(method: string, params: Record<string, unknown>): Promise<Rpc
 				try {
 					resolve(JSON.parse(line) as RpcReply);
 				} catch {
-					reject(new Error(`hc connect gave an invalid reply to ${method}`));
+					reject(new NoReplyError(`hc connect gave an invalid reply to ${method}`));
 				}
 				child.kill();
 			});
 		});
 		child.on("error", (error) => settle(() => reject(error)));
-		child.on("close", () => settle(() => reject(new Error(`hc connect closed without a reply to ${method}`))));
+		child.on("close", () => settle(() => reject(new NoReplyError(`hc connect closed without a reply to ${method}`))));
 		child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })}\n`);
 	});
+}
+
+/** Addresses of the terminals, finished ones included, that carry this launch label (`hc ls --all --label`). */
+async function terminalsWithLabel(label: string): Promise<string[]> {
+	const { stdout } = await execFileAsync(
+		HC_COMMAND,
+		["ls", "--all", "--label", `${HERDR_CORE_LAUNCH_LABEL_KEY}=${label}`, "--json"],
+		{ encoding: "utf8", timeout: APP_CHECK_TIMEOUT_MS, killSignal: "SIGKILL" },
+	);
+	const terminals = (JSON.parse(stdout) as { terminals?: Array<{ address?: unknown }> }).terminals ?? [];
+	return terminals
+		.map((terminal) => terminal.address)
+		.filter((address): address is string => typeof address === "string");
+}
+
+/**
+ * After a start request without an answer (D27): looks the label up until the window ends and returns the
+ * terminal only when exactly one carries it. It never sends a second start request, so a retry cannot make
+ * a second child. A failed lookup counts as no terminal found yet.
+ */
+async function findStartedTerminal(label: string, cause: string): Promise<string> {
+	const deadline = Date.now() + LABEL_LOOKUP_WINDOW_MS;
+	for (;;) {
+		const found = await terminalsWithLabel(label).catch(() => []);
+		if (found.length === 1) return found[0];
+		if (found.length > 1) throw new Error(`${cause}; ${found.length} terminals carry label ${label}, not one`);
+		const left = deadline - Date.now();
+		if (left <= 0) throw new Error(`${cause}; no terminal carries label ${label}`);
+		await new Promise((resolve) => setTimeout(resolve, Math.min(LABEL_LOOKUP_INTERVAL_MS, left)));
+	}
+}
+
+/** Sends the one start request; a request without an answer is followed by the label lookup only. */
+async function runLauncherTerminal(launch: ProgramLaunch, label: string): Promise<string> {
+	let reply: RpcReply;
+	try {
+		reply = await hcRequest("terminal.run", {
+			argv: [...launch.launcherArgv],
+			// Without a cwd hc runs the program in the core's own directory; the child runs in the parent cwd (README).
+			cwd: launch.cwd ?? process.cwd(),
+			labels: { [HERDR_CORE_LAUNCH_LABEL_KEY]: label },
+			caller: callerTerminal(),
+			no_notify: true,
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (error instanceof NoReplyError) return findStartedTerminal(label, message);
+		throw new Error(`hc terminal.run failed for label ${label}: ${message}`);
+	}
+	const address = reply.result?.address;
+	if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
+	return address;
 }
 
 /**
@@ -132,16 +195,7 @@ async function startLauncherTerminal(launch: ProgramLaunch, warn: (warning: stri
 	const watch = new LabelExitWatch(label);
 	await watch.subscribe();
 	try {
-		const reply = await hcRequest("terminal.run", {
-			argv: [...launch.launcherArgv],
-			// Without a cwd hc runs the program in the core's own directory; the child runs in the parent cwd (README).
-			cwd: launch.cwd ?? process.cwd(),
-			labels: { [HERDR_CORE_LAUNCH_LABEL_KEY]: label },
-			caller: callerTerminal(),
-			no_notify: true,
-		});
-		const address = reply.result?.address;
-		if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
+		const address = await runLauncherTerminal(launch, label);
 		watch.attach(address);
 		exitWatches.set(address, watch);
 		await placeChildTerminal(address, callerTerminal(), warn);
@@ -170,6 +224,8 @@ async function closeTerminal(surface: string): Promise<void> {
 		throw new Error(`herdr-core terminal ${surface} has not finished after kill; not removed`);
 	}
 	await execFileAsync(HC_COMMAND, ["rm", surface], { encoding: "utf8" });
+	// The terminal is gone, so its watch has nothing left to report.
+	exitWatches.delete(surface);
 }
 
 /** herdr-core (the `hc` CLI inside an herdr-core terminal). A direct-program child gets a pane (D27). */
