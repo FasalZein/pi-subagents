@@ -99,7 +99,7 @@ export const STOPPED_REASON = "stopped by the parent";
  * wrap-up, and an end of the child's own. Undefined for a nonzero exit that is no operator close: a
  * crash keeps its own failure text.
  */
-export function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd | undefined {
+function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd | undefined {
 	if (end.stopped) return { kind: "cancelled", reason: STOPPED_REASON };
 	if (end.ping) return { kind: "pinged", message: end.ping.message, code: end.exitCode };
 	if (end.timedOut) {
@@ -142,7 +142,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
  * D14 for an end the watcher built without an exit of the child's own (a stop before the exit, a
  * wrap-up that could not start, a watcher error): the same assembled record and rendering.
  */
-export function publishRuntimeEnd(running: RunningSubagent, end: RunEnd): PublishedResult | undefined {
+function publishRuntimeEnd(running: RunningSubagent, end: RunEnd): PublishedResult | undefined {
 	return publishEnd(running, end, { contextWarned: false, keepCrashText: false });
 }
 
@@ -193,7 +193,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 }
 
 /** An unconfirmed kill must not read as a clean one: the pane can still be running. */
-export const KILL_UNCONFIRMED_WARNING =
+const KILL_UNCONFIRMED_WARNING =
 	"the system could not confirm that this sub-agent stopped; check its pane and close it before you trust this result";
 
 /** D8 with the agent's time-limit policy: why a run that a time limit stopped cannot resume. */
