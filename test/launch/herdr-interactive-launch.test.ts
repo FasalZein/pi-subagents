@@ -227,7 +227,10 @@ describe("Herdr interactive launch parity", () => {
 			const launchScript = readFileSync(launchScriptPath, "utf8");
 			const command = launchScript.split("\n").slice(1).join("\n").trim();
 
+			// The shell stands in for the child pane w1:p2: the launcher requires herdr's pane identity there
+			// (spec D34), which must not come from the env that runs the tests.
 			const shell = spawn("/bin/sh", [], {
+				env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "w1:p2" },
 				stdio: ["pipe", "ignore", "ignore"],
 			});
 			try {
