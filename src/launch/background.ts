@@ -11,6 +11,7 @@ import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { getPiInvocation, getSubagentChildProcessEnv } from "./child-command.ts";
 import { resolveDenyEnvPatterns } from "./child-env.ts";
+import { waitForChildSpawn } from "./child-spawn.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
 import { LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
@@ -176,6 +177,8 @@ async function startBackgroundSubagent(
 		env: getSubagentChildProcessEnv(invocation, envVars, denyPatterns),
 	});
 	child.unref();
+	// A spawn error rejects through the undo: the seed and the run folder are removed.
+	await waitForChildSpawn(child);
 	const running: RunningSubagent = {
 		id,
 		name: params.name,

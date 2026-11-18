@@ -5,7 +5,7 @@ import { getSessionResultsDir } from "../../src/artifact-storage.ts";
 import { launchBackgroundSubagent } from "../../src/launch/background.ts";
 import { writeEnvCapsule } from "../../src/launch/env-capsule.ts";
 import { launchInteractiveSubagent } from "../../src/launch/interactive.ts";
-import { resumeSubagentSession, type ResumeServiceRuntime } from "../../src/runtime/resume-service.ts";
+import { type ResumeServiceRuntime, resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
 	assert,
@@ -216,7 +216,10 @@ async function resumeFailingInteractive(failing: FailingStep): Promise<void> {
 		const sessionFile = await writeResumableSession(dir, "interactive");
 		// The previous run's verdicts: a failed resume must keep both (D6).
 		writeFileSync(`${sessionFile}.exit`, JSON.stringify({ type: "done" }));
-		writeFileSync(`${sessionFile}.timeout`, JSON.stringify({ kind: "timeout", blocksResume: false, budget: { timeoutSeconds: 30 } }));
+		writeFileSync(
+			`${sessionFile}.timeout`,
+			JSON.stringify({ kind: "timeout", blocksResume: false, budget: { timeoutSeconds: 30 } }),
+		);
 		const sidecarsBefore = [readFileSync(`${sessionFile}.exit`), readFileSync(`${sessionFile}.timeout`)];
 		const before = readFileSync(sessionFile);
 		const resultsDir = join(testResultsDir(), `t30-${failing}`);
@@ -357,8 +360,13 @@ describe("a started child is never rolled back (D6)", () => {
 				[],
 				"the started child's pane stays open",
 			);
-			assert.equal(warnings.length, 1, `the persistence failure is reported once: ${JSON.stringify(warnings)}`);
-			assert.match(warnings[0], /EACCES|permission/i);
+			const resultWarnings = running.resultTarget?.warnings ?? [];
+			assert.equal(
+				resultWarnings.length,
+				1,
+				`the persistence failure is reported once: ${JSON.stringify(resultWarnings)}`,
+			);
+			assert.match(resultWarnings[0], /EACCES/);
 			await running.completionPromise;
 		} finally {
 			tmux.restore();

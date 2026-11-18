@@ -28,7 +28,7 @@ export interface SubagentTimeoutVerdict {
 	budget?: SubagentTimeoutBudget;
 }
 
-function getSubagentTimeoutSidecarPath(sessionFile: string): string {
+export function getSubagentTimeoutSidecarPath(sessionFile: string): string {
 	return `${sessionFile}.timeout`;
 }
 
