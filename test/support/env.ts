@@ -56,6 +56,14 @@ export const TRACKED_ENV_KEYS = [
 	"ZELLIJ_SESSION_NAME",
 ] as const;
 
+// A test run started from inside a Pi child inherits that child's PI_SUBAGENT_*
+// and PI_DENY_TOOLS values (agent, spawn grants, session), and the code under test
+// would then treat the test process as that child. Drop them once, before the
+// snapshot that restoreTrackedEnv() returns to. Live-test settings (PI_SUBAGENT_LIVE_*) stay.
+for (const key of Object.keys(process.env)) {
+	if ((key.startsWith("PI_SUBAGENT_") && !key.startsWith("PI_SUBAGENT_LIVE_")) || key === "PI_DENY_TOOLS") delete process.env[key];
+}
+
 export const ORIGINAL_ENV = Object.fromEntries(TRACKED_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<
 	(typeof TRACKED_ENV_KEYS)[number],
 	string | undefined
