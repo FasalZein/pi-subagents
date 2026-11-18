@@ -1,6 +1,28 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SessionEntry } from "../../src/session/session.ts";
 import { type RunEnd, type RunFacts } from "../../src/runtime/result-assembler.ts";
 import { parseRunId } from "../../src/runtime/result-record.ts";
+
+let resultsRoot: string | undefined;
+/** A results folder for resume calls, removed when the test process exits. */
+export function testResultsDir(): string {
+	if (!resultsRoot) {
+		const root = mkdtempSync(join(tmpdir(), "pi-results-"));
+		resultsRoot = root;
+		process.once("exit", () => rmSync(root, { recursive: true, force: true }));
+	}
+	return join(resultsRoot, "results");
+}
+
+/**
+ * A parent tool context for tools that reserve run ids; callers point PI_ARTIFACT_PROJECT_ROOT at a
+ * test folder so the results folder stays out of the home folder.
+ */
+export function parentToolCtx<T extends object>(cwd: string, extra: T) {
+	return { cwd, sessionManager: { getSessionId: () => "results-test-parent" }, ...extra };
+}
 
 let nextId = 0;
 const id = () => `e${++nextId}`;

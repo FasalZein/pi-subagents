@@ -39,6 +39,11 @@ export function getSessionArtifactDir(cwd: string, sessionId: string): string {
 	return join(getProjectArtifactsDir(cwd), sessionId);
 }
 
+/** D13: one folder per run of this parent session; the extension never deletes it. */
+export function getSessionResultsDir(cwd: string, sessionId: string): string {
+	return join(getSessionArtifactDir(cwd, sessionId), "results");
+}
+
 export function resolveSessionArtifactPath(cwd: string, sessionId: string, name: string): string {
 	return resolve(getSessionArtifactDir(cwd, sessionId), name);
 }

@@ -1,3 +1,4 @@
+import { testResultsDir } from "../support/result-fixtures.ts";
 import { writeFileSync } from "node:fs";
 
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -68,7 +69,7 @@ async function resumeAndCapture(dir: string, skills: string | undefined): Promis
 			...(skills ? { skills } : {}),
 		});
 		await resumeSubagentSession(
-			{ sessionFile, task: "Visibility env probe." },
+			{ resultsDir: testResultsDir(), sessionFile, task: "Visibility env probe." },
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,

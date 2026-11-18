@@ -261,6 +261,7 @@ describe("subagent-done.ts", () => {
 					name: "Ping Child",
 					message: "Need help",
 					outputTokens: 11,
+					acceptedCall: { toolCallId: "tool-1", args: { message: "Need help" } },
 				});
 			} finally {
 				exitMock.mock.restore();
@@ -654,7 +655,8 @@ describe("subagent-done.ts", () => {
 					},
 				);
 				let shutdowns = 0;
-				await doneTool.execute("tool-2", {}, undefined, undefined, {
+				const args = { outcome: "done", summary: "s", data: { big: "x".repeat(9_000) } };
+				await doneTool.execute("tool-2", args, undefined, undefined, {
 					shutdown() {
 						shutdowns += 1;
 					},
@@ -665,6 +667,7 @@ describe("subagent-done.ts", () => {
 				assert.deepEqual(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")), {
 					type: "done",
 					outputTokens: 17,
+					acceptedCall: { toolCallId: "tool-2", args },
 					contextTokens: 145_000,
 					contextWindow: 200_000,
 				});

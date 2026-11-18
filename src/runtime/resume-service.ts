@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
+import { reserveRunId } from "./result-files.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -98,6 +99,8 @@ export interface ResumeServiceRuntime {
 
 export interface ResumeSessionInput {
 	sessionFile: string;
+	/** The parent session's results folder; the resume reserves its run id there (D13). */
+	resultsDir: string;
 	task?: string;
 	name?: string;
 	agent?: string;
@@ -449,7 +452,7 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_PACKAGE_DIR = "";
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
-	const id = Math.random().toString(16).slice(2, 10);
+	const id = reserveRunId(input.resultsDir).runId;
 	const running: RunningSubagent = {
 		id,
 		name,
