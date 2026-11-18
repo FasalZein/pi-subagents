@@ -14,7 +14,7 @@ import {
 } from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
-import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
+import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
@@ -94,13 +94,23 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 			sent.push(message);
 		},
 	};
-	const runtime = {
-		stopRunningSubagent: (r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
-	} as unknown as SubagentToolRuntime;
-	registerSubagentCoreTools(pi as never, () => true, runtime);
+	registerSubagentKillTool(
+		pi as never,
+		() => true,
+		(r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
+		{ mayLaunch: () => true },
+	);
 	wireSubagentSteerBack(pi as never, running, watch, String, () => {});
-	await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
-	assert.ok(ac.signal.aborted);
+	try {
+		await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
+		assert.ok(ac.signal.aborted);
+	} catch (error) {
+		// A failed stop must not leave the watcher pending: it would keep node --test alive.
+		ac.abort();
+		child.emit("exit", null, "SIGTERM");
+		await watch.catch(() => {});
+		throw error;
+	}
 	exitWith(child, sessionFile);
 	const routed = await watch;
 	await sleep(10);
