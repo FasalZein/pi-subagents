@@ -72,7 +72,8 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 	});
 
 	afterEach(async () => {
-		for (const name of ["hang-label", "fail-keep", "fail-restore", "focus-no-ok"]) rmSync(join(stateDir, name), { force: true });
+		for (const name of ["hang-label", "fail-keep", "fail-restore", "focus-no-ok"])
+			rmSync(join(stateDir, name), { force: true });
 		for (const surface of started.splice(0)) await herdrCoreBackend.closeSurface(surface);
 		for (const [key, value] of saved) {
 			if (value === undefined) delete process.env[key];
@@ -105,7 +106,11 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 	it("reads the status, focuses the parent by address, keeps the child as a split, then restores and checks the focus", async () => {
 		const child = await start("Split Child");
 		assert.deepEqual(appCalls(), splitTransaction(child));
-		assert.equal(fakeAppTabOf(stateDir, fakeAppPaneOf(stateDir, child)!), FAKE_APP_TAB, "the child is in the parent's tab");
+		assert.equal(
+			fakeAppTabOf(stateDir, fakeAppPaneOf(stateDir, child)!),
+			FAKE_APP_TAB,
+			"the child is in the parent's tab",
+		);
 		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE, "focus is back on the saved pane");
 		assert.deepEqual(tabLabelCalls(), [], "no tab label after a split");
 		assert.deepEqual(warnings, []);
@@ -144,7 +149,10 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		assert.ok(fakeAppPaneOf(stateDir, child), "the split stands");
 		assert.deepEqual(tabLabelCalls(), [], "a failed restore does not start the tab fallback");
 		assert.equal(warnings.length, 1);
-		assert.match(warnings[0]!, new RegExp(`focus was not restored to pane ${FAKE_APP_OWNER_PANE} after placing ${child}`));
+		assert.match(
+			warnings[0]!,
+			new RegExp(`focus was not restored to pane ${FAKE_APP_OWNER_PANE} after placing ${child}`),
+		);
 		assert.match(warnings[0]!, /focus refused/);
 	});
 

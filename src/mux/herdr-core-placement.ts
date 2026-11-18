@@ -18,7 +18,9 @@ async function run(command: string, args: string[]): Promise<string> {
 		return (await execFileAsync(command, args, BOUNDED)).stdout;
 	} catch (error) {
 		const failed = error as { killed?: boolean; stdout?: string; message: string };
-		const detail = failed.killed ? `no reply within ${PLACEMENT_CALL_TIMEOUT_MS} ms` : failed.stdout?.trim() || failed.message;
+		const detail = failed.killed
+			? `no reply within ${PLACEMENT_CALL_TIMEOUT_MS} ms`
+			: failed.stdout?.trim() || failed.message;
 		throw new Error(`${command} ${args.join(" ")}: ${detail}`);
 	}
 }
