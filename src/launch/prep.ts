@@ -1,10 +1,11 @@
-import { existsSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
+import { getDeleteOnExitMarkerPath } from "../session/delete-on-exit.ts";
 import {
 	buildIdentityBlock,
 	type PersistedSubagentLaunchMetadata,
@@ -315,9 +316,10 @@ export async function getPersistedSessionParityArgs(
 
 /** Deletes the temporary session file of a no-session run; safe to call more than once. */
 export function cleanupNoSessionSessionFile(running: Pick<RunningSubagent, "noSession" | "sessionFile">): void {
-	if (!running.noSession || !existsSync(running.sessionFile)) return;
+	if (!running.noSession) return;
 	try {
 		rmSync(running.sessionFile, { force: true });
+		rmSync(getDeleteOnExitMarkerPath(running.sessionFile), { force: true });
 	} catch {}
 }
 

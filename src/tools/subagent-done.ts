@@ -10,6 +10,7 @@ import { applyChildSystemPromptOverrides } from "./child-system-prompt.ts";
 import { getPublishedRunningSubagentCount } from "../runtime/nested-lifecycle.ts";
 import { installSubagentContextReminders } from "./context-reminders.ts";
 import { createExitSignalWriter } from "./exit-signal.ts";
+import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
 import { createPaneTakeover, requestShutdown } from "./pane-takeover.ts";
@@ -119,6 +120,8 @@ export default function (pi: ExtensionAPI) {
 	const callerPingState = createCallerPingState();
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
+	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
+	deleteMarkedSessionFileOnProcessExit(process.env.PI_SUBAGENT_SESSION);
 
 	const writeExitSignal = createExitSignalWriter({
 		pi,

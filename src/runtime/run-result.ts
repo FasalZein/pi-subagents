@@ -29,6 +29,10 @@ export const CONTEXT_PRESSURE_RESUME_REASON =
 export const NO_SESSION_RESUME_REASON =
 	"a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
 
+/** D13 with the context-warning policy: a no-session run that stopped early keeps both reasons. */
+export const NO_SESSION_CONTEXT_PRESSURE_RESUME_REASON =
+	"stopped early by its context-warning policy, and a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
+
 /**
  * True for a tool result that carries a published rendering (its details name the run id, as the
  * wait path sets them only then); its text already holds the launch warnings.
@@ -105,11 +109,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 			contextUsage.contextTokens !== undefined
 				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
 				: undefined,
-		resume: running.noSession
-			? { resumable: false, reason: NO_SESSION_RESUME_REASON }
-			: contextUsage.contextWarned
-				? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
-				: { resumable: true },
+		resume: resumeFact(running.noSession === true, contextUsage.contextWarned === true),
 	});
 	const noText = !assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
 	// A nonzero end without an answer is a crash, not an operator close: it keeps its failure text.
@@ -122,6 +122,13 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		showContextUsage: running.reportContextUsage !== false,
 	});
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
+}
+
+function resumeFact(noSession: boolean, contextWarned: boolean): ResultRecord["resume"] {
+	if (noSession && contextWarned) return { resumable: false, reason: NO_SESSION_CONTEXT_PRESSURE_RESUME_REASON };
+	if (noSession) return { resumable: false, reason: NO_SESSION_RESUME_REASON };
+	if (contextWarned) return { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON };
+	return { resumable: true };
 }
 
 /** The SubagentResult fields that carry a published rendering to the message and wait paths. */

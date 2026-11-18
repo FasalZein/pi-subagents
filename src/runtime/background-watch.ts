@@ -276,7 +276,7 @@ function watchBackgroundGeneration(
 					entries > previousEntries ? hasChildProgress(getNewEntries(running.sessionFile, previousEntries)) : false;
 				observeSubagentProgress(running, stat.size, now, produced);
 				running.entries = entries;
-				return true;
+				return !running.noSession || running.timeoutWarnThreshold !== undefined;
 			} catch {
 				return false;
 			}

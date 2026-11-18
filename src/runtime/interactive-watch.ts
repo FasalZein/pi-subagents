@@ -1,10 +1,11 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
 import { traceSubagentLaunch } from "../launch/trace.ts";
 import type { PollResult } from "../mux/poll.ts";
 import type { MuxBackendAdapter } from "../mux/backend.ts";
 import { consumeSubagentExitSignal, currentMuxAdapter, pollForExit } from "../mux.ts";
 import { hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
-import { getInteractiveProcessFile } from "../session/interactive-process.ts";
+import { getInteractiveProcessFile, isProcessGone } from "../session/interactive-process.ts";
 import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "../session/session.ts";
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
@@ -17,6 +18,7 @@ import {
 	getSubagentNextDeadlineAt,
 	hasChildProgress,
 	observeSubagentProgress,
+	TIMEOUT_KILL_ESCALATION_MS,
 } from "./timeout-budget.ts";
 import { startTimeoutWrapUpWithinDeadline } from "./timeout-restart.ts";
 
@@ -182,8 +184,21 @@ export async function watchSubagent(
 			}
 		}
 	} finally {
+		// D13: Pi appends by pathname, also in its shutdown handler after the done sidecar, so the
+		// temporary session file goes only after the pane launcher (which outlives Pi) has exited.
+		if (running.noSession) await waitForPaneLauncherExit(running);
 		runtime.cleanupNoSessionSessionFile(running);
 	}
+}
+
+const PANE_EXIT_POLL_MS = 50;
+
+async function waitForPaneLauncherExit(running: RunningSubagent): Promise<void> {
+	const pid = running.paneLauncherPid;
+	if (pid === undefined) return;
+	// The pane is closed by now; a launcher that outlives the kill escalation bound is not waited for.
+	const deadline = Date.now() + TIMEOUT_KILL_ESCALATION_MS;
+	while (!isProcessGone(pid) && Date.now() < deadline) await delay(PANE_EXIT_POLL_MS);
 }
 
 async function watchInteractiveGeneration(
@@ -475,6 +490,10 @@ function waitForPoll(interval: number, signal: AbortSignal): Promise<void> {
 
 function cleanupDoneSentinel(running: RunningSubagent): void {
 	if (!running.doneSentinelFile) return;
+	try {
+		const pid = Number(readFileSync(getInteractiveProcessFile(running.doneSentinelFile), "utf8").trim());
+		if (Number.isInteger(pid) && pid > 0) running.paneLauncherPid = pid;
+	} catch {}
 	try {
 		rmSync(running.doneSentinelFile, { force: true });
 		rmSync(getInteractiveProcessFile(running.doneSentinelFile), { force: true });
