@@ -545,19 +545,19 @@ async function resumeSubagentSessionWithoutWidth(
 		}
 		if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 		if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
-		const { command, dispose } = buildInteractiveShellCommand({
+		const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
 			cwd: resumeCwd ?? undefined,
 			piArgs,
 			envOverrides: resumeEnvVars,
 			denyEnv: invocationMetadata?.denyEnv,
 			paneIdentity: adapter?.paneIdentity,
 			doneSentinelFile,
-			...(programSession ? { deriveZellijPaneSurface: true } : {}),
+			...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),
 		});
 		try {
 			const surface =
 				ordinarySurface ??
-				(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+				(await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
 			if (!programSession) {
 				await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
 				sendShellCommand(surface, command);

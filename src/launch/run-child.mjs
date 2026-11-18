@@ -99,8 +99,10 @@ for (const name of requiredIdentity) {
 }
 
 const env = mergeEnv([capsule.parentEnv, pickPaneIdentity(process.env, capsule.paneIdentityKeys), capsule.overrides]);
-if (capsule.deriveZellijPaneSurface && typeof process.env.ZELLIJ_PANE_ID === "string" && process.env.ZELLIJ_PANE_ID) {
-	env.PI_SUBAGENT_SURFACE = `pane:${process.env.ZELLIJ_PANE_ID}`;
+const surfaceFrom = capsule.surfaceFromEnv;
+if (surfaceFrom && typeof surfaceFrom.name === "string" && typeof surfaceFrom.prefix === "string") {
+	const value = process.env[surfaceFrom.name];
+	if (typeof value === "string" && value) env.PI_SUBAGENT_SURFACE = `${surfaceFrom.prefix}${value}`;
 }
 
 if (typeof capsule.processIdFile === "string" && capsule.processIdFile) {

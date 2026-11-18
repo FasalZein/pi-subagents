@@ -222,18 +222,18 @@ export async function restartSubagentForTimeoutWrapUp(
 		piArgs.push(`@${taskPath}`);
 		if (programSession) Object.assign(launch.env, programSession.childEnv);
 		if (surface) launch.env.PI_SUBAGENT_SURFACE = surface;
-		const { command, dispose } = buildInteractiveShellCommand({
+		const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
 			cwd: launch.cwd ?? undefined,
 			piArgs,
 			envOverrides: launch.env,
 			denyEnv: metadata.denyEnv,
 			paneIdentity: adapter?.paneIdentity,
 			doneSentinelFile,
-			...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
+			...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),
 		});
 		disposeCapsule = dispose;
 		if (programSession) {
-			surface = await programSession.start(metadata.sessionTitle ?? running.title ?? running.name, command, {
+			surface = await programSession.start(metadata.sessionTitle ?? running.title ?? running.name, programLaunch, {
 				zellij: zellijContext,
 			});
 			running.surface = surface;

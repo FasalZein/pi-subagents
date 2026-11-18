@@ -178,20 +178,20 @@ export async function launchInteractiveSubagent(
 
 	const { launchEntryCount } = launch;
 	clearSubagentExitSidecar(prepared.subagentSessionFile);
-	const { command, capsulePath, dispose } = buildInteractiveShellCommand({
+	const { command, launch: programLaunch, capsulePath, dispose } = buildInteractiveShellCommand({
 		cwd: launch.forcedCwd ?? prepared.runtimePaths.effectiveCwd ?? undefined,
 		piArgs,
 		envOverrides: envVars,
 		denyEnv: prepared.agentDefs?.denyEnv,
 		paneIdentity: adapter?.paneIdentity,
 		doneSentinelFile,
-		...(programSession ? { deriveZellijPaneSurface: true } : {}),
+		...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),
 	});
 	let surface: string;
 	try {
 		surface =
 			ordinarySurface ??
-			(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+			(await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
 		traceSubagentLaunch("interactive.surface", {
 			id,
 			name: params.name,
