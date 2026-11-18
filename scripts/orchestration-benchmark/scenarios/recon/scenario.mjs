@@ -1,6 +1,8 @@
 // Scenario (a) of G2.1: 6 read-only recon children launched directly.
-// Each child reads one planted fact; child 4's file also holds a 7th fact that is
-// only in its report. The oracle compares the parent's final reply by key.
+// Each child reads one planted fact from the shared workspace. The 7th fact is in
+// child 4's private instructions (its agent file, outside the workspace), so no
+// sibling can read it and it reaches the parent only through child 4's own report.
+// The oracle compares the parent's final reply by key.
 // archive/area-3.md is a decoy with a stale value: a read counts by fixture path only.
 const facts = {
 	"FACT-1": "cobalt-3318",

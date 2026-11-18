@@ -408,32 +408,67 @@ test("a batch with any launch order passes when the scenario allows any order", 
 	);
 });
 
-test("the recon fixture plants 6 facts, one per child, and a 7th only in one child's file", () => {
-	const dir = join(
+test("[T02b-5] the recon fixture plants 6 shared facts, one per child, and a 7th only in child 4's private instructions", () => {
+	const reconDir = join(
 		dirname(fileURLToPath(import.meta.url)),
 		"scenarios",
 		"recon",
-		"workspace",
-		"recon",
 	);
+	const factsIn = (file) =>
+		[...readFileSync(file, "utf8").matchAll(/(FACT-\d): ([\w-]+)/g)].map(
+			(m) => [m[1], m[2]],
+		);
+	const dir = join(reconDir, "workspace", "recon");
 	const files = readdirSync(dir).sort();
 	assert.equal(files.length, 6);
-	const keysByFile = files.map((name) =>
-		[
-			...readFileSync(join(dir, name), "utf8").matchAll(/^(FACT-\d): (\S+)$/gm),
-		].map((m) => [m[1], m[2]]),
+	const keysByFile = files.map((name) => factsIn(join(dir, name)));
+	// Each shared file holds exactly its own fact; FACT-7 is in no workspace file.
+	keysByFile.forEach((facts, index) => {
+		const key = `FACT-${index + 1}`;
+		assert.deepEqual(facts, [[key, recon.expectedFacts[key]]]);
+	});
+	const agents = join(reconDir, "agents");
+	const privateFacts = readdirSync(agents)
+		.sort()
+		.map((name) => [name, factsIn(join(agents, name))]);
+	assert.deepEqual(
+		privateFacts.filter(([, facts]) => facts.length > 0),
+		[["bench-recon-4.md", [["FACT-7", recon.expectedFacts["FACT-7"]]]]],
 	);
-	const all = keysByFile.flat();
-	assert.equal(new Set(all.map(([key]) => key)).size, 7);
-	for (const [key, value] of all) assert.equal(recon.expectedFacts[key], value);
-	assert.deepEqual(keysByFile.filter((facts) => facts.length === 2).length, 1);
-	// Every child contract reads its own file and returns the facts in it.
+	// Every child contract reads its own file and returns its facts; child 4 also its private fact.
 	for (const [role, contract] of Object.entries(recon.childResults)) {
 		const i = Number(role.at(-1));
 		assert.deepEqual(contract.reads, [`recon/area-${i}.md`]);
+		const own = keysByFile[i - 1].map(([, value]) => value);
 		assert.deepEqual(
 			contract.returns,
-			keysByFile[i - 1].map(([, value]) => value),
+			i === 4 ? [...own, recon.expectedFacts["FACT-7"]] : own,
 		);
 	}
+});
+
+test("[T02b-5] FACT-7 counts only when it arrives through child 4's own report", () => {
+	const launch6 = launch([
+		["r1", "a"],
+		["r4", "d"],
+	]);
+	const reply = assistant("stop", "x-1 h-4 e-7");
+	const children = [child("a", "x-1"), child("d", ["h-4", "e-7"])];
+	// A sibling's report carries FACT-7; child 4's own report lacks it.
+	const leaked = account(
+		[launch6, result("r1", "x-1 e-7"), result("r4", "h-4"), reply],
+		children,
+	);
+	assert.deepEqual(
+		leaked.runs.map((r) => r.delivered),
+		[true, false],
+	);
+	const own = account(
+		[launch6, result("r1", "x-1"), result("r4", "h-4 e-7"), reply],
+		children,
+	);
+	assert.deepEqual(
+		own.runs.map((r) => r.delivered),
+		[true, true],
+	);
 });
