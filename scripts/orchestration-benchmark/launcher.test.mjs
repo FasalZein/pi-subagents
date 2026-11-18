@@ -76,6 +76,20 @@ test("[F1] only the requested provider enters a sample; an OAuth refresh token i
 		/expires within/,
 	);
 	assert.throws(() => selectProviderAuth(auth, "missing", now, 0), /no entry/);
+	// A provider whose models.json entry carries its key needs no login entry (T04).
+	assert.deepEqual(
+		selectProviderAuth(auth, "keyed", now, 0, {
+			providers: { keyed: { apiKey: "k" } },
+		}),
+		{},
+	);
+	assert.throws(
+		() =>
+			selectProviderAuth(auth, "missing", now, 0, {
+				providers: { missing: { baseUrl: "u" } },
+			}),
+		/no entry/,
+	);
 	assert.deepEqual(
 		selectProviderModels(
 			{ providers: { wanted: { baseUrl: "u" }, other: { baseUrl: "v" } } },
