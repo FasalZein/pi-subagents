@@ -101,6 +101,7 @@ import "./mux/zellij-owned-placement.test.ts";
 import "./agents/roster-filtering.test.ts";
 import "./agents/roster-limit-fields.test.ts";
 import "./agents/registration-gating.test.ts";
+import "./agents/malformed-agent.test.ts";
 
 import "./runtime/outstanding-work.test.ts";
 import "./mux/herdr-work.test.ts";
