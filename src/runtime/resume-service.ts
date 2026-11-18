@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
@@ -53,7 +53,8 @@ import {
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
 import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
-import { setAsidePreviousVerdicts, startResumedChild } from "./resume-start.ts";
+import { assertResumeAllowed, reserveResumeSession, settleVerdictAfterRun } from "./resume-guards.ts";
+import { setAsidePreviousExitRecord, startResumedChild } from "./resume-start.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -93,6 +94,8 @@ export interface ResumeSessionInput {
 	mode?: "interactive" | "background";
 	model?: string;
 	thinking?: string;
+	/** D8: the overlay operator's explicit override of the resume guards, for this attempt only. */
+	operatorOverride?: boolean;
 }
 
 export function resolveResumeLaunchMetadataForInvocation(
@@ -204,12 +207,19 @@ export async function resumeSubagentSession(
 				"Start a new launch of the agent for follow-up work.",
 		);
 	}
+	// D8: the guards and the session reservation run before any asynchronous step.
+	if (input.operatorOverride !== true) assertResumeAllowed(input.sessionFile);
+	const releaseSession = reserveResumeSession(input.sessionFile, runtime.runningSubagents.values());
 	// D9: a resume, from the tool or the overlay, takes one launch cap slot before any side effect.
 	const capSlot = tryAcquireLaunchCapSlots(1);
-	if (!capSlot) throw new Error(getLaunchCapError(1));
+	if (!capSlot) {
+		releaseSession();
+		throw new Error(getLaunchCapError(1));
+	}
 	const widthLimit = getSpawnWidthLimit();
 	const slot = tryAcquireSlots(1, widthLimit);
 	if (!slot) {
+		releaseSession();
 		capSlot.release();
 		throw new Error(
 			`Spawn width limit reached (${getLiveSlotCount()}/${widthLimit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
@@ -227,10 +237,19 @@ export async function resumeSubagentSession(
 		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
-			running.completionPromise = releaseSpawnWidthSlotOnCompletion(running, running.completionPromise);
+			const settled = running.completionPromise
+				.then((result) => {
+					settleVerdictAfterRun(input.sessionFile, result);
+					return result;
+				})
+				.finally(releaseSession);
+			running.completionPromise = releaseSpawnWidthSlotOnCompletion(running, settled);
+		} else {
+			releaseSession();
 		}
 		return running;
 	} catch (error) {
+		releaseSession();
 		if (claimedRunning) releaseSpawnWidthSlot(claimedRunning);
 		slot.release();
 		// No-op after a commit or the undo; covers a throw before the undo registered.
@@ -308,26 +327,12 @@ async function resumeSubagentSessionWithoutWidth(
 		throw new Error(`Subagents require a supported terminal multiplexer. ${muxSetupHint()}`);
 	}
 
-	// Guard: reject duplicate resume of the same session file
-	const normalizedFile = resolve(sessionFile);
-	for (const existing of runtime.runningSubagents.values()) {
-		if (existing.sessionFile && resolve(existing.sessionFile) === normalizedFile) {
-			throw new Error(
-				`Session "${existing.name}" (${existing.agent ?? "subagent"}) is already running with id ${existing.id}. ` +
-					"Use subagent_kill first or wait for it to complete.",
-			);
-		}
-	}
-
 	const entryCountBefore = getEntryCount(sessionFile);
-	// Read the previous verdict before setting it aside: it carries the budgets the
-	// killed run was under, which is the only record for a session mode that
-	// never persisted launch metadata.
+	// The previous verdict carries the budgets the killed run was under, which is the only
+	// record for a session mode that never persisted launch metadata. It stays in force until
+	// the resumed run ends (D8); only the previous exit record moves aside here.
 	const previousTimeout = readSubagentTimeoutSidecar(sessionFile);
-	// The previous run's verdicts are spent once the child starts: that lets a resumed run
-	// that finishes cleanly release a session an earlier timeout had flagged, while a resumed
-	// run that times out again writes a fresh one. A failed resume puts them back (D6).
-	const discardPreviousVerdicts = setAsidePreviousVerdicts(sessionFile, undo);
+	const discardPreviousExitRecord = setAsidePreviousExitRecord(sessionFile, undo);
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
 	const savedExtensions = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
 	const extensionArgs =
@@ -477,7 +482,7 @@ async function resumeSubagentSessionWithoutWidth(
 	});
 	// The child runs and owns its run folder, surface and capsule.
 	undo.commit();
-	discardPreviousVerdicts();
+	discardPreviousExitRecord();
 
 	if (shouldPersistInvocationMetadata) {
 		// A live child is never rolled back: a failed write becomes a warning on its result (D6).

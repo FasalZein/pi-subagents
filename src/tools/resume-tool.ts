@@ -2,9 +2,9 @@ import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-ag
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { endedUnderContextPressure } from "../session/completion-reason.ts";
-import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
+import { parseRunId, type RunId } from "../runtime/result-record.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
@@ -21,28 +21,25 @@ export interface ResumeToolRuntime extends ResumeServiceRuntime {
 	getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
 }
 
-function assertResumeAllowed(sessionFile: string): void {
-	// The child ended on instruction from its context-warning policy, so its
-	// window is spent. Resuming buys no room and only repeats the wrap-up.
-	// Operators can still resume it deliberately from the /subagents overlay.
-	if (endedUnderContextPressure(sessionFile)) {
-		throw new Error(
-			"This sub-agent stopped early as instructed by its context-warning policy, and its context window is spent. " +
-				"Resuming gives it no room to work. Launch a fresh sub-agent with the remaining work instead.",
-		);
+/**
+ * D8: a resume names a run id or a session file. A run id resolves through the parent session's
+ * result record; a record that says the run is not resumable refuses with its own reason.
+ */
+function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string }, resultsDir: string): string {
+	if (params.runId && params.sessionFile) throw new Error("Give a run id or a session file, not both.");
+	if (params.sessionFile) return params.sessionFile;
+	if (!params.runId) throw new Error("A run id or a session file is required.");
+	let runId: RunId;
+	try {
+		runId = parseRunId(params.runId);
+	} catch {
+		throw new Error(`No result with run id "${params.runId}" in this session.`);
 	}
-
-	// A budget kill is recoverable by default — a resume re-arms the same
-	// budget, so it cannot run away again. Only an agent that opted into
-	// `on-timeout: block-resume` refuses, because a second partial run of a
-	// non-idempotent child is not safe to attempt.
-	const timedOut = readSubagentTimeoutSidecar(sessionFile);
-	if (!timedOut?.blocksResume) return;
-	const limitDescription = timedOut.kind === "idle-timeout" ? "limit for time without output" : "time limit";
-	throw new Error(
-		`The system stopped this sub-agent because it went past its ${limitDescription}. ` +
-			"Its agent file does not allow a resume after that. Start a new sub-agent with a smaller task instead.",
-	);
+	const record = sessionResultStore(resultsDir).read(runId);
+	if (!record) throw new Error(`No result with run id "${params.runId}" in this session.`);
+	if (!record.resume.resumable) throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
+	if (!record.sessionFile) throw new Error(`Run ${runId} cannot be resumed: its record names no session file.`);
+	return record.sessionFile;
 }
 
 function forceSynchronousResumeIfNeeded(running: RunningSubagent, hasUI: boolean): void {
@@ -65,11 +62,19 @@ export function registerSubagentResumeTool(
 	pi.registerTool({
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
-		description: "Continue an earlier child session from its session file, optionally with a follow-up task.",
+		description:
+			"Continue an earlier child session by the run id of its result or by its session file, optionally with a follow-up task.",
 		parameters: Type.Object({
-			sessionFile: Type.String({
-				description: "Path to the session .jsonl file to resume",
-			}),
+			runId: Type.Optional(
+				Type.String({
+					description: "Run id of an earlier result whose session to resume",
+				}),
+			),
+			sessionFile: Type.Optional(
+				Type.String({
+					description: "Path to the session .jsonl file to resume; give this or runId",
+				}),
+			),
 			name: Type.Optional(
 				Type.String({
 					description: "Display name for the terminal tab. Default: 'Resume'",
@@ -146,9 +151,8 @@ export function registerSubagentResumeTool(
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_RESUME_TOOL_NAME));
-			const sessionFile = params.sessionFile;
-			if (!sessionFile) throw new Error("Session file is required.");
-			assertResumeAllowed(sessionFile);
+			const resultsDir = getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId());
+			const sessionFile = resolveResumeSessionFile(params, resultsDir);
 			const launchMetadata = readSubagentLaunchMetadata(sessionFile);
 			const warning =
 				getIgnoredModelOverrideWarning(launchMetadata?.agent, launchMetadata?.allowModelOverride, params) ?? "";
@@ -156,7 +160,7 @@ export function registerSubagentResumeTool(
 			const running = await resumeSubagentSession(
 				{
 					sessionFile,
-					resultsDir: getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()),
+					resultsDir,
 					parent: { parentCwd: ctx.cwd, warnings: launchWarningLines(warning) },
 					task: params.task,
 					name: params.name,

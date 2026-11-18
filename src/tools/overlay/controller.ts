@@ -350,6 +350,9 @@ export class SubagentsOverlayController implements Component {
 					task: message,
 					name: item.name,
 					agent: item.agent,
+					// D8: resuming from the overlay is the operator's explicit override of the guards,
+					// for this attempt only; the verdict stays in force until the new run ends.
+					operatorOverride: true,
 				},
 				this.runtime,
 			);
