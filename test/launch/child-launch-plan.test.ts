@@ -409,7 +409,7 @@ describe("child launch plan", () => {
 						],
 					},
 				}),
-			/Model 'zai-messages\/glm-5\.1:medium' is not allowed for agent 'reviewer'/,
+			/Model 'glm-5\.1' is not allowed for agent 'reviewer'/,
 		);
 	});
 

@@ -31,7 +31,7 @@ import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
-import { applySynchronousLaunchPolicy, getBackgroundAutoExitWarning, getSubagentToolsWarning } from "./policy.ts";
+import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_KILL_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
 
@@ -432,9 +432,7 @@ export function registerSubagentCoreTools(
 						child,
 						agentDefs,
 						blocking: resolveSubagentBlocking(child, agentDefs),
-						warning:
-							getSubagentToolsWarning(agentDefs?.tools) ??
-							getBackgroundAutoExitWarning(agentDefs, shouldUseBackgroundLaunch(child, agentDefs, ctx.hasUI)),
+						warning: getChildLaunchWarning(child, agentDefs, shouldUseBackgroundLaunch(child, agentDefs, ctx.hasUI)),
 					};
 				});
 				// Slot cost per child: 1 normally, N candidates for a verified
@@ -474,8 +472,10 @@ export function registerSubagentCoreTools(
 					throw error;
 				}
 				runtime.startWidgetRefresh();
-				const warnings = prepared.map((entry) => entry.warning?.message ?? "");
-				const warningPrefix = warnings.filter(Boolean).join("\n\n");
+				const warningPrefix = prepared
+					.map((entry) => entry.warning)
+					.filter(Boolean)
+					.join("\n\n");
 				if (launched.length === 1) {
 					const result = await runtime.getLaunchedSubagentResult(launched[0], getToolWaitSignal(launched[0], signal));
 					return withToolWarning(result, warningPrefix);
