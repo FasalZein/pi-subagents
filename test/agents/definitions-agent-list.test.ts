@@ -4,14 +4,13 @@ import {
 	createTestDir,
 	describe,
 	getAgentListEntriesForTest,
-	getAgentListSignatureForTest,
 	getEffectiveAgentDefinitionsForTest,
 	getExtensionLaunchArgsForTest,
 	it,
 	join,
 	loadAgentDefaults,
 	mkdirSync,
-	renderAgentListReminderForTest,
+	renderAgentDetailsForTest,
 	resetSubagentStateForTest,
 	resolveDenyToolsForTest,
 	resolveEffectiveSessionModeForTest,
@@ -346,19 +345,11 @@ describe("agent definitions and catalog", () => {
 		const defs = loadAgentDefaults("reviewer");
 		assert.equal(defs?.allowedModels, "openai-ws/gpt-5.5:low, nahcrof/glm-5.1:off");
 
-		const entries = getAgentListEntriesForTest(dir);
-		const reminder = renderAgentListReminderForTest(entries);
-		assert.match(reminder, /default_model: zai-messages\/glm-5\.1:high/);
-		assert.match(reminder, /models: zai-messages\/glm-5\.1:high \| openai-ws\/gpt-5\.5:low \| nahcrof\/glm-5\.1:off/);
-		assert.match(reminder, /- `scout`: Inspect files\n(?: {2}.+\n){4,5} {2}models: any model ref/);
-		assert.match(reminder, /`models:` lists accepted overrides/);
-
-		const firstSignature = getAgentListSignatureForTest(entries);
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review changes\nmode: background\nmodel: zai-messages/glm-5.1:high\nallow-model-override: true\nallowed-models: anthropic-kiro/claude-opus-4-8-thinking:xhigh\n---\n\nReviewer body.`,
-		);
-		assert.notEqual(firstSignature, getAgentListSignatureForTest(getAgentListEntriesForTest(dir)));
+		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir));
+		assert.match(details, /^default model: zai-messages\/glm-5\.1:high$/m);
+		// Accepted refs grouped by provider, the default first (D20).
+		assert.match(details, /^models: zai-messages: glm-5\.1:high; openai-ws: gpt-5\.5:low; nahcrof: glm-5\.1:off$/m);
+		assert.match(details, /^scout \(global\): Inspect files\ndefault model: the parent's model\nmodels: any model ref$/m);
 	});
 
 	it("renders open model overrides when allow-model-override is true without allowed-models", () => {
@@ -373,10 +364,9 @@ describe("agent definitions and catalog", () => {
 			`---\nname: debugger\ndescription: Diagnose failures\nmodel: openai-cpa/gpt-5.6-sol\nthinking: max\nallow-model-override: true\n---\n\nDebugger body.`,
 		);
 
-		const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(dir));
-		assert.match(reminder, /default_model: openai-cpa\/gpt-5\.6-sol:max/);
-		assert.match(reminder, /models: any model ref/);
-		assert.match(reminder, /`models: any model ref` accepts any available model/);
+		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir));
+		assert.match(details, /^default model: openai-cpa\/gpt-5\.6-sol:max$/m);
+		assert.match(details, /^models: any model ref$/m);
 	});
 
 	it("hides selectable models when allow-model-override is false", () => {
@@ -391,9 +381,9 @@ describe("agent definitions and catalog", () => {
 			`---\nname: reviewer\ndescription: Review changes\nmode: background\nmodel: zai-messages/glm-5.1:high\nallow-model-override: false\nallowed-models: openai-ws/gpt-5.5:low\n---\n\nReviewer body.`,
 		);
 
-		const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(dir));
-		assert.doesNotMatch(reminder, /\n {2}models:/);
-		assert.match(reminder, /no `models:` line ignores model and thinking overrides/);
+		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir));
+		assert.match(details, /^models: the default only \(overrides are ignored\)$/m);
+		assert.doesNotMatch(details, /openai-ws/);
 	});
 
 	it("renders the completion contract to match each child's actual exit path", () => {
@@ -424,23 +414,26 @@ describe("agent definitions and catalog", () => {
 			`---\nname: no-mode\ndescription: Agent with no mode field\n---\n\nBody.`,
 		);
 
-		const reminder = renderAgentListReminderForTest(getAgentListEntriesForTest(dir));
-		// Bound each assertion to one agent block. Unbounded `[\s\S]*?` regexes
-		// matched across the blank-line block boundary into the next agent's
-		// completion line, so they passed even against the old renderer.
-		const blockFor = (name: string) =>
-			reminder.match(new RegExp(`^- \`${name}\`:[\\s\\S]*?(?=\\n\\n|\\n</subagent-roster>)`, "m"))?.[0] ?? "";
+		// A session with a pane: only a pane child can stay open (index flags, D19).
+		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir), {
+			launch: { paneAvailable: true, forcesWait: false },
+		});
+		// Bound each assertion to one agent block.
+		const blockFor = (name: string) => details.split("\n\n").find((block) => block.startsWith(`${name} (`)) ?? "";
+		const manual = /closes itself|stays open until a human or the agent finishes/;
 		// Interactive children without `auto-exit` are told to stay open for the
 		// operator and never receive `subagent_done`, so their results only
 		// arrive after the pane is closed. The roster must not promise otherwise.
 		// An omitted `mode` takes the interactive launch path as well.
-		assert.match(blockFor("pairing"), /completion: human_or_agent_must_finish/);
-		assert.match(blockFor("no-mode"), /completion: human_or_agent_must_finish/);
-		assert.match(blockFor("fire-and-forget"), /completion: exits_automatically/);
+		assert.equal(blockFor("pairing").match(manual)?.[0], "stays open until a human or the agent finishes");
+		assert.equal(blockFor("no-mode").match(manual)?.[0], "stays open until a human or the agent finishes");
+		assert.equal(blockFor("fire-and-forget").match(manual)?.[0], "closes itself");
 		// Background children must call `subagent_done` themselves, so the
 		// default contract stays exits_automatically for them.
-		assert.match(blockFor("runner"), /completion: exits_automatically/);
-		assert.match(blockFor("pinned-open"), /completion: human_or_agent_must_finish/);
+		assert.equal(blockFor("runner").match(manual)?.[0], "closes itself");
+		// A headless child always closes itself: applySynchronousLaunchPolicy
+		// sets auto-exit for every background launch, also with auto-exit: false.
+		assert.equal(blockFor("pinned-open").match(manual)?.[0], "closes itself");
 	});
 
 	it("defaults spawning to false for named agent definitions", () => {
@@ -463,35 +456,11 @@ describe("agent definitions and catalog", () => {
 		assert.equal(coordinator?.spawning, true);
 		assert.deepEqual([...resolveDenyToolsForTest(worker ?? null)].sort(), [
 			"subagent",
+			"subagent_agents",
 			"subagent_kill",
 			"subagent_resume",
 		]);
 		assert.deepEqual([...resolveDenyToolsForTest(coordinator ?? null)], []);
-	});
-
-	it("keeps catalog signatures stable until the effective ambient catalog changes", () => {
-		const dir = createTestDir();
-		const configDir = join(dir, "agent-root");
-		const agentsDir = join(configDir, "agents");
-		mkdirSync(agentsDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review changes for regressions\nmode: background\n---\n\nReviewer body.`,
-		);
-
-		const first = getAgentListEntriesForTest(dir);
-		const second = getAgentListEntriesForTest(dir);
-		assert.equal(getAgentListSignatureForTest(first), getAgentListSignatureForTest(second));
-
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review critical changes for regressions\nmode: background\n---\n\nReviewer body.`,
-		);
-
-		const changed = getAgentListEntriesForTest(dir);
-		assert.notEqual(getAgentListSignatureForTest(first), getAgentListSignatureForTest(changed));
 	});
 
 	it("registers conservative delegation guidance on the subagent tool", () => {

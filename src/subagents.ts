@@ -3,7 +3,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
 import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
-import { applyAgentIndexSection, renderAgentIndexSection, selectIndexTargets } from "./agents/index-section.ts";
+import {
+	applyAgentIndexSection,
+	type IndexLaunchPolicy,
+	renderAgentIndexSection,
+	selectIndexTargets,
+} from "./agents/index-section.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
 	formatMalformedAgentNotice,
@@ -75,6 +80,8 @@ import {
 	stopAfterCurrentSubagentBatch,
 } from "./runtime/state.ts";
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
+import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
+import { registerSubagentAgentsTool } from "./tools/agents-tool.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
 	markInitialPromptLaunchComplete,
@@ -114,6 +121,11 @@ function loadLaunchableAgentDefaults(agentName: string, cwdHint?: string): Agent
 	} catch {
 		return null;
 	}
+}
+
+/** How a solo launch from this session runs; the index flags and the agent detail both follow it. */
+function getSoloLaunchPolicy(hasUI: boolean): IndexLaunchPolicy {
+	return { paneAvailable: hasUI && isMuxAvailable(), forcesWait: shouldForceSynchronousLaunch(hasUI) };
 }
 
 function getAgentListEntries(baseCwd = process.cwd()): AgentListEntry[] {
@@ -237,12 +249,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// changed agent file shows in the next request. Pi keeps the section with
 	// the session and patches it only when its text changed (D19).
 	pi.on("before_agent_start", (event, ctx) => {
-		if (!shouldRegister(SUBAGENT_TOOL_NAME) || !isToolCallable(pi, SUBAGENT_TOOL_NAME)) return undefined;
+		if (!mayLaunch()) return undefined;
 		const spawnEnv = parseSpawnEnv(process.env);
-		const section = renderAgentIndexSection(selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv), {
-			paneAvailable: ctx.hasUI && isMuxAvailable(),
-			forcesWait: shouldForceSynchronousLaunch(ctx.hasUI),
-		});
+		const section = renderAgentIndexSection(
+			selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv),
+			getSoloLaunchPolicy(ctx.hasUI),
+		);
 		if (!section) return undefined;
 		return applyAgentIndexSection(event, section, spawnEnv.callerAgent !== null);
 	});
@@ -329,6 +341,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	);
 
 	const shouldRegister = (name: string) => !deniedTools.has(name);
+	// The index and subagent_agents describe only what this session may launch.
+	const mayLaunch = () => shouldRegister(SUBAGENT_TOOL_NAME) && isToolCallable(pi, SUBAGENT_TOOL_NAME);
 
 	registerSubagentCoreTools(pi, shouldRegister, {
 		loadAgentDefaults: (agentName, cwd) => (agentName ? loadAgentDefaults(agentName, undefined, cwd) : null),
@@ -360,6 +374,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		modelRegistry: {
 			getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
 		},
+	});
+
+	registerSubagentAgentsTool(pi, shouldRegister, {
+		mayLaunch,
+		spawnEnv: () => parseSpawnEnv(process.env),
+		listLaunchableAgents: (cwd, spawnEnv) =>
+			selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, spawnEnv),
+		launchPolicy: getSoloLaunchPolicy,
 	});
 
 	registerSubagentMessageRenderers(pi, formatElapsed);
