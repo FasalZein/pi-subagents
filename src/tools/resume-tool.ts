@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
+import { isRenderedResult, launchWarningLines } from "../runtime/headless-result.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
@@ -165,6 +166,7 @@ export function registerSubagentResumeTool(
 				{
 					sessionFile,
 					resultsDir: getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()),
+					parent: { parentCwd: ctx.cwd, warnings: launchWarningLines(warning) },
 					task: params.task,
 					name: params.name,
 					agent: params.agent,
@@ -182,7 +184,7 @@ export function registerSubagentResumeTool(
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
-				if (!warning) return result;
+				if (!warning || isRenderedResult(result)) return result;
 				return {
 					...result,
 					content: [{ type: "text" as const, text: warning }, ...result.content],

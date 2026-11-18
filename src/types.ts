@@ -1,5 +1,9 @@
 import type { ChildProcess } from "node:child_process";
+import type { ResultTarget } from "./runtime/headless-result.ts";
 import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts";
+
+/** What the rendered result needs from the receiving parent (D14); a resume passes it in. */
+export type ResultParent = Pick<ResultTarget, "parentCwd" | "warnings">;
 
 export type DeliveryState = "detached" | "awaited";
 export type ParentClosePolicy = "terminate" | "continue";
@@ -97,6 +101,11 @@ export interface SubagentResult {
 	error?: string;
 	errorMessage?: string;
 	ping?: SubagentPing;
+	/** The rendered result (D14); when set, every delivery path shows exactly this text. */
+	resultText?: string;
+	/** Run id and report file of the published result record (D13). */
+	resultRunId?: string;
+	reportFile?: string;
 }
 
 export interface CompletedSubagentResult extends SubagentResult {
@@ -171,6 +180,8 @@ export interface RunningSubagent {
 	modelRef?: string;
 	/** Exact launch contract reused by an internal timeout wrap-up restart. */
 	launchMetadata?: PersistedSubagentLaunchMetadata;
+	/** The parent session's result store and this run's reserved id (D13). */
+	resultTarget?: ResultTarget;
 	contextLabel?: string;
 	activity?: string;
 	taskPreview?: string;

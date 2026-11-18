@@ -127,6 +127,8 @@ function getCompletedResultDetails(completed: CompletedSubagentResult): Record<s
 		contextTokens: completed.contextTokens,
 		contextWindow: completed.contextWindow,
 		sessionFile: completed.sessionFile,
+		...(completed.resultRunId ? { runId: completed.resultRunId } : {}),
+		...(completed.reportFile ? { reportFile: completed.reportFile } : {}),
 		...(completed.deliveryId ? { deliveryId: completed.deliveryId } : {}),
 		...getTimeoutResultDetails(completed),
 		...(completed.timeoutWrapUp ? { timeoutWrapUp: completed.timeoutWrapUp } : {}),
@@ -177,6 +179,7 @@ function getCompletedSubagentContent(
 	formatElapsed: (elapsed: number) => string,
 	sessionRef: string,
 ): string {
+	if (completed.resultText !== undefined) return completed.resultText;
 	// A budget kill is the dominant fact about this run: without it the parent
 	// reads an ordinary non-zero exit and retries the same runaway.
 	if (completed.timedOut) {

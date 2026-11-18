@@ -346,6 +346,7 @@ export class SubagentsOverlayController implements Component {
 				{
 					sessionFile: item.sessionFile!,
 					resultsDir: getSessionResultsDir(this.ctx.cwd, this.ctx.sessionManager.getSessionId()),
+					parent: { parentCwd: this.ctx.cwd, warnings: [] },
 					task: message,
 					name: item.name,
 					agent: item.agent,

@@ -12,6 +12,7 @@ import {
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
+import { isRenderedResult, launchWarningLines } from "../runtime/headless-result.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
 import {
 	asSubagentToolResult,
@@ -163,7 +164,8 @@ export function getSubagentNameError(name: string | undefined): string | null {
 }
 
 export function withToolWarning(result: ToolResult, warningPrefix: string): ToolResult {
-	if (!warningPrefix) return result;
+	// D14: a published rendering holds the warnings inside its frame, the same text the message path shows.
+	if (!warningPrefix || isRenderedResult(result)) return result;
 	const existingText = result.content
 		.filter((block): block is { type: "text"; text: string } => block.type === "text")
 		.map((block) => block.text)
@@ -234,6 +236,7 @@ function buildSubagentLaunchContext(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	autoExit: true | undefined,
+	warning: string,
 ): SubagentLaunchContext {
 	const parentModelRef = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 	return {
@@ -244,6 +247,7 @@ function buildSubagentLaunchContext(
 		modelRegistry: ctx.modelRegistry,
 		parentModelRef,
 		parentThinking: pi.getThinkingLevel() as string,
+		resultWarnings: launchWarningLines(warning),
 	};
 }
 
@@ -255,6 +259,7 @@ async function launchOneSubagent(
 	runtime: SubagentToolRuntime,
 	pi: ExtensionAPI,
 	slots: SpawnSlotLease,
+	warning: string,
 ): Promise<RunningSubagent> {
 	const effectiveParams = enforceAgentFrontmatter(params, agentDefs);
 	// In print/prompt-style runs there is no durable parent turn for async steer
@@ -270,7 +275,7 @@ async function launchOneSubagent(
 		forceSynchronousLaunch,
 	);
 
-	const launchCtx = buildSubagentLaunchContext(toolCallId, ctx, pi, headlessAutoExit);
+	const launchCtx = buildSubagentLaunchContext(toolCallId, ctx, pi, headlessAutoExit, warning);
 	if (agentDefs?.llmAsVerifier === true) {
 		// One logical child fronts the whole fan-out: N candidates are planned
 		// here and owned by a detached supervisor; no per-candidate routes are
@@ -459,7 +464,8 @@ export function registerSubagentCoreTools(
 						const childSlots = unlaunchedSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
-							running = await launchOneSubagent(toolCallId, entry.child, entry.agentDefs, ctx, runtime, pi, childSlots);
+							const { child, agentDefs, warning } = entry;
+							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();
 							throw error;
@@ -472,30 +478,22 @@ export function registerSubagentCoreTools(
 					throw error;
 				}
 				runtime.startWidgetRefresh();
-				const warningPrefix = prepared
-					.map((entry) => entry.warning)
-					.filter(Boolean)
-					.join("\n\n");
 				if (launched.length === 1) {
 					const result = await runtime.getLaunchedSubagentResult(launched[0], getToolWaitSignal(launched[0], signal));
-					return withToolWarning(result, warningPrefix);
+					return withToolWarning(result, prepared[0].warning);
 				}
 
 				const results = await Promise.all(
 					launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))),
 				);
+				// Each child's warnings stay with its own text; a published rendering already holds them.
 				const texts = results
-					.flatMap((result) => result.content)
+					.flatMap((result, index) => withToolWarning(result, prepared[index].warning).content)
 					.filter((block) => block.type === "text")
 					.map((block) => block.text);
 				const joined = texts.join("\n\n");
 				return asSubagentToolResult({
-					content: [
-						{
-							type: "text",
-							text: warningPrefix ? `${warningPrefix}\n\n${joined}` : joined,
-						},
-					],
+					content: [{ type: "text", text: joined }],
 					details: {
 						status: hasBlockingChild ? "batch" : "started",
 						children: results.map((result, index) => ({
