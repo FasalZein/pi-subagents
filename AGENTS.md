@@ -7,6 +7,8 @@ Read `README.md` before doing anything. It documents the model, frontmatter, pla
 - This is a Pi package extension. Extension entrypoint is `src/index.ts`.
 - Tests run on plain `node --test` (see `package.json` scripts). `npm test` and `bun test` both work.
 - One-off checks (`tsc`, `biome`, `knip`) run via `bunx` so no extra deps are declared.
+- `bun.lock` is the only tracked lockfile; `package-lock.json` is gitignored.
+- Do not use `git stash` in a linked worktree: the stash list is shared with the main checkout, so a pop can apply another session's entry.
 
 ## Project structure contract
 
