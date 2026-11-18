@@ -109,6 +109,7 @@ describe("launch coordinator", () => {
 		assert.deepEqual(launch.envVars.PI_DENY_TOOLS.split(",").sort(), [
 			"bash",
 			"subagent",
+			"subagent_agents",
 			"subagent_kill",
 			"subagent_resume",
 		]);
