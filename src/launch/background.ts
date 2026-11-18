@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { reserveRunId } from "../runtime/result-files.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -135,7 +135,9 @@ export async function launchBackgroundSubagent(
 	ctx: SubagentLaunchContext,
 	runtime: BackgroundLaunchRuntime,
 ): Promise<RunningSubagent> {
-	const id = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId())).runId;
+	const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
+	const reservation = store.reserve();
+	const id = reservation.runId;
 	const plan = await buildBackgroundLaunchPlan(params, ctx);
 	const { launch, invocation, denyPatterns } = plan;
 	const { prepared, noSession } = launch;
@@ -181,6 +183,7 @@ export async function launchBackgroundSubagent(
 		modelContextWindow: runtime.getContextWindow(prepared.effectiveModelRef),
 		modelRef: prepared.effectiveModelRef,
 		launchMetadata: launch.launchMetadata,
+		resultTarget: { store, reservation },
 	};
 	const rememberTail = (current: string | undefined, chunk: Buffer | string) =>
 		`${current ?? ""}${chunk.toString()}`.slice(-4000);

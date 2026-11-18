@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
-import { reserveRunId } from "./result-files.ts";
+import { sessionResultStore } from "./result-files.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -453,7 +453,8 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_PACKAGE_DIR = "";
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
-	const id = reserveRunId(input.resultsDir).runId;
+	const reservation = sessionResultStore(input.resultsDir).reserve();
+	const id = reservation.runId;
 	const running: RunningSubagent = {
 		id,
 		name,
@@ -479,6 +480,7 @@ async function resumeSubagentSessionWithoutWidth(
 		modelContextWindow: runtime.getContextWindow(invocationMetadata?.modelRef),
 		modelRef: invocationMetadata?.modelRef,
 		launchMetadata: resumedInvocationMetadata,
+		resultTarget: { store: sessionResultStore(input.resultsDir), reservation },
 	};
 
 	if (metadata.mode === "background") {

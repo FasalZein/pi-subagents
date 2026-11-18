@@ -52,6 +52,7 @@ import {
 	resolveTaskSessionMode as resolveTaskSessionModeFromSessionFiles,
 	type SubagentSessionMode,
 } from "./session/session-files.ts";
+import { setResultStorageNotice } from "./runtime/result-files.ts";
 import type { SubagentParamsInput } from "./types.ts";
 
 export {
@@ -194,6 +195,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		resetSubagentBatchStopRequest();
 		applySubagentLineage(ctx);
 		attachWidgetContext(ctx);
+		// D13: a results-folder failure tells the person once, outside any tool result.
+		setResultStorageNotice((message) => ctx.ui.notify(message, "warning"));
 		// One notice per session (D24). In print mode the notice is not shown:
 		// Pi has no print-mode notice channel and its fallback notify is a no-op.
 		// The launch refusal still names the file and its error. Revisit if Pi
