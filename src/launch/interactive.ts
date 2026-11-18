@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle, isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { reserveRunId } from "../runtime/result-files.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
 import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
@@ -48,7 +48,9 @@ export async function launchInteractiveSubagent(
 	runtime: InteractiveLaunchRuntime,
 	options?: { surface?: string },
 ): Promise<RunningSubagent> {
-	const id = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId())).runId;
+	const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
+	const reservation = store.reserve();
+	const id = reservation.runId;
 	const launch = await coordinateSubagentLaunch(params, ctx, {
 		mode: "interactive",
 	});
@@ -243,5 +245,6 @@ export async function launchInteractiveSubagent(
 		launchMetadata: launch.launchMetadata,
 		doneSentinelFile,
 		zellijTarget: programSession?.target,
+		resultTarget: { store, reservation, parentCwd: ctx.cwd, warnings: ctx.resultWarnings ?? [] },
 	};
 }

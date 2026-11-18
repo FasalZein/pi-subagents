@@ -12,7 +12,7 @@ import {
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
-import { isRenderedResult, launchWarningLines } from "../runtime/headless-result.ts";
+import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
 import {
 	asSubagentToolResult,
