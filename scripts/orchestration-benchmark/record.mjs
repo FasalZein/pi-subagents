@@ -161,13 +161,19 @@ export function usageLedger(events) {
 	return { ledger, missingUsage };
 }
 
+const isToolUsage = (row) => row.type === "toolResult";
+
 /**
- * Totals of ledger rows. requests counts usage rows: an assistant row is one
- * provider call; a tool-result row may stand for several nested calls.
+ * Totals of ledger rows. Every row adds its tokens and cost. requests counts
+ * the session's own model requests (every row except a tool result);
+ * toolUsageEntries counts tool-result rows, each of which may stand for
+ * several nested calls of the tool and is no request of this session.
  */
 export function totals(rows) {
+	const toolUsageEntries = rows.filter(isToolUsage).length;
 	const sum = {
-		requests: rows.length,
+		requests: rows.length - toolUsageEntries,
+		toolUsageEntries,
 		input: 0,
 		cacheRead: 0,
 		cacheWrite: 0,
@@ -184,8 +190,7 @@ export function totals(rows) {
 	};
 }
 
-const toolAttributed = (ledger) =>
-	totals(ledger.filter((row) => row.type === "toolResult"));
+const toolAttributed = (ledger) => totals(ledger.filter(isToolUsage));
 
 /**
  * Parent cost: all model-attributed entries; the conversational subtotal

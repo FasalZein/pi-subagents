@@ -13,6 +13,7 @@ import {
 	summarizeChildren,
 	summarizeParent,
 	terminalAnswer,
+	totals,
 } from "./record.mjs";
 
 const KEY_PARTS = {
@@ -170,6 +171,39 @@ test("[F9] nested usage of a tool result counts for parent and child, apart from
 	assert.equal(child.cost, 0.75);
 	assert.equal(child.children[0].cumulativeInput, 12);
 	assert.equal(child.children[0].toolAttributed.cumulativeInput, 7);
+});
+
+test("a usage-bearing tool result adds tokens and cost but is no request; it counts as a tool usage entry", () => {
+	const toolResult = (u) => ({
+		type: "message",
+		message: { role: "toolResult", toolName: "ask", isError: false, usage: u },
+	});
+	const parent = summarizeParent([
+		assistant(usage(10, 0, 0, 1, 0.01)),
+		toolResult(usage(21, 0, 0, 3, 0.01)),
+	]);
+	const counts = (t) => [t.requests, t.toolUsageEntries, t.cumulativeInput];
+	assert.deepEqual(counts(parent.all), [1, 1, 31]);
+	assert.deepEqual(counts(parent.conversation), [1, 0, 10]);
+	assert.deepEqual(counts(parent.toolAttributed), [0, 1, 21]);
+	const child = summarizeChildren([
+		[
+			{
+				type: "custom",
+				customType: "pi-subagents_launch_metadata",
+				data: { agent: "r" },
+			},
+			assistant(usage(5, 0, 0, 1, 0.5), "stop"),
+			toolResult(usage(7, 0, 0, 1, 0.25)),
+		],
+	]).children[0];
+	assert.deepEqual(counts(child), [1, 1, 12]);
+	assert.deepEqual(counts(child.toolAttributed), [0, 1, 7]);
+	// All-attempt totals sum the ledgers of two attempts with the same rule.
+	assert.deepEqual(
+		counts(totals([...parent.ledger, ...parent.ledger])),
+		[2, 2, 62],
+	);
 });
 
 test("[F8] a request without usage is counted as missing evidence, not as zero", () => {
