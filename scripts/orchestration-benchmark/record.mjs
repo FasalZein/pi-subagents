@@ -77,7 +77,7 @@ export function sealRecord(record) {
 	return { ...body, checksum: sha256(canonicalJson(body)) };
 }
 
-function hasValidChecksum(record) {
+export function hasValidChecksum(record) {
 	if (
 		!record ||
 		typeof record !== "object" ||
@@ -304,14 +304,21 @@ export function singleAnswer(text) {
 
 /**
  * Keyed answer: one `<KEY>: <value>` line per key, values by key; null when no key line exists.
- * A repeated key keeps its last line.
+ * A key repeated with one value keeps that value. A key with different values
+ * keeps the list of its distinct values, which matches no expected value: a
+ * conflicting parent answer is a wrong answer.
  * @param {string[]} keys
  */
 export function keyedAnswer(keys) {
 	return (text) => {
 		const found = Object.entries(keyedValues(keys, text));
 		return found.length
-			? Object.fromEntries(found.map(([key, values]) => [key, values.at(-1)]))
+			? Object.fromEntries(
+					found.map(([key, values]) => {
+						const distinct = [...new Set(values)];
+						return [key, distinct.length === 1 ? distinct[0] : distinct];
+					}),
+				)
 			: null;
 	};
 }
@@ -554,10 +561,17 @@ export function loadEvidence(
 	const unmatchedProbes =
 		probes.filter((probe) => !sessionFiles.has(probe.sessionFile)).length +
 		(probes.length - bySession.size);
+	// A probe whose session file is no file of the attempt: Pi writes a session
+	// file only at the first message, so a child that never got its task has none.
+	const attemptFiles = new Set([parentFile, ...childFiles, ...otherFiles]);
+	const unfiledProbes = [...bySession.keys()].filter(
+		(file) => !attemptFiles.has(file),
+	).length;
 	return {
 		checkout,
 		missingProbes: missing.length,
 		unmatchedProbes,
+		unfiledProbes,
 		parentLoadedCheckout: fromCheckout(parent, parentTool),
 		childrenLoadedCheckout: children.every((child) =>
 			fromCheckout(child.probe, childTool),

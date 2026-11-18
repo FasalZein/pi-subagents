@@ -2,7 +2,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { AgentDefaults } from "../agents/definitions.ts";
-import { assertModelAllowed, splitModelRef } from "../agents/model-refs.ts";
+import {
+	assertModelAllowed,
+	buildModelRef,
+	parseAllowedModels,
+	resolveModelChoice,
+	splitModelRef,
+} from "../agents/model-refs.ts";
 import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import { generateSubagentSessionFile, type ResumeMode } from "../session/session-files.ts";
 import { addToolModeDeniedNames, resolveDenyTools } from "../tools/policy.ts";
@@ -157,6 +163,105 @@ export function resolveAvailableModelRef(
 	return { model: resolved, thinking };
 }
 
+/** The agent's model settings as written in its definition (and persisted for resume). */
+export interface AgentModelConfig {
+	definitionModel?: string;
+	definitionThinking?: string;
+	allowedModels?: string;
+	agentName?: string;
+}
+
+/**
+ * The agent's own default ref. A model written without a provider resolves to
+ * its one registry ref; an ambiguous or unknown one stays as written. The
+ * thinking field applies when the model carries no level suffix.
+ */
+export function resolveAgentDefaultRef(
+	config: AgentModelConfig,
+	modelRegistry: ModelRegistryLike | undefined,
+): string | undefined {
+	if (!config.definitionModel) return undefined;
+	const { model, thinking } = splitModelRef(config.definitionModel);
+	const matches = model.includes("/")
+		? []
+		: (modelRegistry?.getAvailable() ?? []).filter((candidate) => candidate.id === model);
+	const resolved = matches.length === 1 ? `${matches[0]?.provider}/${model}` : model;
+	return buildModelRef(resolved, thinking ?? config.definitionThinking);
+}
+
+/**
+ * The one ref the agent's own default adds to its accepted list: the default
+ * model at its effective level (its own level, else `effectiveThinking`), or
+ * the inherited ref when the agent has no default. A model-wide grant would
+ * accept the default model at every level.
+ */
+export function resolveImplicitModelGrant(
+	config: AgentModelConfig,
+	modelRegistry: ModelRegistryLike | undefined,
+	inheritedModelRef: string | undefined,
+	effectiveThinking: string | undefined,
+): string | undefined {
+	const defaultRef = resolveAgentDefaultRef(config, modelRegistry);
+	return defaultRef ? buildModelRef(defaultRef, effectiveThinking) : inheritedModelRef;
+}
+
+export interface CallModelRequest {
+	/** The model of the launch or resume call. */
+	model: string;
+	/** The thinking parameter of the call. */
+	thinking?: string;
+	config: AgentModelConfig;
+	/** The ref the child ran on without an agent default (the parent's model); accepted, never a provider source. */
+	inheritedModelRef?: string;
+	/** The level used when neither the call nor the accepted list fixes one. */
+	fallbackThinking?: string;
+	modelRegistry?: ModelRegistryLike;
+}
+
+/**
+ * Resolve the model of a launch or resume call (D22). Launch and resume both
+ * call this, so the same agent and the same call give the same child ref.
+ *
+ * Recorded limits:
+ * - A bare default (`model: base`) that two registry providers carry stays unqualified, so an exact call for one of them can be refused.
+ * - An unrestricted resume without a thinking parameter takes the configured thinking level, not the previous run's level.
+ * - A literal registry id that ends in a known thinking level (`base:high`) is read as a model plus a level.
+ */
+export function resolveCallModelRef(request: CallModelRequest): ReturnType<typeof normalizeModelRef> {
+	const defaultRef = resolveAgentDefaultRef(request.config, request.modelRegistry);
+	const implicitRef = resolveImplicitModelGrant(
+		request.config,
+		request.modelRegistry,
+		request.inheritedModelRef,
+		request.fallbackThinking,
+	);
+	const accepted = parseAllowedModels(request.config.allowedModels);
+	const choice = resolveModelChoice({
+		requested: request.model,
+		requestedThinking: request.thinking,
+		accepted: accepted.length > 0 && implicitRef ? [implicitRef, ...accepted] : accepted,
+		known: request.modelRegistry?.getAvailable() ?? [],
+		defaultRef,
+		defaultThinking: (defaultRef ? splitModelRef(defaultRef).thinking : undefined) ?? request.config.definitionThinking,
+		fallbackThinking: request.fallbackThinking,
+		agentName: request.config.agentName,
+	});
+	const available = resolveAvailableModelRef(
+		choice.model,
+		choice.thinking,
+		choice.explicitThinking,
+		request.modelRegistry,
+	);
+	const resolved = normalizeModelRef(available.model, available.thinking);
+	assertModelAllowed(
+		resolved.effectiveModelRef,
+		request.config.allowedModels,
+		request.config.agentName,
+		implicitRef ? [implicitRef] : [],
+	);
+	return resolved;
+}
+
 export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Promise<ChildLaunchPlan> {
 	const { params, agentDefs, parentCwd, parentSessionDir } = options;
 	const hasAllowedModels = !!agentDefs?.allowedModels?.trim();
@@ -182,28 +287,43 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		return normalizeModelRef(available.model, available.thinking);
 	};
 
-	const requestedModel = params.model ?? agentDefs?.model ?? options.parentModelRef;
-	const { effectiveModel, effectiveThinking, effectiveModelRef } = resolveRef(
-		requestedModel,
-		params.thinking ?? agentDefs?.thinking ?? options.parentThinking,
-		{
-			resolveAlways: params.model != null,
+	const fallbackThinking = agentDefs?.thinking ?? options.parentThinking;
+	const modelConfig: AgentModelConfig = {
+		definitionModel: agentDefs?.model,
+		definitionThinking: agentDefs?.thinking,
+		allowedModels: agentDefs?.allowedModels,
+		agentName: params.agent,
+	};
+	const inheritedModelRef = agentDefs?.model
+		? undefined
+		: normalizeModelRef(options.parentModelRef, fallbackThinking).effectiveModelRef;
+	const resolveDefaultModel = () => {
+		const ref = resolveRef(agentDefs?.model ?? options.parentModelRef, params.thinking ?? fallbackThinking, {
+			resolveAlways: false,
 			explicitThinking: params.thinking != null,
-		},
-	);
-	if (hasAllowedModels) {
-		const defaultModelRef = resolveRef(
-			agentDefs?.model ?? options.parentModelRef,
-			agentDefs?.thinking ?? options.parentThinking,
-			{ resolveAlways: false, explicitThinking: false },
-		).effectiveModelRef;
-		assertModelAllowed(
-			effectiveModelRef,
-			agentDefs?.allowedModels,
-			params.agent,
-			defaultModelRef ? [defaultModelRef] : [],
+		});
+		const implicitRef = resolveImplicitModelGrant(
+			modelConfig,
+			options.modelRegistry,
+			inheritedModelRef,
+			fallbackThinking,
 		);
-	}
+		if (hasAllowedModels) {
+			assertModelAllowed(ref.effectiveModelRef, agentDefs?.allowedModels, params.agent, implicitRef ? [implicitRef] : []);
+		}
+		return ref;
+	};
+	const { effectiveModel, effectiveThinking, effectiveModelRef } =
+		params.model != null
+			? resolveCallModelRef({
+					model: params.model,
+					thinking: params.thinking,
+					config: modelConfig,
+					inheritedModelRef,
+					fallbackThinking,
+					modelRegistry: options.modelRegistry,
+				})
+			: resolveDefaultModel();
 
 	const runtimePaths = resolveSubagentRuntimePaths(params, agentDefs, parentCwd, parentSessionDir);
 	const subagentSessionFile = generateSubagentSessionFile(
