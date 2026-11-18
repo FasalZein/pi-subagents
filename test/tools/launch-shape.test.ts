@@ -6,7 +6,7 @@ import {
 	registerSubagentCoreTools,
 	type SubagentToolRuntime,
 } from "../../src/tools/subagent-tools.ts";
-import type { RunningSubagent, SubagentParamsInput } from "../../src/types.ts";
+import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
 	assert,
@@ -49,8 +49,11 @@ function child(agent: string, name: string): SubagentParamsInput {
 	return { agent, name, title: "Launch shape check", task: "Check the launch shape" };
 }
 
-/** A launch tool over a fake runtime: each agent name maps to its pane or headless mode. */
-function fakeLaunchTool(modes: Record<string, "interactive" | "background">) {
+/**
+ * A launch tool over a fake runtime: each agent name maps to its frontmatter defaults.
+ * Each child finishes at once with the report "Report of <name>."; hasUI false is a one-shot parent.
+ */
+function fakeLaunchTool(agents: Record<string, Partial<AgentDefaults>>, { hasUI = true } = {}) {
 	const launched: string[] = [];
 	const start = (mode: "interactive" | "background") => async (params: SubagentParamsInput) => {
 		launched.push(params.name);
@@ -75,13 +78,13 @@ function fakeLaunchTool(modes: Record<string, "interactive" | "background">) {
 		return running;
 	};
 	const runtime: SubagentToolRuntime = {
-		loadAgentDefaults: (agent) => (agent && modes[agent] ? ({ mode: modes[agent] } as AgentDefaults) : null),
+		loadAgentDefaults: (agent) => (agent && agents[agent] ? (agents[agent] as AgentDefaults) : null),
 		resolveEffectiveSessionMode: () => "lineage-only",
 		resolveTaskSessionMode: () => "lineage-only",
 		launchBackgroundSubagent: start("background"),
 		launchSubagent: start("interactive"),
-		watchBackgroundSubagent: () => new Promise(() => {}),
-		watchSubagent: () => new Promise(() => {}),
+		watchBackgroundSubagent: async (running) => report(running),
+		watchSubagent: async (running) => report(running),
 		getWatcherSignal: (_running, controller) => controller.signal,
 		wireSubagentSteerBack: () => {},
 		startWidgetRefresh: () => {},
@@ -99,14 +102,26 @@ function fakeLaunchTool(modes: Record<string, "interactive" | "background">) {
 	const tool = tools.get("subagent");
 	assert.ok(tool);
 	const ctx = {
-		hasUI: true,
+		hasUI,
 		cwd: process.cwd(),
 		sessionManager: { getSessionFile: () => "/tmp/parent.jsonl", getSessionId: () => "parent" },
 	};
+	const call = (children: SubagentParamsInput[]) => tool.execute("call-1", { children }, undefined, undefined, ctx);
 	return {
 		launched,
-		launch: async (children: SubagentParamsInput[]) =>
-			(await tool.execute("call-1", { children }, undefined, undefined, ctx)).content[0].text as string,
+		call,
+		launch: async (children: SubagentParamsInput[]) => (await call(children)).content[0].text as string,
+	};
+}
+
+function report(running: RunningSubagent): SubagentResult {
+	return {
+		name: running.name,
+		task: running.task,
+		summary: `Report of ${running.name}.`,
+		sessionFile: running.sessionFile,
+		exitCode: 0,
+		elapsed: 1,
 	};
 }
 
@@ -116,6 +131,8 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_SPAWNABLE",
 	"PI_SUBAGENT_SPAWN_BUDGET",
 	"PI_SUBAGENT_PI_COMMAND",
+	"PI_SUBAGENT_MUX",
+	"TMUX",
 ] as const;
 
 /** The real extension over a config root holding the named agent files; returns a launch caller. */
@@ -181,30 +198,64 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 	});
 
 	it("launches one child and three children through the children list", async () => {
-		const one = fakeLaunchTool({ scout: "background" });
+		const one = fakeLaunchTool({ scout: { mode: "background" } });
 		await one.launch([child("scout", "solo-scout")]);
 		assert.deepEqual(one.launched, ["solo-scout"]);
 		resetSubagentStateForTest();
-		const three = fakeLaunchTool({ scout: "background" });
+		const three = fakeLaunchTool({ scout: { mode: "background" } });
 		await three.launch([child("scout", "scout-one"), child("scout", "scout-two"), child("scout", "scout-three")]);
 		assert.deepEqual(three.launched, ["scout-one", "scout-two", "scout-three"]);
 	});
 
 	it("replies for two children with two child lines, one batch line and each resolved model ref", async () => {
-		const tool = fakeLaunchTool({ viewer: "interactive", scout: "background" });
+		// Pin a fake tmux: with no multiplexer the pane child would fall back to headless.
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		process.env.TMUX = "fake-tmux-socket";
+		const tool = fakeLaunchTool({ viewer: { mode: "interactive" }, scout: { mode: "background" } });
 		const text = await tool.launch([child("viewer", "pane-viewer"), child("scout", "bg-scout")]);
 		const lines = text.split("\n");
 		assert.equal(lines.length, 3, text);
-		assert.match(lines[0], /pane-viewer/);
-		assert.match(lines[0], /viewer/);
-		assert.match(lines[0], /run-pane-viewer/);
-		assert.match(lines[0], /stub\/pane-viewer/);
-		assert.match(lines[0], /\bpane\b/);
-		assert.match(lines[1], /bg-scout/);
-		assert.match(lines[1], /run-bg-scout/);
-		assert.match(lines[1], /stub\/bg-scout/);
-		assert.match(lines[1], /\bheadless\b/);
+		assert.equal(lines[0], "- pane-viewer (agent viewer): run run-pane-viewer, model stub/pane-viewer, pane");
+		assert.equal(lines[1], "- bg-scout (agent scout): run run-bg-scout, model stub/bg-scout, headless");
 		assert.match(lines[2], /report arrives later/);
+	});
+
+	it("gives a forced wait for two async children the child lines, one batch line and both reports", async () => {
+		const tool = fakeLaunchTool({ scout: { mode: "background", async: true } }, { hasUI: false });
+		const result = await tool.call([child("scout", "scout-one"), child("scout", "scout-two")]);
+		const text = result.content[0].text as string;
+		const lines = text.split("\n");
+		assert.equal(lines[0], "- scout-one (agent scout): run run-scout-one, model stub/scout-one, headless", text);
+		assert.equal(lines[1], "- scout-two (agent scout): run run-scout-two, model stub/scout-two, headless", text);
+		assert.match(lines[2], /reports? follows? below/i, text);
+		assert.doesNotMatch(text, /arrives later/);
+		assert.ok(text.indexOf("Report of scout-one.") > lines[2].length, text);
+		assert.ok(text.includes("Report of scout-two."), text);
+		// The TUI shows the reports of a batch only when its status says they were delivered.
+		assert.equal(result.details.status, "batch");
+	});
+
+	it("gives a mixed list with one blocking child the child lines, one batch line and both reports", async () => {
+		const tool = fakeLaunchTool({ scout: { mode: "background", async: true }, worker: { mode: "background", async: false } });
+		const result = await tool.call([child("scout", "bg-scout"), child("worker", "fg-worker")]);
+		const text = result.content[0].text as string;
+		const lines = text.split("\n");
+		assert.equal(lines[0], "- bg-scout (agent scout): run run-bg-scout, model stub/bg-scout, headless", text);
+		assert.equal(lines[1], "- fg-worker (agent worker): run run-fg-worker, model stub/fg-worker, headless", text);
+		assert.match(lines[2], /reports? follows? below/i, text);
+		assert.ok(text.includes("Report of bg-scout.") && text.includes("Report of fg-worker."), text);
+		assert.equal(result.details.status, "batch");
+	});
+
+	it("gives one waiting child its child line and batch line before its report", async () => {
+		const tool = fakeLaunchTool({ worker: { mode: "background", async: false } });
+		const result = await tool.call([child("worker", "fg-worker")]);
+		const text = result.content[0].text as string;
+		const lines = text.split("\n");
+		assert.equal(lines[0], "- fg-worker (agent worker): run run-fg-worker, model stub/fg-worker, headless", text);
+		assert.match(lines[1], /reports? follows? below/i, text);
+		assert.ok(text.includes("Report of fg-worker."), text);
+		assert.equal(result.details.status, "completed");
 	});
 
 	it("makes an async child in one call wait for a blocking child in a separate call of the same message", async () => {

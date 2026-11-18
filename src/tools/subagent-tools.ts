@@ -131,10 +131,7 @@ export function getSubagentNameError(name: string | undefined): string | null {
 export function withToolWarning(result: ToolResult, warningPrefix: string): ToolResult {
 	// D14: a published rendering holds the warnings inside its frame, the same text the message path shows.
 	if (!warningPrefix || isRenderedResult(result)) return result;
-	const existingText = result.content
-		.filter((block): block is { type: "text"; text: string } => block.type === "text")
-		.map((block) => block.text)
-		.join("\n\n");
+	const existingText = resultText(result);
 	// Spread the original result so batch/turn-control fields like `terminate`
 	// survive; only the text content is prepended with the warning.
 	return asSubagentToolResult({
@@ -329,6 +326,13 @@ export function shouldForceSynchronousLaunch(hasUI: boolean, argv = process.argv
 	return isHeadlessLaunchSession(hasUI, argv) || startupPromptActive;
 }
 
+function resultText(result: ToolResult): string {
+	return result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
+}
+
 function getToolWaitSignal(running: RunningSubagent, signal: AbortSignal | undefined): AbortSignal | undefined {
 	return running.async === false ? undefined : signal;
 }
@@ -349,8 +353,7 @@ export function registerSubagentCoreTools(
 				const widthLimit = getSpawnWidthLimit();
 				if (children.length > widthLimit) return getBatchWidthValidationError(children.length, widthLimit);
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
-				let launchableCache: LaunchableAgent[] | undefined;
-				const launchable = () => (launchableCache ??= runtime.listLaunchableAgents(ctx.cwd));
+				const launchable = () => runtime.listLaunchableAgents(ctx.cwd);
 				const prepared = children.map((child) => {
 					const agentDefs = runtime.loadAgentDefaults(child.agent, ctx.cwd);
 					const error = getLaunchError(child, agentDefs, currentAgent, launchable);
@@ -403,30 +406,24 @@ export function registerSubagentCoreTools(
 				const results = await Promise.all(
 					launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))),
 				);
-				// D23: children that report later get one launch reply; awaited children return their reports.
-				const startedReply = results.every((result) => (result.details as { status?: string })?.status === "started")
-					? renderLaunchReply(
-							launched,
-							prepared.map((entry) => entry.warning),
-						)
-					: undefined;
+				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
+				// with its own warnings (a published rendering already holds them).
+				const delivered = results.map((result) => (result.details as { status?: string })?.status !== "started");
+				const text = renderLaunchReply(
+					launched,
+					results.map((result, index) =>
+						delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
+					),
+					prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+				);
 				if (launched.length === 1) {
-					return startedReply
-						? asSubagentToolResult({ ...results[0], content: [{ type: "text", text: startedReply }] })
-						: withToolWarning(results[0], prepared[0].warning);
+					return asSubagentToolResult({ ...results[0], content: [{ type: "text", text }] });
 				}
-				// Each child's warnings stay with its own text; a published rendering already holds them.
-				const joined =
-					startedReply ??
-					results
-						.flatMap((result, index) => withToolWarning(result, prepared[index].warning).content)
-						.filter((block) => block.type === "text")
-						.map((block) => block.text)
-						.join("\n\n");
 				return asSubagentToolResult({
-					content: [{ type: "text", text: joined }],
+					content: [{ type: "text", text }],
 					details: {
-						status: hasBlockingChild ? "batch" : "started",
+						// "batch" when this reply holds reports, so the TUI shows them.
+						status: delivered.some(Boolean) ? "batch" : "started",
 						children: results.map((result, index) => ({
 							...(result.details as Record<string, unknown>),
 							task: prepared[index]?.child.task,
