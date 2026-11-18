@@ -1,6 +1,6 @@
 # Context rework: bounded parent context and better orchestration
 
-Status: draft. Third rework on 2026-11-18 after the round 3 plan review returned BLOCKED on two launch policies (D13, D34). Result delivery stays at least once, with lookup by run id (owner, 2026-11-18). Waits for owner approval. Baseline: upstream v2.9.2 (cf6dbf4). Branch: feat/context-rework.
+Status: approved by the owner on 2026-11-18, after three plan review rounds and a targeted check that closed the last two blockers (D13, D34). Result delivery is at least once, with lookup by run id (owner, 2026-11-18). Herdr app placement: a split beside the parent by default, a tab as fallback (owner, 2026-11-18). The ticket list is not yet reviewed. Baseline: upstream v2.9.2 (cf6dbf4). Branch: feat/context-rework.
 
 Terms follow GLOSSARY.md. Decision records: docs/adr/0001 to 0003. Reviews and answers are in ~/.pi/artifacts/pi-subagents/: spec-plan-review.md and spec-plan-review-response.md (round 1), spec-plan-review-round2.md and spec-plan-review-round2-response.md (round 2), spec-plan-review-round3.md and spec-plan-review-round3-response.md (round 3).
 
