@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 // 3: final.delivery (outcome classes, transfers by run id), keyed answers.
-export const RECORD_SCHEMA = 3;
+// 4: transport apart from correctness, availableToAnswer, undelivered with subClass.
+export const RECORD_SCHEMA = 4;
 
 /**
  * Verdicts of a completed sample. A completed sample keeps its verdict on rerun.

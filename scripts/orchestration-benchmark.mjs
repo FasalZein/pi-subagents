@@ -295,7 +295,7 @@ async function main() {
 			parentToolAttributed: last.parent?.toolAttributed ?? null,
 			childRoles: last.children?.roles ?? null,
 			childCost: last.children?.cost ?? null,
-			// Outcome classes and results duplicated, lost and parked, by run id.
+			// Outcome classes, transfers, extra copies and undelivered results, by run id.
 			delivery: last.delivery ?? null,
 		},
 		allAttempts: sumAttempts(attempts),

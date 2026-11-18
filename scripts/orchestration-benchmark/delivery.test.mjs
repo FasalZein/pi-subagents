@@ -88,8 +88,8 @@ test("one carrier per run id is a clean delivery and a clean yield", () => {
 		],
 	);
 	assert.deepEqual(
-		[record.transfers, record.duplicated, record.lost, record.parked],
-		[2, 0, 0, 0],
+		[record.transfers, record.duplicated, record.undelivered],
+		[2, 0, 0],
 	);
 	assert.equal(record.cleanYieldShare, 1);
 });
@@ -237,17 +237,11 @@ test("a duplicate carrier, a deliberate digest and a missing handover are told a
 	);
 	assert.deepEqual(
 		record.runs.map((r) => r.handover),
-		["duplicate-carrier", "digest", "delivered", "parked"],
+		["duplicate-carrier", "digest", "delivered", "undelivered"],
 	);
 	assert.deepEqual(
-		[
-			record.transfers,
-			record.duplicated,
-			record.digests,
-			record.parked,
-			record.lost,
-		],
-		[3, 1, 1, 1, 0],
+		[record.transfers, record.duplicated, record.digests, record.undelivered],
+		[3, 1, 1, 1],
 	);
 	// Only a result that came by its own run id is a clean yield.
 	assert.deepEqual(
@@ -256,21 +250,32 @@ test("a duplicate carrier, a deliberate digest and a missing handover are told a
 	);
 });
 
-test("a missing handover is parked when the parent ended its turn, lost when it did not", () => {
+test("[T02b-4] a missing handover is undelivered; stopReason never decides parked or lost", () => {
 	const children = [child("a", "x-1")];
-	const parked = account([LAUNCH, assistant("stop", "Waiting.")], children);
-	const lost = account([LAUNCH, assistant("toolUse", "Working.")], children);
-	assert.deepEqual([parked.parked, parked.lost], [1, 0]);
-	assert.deepEqual([lost.parked, lost.lost], [0, 1]);
-	// A child that did not end with its result had nothing to hand over.
+	// A detached launch ends its tool batch: the last reason is toolUse while the
+	// result waits for the next human turn. An unrelated stop reply proves nothing either.
+	const detached = account(
+		[LAUNCH, assistant("toolUse", "Launching.")],
+		children,
+	);
+	const idle = account([LAUNCH, assistant("stop", "Waiting.")], children);
+	for (const record of [detached, idle]) {
+		assert.deepEqual(
+			[record.runs[0].handover, record.runs[0].subClass, record.undelivered],
+			["undelivered", "unknown", 1],
+		);
+		assert.deepEqual(record.undeliveredBySubClass, {
+			parked: 0,
+			lost: 0,
+			unknown: 1,
+		});
+	}
+	// A child that did not end its turn had nothing to hand over.
 	const none = account(
 		[LAUNCH, assistant("stop", "Waiting.")],
 		[child("a", "x-1", { ended: false })],
 	);
-	assert.deepEqual(
-		[none.runs[0].handover, none.parked, none.lost],
-		["no-result", 0, 0],
-	);
+	assert.deepEqual([none.runs[0].handover, none.undelivered], ["no-result", 0]);
 });
 
 test("a result that arrives after the terminal reply is a transfer, but not available to the scored answer", () => {

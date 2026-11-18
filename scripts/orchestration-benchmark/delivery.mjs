@@ -15,9 +15,16 @@
  * reply. The row field delivered, which the verdict uses, is availableToAnswer.
  * - digest: no own carrier, but another carrier or allowed tool result holds the
  *   result (a deliberate digest, for example a workflow script). It is not lost.
- * - parked: no carrier, the child ended with its result, and the parent ended its
- *   turn: the result waits for user input that never comes inside the deadline.
- * - lost: no carrier, the child ended with its result, and the parent did not end its turn.
+ * - undelivered: no carrier, but the child ended its turn. This is the gate class:
+ *   the spec gates on zero lost AND zero parked, so their sum is the gate.
+ *   Its subClass comes only from positive evidence, never from stopReason:
+ *   - parked needs a parent session entry that records the result as queued for a
+ *     later turn (for example a nextTurn queue entry naming the run id);
+ *   - lost needs a parent session entry that records the result as dropped or
+ *     failed to send for that run id;
+ *   - unknown otherwise. Pi 1.5.2 queues nextTurn messages in memory only
+ *     (agent-session.js), and v2.9.2 writes no queue or drop entry, so its
+ *     session files hold neither kind of evidence: the subClass is unknown there.
  * - no-result: the child did not end its turn, so there was nothing to hand over.
  * - unbound: the child's name matches no single run id the parent launched.
  *
@@ -97,6 +104,16 @@ export function carriers(events, parentToolAllowlist) {
 	return found;
 }
 
+/**
+ * Sub-class of an undelivered run (see the module header for the evidence each
+ * needs). The supported release writes neither kind of evidence, so it is
+ * unknown; an adapter for a release that records queue or drop entries adds
+ * the check here.
+ */
+function undeliveredSubClass() {
+	return "unknown";
+}
+
 function terminalIndex(events) {
 	let last = -1;
 	events.forEach((e, index) => {
@@ -108,16 +125,9 @@ function terminalIndex(events) {
 /**
  * Handover class of one run (see the module header).
  * @param {{runId: string | null, tokens: string[], ended: boolean, carried: object[],
- *   parentIdle: boolean, answeredAt: number}} input - answeredAt: entry index of the scored reply
+ *   answeredAt: number}} input - answeredAt: entry index of the scored reply
  */
-export function handover({
-	runId,
-	tokens,
-	ended,
-	carried,
-	parentIdle,
-	answeredAt,
-}) {
+export function handover({ runId, tokens, ended, carried, answeredAt }) {
 	const holds = (c) =>
 		tokens.length > 0 && tokens.every((token) => containsToken(c.text, token));
 	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
@@ -130,7 +140,8 @@ export function handover({
 		return { handover: "digest", transfers: 0, correct: false };
 	if (!ended) return { handover: "no-result", transfers: 0, correct: false };
 	return {
-		handover: parentIdle ? "parked" : "lost",
+		handover: "undelivered",
+		subClass: undeliveredSubClass(),
 		transfers: 0,
 		correct: false,
 	};
@@ -176,7 +187,6 @@ export function deliveryAccounting({
 			tokens,
 			ended: child.ended,
 			carried,
-			parentIdle: parentReply.terminal,
 			answeredAt,
 		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
@@ -210,8 +220,12 @@ export function deliveryAccounting({
 				sum + (row.handover === "duplicate-carrier" ? row.transfers - 1 : 0),
 			0,
 		),
-		lost: count("handover", "lost"),
-		parked: count("handover", "parked"),
+		undelivered: count("handover", "undelivered"),
+		undeliveredBySubClass: {
+			parked: count("subClass", "parked"),
+			lost: count("subClass", "lost"),
+			unknown: count("subClass", "unknown"),
+		},
 		digests: count("handover", "digest"),
 		unbound: count("handover", "unbound"),
 		outcomeClasses: {
