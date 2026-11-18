@@ -73,7 +73,8 @@ function parseCli() {
 	const { positionals, values } = parseArgs({
 		allowPositionals: true,
 		options: {
-			set: { type: "string" },
+			// Default "" so the name check below also rejects a missing --set.
+			set: { type: "string", default: "" },
 			checkout: { type: "string" },
 			thinking: { type: "string" },
 		},
@@ -82,19 +83,19 @@ function parseCli() {
 	if (!["start", "run", "report"].includes(command))
 		fail("usage: start | run | report (see the file header)");
 	// Same rule as the launcher's --set: the folder cannot leave the fixed root.
-	if (!values.set || !/^[a-z0-9-]+$/.test(values.set))
+	if (!/^[a-z0-9-]+$/.test(values.set))
 		fail("--set must be a plain lower-case name");
 	// The report labels models from the run's plan file, so it needs no model refs.
-	const models =
-		command === "report"
-			? []
-			: MODEL_ENV.map((name, index) => {
-					const ref = process.env[name]?.trim();
-					if (!ref) fail(`set ${name}`);
-					return { label: `model ${index + 1}`, ref };
-				});
-	if (command !== "report" && (!values.checkout || !values.thinking))
-		fail("--checkout and --thinking are required");
+	let models = [];
+	if (command !== "report") {
+		models = MODEL_ENV.map((name, index) => {
+			const ref = process.env[name]?.trim();
+			if (!ref) fail(`set ${name}`);
+			return { label: `model ${index + 1}`, ref };
+		});
+		if (!values.checkout || !values.thinking)
+			fail("--checkout and --thinking are required");
+	}
 	return {
 		command,
 		setDir: join(OUT_ROOT, values.set),

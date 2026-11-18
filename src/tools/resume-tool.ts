@@ -10,6 +10,7 @@ import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagen
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 
@@ -156,6 +157,9 @@ export function registerSubagentResumeTool(
 			const sessionFile = params.sessionFile;
 			if (!sessionFile) throw new Error("Session file is required.");
 			assertResumeAllowed(sessionFile);
+			const launchMetadata = readSubagentLaunchMetadata(sessionFile);
+			const warning =
+				getIgnoredModelOverrideWarning(launchMetadata?.agent, launchMetadata?.allowModelOverride, params) ?? "";
 
 			const running = await resumeSubagentSession(
 				{
@@ -177,7 +181,12 @@ export function registerSubagentResumeTool(
 
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
-				return runtime.getLaunchedSubagentResult(running, signal);
+				const result = await runtime.getLaunchedSubagentResult(running, signal);
+				if (!warning) return result;
+				return {
+					...result,
+					content: [{ type: "text" as const, text: warning }, ...result.content],
+				};
 			}
 
 			requestSubagentBatchStop();
@@ -185,7 +194,7 @@ export function registerSubagentResumeTool(
 				content: [
 					{
 						type: "text" as const,
-						text: `Session "${running.name}" resumed.`,
+						text: warning ? `${warning}\n\nSession "${running.name}" resumed.` : `Session "${running.name}" resumed.`,
 					},
 				],
 				details: {
