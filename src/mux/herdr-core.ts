@@ -12,6 +12,7 @@ import {
 	readFinishedTerminal,
 } from "./herdr-core-exit.ts";
 import { placeChildTerminal } from "./herdr-core-placement.ts";
+import type { PollResult } from "./poll.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
@@ -30,6 +31,11 @@ const LABEL_LOOKUP_INTERVAL_MS = 1_000;
 
 /** Exit watches of the direct-program terminals of this process, by terminal address. */
 const exitWatches = new Map<string, LabelExitWatch>();
+/**
+ * Exit results of the terminals this process removed. The backend contract reports the exit after an awaited
+ * close; addresses are unique per core, and an entry is one small result per closed child of this process.
+ */
+const removedExits = new Map<string, PollResult>();
 
 /**
  * Stops and forgets every exit watch of this process. Test seam: a watch whose terminal never finished
@@ -39,6 +45,7 @@ const exitWatches = new Map<string, LabelExitWatch>();
 export function stopExitWatchesForTest(): void {
 	for (const watch of exitWatches.values()) watch.stop();
 	exitWatches.clear();
+	removedExits.clear();
 }
 
 function callerTerminal(): string {
@@ -216,16 +223,20 @@ async function readExit(surface: string) {
 async function closeTerminal(surface: string): Promise<void> {
 	await execFileAsync(HC_COMMAND, ["kill", surface], { encoding: "utf8" }).catch(() => undefined);
 	const watch = exitWatches.get(surface);
+	let exit: PollResult | undefined;
 	if (watch) {
 		await watch.readOnce();
-		if (!watch.exit) throw new Error(`herdr-core terminal ${surface} has not finished after kill; not removed`);
+		exit = watch.exit;
 		watch.stop();
-	} else if (!(await readFinishedTerminal(surface))) {
-		throw new Error(`herdr-core terminal ${surface} has not finished after kill; not removed`);
+	} else {
+		const facts = await readFinishedTerminal(surface);
+		exit = facts && exitFactsResult(facts);
 	}
+	if (!exit) throw new Error(`herdr-core terminal ${surface} has not finished after kill; not removed`);
 	await execFileAsync(HC_COMMAND, ["rm", surface], { encoding: "utf8" });
-	// The terminal is gone, so its watch has nothing left to report.
+	// The watch retires; hc no longer knows the terminal, so checkExit answers from the facts read here.
 	exitWatches.delete(surface);
+	removedExits.set(surface, exit);
 }
 
 /** herdr-core (the `hc` CLI inside an herdr-core terminal). A direct-program child gets a pane (D27). */
@@ -262,6 +273,8 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 		start: (_name, launch, options) => startLauncherTerminal(launch, options?.onPlacementWarning ?? (() => {})),
 	}),
 	checkExit: async (surface) => {
+		const removed = removedExits.get(surface);
+		if (removed) return removed;
 		const watch = exitWatches.get(surface);
 		if (!watch) return readExit(surface);
 		// The watch owns recovery after a dropped stream; checkExit reads only when it could not subscribe again.

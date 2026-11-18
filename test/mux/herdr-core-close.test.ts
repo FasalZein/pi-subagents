@@ -86,8 +86,11 @@ describe("herdr-core close, lost replies and parent close (T46, D27)", () => {
 		await herdrCoreBackend.closeSurface(child, target);
 		assert.deepEqual(killAndRemoveCalls(), [`kill ${child}`, `rm ${child}`]);
 		assert.equal(terminalState(sibling).state, "live");
-		// The removed terminal has no watch left: checkExit asks hc, which no longer knows the terminal.
-		await assert.rejects(herdrCoreBackend.checkExit!(child, target));
+		// The watch retired with the terminal; checkExit answers from the facts read before the removal and
+		// asks hc nothing more.
+		const callsBefore = readFakeHcCalls(stateDir).length;
+		assert.equal((await herdrCoreBackend.checkExit!(child, target))?.exitCode, 1);
+		assert.equal(readFakeHcCalls(stateDir).length, callsBefore);
 	});
 
 	it("uses the one terminal found by label when the start reply is lost after the terminal was made", async () => {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -190,8 +190,12 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 	it("ends the watch with exit 7 when the stream drops during a start whose reply comes late", async () => {
 		writeFileSync(join(stateDir, "hold-run"), "");
 		const starting = start();
+		// The fake creates the terminal file empty first (an exclusive create), then writes it.
 		const surface = await eventually(
-			() => (existsSync(join(stateDir, "term-t2.json")) ? "t2" : undefined),
+			() =>
+				existsSync(join(stateDir, "term-t2.json")) && statSync(join(stateDir, "term-t2.json")).size > 0
+					? "t2"
+					: undefined,
 			"the started terminal",
 		);
 		// The launcher exits and the stream drops before any replacement subscription exists: no stream sees
@@ -224,5 +228,7 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 			? [`kill ${surface}`, `get ${surface} --json`, `rm ${surface}`]
 			: [`kill ${surface}`, `rm ${surface}`];
 		assert.deepEqual(calls, expected);
+		const exit = await checkExit(surface);
+		assert.equal(exit?.exitCode, 1);
 	});
 });
