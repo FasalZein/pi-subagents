@@ -20,5 +20,5 @@ Amended 2026-11-18 after the plan review: the terminal's own program is the exis
 
 - herdr-core ends children when the parent terminal's program ends, and that program is the shell, not Pi. The extension still stops its children when the parent session closes. When Pi dies without an orderly shutdown, its children keep running until the shell ends.
 - A child outlives the parent only when its agent definition asks for it.
-- The exit watch subscribes by the launch label before the start, and after a dropped stream it reads the terminal state once, so a fast child cannot finish unseen.
-- Live checks on herdr-app 0.1.16 confirmed the split and the tab through a label. The split moves focus, so the backend restores it. The tab is the fallback when the split fails.
+- The exit watch subscribes by the launch label before the start, and after a dropped stream it subscribes again first and then reads the terminal state once, so a fast child cannot finish unseen.
+- Live checks on herdr-app 0.1.16 confirmed the split and the tab through a label. The split moves focus, so the backend restores it, also when a step fails, and runs at most one focus transaction at a time per Herdr app. The tab is the fallback when the split fails.

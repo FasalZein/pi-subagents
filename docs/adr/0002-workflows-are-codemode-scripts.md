@@ -19,4 +19,4 @@ We decided that this place is Pi's built-in codemode. The extension adds one blo
 - A host without codemode still has the wait tool as a plain tool call. It gets the join, not the saving from script variables.
 - A script cannot be resumed from the middle. After a failure the parent recovers the results by lookup, by run id or from the list of recent runs (ADR 0001), instead of launching the batch again.
 - Amended 2026-11-18: inside codemode, the rule that a batch of only launches ends the parent turn, and the rule that a launch next to another call waits, do not apply. Pi gives an extension no way to end the turn after a codemode call, and a script receives a nested launch's data instead of its text. The rule against doing delegated work is therefore in the index, which the model always sees.
-- A launch that fails partway returns the run ids of the children that started, so a script can wait for them or stop them.
+- A launch that fails partway returns, as structured data, a failure discriminator, the failed child and the run ids of the children that started, so a script can branch to recovery and wait for them or stop them.

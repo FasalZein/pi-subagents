@@ -23,4 +23,4 @@ Changed on 2026-11-18 by the owner, after two plan reviews. The first version pr
 - After a workflow script fails, nothing comes back by itself; the parent recovers the results by lookup.
 - Removing delivered results from the parent context waits until Pi offers a final read-only dispatch hook, or until measurements show that capped summaries still dominate parent input.
 - Verified fan-out keeps its v2.9.2 lease, receipt and adoption; only its text is capped. Its adoption can deliver a winner again, within the cap.
-- A child that outlives its parent gets no result record.
+- A child that outlives its parent gets no result record. The one exception is a verified fan-out winner, which the origin or an authorized ancestor can adopt after the origin exits.

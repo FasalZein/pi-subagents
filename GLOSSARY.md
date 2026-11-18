@@ -45,7 +45,7 @@ _Avoid_: operator mode, manual mode
 ### Results
 
 **Result**:
-The record that a run ends with: an outcome, a summary and a report file. A run has a result only when it ends while its parent process watches it.
+The record that a run ends with: an outcome, a summary and a report file. A run has a result only when it ends while its parent process watches it, or when it is a verified fan-out winner that the origin or an authorized ancestor adopts.
 _Avoid_: completion, output, response
 
 **Outcome**:
