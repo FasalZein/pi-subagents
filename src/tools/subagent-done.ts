@@ -562,7 +562,7 @@ export default function (pi: ExtensionAPI) {
 				"It will close this session and return your results to the main session. " +
 				"Your LAST assistant message before calling this becomes the summary returned to the caller.",
 			parameters: doneParams,
-			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 				if (takeover.tookOver) {
 					// D11/D12: the result stays in this session; the pane closes only
 					// when the person closes it.
@@ -576,7 +576,8 @@ export default function (pi: ExtensionAPI) {
 						details: {},
 					};
 				}
-				writeExitSignal({ type: "done", outputTokens }, { supersede: true });
+				// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
+				writeExitSignal({ type: "done", outputTokens, acceptedCall: { toolCallId, args: params } }, { supersede: true });
 				requestShutdown(ctx);
 				return {
 					content: [{ type: "text", text: "Shutting down subagent session." }],
