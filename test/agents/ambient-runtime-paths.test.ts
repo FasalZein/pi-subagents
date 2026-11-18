@@ -58,6 +58,7 @@ describe("ambient agents and runtime paths", () => {
 				registerCommand() {},
 				registerMessageRenderer() {},
 				registerTool() {},
+				getActiveTools: () => [],
 				sendMessage(message: any) {
 					sent.push(message);
 				},

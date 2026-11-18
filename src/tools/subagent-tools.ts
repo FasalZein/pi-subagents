@@ -14,7 +14,6 @@ import {
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
-import { findRunningSubagent } from "../runtime/running-registry.ts";
 import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
@@ -32,7 +31,7 @@ import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionTe
 import { renderLaunchReply } from "./launch-reply.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
-import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_KILL_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
+import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
 
 let initialPromptLaunchActive = isInitialPromptInvocation();
 
@@ -62,11 +61,6 @@ export const SubagentParams = Type.Object({
 		description: "The children to start in this one call, up to the spawn width.",
 	}),
 });
-const SubagentKillParams = Type.Object({
-	id: Type.String({
-		description: "Running subagent id or display name to stop",
-	}),
-});
 
 type ToolResult = ReturnType<typeof asSubagentToolResult>;
 
@@ -82,7 +76,6 @@ export interface SubagentToolRuntime {
 	wireSubagentSteerBack(pi: ExtensionAPI, running: RunningSubagent, promise: Promise<SubagentResult>): void;
 	startWidgetRefresh(): void;
 	getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal): Promise<ToolResult>;
-	stopRunningSubagent(running: RunningSubagent): Promise<void>;
 	muxUnavailableResult(action: string): unknown;
 	/** The agents this session may launch, read from the current files. */
 	listLaunchableAgents(cwd: string): LaunchableAgent[];
@@ -488,40 +481,6 @@ export function registerSubagentCoreTools(
 				);
 			},
 		});
-
-	pi.registerTool({
-		name: SUBAGENT_KILL_TOOL_NAME,
-		label: "Kill Subagent",
-		description: "Stop a running subagent, pane or headless, by its run id or name.",
-		parameters: SubagentKillParams,
-		execute: async (_toolCallId, params) => {
-			const match = findRunningSubagent(params.id);
-			if (!match.running)
-				return asSubagentToolResult({
-					content: [
-						{
-							type: "text" as const,
-							text: match.error ?? "Subagent not found.",
-						},
-					],
-					details: { error: match.error ?? "not found" },
-				});
-			await runtime.stopRunningSubagent(match.running);
-			return asSubagentToolResult({
-				content: [
-					{
-						type: "text" as const,
-						text: `Stopping subagent "${match.running.name}" (${match.running.id}).`,
-					},
-				],
-				details: {
-					id: match.running.id,
-					name: match.running.name,
-					status: "stopping",
-				},
-			});
-		},
-	});
 
 	if (shouldRegister(SET_TAB_TITLE_TOOL_NAME)) registerSetTabTitleTool(pi);
 }
