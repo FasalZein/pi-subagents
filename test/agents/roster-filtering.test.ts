@@ -1,6 +1,6 @@
 import { getAgentListEntries } from "../../src/agents/agent-list.ts";
 import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
-import { renderAgentDetail } from "../../src/agents/launchable-agents.ts";
+import { renderAgentDetailsForTest } from "../../src/testing/test-helpers.ts";
 import {
 	afterEach,
 	assert,
@@ -61,7 +61,7 @@ describe("roster filtering", () => {
 			child.map((entry) => entry.name),
 			["other-only", "public"].sort(),
 		);
-		const details = child.map(renderAgentDetail).join("\n\n");
+		const details = renderAgentDetailsForTest(child);
 		assert.match(details, /^other-only \(global\): Caller worker$/m);
 		assert.doesNotMatch(details, /root-only/);
 	});
@@ -70,7 +70,9 @@ describe("roster filtering", () => {
 		const dir = createTestDir();
 		writeAgents(dir);
 		const options = { callerAgent: "caller-agent", callerSpawnable: true as const };
-		const details = getAgentListEntries(dir, resolveSessionMode, options).map(renderAgentDetail).join("\n\n");
+		const details = renderAgentDetailsForTest(getAgentListEntries(dir, resolveSessionMode, options), {
+			visibleNames: new Set(["scout", "reviewer"]),
+		});
 		assert.match(details, /^may launch: scout, reviewer \(depth 2, width 3\)$/m);
 	});
 });

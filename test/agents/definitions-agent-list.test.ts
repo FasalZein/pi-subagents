@@ -414,7 +414,10 @@ describe("agent definitions and catalog", () => {
 			`---\nname: no-mode\ndescription: Agent with no mode field\n---\n\nBody.`,
 		);
 
-		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir));
+		// A session with a pane: only a pane child can stay open (index flags, D19).
+		const details = renderAgentDetailsForTest(getAgentListEntriesForTest(dir), {
+			launch: { paneAvailable: true, forcesWait: false },
+		});
 		// Bound each assertion to one agent block.
 		const blockFor = (name: string) => details.split("\n\n").find((block) => block.startsWith(`${name} (`)) ?? "";
 		const manual = /closes itself|stays open until a human or the agent finishes/;
@@ -428,7 +431,9 @@ describe("agent definitions and catalog", () => {
 		// Background children must call `subagent_done` themselves, so the
 		// default contract stays exits_automatically for them.
 		assert.equal(blockFor("runner").match(manual)?.[0], "closes itself");
-		assert.equal(blockFor("pinned-open").match(manual)?.[0], "stays open until a human or the agent finishes");
+		// A headless child always closes itself: applySynchronousLaunchPolicy
+		// sets auto-exit for every background launch, also with auto-exit: false.
+		assert.equal(blockFor("pinned-open").match(manual)?.[0], "closes itself");
 	});
 
 	it("defaults spawning to false for named agent definitions", () => {

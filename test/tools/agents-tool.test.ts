@@ -21,12 +21,25 @@ type AgentsTool = {
 		params: { name?: string; query?: string; limit?: number },
 		signal: undefined,
 		onUpdate: undefined,
-		ctx: { cwd: string },
+		ctx: SessionContext & { cwd: string },
 	): Promise<{ content: Array<{ type: "text"; text: string }> }>;
 };
 
+/** The parts of the session that the tool reads besides the files. */
+interface SessionContext {
+	hasUI?: boolean;
+	model?: { provider: string; id: string };
+}
+
+interface SessionOptions extends SessionContext {
+	thinking?: string;
+	/** Tools the session model cannot call (absent from the active tools). */
+	inactiveTools?: string[];
+}
+
 const ENV_KEYS = [
 	"PI_CODING_AGENT_DIR",
+	"PI_DENY_TOOLS",
 	"PI_SUBAGENT_AGENT",
 	"PI_SUBAGENT_SPAWNABLE",
 	"PI_SUBAGENT_SPAWN_BUDGET",
@@ -47,9 +60,15 @@ function createAgentRoot(): { cwd: string; agentsDir: string } {
 }
 
 /** Load the extension in `cwd` and return a caller of its subagent_agents tool. */
-function loadAgentsTool(cwd: string): (params: { name?: string; query?: string; limit?: number }) => Promise<string> {
+function loadAgentsTool(
+	cwd: string,
+	session: SessionOptions = { hasUI: true },
+): (params: { name?: string; query?: string; limit?: number }) => Promise<string> {
 	const tools = new Map<string, AgentsTool>();
 	const api = {
+		getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+		getActiveTools: () => [...tools.keys()].filter((name) => !session.inactiveTools?.includes(name)),
+		getThinkingLevel: () => session.thinking ?? "off",
 		on() {},
 		registerTool(tool: AgentsTool & { name: string }) {
 			tools.set(tool.name, tool);
@@ -67,7 +86,8 @@ function loadAgentsTool(cwd: string): (params: { name?: string; query?: string; 
 	}
 	const tool = tools.get("subagent_agents");
 	assert.ok(tool, "subagent_agents is registered");
-	return async (params) => (await tool.execute("call-1", params, undefined, undefined, { cwd })).content[0].text;
+	const ctx = { cwd, hasUI: session.hasUI, model: session.model };
+	return async (params) => (await tool.execute("call-1", params, undefined, undefined, ctx)).content[0].text;
 }
 
 function describedAs(index: number): string {
@@ -81,6 +101,7 @@ describe("subagent_agents tool", () => {
 		delete process.env.PI_SUBAGENT_AGENT;
 		delete process.env.PI_SUBAGENT_SPAWNABLE;
 		delete process.env.PI_SUBAGENT_SPAWN_BUDGET;
+		delete process.env.PI_DENY_TOOLS;
 	});
 	afterEach(() => {
 		for (const key of ENV_KEYS) {
@@ -110,6 +131,7 @@ describe("subagent_agents tool", () => {
 				"spawn-depth: 2",
 			].join("\n"),
 		);
+		writeAgent(agentsDir, "scout", "name: scout\ndescription: Scouts");
 		const call = loadAgentsTool(cwd);
 		assert.equal(
 			await call({ name: "reviewer" }),
@@ -120,7 +142,8 @@ describe("subagent_agents tool", () => {
 				"child: headless, closes itself, launch returns at once",
 				"session: copy of this chat",
 				"limits: timeout 15m, idle-timeout 2m",
-				"may launch: scout (depth 2)",
+				// Width 16 is the enforced ceiling (MAX_SPAWN_WIDTH) when the agent sets none.
+				"may launch: scout (depth 2, width 16)",
 			].join("\n"),
 		);
 	});
@@ -146,7 +169,7 @@ describe("subagent_agents tool", () => {
 		assert.equal((await call({ query: "summary", limit: 2 })).split("\n").length, 2);
 		assert.match(
 			await call({ query: "nothing-like-this" }),
-			/^No agent matches 'nothing-like-this'\. 101 agents in total\.$/,
+			/^No agent matches the query\. 101 agents in total\.$/,
 		);
 	});
 
@@ -183,8 +206,8 @@ describe("subagent_agents tool", () => {
 		writeAgent(agentsDir, "secret", "name: secret\ndescription: Holds the secret plan");
 		writeAgent(agentsDir, "secrets", "name: secrets\ndescription: Holds more secret plans");
 		// Each malformed file names itself, so its name survives the parse error.
-		writeAgent(agentsDir, "broken-allowed", "name: broken-allowed\ndescription: Broken\nvisible-to: all, root");
-		writeAgent(agentsDir, "broken-secret", "name: broken-secret\ndescription: Broken\nvisible-to: all, root");
+		writeAgent(agentsDir, "broken-allowed", "name: broken-allowed\ndescription: Broken\ntimeout: 0");
+		writeAgent(agentsDir, "broken-secret", "name: broken-secret\ndescription: Broken\ntimeout: 0");
 		process.env.PI_SUBAGENT_AGENT = "coordinator";
 		process.env.PI_SUBAGENT_SPAWNABLE = "helper,broken-allowed";
 		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
@@ -195,11 +218,11 @@ describe("subagent_agents tool", () => {
 		assert.match(count, /^2 agents that you may launch \(1 malformed\)\. /);
 
 		const byName = await call({ name: "secret" });
-		assert.match(byName, /^No agent 'secret' that you may launch\. Closest: /);
-		assert.doesNotMatch(byName.replace("No agent 'secret'", ""), hidden);
+		assert.match(byName, /^No agent of that name that you may launch\. Closest: /);
+		assert.doesNotMatch(byName, hidden);
 		const typo = await call({ name: "secrat" });
-		assert.equal(typo, "No agent 'secrat' that you may launch. Closest: helper, broken-allowed.");
-		assert.doesNotMatch(await call({ name: "broken-secret" }), /malformed|visible-to/);
+		assert.equal(typo, "No agent of that name that you may launch. Closest: helper, broken-allowed.");
+		assert.doesNotMatch(await call({ name: "broken-secret" }), /malformed|timeout/);
 
 		const query = await call({ query: "secret broken" });
 		const names = query.split("\n").map((line) => line.match(/^- ([\w-]+):/)?.[1]);
@@ -208,6 +231,6 @@ describe("subagent_agents tool", () => {
 		assert.match(query, /^- broken-allowed: malformed, /m);
 
 		const parseError = await call({ name: "broken-allowed" });
-		assert.match(parseError, /^Agent 'broken-allowed' is malformed in .*broken-allowed\.md: .*visible-to/);
+		assert.match(parseError, /^Agent 'broken-allowed' is malformed in .*broken-allowed\.md: .*timeout/);
 	});
 });

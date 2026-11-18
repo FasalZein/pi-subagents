@@ -1,6 +1,6 @@
 import { getAgentListEntries } from "../../src/agents/agent-list.ts";
 import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
-import { renderAgentDetail } from "../../src/agents/launchable-agents.ts";
+import { renderAgentDetailsForTest } from "../../src/testing/test-helpers.ts";
 import {
 	afterEach,
 	assert,
@@ -34,7 +34,7 @@ function listEntries(dir: string) {
 
 
 function render(dir: string): string {
-	return listEntries(dir).map(renderAgentDetail).join("\n\n");
+	return renderAgentDetailsForTest(listEntries(dir));
 }
 
 // The roster that carried these fields is gone (D19); the full definition view
@@ -53,7 +53,7 @@ describe("agent detail limit fields", () => {
 		assert.equal(entry?.idleTimeout, 180);
 		assert.equal(entry?.contextWarnThreshold, "80%");
 		assert.equal(entry?.reportContextUsage, false);
-		assert.match(render(dir), /^limits: timeout 15m, idle-timeout 3m, context-warn 80%, token counts hidden$/m);
+		assert.match(render(dir), /^limits: timeout 15m, idle-timeout 3m, context warnings at 80%, 85%, 90%, token counts hidden$/m);
 	});
 
 	it("says none when no limit field is set", () => {
@@ -77,29 +77,29 @@ describe("agent detail limit fields", () => {
 	it("skips an explicit context-warn off value", () => {
 		const dir = createTestDir();
 		writeLimitedAgent(dir, "context-warn-threshold: off");
-		assert.doesNotMatch(render(dir), /context-warn/);
+		assert.doesNotMatch(render(dir), /context warnings/);
 	});
 
 	it("normalizes a context-warn threshold written without a percent sign", () => {
 		const dir = createTestDir();
 		writeLimitedAgent(dir, "context-warn-threshold: 75");
-		assert.match(render(dir), /context-warn 75%/);
+		assert.match(render(dir), /context warnings at 75%, 80%, 85%/);
 	});
 
-	it("omits a context-warn schedule that collapsed below three stages", () => {
+	it("lists every stage of a context-warn schedule, also a collapsed one", () => {
+		// The child receives the threshold and step as set (prep.ts), and it warns
+		// at each distinct stage that getContextReminderThresholds schedules.
 		const dir = createTestDir();
-		// 95% with the default 5% step yields thresholds [95, 99]: the runtime
-		// never delivers the final stop instruction, so no stop behavior exists.
 		writeLimitedAgent(dir, "context-warn-threshold: 95%");
-		assert.doesNotMatch(render(dir), /context-warn/);
-
-		// The same 80% start with a 10% step keeps three stages and renders.
+		assert.match(render(dir), /^limits: context warnings at 95%, 99%$/m);
 		writeLimitedAgent(dir, "context-warn-threshold: 80%\ncontext-warn-step: 10%");
-		assert.match(render(dir), /context-warn 80%/);
+		assert.match(render(dir), /^limits: context warnings at 80%, 90%, 99%$/m);
+	});
 
-		// A step that collapses the schedule hides the limit again.
-		writeLimitedAgent(dir, "context-warn-threshold: 80%\ncontext-warn-step: 20%");
-		assert.doesNotMatch(render(dir), /context-warn/);
+	it("renders the report threshold and the no-resume policy of a timeout", () => {
+		const dir = createTestDir();
+		writeLimitedAgent(dir, "timeout: 900\ntimeout-warn-threshold: 50%\non-timeout: block-resume");
+		assert.match(render(dir), /^limits: timeout 15m \(report at 450s\), no resume after it$/m);
 	});
 
 	it("renders an idle-timeout alone", () => {

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { IndexLaunchPolicy } from "../agents/index-section.ts";
 import {
 	type AgentsRequest,
 	answerAgentsRequest,
@@ -7,6 +8,7 @@ import {
 	type LaunchableAgent,
 } from "../agents/launchable-agents.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
+import type { ParsedSpawnEnv } from "../spawn/policy.ts";
 import { SUBAGENT_AGENTS_TOOL_NAME } from "./tool-names.ts";
 
 /** Parse the tool parameters into one request; name and query together are refused. */
@@ -20,9 +22,16 @@ function parseAgentsRequest(params: { name?: string; query?: string; limit?: num
 }
 
 interface AgentsToolRuntime {
+	/** Whether this session may call the launch tool: the check the index makes. */
+	mayLaunch(): boolean;
+	spawnEnv(): ParsedSpawnEnv;
 	/** The agents this session may launch, read from the current files. */
-	listLaunchableAgents(cwd: string): LaunchableAgent[];
+	listLaunchableAgents(cwd: string, spawnEnv: ParsedSpawnEnv): LaunchableAgent[];
+	/** How a solo launch from this session runs, as for the index flags. */
+	launchPolicy(hasUI: boolean): IndexLaunchPolicy;
 }
+
+const LAUNCH_DENIED = "This session may not launch agents, so it has none to look up.";
 
 export function registerSubagentAgentsTool(
 	pi: ExtensionAPI,
@@ -43,9 +52,20 @@ export function registerSubagentAgentsTool(
 			),
 		}),
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
-			const request = parseAgentsRequest(params);
+			const request = runtime.mayLaunch() ? parseAgentsRequest(params) : LAUNCH_DENIED;
+			const spawnEnv = runtime.spawnEnv();
 			const text =
-				typeof request === "string" ? request : answerAgentsRequest(request, runtime.listLaunchableAgents(ctx.cwd));
+				typeof request === "string"
+					? request
+					: answerAgentsRequest(request, runtime.listLaunchableAgents(ctx.cwd, spawnEnv), {
+							spawnEnv,
+							launch: runtime.launchPolicy(ctx.hasUI),
+							parentModel: {
+								registry: ctx.modelRegistry,
+								ref: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+								thinking: pi.getThinkingLevel(),
+							},
+						});
 			return asSubagentToolResult({
 				content: [{ type: "text" as const, text }],
 				details: typeof request === "string" ? { error: request } : { request: request.kind },

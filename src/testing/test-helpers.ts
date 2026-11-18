@@ -1,5 +1,5 @@
 import { type AgentListEntry, getAgentListEntries } from "../agents/agent-list.ts";
-import { renderAgentDetail } from "../agents/launchable-agents.ts";
+import { type AgentDetailContext, renderAgentDetail } from "../agents/agent-detail.ts";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { getEffectiveAgentDefinitions } from "../agents/definitions.ts";
 import {
@@ -101,9 +101,20 @@ export function getAgentListEntriesForTest(baseCwd = process.cwd()) {
 	);
 }
 
-/** The full definition view of each entry, one block per agent. */
-export function renderAgentDetailsForTest(entries: AgentListEntry[]) {
-	return entries.map(renderAgentDetail).join("\n\n");
+/**
+ * The full definition view of each entry, one block per agent. By default the
+ * caller is a root session without a pane, a forced wait or a parent model,
+ * and it can see every entry.
+ */
+export function renderAgentDetailsForTest(entries: AgentListEntry[], context: Partial<AgentDetailContext> = {}) {
+	const full: AgentDetailContext = {
+		spawnEnv: { callerAgent: null, callerBudget: null, envDepthCeiling: null, envWidthCeiling: null, callerSpawnable: true },
+		launch: { paneAvailable: false, forcesWait: false },
+		parentModel: {},
+		visibleNames: new Set(entries.map((entry) => entry.name)),
+		...context,
+	};
+	return entries.map((entry) => renderAgentDetail(entry, full)).join("\n\n");
 }
 
 export function buildChildContextBoundaryForTest(options: ChildContextBoundaryOptions) {

@@ -87,6 +87,11 @@ export interface MalformedAgentFile {
 	source: "project" | "global";
 	path: string;
 	error: string;
+	/**
+	 * The visible-to the file states, read apart from the error; [] (no caller)
+	 * when the header is unterminated or the value itself is invalid.
+	 */
+	visibleTo: string[];
 }
 
 type ParsedAgentFile =
@@ -123,7 +128,25 @@ function parseAgentDefinition(
 		// A disabled file is never launched, so its parse error is not news.
 		if (get("enabled") === "false") return null;
 		const message = error instanceof Error ? error.message : String(error);
-		return { kind: "malformed", file: { name: get("name") ?? basename(path, ".md"), source, path, error: message } };
+		return {
+			kind: "malformed",
+			file: { name: get("name") ?? basename(path, ".md"), source, path, error: message, visibleTo: readVisibleTo(content) },
+		};
+	}
+}
+
+/**
+ * The visibility of a file that failed to parse, by the same header match and
+ * key reading as a valid file. When it cannot be read, no caller sees the
+ * file: an unrelated error must never widen its visibility.
+ */
+function readVisibleTo(content: string): string[] {
+	const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1];
+	if (frontmatter === undefined) return [];
+	try {
+		return parseVisibleTo(frontmatter.match(/^visible-to:[ \t]*(.+)$/m)?.[1].trim());
+	} catch {
+		return [];
 	}
 }
 
