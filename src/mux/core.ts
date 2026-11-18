@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { promisify } from "node:util";
 import { isHerdrRuntimeAvailable } from "./herdr.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
+import { tmuxBackend } from "./tmux.ts";
 
 export const execFileAsync = promisify(execFile);
 
@@ -25,7 +26,7 @@ function isCmuxRuntimeAvailable(): boolean {
 }
 
 function isTmuxRuntimeAvailable(): boolean {
-	return !!process.env.TMUX && hasCommand("tmux");
+	return tmuxBackend.isAvailable();
 }
 
 function isZellijRuntimeAvailable(): boolean {
@@ -79,9 +80,7 @@ export function isMuxAvailable(): boolean {
 export function muxSetupHint(): string {
 	const pref = muxPreference();
 	if (pref === "cmux") return "Start pi inside cmux (`cmux pi`).";
-	if (pref === "tmux") {
-		return "Start pi inside tmux (`tmux new -A -s pi 'pi'`).";
-	}
+	if (pref === "tmux") return tmuxBackend.setupHint();
 	if (pref === "zellij") {
 		return "Start pi inside zellij (`zellij --session pi`, then run `pi`).";
 	}
