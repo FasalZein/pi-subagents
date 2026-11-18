@@ -18,7 +18,8 @@
  * - Nothing else touches that checkout while a sample runs.
  * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
  *
- * Scenarios: smoke (launcher check) and recon (G2.1 scenario (a): 6 children, 7 keyed facts).
+ * Scenarios: smoke (launcher check), recon (G2.1 scenario (a): 6 children, 7 keyed facts)
+ * and review (G2.1 scenario (b): 8 children, 8 verdicts keyed by target).
  * The record keeps delivery accounting by run id in final.delivery (see delivery.mjs).
  *
  * Known limits (accepted for version 1):
