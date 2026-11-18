@@ -1,9 +1,5 @@
 import type { AgentDefaults } from "../../src/agents/definitions.ts";
-import {
-	getLaunchCountUsed,
-	LAUNCH_CAP_ENV,
-	tryAcquireLaunchCapSlots,
-} from "../../src/runtime/launch-cap.ts";
+import { getLaunchCountUsed, LAUNCH_CAP_ENV, tryAcquireLaunchCapSlots } from "../../src/runtime/launch-cap.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import {
 	markInitialPromptLaunchComplete,
@@ -29,7 +25,13 @@ import { loadExtension, useFakePi } from "../support/extension-host.ts";
 // D9: a parent starts at most 64 runs between two session starts; PI_SUBAGENT_LAUNCH_CAP changes
 // the number. Expected values come from D9 and the T33 ticket text.
 
-const ENV_KEYS = [LAUNCH_CAP_ENV, "PI_SUBAGENT_AGENT", "PI_SUBAGENT_PI_COMMAND", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_VF_RUN_DIR"];
+const ENV_KEYS = [
+	LAUNCH_CAP_ENV,
+	"PI_SUBAGENT_AGENT",
+	"PI_SUBAGENT_PI_COMMAND",
+	"PI_CODING_AGENT_DIR",
+	"PI_SUBAGENT_VF_RUN_DIR",
+];
 
 function makeRunning(params: SubagentParamsInput): RunningSubagent {
 	return {
@@ -49,7 +51,14 @@ function makeRunning(params: SubagentParamsInput): RunningSubagent {
 }
 
 function report(running: RunningSubagent): SubagentResult {
-	return { name: running.name, task: running.task, summary: "Done", summarySource: "subagent", exitCode: 0, elapsed: 0 };
+	return {
+		name: running.name,
+		task: running.task,
+		summary: "Done",
+		summarySource: "subagent",
+		exitCode: 0,
+		elapsed: 0,
+	};
 }
 
 /** The launch tool over a fake runtime; each child finishes at once, so spawn width never binds. */
@@ -69,7 +78,10 @@ function fakeLaunchTool(
 		getWatcherSignal: (_running, controller) => controller.signal,
 		wireSubagentSteerBack: () => {},
 		startWidgetRefresh: () => {},
-		getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "started" }], details: { status: "started" } }),
+		getLaunchedSubagentResult: async () => ({
+			content: [{ type: "text", text: "started" }],
+			details: { status: "started" },
+		}),
 		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 		listLaunchableAgents: () => [],
@@ -85,7 +97,11 @@ function fakeLaunchTool(
 		() => true,
 		runtime,
 	);
-	const ctx = { hasUI: false, cwd: process.cwd(), sessionManager: { getSessionFile: () => "/tmp/parent.jsonl", getSessionId: () => "parent" } };
+	const ctx = {
+		hasUI: false,
+		cwd: process.cwd(),
+		sessionManager: { getSessionFile: () => "/tmp/parent.jsonl", getSessionId: () => "parent" },
+	};
 	let calls = 0;
 	return (count = 1) => {
 		calls++;
@@ -244,6 +260,15 @@ describe("launch cap (D9)", () => {
 		await reloaded.startSession("reload");
 		const afterReload = await launchIn(reloaded, "after-reload");
 		assert.ok(refused(afterReload), text(afterReload));
+
+		// loadExtension refreshes only src/subagents.ts; Pi's reload also loads launch-cap.ts again.
+		// A fresh instance of the cap module must see the count the old instance kept.
+		const generation = Date.now();
+		const freshCapModule: typeof import("../../src/runtime/launch-cap.ts") = await import(
+			`../../src/runtime/launch-cap.ts?reload=${generation}`
+		);
+		freshCapModule.resetLaunchCountForSessionStart("reload");
+		assert.equal(freshCapModule.getLaunchCountUsed(), 1, "a fresh module instance keeps the count");
 
 		for (const reason of ["new", "resume", "fork"]) {
 			await reloaded.startSession(reason);
