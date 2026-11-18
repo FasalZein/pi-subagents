@@ -23,6 +23,11 @@ export interface MuxBackendContractFixture {
 	runtimeEnvKeys: readonly string[];
 	/** Titles that the fake recorded from renameCurrentTab and renameWorkspace, in call order. */
 	recordedTitles(stateDir: string): string[];
+	/**
+	 * Commands that the fake saw SUBMITTED (typed, then Enter) on one surface, in order.
+	 * Typed text without Enter must not appear. A bare Enter appears as "".
+	 */
+	submittedCommands(stateDir: string, surface: string): string[];
 }
 
 const SCREEN_LINES = 50;
@@ -103,6 +108,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			assert.ok(child.length > 0);
 			assert.notEqual(child, parent);
 			adapter.sendCommand(child, "echo split-ready");
+			assert.deepEqual(fixture.submittedCommands(stateDir, child), ["echo split-ready"]);
 			assert.match(adapter.readScreen(child, SCREEN_LINES), /echo split-ready/);
 		});
 
@@ -110,6 +116,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			const surface = await adapter.createSurface("Contract IO");
 			adapter.sendCommand(surface, "echo first-line");
 			adapter.sendCommand(surface, "echo last-line");
+			assert.deepEqual(fixture.submittedCommands(stateDir, surface), ["echo first-line", "echo last-line"]);
 			const screen = adapter.readScreen(surface, SCREEN_LINES);
 			assert.match(screen, /echo first-line/);
 			assert.match(screen, /echo last-line/);
@@ -119,8 +126,24 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		it("accepts an empty command as Enter only", async () => {
 			const surface = await adapter.createSurface("Contract Enter");
 			adapter.sendCommand(surface, "echo before-enter");
+			const before = fixture.submittedCommands(stateDir, surface);
+			assert.deepEqual(before, ["echo before-enter"]);
 			adapter.sendCommand(surface, "");
-			assert.match(adapter.readScreen(surface, SCREEN_LINES), /echo before-enter/);
+			const after = fixture.submittedCommands(stateDir, surface);
+			assert.ok(after.length > before.length, "an empty command submits nothing");
+			assert.deepEqual(after.slice(0, before.length), before);
+			assert.ok(
+				after.slice(before.length).every((line) => line === ""),
+				"an empty command must submit Enter only",
+			);
+		});
+
+		it("submits a command only to its target surface", async () => {
+			const target = await adapter.createSurface("Contract Target");
+			const other = await adapter.createSurface("Contract Other");
+			adapter.sendCommand(target, "echo only-target");
+			assert.deepEqual(fixture.submittedCommands(stateDir, target), ["echo only-target"]);
+			assert.deepEqual(fixture.submittedCommands(stateDir, other), []);
 		});
 
 		it("closes a surface, so that a later read fails", async () => {
@@ -139,6 +162,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		it("is reached through the shared mux functions", async () => {
 			const surface = await createSurface("Contract Shared");
 			sendCommand(surface, "echo via-shared");
+			assert.deepEqual(fixture.submittedCommands(stateDir, surface), ["echo via-shared"]);
 			assert.match(adapter.readScreen(surface, SCREEN_LINES), /echo via-shared/);
 			assert.match(readScreen(surface, SCREEN_LINES), /echo via-shared/);
 			closeSurface(surface);
