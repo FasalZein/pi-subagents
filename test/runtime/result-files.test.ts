@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
@@ -44,6 +45,37 @@ function assertRecordNamesExistingReport(folder: string): ResultRecord | undefin
 /** The record as JSON stores it: fields set to undefined drop out. */
 function asStored(record: ResultRecord): ResultRecord {
 	return JSON.parse(JSON.stringify(record)) as ResultRecord;
+}
+
+const srcUrl = (path: string) => new URL(`../../${path}`, import.meta.url).href;
+
+/**
+ * Publishes one run whose report is `text` in a child process whose file-size limit is 1 KiB
+ * (`ulimit -f 1`): a write that crosses the limit writes part of its bytes and returns (a short
+ * write); the next write fails with EFBIG. Returns the published record and the folder's files.
+ */
+function publishUnderFileSizeLimit(text: string): { record: ResultRecord; files: Record<string, string> } {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "result-files-limit-")));
+	roots.push(root);
+	const script = join(root, "publish.mjs");
+	writeFileSync(
+		script,
+		`import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { assembleResult } from ${JSON.stringify(srcUrl("src/runtime/result-assembler.ts"))};
+import { publishResult, reserveRunId } from ${JSON.stringify(srcUrl("src/runtime/result-files.ts"))};
+import { assistant, facts, sessionHeader } from ${JSON.stringify(srcUrl("test/support/result-fixtures.ts"))};
+const reservation = reserveRunId(join(process.argv[2], "results"));
+const text = readFileSync(join(process.argv[2], "input.txt"), "utf8");
+const record = publishResult(reservation, assembleResult(facts([sessionHeader(), assistant(text)], { runId: reservation.runId })));
+const files = Object.fromEntries(readdirSync(reservation.folder).map((name) => [name, readFileSync(join(reservation.folder, name), "utf8")]));
+process.stdout.write(JSON.stringify({ record, files }));
+`,
+	);
+	writeFileSync(join(root, "input.txt"), text);
+	const child = spawnSync("bash", ["-c", 'ulimit -f 1 && exec "$0" "$1" "$2"', process.execPath, script, root], { encoding: "utf8" });
+	assert.equal(child.status, 0, child.stderr);
+	return JSON.parse(child.stdout) as { record: ResultRecord; files: Record<string, string> };
 }
 
 const failingRename = {
@@ -136,6 +168,66 @@ describe("result files (D13)", () => {
 		assert.ok(a?.report.saved && b?.report.saved);
 		assert.equal(readFileSync(a.report.path, "utf8"), "first run");
 		assert.equal(readFileSync(b.report.path, "utf8"), "second run");
+	});
+
+	it("commits no truncated report when a write of the report is short", () => {
+		const text = "r".repeat(3000);
+		const { record, files } = publishUnderFileSizeLimit(text);
+
+		assert.equal(record.report.saved, false, "a report that does not fit is not saved");
+		assert.deepStrictEqual(files, {}, "no record and no partial report stay");
+	});
+
+	it("commits no truncated record when a write of the record is short", () => {
+		// The report (900 bytes) fits under 1 KiB; the record holds the summary and more, so it does not.
+		const text = "s".repeat(900);
+		const { record, files } = publishUnderFileSizeLimit(text);
+
+		assert.equal(record.report.saved, false, "a record that does not fit is not committed");
+		assert.deepStrictEqual(files, {}, "no record and no unnamed report stay");
+	});
+
+	it("keeps the result in memory when cleanup of a failed write also fails", () => {
+		const notices: string[] = [];
+		const store = new ResultStore(resultsDir(), (message) => notices.push(message));
+		const reservation = store.reserve();
+		const folder = folderOf(reservation);
+		// A non-directory now occupies the reserved path: the writes and their cleanup both fail.
+		rmdirSync(folder);
+		writeFileSync(folder, "not a folder");
+
+		const record = store.publish(reservation, runResult(reservation.runId, "summary after a lost folder"));
+
+		assert.equal(record.report.saved, false);
+		assert.equal(notices.length, 1);
+		assert.deepStrictEqual(store.read(reservation.runId), record, "the record stays in memory");
+		const text = renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
+		assert.match(text, /report not saved: /);
+		assert.ok(text.includes("summary after a lost folder"));
+	});
+
+	it("gives colliding draws different run ids in memory, and no run replaces the record of another", () => {
+		const dir = resultsDir();
+		chmodSync(join(dir, ".."), 0o500);
+		const store = new ResultStore(dir, () => {});
+		const draws = ["aaaa0001", "aaaa0001", "bbbb0002"].map(parseRunId);
+		const draw = () => {
+			const next = draws.shift();
+			assert.ok(next, "enough draws");
+			return next;
+		};
+
+		const first = store.reserve(draw);
+		const second = store.reserve(draw);
+		assert.equal(first.folder, undefined);
+		assert.equal(first.runId, "aaaa0001");
+		assert.equal(second.runId, "bbbb0002");
+		const a = store.publish(first, runResult(first.runId, "first run"));
+		const b = store.publish(second, runResult(second.runId, "second run"));
+
+		assert.deepStrictEqual(store.read(first.runId), a);
+		assert.deepStrictEqual(store.read(second.runId), b);
+		assert.ok(a.summary.includes("first run") && b.summary.includes("second run"));
 	});
 
 	it("degrades a read-only results folder to memory with one notice and no path in the text", () => {

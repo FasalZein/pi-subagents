@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
@@ -70,13 +70,20 @@ export interface ResultFileIo {
 
 const NODE_IO: ResultFileIo = { rename: renameSync };
 
-/** Writes `text` to a new file and flushes it; fails when the file exists. */
+/**
+ * Writes all of `text` to a new file and flushes it; fails when the file exists. writeFileSync
+ * repeats short writes until every byte is written or a write throws. A failed write removes the
+ * partial file, so no folder keeps a cut report.
+ */
 function writeNewFile(path: string, text: string): void {
 	const fd = openSync(path, "wx");
+	let written = false;
 	try {
-		writeSync(fd, text);
+		writeFileSync(fd, text);
 		fsyncSync(fd);
+		written = true;
 	} finally {
+		if (!written) removeQuietly(path);
 		closeSync(fd);
 	}
 }
@@ -112,11 +119,20 @@ export function publishResult(reservation: Reservation, result: AssembledResult,
 		io.rename(temp, join(folder, RECORD_FILE));
 		return record;
 	} catch (error) {
-		// The new report is not named by any record; the old record keeps its own report.
-		rmSync(temp, { force: true });
-		if (reportPath) rmSync(reportPath, { force: true });
+		// The new report is not named by any record; the old record keeps its own report. Cleanup is
+		// best effort: its failure must not cost the caller the in-memory record.
+		removeQuietly(temp);
+		if (reportPath) removeQuietly(reportPath);
 		const report: ReportStorage = { saved: false, error: errorText(error) };
 		return { ...result.record, report };
+	}
+}
+
+function removeQuietly(path: string): void {
+	try {
+		rmSync(path, { force: true });
+	} catch {
+		// An unremovable leftover is not named by any record.
 	}
 }
 
@@ -134,6 +150,8 @@ export function readResultRecord(folder: string): ResultRecord | undefined {
  */
 export class ResultStore {
 	private readonly memory = new Map<RunId, ResultRecord>();
+	/** Every id this store handed out: without a folder on disk, only this set keeps ids exclusive. */
+	private readonly reserved = new Set<RunId>();
 	private noticeSent = false;
 	private readonly resultsDir: string;
 	private readonly notifyStorageFailure: (message: string) => void;
@@ -145,8 +163,14 @@ export class ResultStore {
 		this.io = io;
 	}
 
-	reserve(draw?: () => RunId): Reservation {
-		const reservation = reserveRunId(this.resultsDir, draw);
+	reserve(draw: () => RunId = drawRunId): Reservation {
+		const freshDraw = (): RunId => {
+			let runId = draw();
+			while (this.reserved.has(runId)) runId = draw();
+			return runId;
+		};
+		const reservation = reserveRunId(this.resultsDir, freshDraw);
+		this.reserved.add(reservation.runId);
 		if (reservation.folder === undefined) this.storageFailed(reservation.error);
 		return reservation;
 	}
