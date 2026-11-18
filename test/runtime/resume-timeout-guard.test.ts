@@ -1,4 +1,4 @@
-import { testResultsDir } from "../support/result-fixtures.ts";
+import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -81,7 +81,7 @@ function createResumeRuntime() {
 }
 
 function registerResumeTool(runtime: ReturnType<typeof createResumeRuntime>) {
-	const tools = new Map<string, { execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }>();
+	const tools = new Map<string, { execute: (id: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<unknown> }>();
 	registerSubagentResumeTool(
 		{
 			registerTool(definition: { name: string }) {
@@ -119,7 +119,7 @@ describe("timeout resume guard", () => {
 			const tool = registerResumeTool(createResumeRuntime());
 
 			await assert.rejects(
-				() => tool.execute("call-1", { sessionFile }, undefined),
+				() => tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false })),
 				/stopped this sub-agent because it went past its time limit[\s\S]*does not allow a resume[\s\S]*smaller task/,
 			);
 			assert.equal(existsSync(spawnMarker), false, "the guard must refuse before any child is started");
@@ -135,7 +135,7 @@ describe("timeout resume guard", () => {
 			const tool = registerResumeTool(createResumeRuntime());
 
 			await assert.rejects(
-				() => tool.execute("call-idle", { sessionFile }, undefined),
+				() => tool.execute("call-idle", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false })),
 				/stopped this sub-agent because it went past its limit for time without output/,
 			);
 		});
@@ -153,11 +153,8 @@ describe("timeout resume guard", () => {
 
 			assert.equal(running.sessionFile, sessionFile);
 			assert.ok(running.childProcess, "a timeout alone must not make a session unrecoverable");
-			assert.equal(
-				readSubagentTimeoutSidecar(sessionFile),
-				null,
-				"a resume clears the spent verdict so a clean run releases the session",
-			);
+			await running.completionPromise;
+			assert.equal(readSubagentTimeoutSidecar(sessionFile), null, "a clean end of the resumed run removes the verdict");
 		});
 	});
 
