@@ -1,3 +1,4 @@
+import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
 import subagentsExtension from "../../src/subagents.ts";
 import {
 	afterEach,
@@ -83,12 +84,14 @@ describe("parent prompt-start hooks", () => {
 			type: "before_agent_start",
 			prompt: "hello",
 			systemPrompt: "BASE SYSTEM PROMPT",
-			systemPromptOptions: {},
+			// Pi always passes normalized options, whose sections map exists.
+			systemPromptOptions: { sections: {} as Record<string, string> },
 		};
 		const results = await Promise.all((handlers.get("before_agent_start") ?? []).map((handler) => handler(event, ctx)));
 		assert.ok(results.length > 0);
 		for (const result of results) {
 			assert.equal((result as { systemPrompt?: string } | undefined)?.systemPrompt, undefined);
 		}
+		assert.match(event.systemPromptOptions.sections[AGENT_INDEX_SECTION_NAME] ?? "", /- worker: Worker/);
 	});
 });
