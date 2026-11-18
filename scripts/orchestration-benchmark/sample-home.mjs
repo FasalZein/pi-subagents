@@ -80,9 +80,13 @@ function readJsonIfExists(path) {
  * The login of one provider, with its refresh token blanked: Pi refreshes only an
  * expired token, and a blank refresh fails instead of rotating the owner's login.
  * Pi validates that `refresh` is a string, so it stays as an empty string.
+ * A provider with no login entry but an apiKey in its models.json entry gets
+ * an empty login file: the copied models.json carries its key.
+ * @param {object} [models] - output of selectProviderModels
  */
-export function selectProviderAuth(auth, provider, now, minimumMs) {
+export function selectProviderAuth(auth, provider, now, minimumMs, models) {
 	const entry = auth[provider];
+	if (!entry && models?.providers?.[provider]?.apiKey) return {};
 	if (!entry)
 		throw new BenchError(
 			`the Pi login file has no entry for provider ${provider}`,
@@ -253,16 +257,21 @@ export function prepareSampleHome(
 		join(agentDir, "settings.json"),
 		`${JSON.stringify(SAMPLE_SETTINGS, null, 2)}\n`,
 	);
-	writeFileSync(
-		join(agentDir, "models.json"),
-		JSON.stringify(readProviderModels(provider)),
-		{ mode: 0o600 },
-	);
+	const providerModels = readProviderModels(provider);
+	writeFileSync(join(agentDir, "models.json"), JSON.stringify(providerModels), {
+		mode: 0o600,
+	});
 	const auth = readJsonIfExists(join(ownerAgentDir(), "auth.json"));
 	writeFileSync(
 		join(agentDir, "auth.json"),
 		JSON.stringify(
-			selectProviderAuth(auth, provider, Date.now(), loginMarginMs),
+			selectProviderAuth(
+				auth,
+				provider,
+				Date.now(),
+				loginMarginMs,
+				providerModels,
+			),
 		),
 		{
 			mode: 0o600,
