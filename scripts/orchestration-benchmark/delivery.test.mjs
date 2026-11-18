@@ -108,10 +108,13 @@ test("a blocking batch result is one carrier for each run it lists", () => {
 		],
 		[child("a", "x-1"), child("b", "y-2")],
 	);
-	// The launch result lists both runs; its text carries no result, so nothing is delivered.
+	// The launch result hands over both finished runs; their summaries hold no result.
 	assert.deepEqual(
-		record.runs.map((r) => r.handover),
-		["parked", "parked"],
+		record.runs.map((r) => [r.handover, r.delivered]),
+		[
+			["delivered", false],
+			["delivered", false],
+		],
 	);
 	const withText = launch(
 		[
@@ -120,6 +123,8 @@ test("a blocking batch result is one carrier for each run it lists", () => {
 		],
 		"completed",
 	);
+	withText.message.details.children[0].summary = "x-1";
+	withText.message.details.children[1].summary = "y-2";
 	withText.message.content = [{ type: "text", text: "x-1\n\ny-2" }];
 	const carried = account(
 		[withText, assistant("stop", "x-1 y-2")],
@@ -130,6 +135,66 @@ test("a blocking batch result is one carrier for each run it lists", () => {
 		["delivered", "delivered"],
 	);
 	assert.equal(carried.transfers, 2);
+});
+
+test("[T02b-2] transport counts every handover by run id, apart from the correctness of its text", () => {
+	// Child a returns a wrong fact; the wait reply and the result message both carry it.
+	const wait = {
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent",
+			content: [{ type: "text", text: 'Sub-agent "a" completed.\n\nwrong-9' }],
+			details: { id: "r1", name: "a", status: "completed", summary: "wrong-9" },
+		},
+	};
+	const record = account(
+		[
+			LAUNCH,
+			wait,
+			result("r1", 'Sub-agent "a" completed.\n\nwrong-9'),
+			result("r2", "y-2"),
+			assistant("stop", "y-2"),
+		],
+		[
+			child("a", "x-1", { fulfils: { read: true, returned: false } }),
+			child("b", "y-2"),
+		],
+	);
+	assert.deepEqual(
+		record.runs.map((r) => [r.handover, r.transfers, r.delivered]),
+		[
+			["duplicate-carrier", 2, false],
+			["delivered", 1, true],
+		],
+	);
+	assert.deepEqual([record.transfers, record.duplicated], [3, 1]);
+	// A batch result binds each child's own summary, not the joined batch text.
+	const batch = launch(
+		[
+			["r1", "a"],
+			["r2", "b"],
+		],
+		"batch",
+	);
+	batch.message.details.children[0].summary = "x-1 y-2";
+	batch.message.details.children[1].summary = "z-0";
+	batch.message.content = [{ type: "text", text: "x-1 y-2\n\nz-0" }];
+	const joined = account(
+		[batch, assistant("stop", "x-1 y-2")],
+		[
+			child("a", "x-1"),
+			child("b", "y-2", { fulfils: { read: true, returned: false } }),
+		],
+	);
+	assert.deepEqual(
+		joined.runs.map((r) => [r.handover, r.delivered]),
+		[
+			["delivered", true],
+			["delivered", false],
+		],
+	);
+	assert.equal(joined.transfers, 2);
 });
 
 test("transfers count by run id: repeated text in later requests is no transfer", () => {

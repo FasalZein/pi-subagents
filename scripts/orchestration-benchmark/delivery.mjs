@@ -2,18 +2,20 @@
  * Delivery accounting of the orchestration benchmark (G2.1): pure functions only.
  *
  * A transfer counts by run id: an entry of the parent session that the extension
- * bound to one run (its details carry the run id) and that holds the child's result.
+ * bound to one finished run (its details carry the run id), whether or not its
+ * text holds the expected fact. Transport is counted apart from correctness.
  * Text that a later request repeats is no transfer, so only carrier entries count.
  *
  * Handover of one child run, by run id:
- * - delivered: exactly one own carrier holds the result before the terminal reply.
- * - duplicate-carrier: more than one own carrier holds it (duplicates are reported, not gated).
+ * - delivered: exactly one own carrier handed the run over before the terminal reply.
+ * - duplicate-carrier: more than one own carrier did (duplicates are reported, not gated).
+ * The row field delivered is stricter: an own carrier holds the expected result.
  * - digest: no own carrier, but another carrier or allowed tool result holds the
  *   result (a deliberate digest, for example a workflow script). It is not lost.
  * - parked: no carrier, the child ended with its result, and the parent ended its
  *   turn: the result waits for user input that never comes inside the deadline.
  * - lost: no carrier, the child ended with its result, and the parent did not end its turn.
- * - no-result: the child did not end with its result, so there was nothing to hand over.
+ * - no-result: the child did not end its turn, so there was nothing to hand over.
  * - unbound: the child's name matches no single run id the parent launched.
  *
  * Outcome class of one child (AGENTS.md): duplicate when the parent read the
@@ -30,7 +32,7 @@ import {
 
 const RESULT_MESSAGE = "subagent_result";
 // Tool result states that announce a run but carry no result yet.
-const NOT_A_RESULT = new Set(["started", "running"]);
+const NOT_A_RESULT = new Set(["started", "running", "pending", "pinged"]);
 
 /** Run entries a details object names: one run, or a batch with a children list. */
 function runsOf(details) {
@@ -76,9 +78,18 @@ export function carriers(events, parentToolAllowlist) {
 			(run) => !NOT_A_RESULT.has(run.status ?? m.details?.status),
 		);
 		const text = textOf(m.content);
-		// A blocking batch result carries every run it lists; an entry without a run is a digest candidate.
+		// An entry without a run is a digest candidate. A single run owns the entry's
+		// text; a batch result binds each run to its own summary, not the joined text.
 		if (runs.length === 0) found.push({ index, runId: null, text });
-		for (const run of runs) found.push({ index, runId: run.id, text });
+		for (const run of runs) {
+			const own =
+				runs.length === 1 && !Array.isArray(m.details?.children)
+					? text
+					: typeof run.summary === "string"
+						? run.summary
+						: "";
+			found.push({ index, runId: run.id, text: own });
+		}
 	});
 	return found;
 }
@@ -96,15 +107,22 @@ function terminalIndex(events) {
  * @param {{runId: string | null, tokens: string[], ended: boolean, carried: object[], parentIdle: boolean}} input
  */
 export function handover({ runId, tokens, ended, carried, parentIdle }) {
-	const holds = (c) => tokens.every((token) => containsToken(c.text, token));
-	const own = runId ? carried.filter((c) => c.runId === runId && holds(c)) : [];
-	if (!runId) return { handover: "unbound", transfers: 0 };
+	const holds = (c) =>
+		tokens.length > 0 && tokens.every((token) => containsToken(c.text, token));
+	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
+	const own = carried.filter((c) => c.runId === runId);
+	const correct = own.some(holds);
 	if (own.length > 1)
-		return { handover: "duplicate-carrier", transfers: own.length };
-	if (own.length === 1) return { handover: "delivered", transfers: 1 };
-	if (carried.some(holds)) return { handover: "digest", transfers: 0 };
-	if (!ended) return { handover: "no-result", transfers: 0 };
-	return { handover: parentIdle ? "parked" : "lost", transfers: 0 };
+		return { handover: "duplicate-carrier", transfers: own.length, correct };
+	if (own.length === 1) return { handover: "delivered", transfers: 1, correct };
+	if (carried.some(holds))
+		return { handover: "digest", transfers: 0, correct: false };
+	if (!ended) return { handover: "no-result", transfers: 0, correct: false };
+	return {
+		handover: parentIdle ? "parked" : "lost",
+		transfers: 0,
+		correct: false,
+	};
 }
 
 /**
@@ -146,21 +164,18 @@ export function deliveryAccounting({
 		const named = runs.filter((run) => run.name && run.name === child.name);
 		const runId = named.length === 1 ? named[0].runId : null;
 		const tokens = child.contract ? resultTokens(child.contract) : [];
-		const result = child.contract
-			? handover({
-					runId,
-					tokens,
-					ended: child.ended && child.fulfils.returned,
-					carried,
-					parentIdle: parentReply.terminal,
-				})
-			: { handover: runId ? "no-result" : "unbound", transfers: 0 };
+		const { correct, ...result } = handover({
+			runId,
+			tokens,
+			ended: child.ended,
+			carried,
+			parentIdle: parentReply.terminal,
+		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
 			parentReads.includes(resolveReadPath(file, workDir)),
 		);
-		const byOwnRun = ["delivered", "duplicate-carrier"].includes(
-			result.handover,
-		);
+		// Delivered for the verdict: an own carrier holds the expected result.
+		const byOwnRun = correct;
 		const surfaced =
 			tokens.length > 0 &&
 			tokens.every((token) => containsToken(finalText, token));
