@@ -261,7 +261,12 @@ export function classifyAttempt({
 		.filter(Boolean);
 	if (new Set(names).size !== names.length)
 		return infra("two launched children share a launch name");
-	if (load.unmatchedProbes > 0) return infra("probe without its session file");
+	// A deadline timeout stays a timeout (G2.1): a child that started but never
+	// got its task has a probe and no session file, which is measured behaviour.
+	const timedOut =
+		observed.kind === "verdict" && observed.verdict === "timeout";
+	if (load.unmatchedProbes - (timedOut ? load.unfiledProbes : 0) > 0)
+		return infra("probe without its session file");
 	if (!load.parentLoadedCheckout || !load.childrenLoadedCheckout)
 		return infra("extension did not load from the checkout");
 	if (

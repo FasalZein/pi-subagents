@@ -1,7 +1,8 @@
 // Scenario (c) of G2.1: build, review, one fix round, judged by a held-out test.
 // The build child makes the failing fixture test pass. The review child checks the
 // code against a checklist that only its agent file holds (outside the workspace);
-// after a correct build the code breaks exactly one rule, R-2, the planted finding.
+// after a correct build the code breaks exactly one rule, R-2, the planted finding
+// (R-1 covers only positive integer quantities; review-fix.test.mjs checks this).
 // The fix child gets the review report from the parent and fixes R-2.
 // After the parent ends, the oracle (oracle.mjs) runs the held-out test, which no
 // child can see, and compares the checksums of the fixture's test files.

@@ -12,7 +12,7 @@ thinking: {{THINKING}}
 
 Read the source file named in your task with the read tool. Check its code against each rule of this checklist:
 
-- R-1: Every money result is whole cents: no function returns a fractional cent value.
+- R-1: For prices in whole cents and positive integer quantities, every money result is whole cents: no function returns a fractional cent value. A quantity that is not a positive integer is a matter of R-2 only.
 - R-2: A function that takes a quantity throws a RangeError when the quantity is not a positive integer.
 - R-3: No function writes to the console or reads the environment.
 
