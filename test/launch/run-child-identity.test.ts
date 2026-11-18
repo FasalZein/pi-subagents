@@ -10,6 +10,12 @@ import {
 	withoutExactIdentityEnv,
 } from "../../src/launch/child-env.ts";
 import { writeEnvCapsule } from "../../src/launch/env-capsule.ts";
+import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
+import { cmuxBackend } from "../../src/mux/cmux.ts";
+import { herdrBackend } from "../../src/mux/herdr-backend.ts";
+import { tmuxBackend } from "../../src/mux/tmux.ts";
+import { weztermBackend } from "../../src/mux/wezterm.ts";
+import { zellijBackend } from "../../src/mux/zellij.ts";
 import { makeProbeDir, presenceProbeCommand, runLauncherInSurface } from "../support/env-presence.ts";
 import { assert, describe, it } from "../support/index.ts";
 
@@ -169,25 +175,55 @@ describe("run-child exact identity names (D34)", () => {
 		});
 	}
 
-	it("prefix backends keep the v2.9.2 patterns: a pane-only prefixed name reaches the child (known limit)", () => {
-		const probe = makeProbeDir();
-		try {
-			const capsule = launch(
-				PREFIX_PANE_IDENTITY,
-				PARENT_ENV,
-				{},
-				presenceProbeCommand(probe.outFile, ["TMUX_PROBE_PRIVATE", "T44_PANE_DENIED", "T44_DENIED_MARKER"]),
-				probe.dir,
-			);
-			const run = runLauncherInSurface(
-				capsule,
-				{ TMUX_PROBE_PRIVATE: "pane-only", T44_PANE_DENIED: "pane-only" },
-				probe.outFile,
-			);
-			assert.equal(run.status, 0, run.stderr);
-			assert.deepEqual(run.flags, { TMUX_PROBE_PRIVATE: "yes", T44_PANE_DENIED: "no", T44_DENIED_MARKER: "no" });
-		} finally {
-			probe.dispose();
-		}
-	});
+	// Each launch path passes adapter.paneIdentity to the capsule; this pins the policy of each backend.
+	const ADAPTERS: Array<{ adapter: MuxBackendAdapter; privateMarker: string; surface: Record<string, string> }> = [
+		{ adapter: tmuxBackend, privateMarker: "TMUX_PROBE_PRIVATE", surface: { TMUX_PANE: "%2" } },
+		{ adapter: cmuxBackend, privateMarker: "CMUX_PROBE_PRIVATE", surface: { CMUX_SURFACE_ID: "surface:2" } },
+		{ adapter: weztermBackend, privateMarker: "WEZTERM_PROBE_PRIVATE", surface: { WEZTERM_PANE: "2" } },
+		{ adapter: zellijBackend, privateMarker: "ZELLIJ_PROBE_PRIVATE", surface: { ZELLIJ_PANE_ID: "2" } },
+		{
+			adapter: herdrBackend,
+			privateMarker: "HERDR_PROBE_PRIVATE",
+			surface: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p2" },
+		},
+	];
+	for (const { adapter, privateMarker, surface } of ADAPTERS) {
+		it(`${adapter.id} adapter: denied markers stay out; a pane-only prefixed marker follows the backend policy`, () => {
+			const probe = makeProbeDir();
+			try {
+				const policy = adapter.paneIdentity ?? PREFIX_PANE_IDENTITY;
+				const markers = [
+					"T44_ALLOWED_MARKER",
+					"T44_DENIED_MARKER",
+					"T44_WILD_DENY_A",
+					"T44_PANE_DENIED",
+					privateMarker,
+				];
+				const capsule = launch(
+					policy,
+					PARENT_ENV,
+					{},
+					presenceProbeCommand(probe.outFile, markers, surface),
+					probe.dir,
+				);
+				const run = runLauncherInSurface(
+					capsule,
+					{ ...surface, [privateMarker]: "pane-only", T44_PANE_DENIED: "pane-only" },
+					probe.outFile,
+				);
+				assert.equal(run.status, 0, run.stderr);
+				assert.deepEqual(run.flags, {
+					T44_ALLOWED_MARKER: "yes",
+					T44_DENIED_MARKER: "no",
+					T44_WILD_DENY_A: "no",
+					T44_PANE_DENIED: "no",
+					// D34 known limit: prefix backends still copy a pane-only name with their prefix.
+					[privateMarker]: policy.kind === "prefix" ? "yes" : "no",
+					...Object.fromEntries(Object.keys(surface).map((name) => [`equal:${name}`, "yes"])),
+				});
+			} finally {
+				probe.dispose();
+			}
+		});
+	}
 });
