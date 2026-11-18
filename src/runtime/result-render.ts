@@ -67,10 +67,14 @@ function reportLine(record: ResultRecord, options: RenderOptions): string {
 	return `report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}`;
 }
 
-/** Footer lines D14 requires: the report file, the run id, why a run cannot resume, requested context usage. */
+/**
+ * Footer lines D14 and D18 require: the report file, the run id, why a run cannot resume, the verifier
+ * footer (its staged or not-applied fact must survive the cap), requested context usage.
+ */
 function requiredLines(record: ResultRecord, options: RenderOptions): string[] {
 	const lines = [reportLine(record, options), `run: ${record.runId}`];
 	if (!record.resume.resumable) lines.push(cutText(`not resumable: ${record.resume.reason}`, FACT_MAX_CHARS));
+	if (options.verifierFooter) lines.push(options.verifierFooter);
 	if (options.showContextUsage && record.contextUsage) {
 		const { tokens, window } = record.contextUsage;
 		lines.push(window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens`);
@@ -78,11 +82,9 @@ function requiredLines(record: ResultRecord, options: RenderOptions): string[] {
 	return lines;
 }
 
-/** Footer lines that get only the room the required fields leave, most important first. */
+/** Footer lines that get only the room the required fields leave, in order. */
 function optionalLines(options: RenderOptions): string[] {
-	const lines = options.verifierFooter ? [options.verifierFooter] : [];
-	for (const warning of options.warnings ?? []) lines.push(`warning: ${warning}`);
-	return lines;
+	return (options.warnings ?? []).map((warning) => `warning: ${warning}`);
 }
 
 /**

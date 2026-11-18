@@ -87,8 +87,8 @@ describe("result renderer: G1.3 bounded text", () => {
 		const locator = `~/${path.slice(HOME.length + 1)}`;
 		assert.ok(text.includes(`report: ${locator}\n`), "the footer names the whole ~ locator");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
-		// D14: the locator may widen the frame, optional lines may not; the required fields fill it.
-		assert.ok(!text.includes(VERIFIER_FOOTER), "optional lines get no room beyond 400 characters");
+		assert.ok(text.includes(VERIFIER_FOOTER), "the verifier footer is a required field (D18)");
+		for (const warning of WARNINGS) assert.ok(!text.includes(warning), "warnings get no room beyond 400 characters");
 		const summary = renderedSummary(text);
 		assert.ok(frameLength(text, summary) <= FRAME_MAX_CHARS + locator.length, "only the locator widens the frame");
 		assert.ok(summary.endsWith(CUT_MARK), "the summary is cut further with a cut mark");
