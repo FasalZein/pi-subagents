@@ -277,9 +277,18 @@ const evidence = (child, extra = {}) => ({
 	malformed: 0,
 	...extra,
 });
+// An answered observation scores the parent's last reply unless a test names another.
 const classify = (ev, observed = { kind: "answered", answer: CODE }) =>
 	classifyAttempt({
-		observed,
+		observed:
+			observed.kind === "answered"
+				? {
+						answeredAt: (ev.parent?.events ?? []).findLastIndex(
+							(e) => e.message?.role === "assistant",
+						),
+						...observed,
+					}
+				: observed,
 		evidence: ev,
 		cli: CLI,
 		scenario: SCENARIO,
@@ -450,6 +459,24 @@ test("[guard] two launched children with one launch name end the attempt as infr
 	assert.deepEqual(
 		[result.kind, result.infraReason],
 		["infra", "two launched children share a launch name"],
+	);
+});
+
+test("[T02b-3] on a timeout no carrier is available to a scored answer; transport stays", () => {
+	// A correct carrier, then a progress reply; observation ended with a timeout.
+	const result = classify(evidence(childSession(["stop"])), {
+		kind: "verdict",
+		verdict: "timeout",
+	});
+	assert.deepEqual(
+		[
+			result.verdict,
+			result.delivery.answeredAt,
+			result.delivery.runs[0].availableToAnswer,
+			result.delivery.transfers,
+			result.delivery.carrierEvents.length,
+		],
+		["timeout", null, false, 1, 1],
 	);
 });
 

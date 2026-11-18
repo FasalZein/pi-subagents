@@ -131,14 +131,6 @@ function undeliveredSubClass() {
 	return "unknown";
 }
 
-function terminalIndex(events) {
-	let last = -1;
-	events.forEach((e, index) => {
-		if (e?.type === "message" && e.message?.role === "assistant") last = index;
-	});
-	return last;
-}
-
 /**
  * Handover class of one run (see the module header).
  * @param {{runId: string | null, contract: object | undefined, ended: boolean, carried: object[],
@@ -173,12 +165,13 @@ export function handover({
 
 /**
  * Delivery accounting of one attempt. Carriers count over the whole parent
- * session; availability to the answer counts up to the scored terminal reply.
+ * session; availability to the answer counts up to the reply the observer scored.
  * @param {object} input
  * @param {object[]} input.parentEvents
  * @param {Array<{name: string | null, role: string | null, contract: object | undefined,
  *   ended: boolean, fulfils: {read: boolean, returned: boolean}}>} input.children
- * @param {{terminal: boolean}} input.parentReply
+ * @param {number | null} input.answeredAt - entry index of the reply the observer
+ *   scored; null when none was scored (a timeout): then no carrier is available.
  * @param {{parentToolAllowlist: string[], parentLoadTool: string,
  *   digestOperations?: Array<{toolName: string, covers: string[]}>}} input.scenario
  * @param {string} input.workDir
@@ -186,16 +179,15 @@ export function handover({
 export function deliveryAccounting({
 	parentEvents,
 	children,
-	parentReply,
+	answeredAt = null,
 	scenario,
 	workDir,
 }) {
 	const runs = launchedRuns(parentEvents, scenario.parentLoadTool);
-	const answeredAt = parentReply.terminal ? terminalIndex(parentEvents) : -1;
+	const cutoff = answeredAt ?? -1;
 	const carried = carriers(parentEvents, scenario.parentToolAllowlist);
-	const finalText = parentReply.terminal
-		? textOf(parentEvents[terminalIndex(parentEvents)].message.content)
-		: "";
+	const finalText =
+		answeredAt === null ? "" : textOf(parentEvents[answeredAt].message.content);
 	const parentReads = parentEvents.flatMap((e) =>
 		e?.type === "message" && e.message?.role === "assistant"
 			? (e.message.content ?? [])
@@ -217,7 +209,7 @@ export function deliveryAccounting({
 			ended: child.ended,
 			carried,
 			digests,
-			answeredAt,
+			answeredAt: cutoff,
 		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
 			parentReads.includes(resolveReadPath(file, workDir)),

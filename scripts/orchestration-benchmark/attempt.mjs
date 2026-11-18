@@ -288,7 +288,8 @@ export function classifyAttempt({
 	const delivery = deliveryAccounting({
 		parentEvents: evidence.parent.events,
 		children: childFacts,
-		parentReply: terminalAnswer(evidence.parent.events),
+		// The observer's scored reply; a timeout scored none, so nothing was available to it.
+		answeredAt: observed.kind === "answered" ? observed.answeredAt : null,
 		scenario,
 		workDir,
 	});

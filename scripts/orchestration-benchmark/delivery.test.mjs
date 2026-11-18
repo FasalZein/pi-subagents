@@ -58,11 +58,18 @@ const child = (name, returns, extra = {}) => ({
 	fulfils: { read: true, returned: true },
 	...extra,
 });
+// The reply an observer would score: the last assistant reply, when it is terminal.
+const scoredAt = (events) => {
+	const index = events.findLastIndex(
+		(e) => e.type === "message" && e.message.role === "assistant",
+	);
+	return events[index]?.message.stopReason === "stop" ? index : null;
+};
 const account = (parentEvents, children) =>
 	deliveryAccounting({
 		parentEvents,
 		children,
-		parentReply: terminalAnswer(parentEvents),
+		answeredAt: scoredAt(parentEvents),
 		scenario: SCENARIO,
 		workDir: WORK,
 	});
@@ -278,7 +285,7 @@ test("[T02b-7] a duplicate carrier, a declared digest and a missing handover are
 	const declared = deliveryAccounting({
 		parentEvents: [...events.slice(0, -1), digest, events.at(-1)],
 		children,
-		parentReply: terminalAnswer(events),
+		answeredAt: scoredAt(events),
 		scenario: {
 			...SCENARIO,
 			parentToolAllowlist: ["subagent", "workflow"],
