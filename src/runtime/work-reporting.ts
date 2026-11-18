@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createHerdrWorkReporter } from "../mux/herdr-work.ts";
+import { currentMuxAdapter } from "../mux.ts";
 import { outstandingWork } from "./outstanding-work.ts";
 
 /** Optional transport for session-scoped delegated-work facts, never native agent status. */
@@ -8,10 +8,18 @@ export interface WorkReporter {
 	stop(): Promise<void>;
 }
 
+/** The part of the Pi session that a work reporter reads. */
+export type WorkReporterSession = { mode: string; sessionManager: { getSessionFile(): string | undefined } };
+
+/** The status ability of the current backend; undefined when the backend has none. */
+async function connectBackendWorkReporter(session: WorkReporterSession): Promise<WorkReporter | undefined> {
+	return currentMuxAdapter()?.connectWorkReporter?.(session);
+}
+
 /** Bind reporting to Pi lifecycle without creating resources in the extension factory. */
 export function registerOutstandingWorkReporting(
 	pi: ExtensionAPI,
-	connect: (ctx: ExtensionContext) => Promise<WorkReporter | undefined> = (ctx) => createHerdrWorkReporter(ctx),
+	connect: (ctx: ExtensionContext) => Promise<WorkReporter | undefined> = connectBackendWorkReporter,
 ) {
 	let ready: Promise<void> = Promise.resolve();
 	let reporter: WorkReporter | undefined;

@@ -95,6 +95,7 @@ import "./mux/tmux-backend-contract.test.ts";
 import "./mux/cmux-backend-contract.test.ts";
 import "./mux/wezterm-backend-contract.test.ts";
 import "./mux/zellij-backend-contract.test.ts";
+import "./mux/herdr-backend-contract.test.ts";
 import "./mux/poll.test.ts";
 import "./mux/herdr.test.ts";
 import "./mux/herdr-placement.test.ts";

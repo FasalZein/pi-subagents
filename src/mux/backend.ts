@@ -1,5 +1,6 @@
 import type { MuxBackend } from "./core.ts";
-import type { HerdrPlacementContext } from "./herdr-surfaces.ts";
+import type { WorkReporter, WorkReporterSession } from "../runtime/work-reporting.ts";
+import type { HerdrPlacementContext, HerdrPlacementPolicy } from "./herdr-surfaces.ts";
 import type { PollResult } from "./poll.ts";
 import type { ZellijPlacementContext } from "./zellij-placement.ts";
 
@@ -32,8 +33,7 @@ export interface DirectProgramSession {
 /**
  * One terminal multiplexer behind the shared functions of src/mux/ (spec decision D26).
  * Holds only the operations that the shared functions call today.
- * tmux, cmux, wezterm and zellij implement it; herdr keeps its branches in io.ts and
- * surfaces.ts until a later ticket moves it here.
+ * tmux, cmux, wezterm, zellij and old herdr implement it.
  */
 export interface MuxBackendAdapter {
 	readonly id: MuxBackend;
@@ -55,6 +55,15 @@ export interface MuxBackendAdapter {
 	closeSurface(surface: string, target?: MuxSessionTarget): void | Promise<void>;
 	renameCurrentTab(title: string): void;
 	renameWorkspace(title: string): void;
+	/**
+	 * True when a shell command line goes to the surface through a staged script file,
+	 * because the backend cannot take a long or multi-line command as typed input.
+	 */
+	readonly stagesShellCommands?: true;
+	/** Optional ability: the backend places surfaces by a herdr placement policy, which a launch stores. */
+	resolveHerdrPlacementPolicy?(value: string | undefined): HerdrPlacementPolicy;
+	/** Optional status ability: publish the count of outstanding children for the session. */
+	connectWorkReporter?(session: WorkReporterSession): Promise<WorkReporter | undefined>;
 	/** Optional ability: resolve the live session for direct-program starts. */
 	openProgramSession?(): Promise<DirectProgramSession>;
 	/** Optional ability: report the exit of the surface's own process; null while it runs. */

@@ -3,22 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MuxSessionTarget } from "./backend.ts";
 import { isFishShell, muxBackendAdapter, requireMuxBackend, shellEscape } from "./core.ts";
-import {
-	closeHerdrPane,
-	readHerdrPaneScreen,
-	readHerdrPaneScreenAsync,
-	runHerdrPaneCommand,
-	sendHerdrPaneEnter,
-} from "./herdr.ts";
 
 export function sendCommand(surface: string, command: string): void {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	if (adapter) {
-		adapter.sendCommand(surface, command);
-		return;
-	}
-	if (command.length > 0) runHerdrPaneCommand(surface, command);
-	else sendHerdrPaneEnter(surface);
+	muxBackendAdapter(requireMuxBackend()).sendCommand(surface, command);
 }
 
 function stageShellCommand(command: string): string {
@@ -35,8 +22,7 @@ function buildStagedShellCommand(scriptPath: string): string {
 }
 
 export function sendShellCommand(surface: string, command: string): void {
-	const backend = requireMuxBackend();
-	if (backend !== "cmux" && backend !== "herdr") {
+	if (!muxBackendAdapter(requireMuxBackend()).stagesShellCommands) {
 		sendCommand(surface, command);
 		return;
 	}
@@ -52,29 +38,20 @@ export function sendShellCommand(surface: string, command: string): void {
 }
 
 export function readScreen(surface: string, lines = 50): string {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	return adapter ? adapter.readScreen(surface, lines) : readHerdrPaneScreen(surface, lines);
+	return muxBackendAdapter(requireMuxBackend()).readScreen(surface, lines);
 }
 
 export async function readScreenAsync(surface: string, lines = 50): Promise<string> {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	return adapter ? adapter.readScreenAsync(surface, lines) : readHerdrPaneScreenAsync(surface, lines);
+	return muxBackendAdapter(requireMuxBackend()).readScreenAsync(surface, lines);
 }
 
 /** Closes the surface and settles when the backend has closed it. */
 export async function closeSurfaceAsync(surface: string, target?: MuxSessionTarget): Promise<void> {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	if (adapter) await adapter.closeSurface(surface, target);
-	else closeHerdrPane(surface);
+	await muxBackendAdapter(requireMuxBackend()).closeSurface(surface, target);
 }
 
 /** Starts the close and does not wait for an asynchronous close, which can then fail unseen. */
 export function closeSurface(surface: string): void {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	if (!adapter) {
-		closeHerdrPane(surface);
-		return;
-	}
-	const closing = adapter.closeSurface(surface);
+	const closing = muxBackendAdapter(requireMuxBackend()).closeSurface(surface);
 	if (closing) void closing.catch(() => {});
 }

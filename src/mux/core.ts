@@ -3,8 +3,7 @@ import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { MuxBackendAdapter } from "./backend.ts";
 import { cmuxBackend } from "./cmux.ts";
-import { isHerdrRuntimeAvailable } from "./herdr.ts";
-import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
+import { herdrBackend } from "./herdr-backend.ts";
 import { tmuxBackend } from "./tmux.ts";
 import { weztermBackend } from "./wezterm.ts";
 import { zellijBackend } from "./zellij.ts";
@@ -13,20 +12,12 @@ export const execFileAsync = promisify(execFile);
 
 export type MuxBackend = "cmux" | "tmux" | "zellij" | "wezterm" | "herdr";
 
-function hasCommand(command: string): boolean {
-	return defaultMuxRuntimeProbe.hasCommand(command);
-}
+/** Every backend, in detection order without a forced backend (spec D29). */
+const DETECTION_ORDER: readonly MuxBackend[] = ["herdr", "cmux", "tmux", "zellij", "wezterm"];
 
 function muxPreference(): MuxBackend | null {
 	const pref = (process.env.PI_SUBAGENT_MUX ?? "").trim().toLowerCase();
-	if (pref === "cmux" || pref === "tmux" || pref === "zellij" || pref === "wezterm" || pref === "herdr") {
-		return pref;
-	}
-	return null;
-}
-
-function isHerdrMuxRuntimeAvailable(): boolean {
-	return isHerdrRuntimeAvailable(hasCommand);
+	return DETECTION_ORDER.find((backend) => backend === pref) ?? null;
 }
 
 export function isCmuxAvailable(): boolean {
@@ -42,30 +33,21 @@ export function isZellijAvailable(): boolean {
 }
 
 export function isHerdrAvailable(): boolean {
-	return isHerdrMuxRuntimeAvailable();
+	return herdrBackend.isAvailable();
 }
 
+/** PI_SUBAGENT_MUX forces a backend, also when markers of several backends are present (spec D29). */
 export function getMuxBackend(): MuxBackend | null {
 	const pref = muxPreference();
-	if (pref === "cmux") return isCmuxAvailable() ? "cmux" : null;
-	if (pref === "tmux") return isTmuxAvailable() ? "tmux" : null;
-	if (pref === "zellij") return isZellijAvailable() ? "zellij" : null;
-	if (pref === "wezterm") return weztermBackend.isAvailable() ? "wezterm" : null;
-	if (pref === "herdr") return isHerdrMuxRuntimeAvailable() ? "herdr" : null;
-
-	if (isHerdrMuxRuntimeAvailable()) return "herdr";
-	if (isCmuxAvailable()) return "cmux";
-	if (isTmuxAvailable()) return "tmux";
-	if (isZellijAvailable()) return "zellij";
-	if (weztermBackend.isAvailable()) return "wezterm";
-	return null;
+	if (pref) return muxBackendAdapter(pref).isAvailable() ? pref : null;
+	return DETECTION_ORDER.find((backend) => muxBackendAdapter(backend).isAvailable()) ?? null;
 }
 
 /**
- * The adapter of a backend; undefined for herdr, which keeps its branches until a later ticket.
+ * The adapter of a backend.
  * A switch, not a module-level map: the adapter modules import this one, so a map would read them before they exist.
  */
-export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter | undefined {
+export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter {
 	switch (backend) {
 		case "cmux":
 			return cmuxBackend;
@@ -76,11 +58,11 @@ export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter | unde
 		case "zellij":
 			return zellijBackend;
 		case "herdr":
-			return undefined;
+			return herdrBackend;
 	}
 }
 
-/** The adapter of the current backend; undefined when no backend runs or the backend is herdr. */
+/** The adapter of the current backend; undefined when no backend runs. */
 export function currentMuxAdapter(): MuxBackendAdapter | undefined {
 	const backend = getMuxBackend();
 	return backend ? muxBackendAdapter(backend) : undefined;
@@ -92,11 +74,7 @@ export function isMuxAvailable(): boolean {
 
 export function muxSetupHint(): string {
 	const pref = muxPreference();
-	if (pref === "cmux") return cmuxBackend.setupHint();
-	if (pref === "tmux") return tmuxBackend.setupHint();
-	if (pref === "zellij") return zellijBackend.setupHint();
-	if (pref === "wezterm") return weztermBackend.setupHint();
-	if (pref === "herdr") return "Start pi inside Herdr (`herdr`, then run `pi`).";
+	if (pref) return muxBackendAdapter(pref).setupHint();
 	return "Start pi inside Herdr (`herdr`, then run `pi`), cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
 }
 
