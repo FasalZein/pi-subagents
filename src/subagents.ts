@@ -72,7 +72,7 @@ export {
 } from "./runtime/wiring.ts";
 
 import { traceSubagentLaunch } from "./launch/trace.ts";
-import { classifyAssistantMessageForMixedBatch } from "./runtime/batch-classifier.ts";
+import { classifyAssistantMessageForMixedBatch, getLaunchCallChildren } from "./runtime/batch-classifier.ts";
 import {
 	markSubagentBatchBlocking,
 	requestSubagentBatchStop,
@@ -282,20 +282,24 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	pi.on("tool_call", (event) => {
 		if (event.toolName !== SUBAGENT_TOOL_NAME) return {};
-		const input = event.input as Partial<SubagentParamsInput>;
-		const agentDefs =
-			typeof input.agent === "string"
-				? loadLaunchableAgentDefaults(input.agent, typeof input.cwd === "string" ? input.cwd : undefined)
-				: null;
-		const agentError = getSubagentAgentRequirementError(input, agentDefs);
-		const agentOverrideError = getSubagentAgentOverrideError(input, agentDefs);
-		if (!agentError && !agentOverrideError) {
-			if (resolveSubagentBlocking(input, agentDefs)) {
-				markSubagentBatchBlocking();
-			} else {
-				requestSubagentBatchStop();
+		// Classify every child of this call before any launch of the message runs:
+		// a blocking child here makes async children in sibling calls wait too.
+		const blocking = getLaunchCallChildren(event.input).map((child) => {
+			const input = child as Partial<SubagentParamsInput>;
+			const agentDefs =
+				typeof input.agent === "string"
+					? loadLaunchableAgentDefaults(input.agent, typeof input.cwd === "string" ? input.cwd : undefined)
+					: null;
+			if (!agentDefs) return null;
+			if (getSubagentAgentRequirementError(input, agentDefs) || getSubagentAgentOverrideError(input, agentDefs)) {
+				return null;
 			}
-		}
+			return resolveSubagentBlocking(input, agentDefs);
+		});
+		// The tool refuses the whole call when one child is invalid, so such a call launches nothing.
+		if (blocking.length === 0 || blocking.includes(null)) return {};
+		if (blocking.includes(true)) markSubagentBatchBlocking();
+		else requestSubagentBatchStop();
 		return {};
 	});
 

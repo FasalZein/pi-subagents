@@ -23,6 +23,7 @@ import {
 	writeFileSync,
 } from "../support/index.ts";
 import "../support/ambient-spawn-grant.ts";
+import { loadExtension, useFakePi } from "../support/extension-host.ts";
 
 // D21 and D23: the launch tool takes only a children list; its reply has one
 // line per child, one line on how results return, and an unknown agent is
@@ -114,6 +115,7 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_AGENT",
 	"PI_SUBAGENT_SPAWNABLE",
 	"PI_SUBAGENT_SPAWN_BUDGET",
+	"PI_SUBAGENT_PI_COMMAND",
 ] as const;
 
 /** The real extension over a config root holding the named agent files; returns a launch caller. */
@@ -203,6 +205,43 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		assert.match(lines[1], /stub\/bg-scout/);
 		assert.match(lines[1], /\bheadless\b/);
 		assert.match(lines[2], /report arrives later/);
+	});
+
+	it("makes an async child in one call wait for a blocking child in a separate call of the same message", async () => {
+		const cwd = createTestDir();
+		const agentsDir = join(cwd, "agent-root", "agents");
+		mkdirSync(agentsDir, { recursive: true });
+		for (const [name, async] of [["blocker", false], ["slow", true]] as const) {
+			writeFileSync(
+				join(agentsDir, `${name}.md`),
+				`---\nname: ${name}\ndescription: ${name} agent\nmode: background\nauto-exit: true\nasync: ${async}\n---\n\nBody.`,
+			);
+		}
+		process.env.PI_CODING_AGENT_DIR = join(cwd, "agent-root");
+		// Each child runs a little while, so a detached child would still be running when its call returns.
+		useFakePi("sleep 0.3");
+		const extension = await loadExtension(cwd);
+		await extension.startSession("startup");
+		const calls = [child("blocker", "blocker-one"), child("slow", "slow-one")].map((entry, index) => ({
+			type: "toolCall",
+			id: `call-${index}`,
+			name: "subagent",
+			arguments: { children: [entry] },
+		}));
+		// Pi runs message_end and every tool_call hook of the message before any parallel call executes.
+		await extension.emit("message_end", { message: { role: "assistant", content: calls } });
+		for (const call of calls) {
+			await extension.emit("tool_call", { toolName: call.name, toolCallId: call.id, input: call.arguments });
+		}
+		const tool = extension.tools.get("subagent");
+		assert.ok(tool);
+		const results = await Promise.all(
+			calls.map((call) => tool.execute(call.id, call.arguments, undefined, undefined, extension.ctx)),
+		);
+		assert.deepEqual(
+			results.map((result) => result.details.status),
+			["completed", "completed"],
+		);
 	});
 
 	it("refuses a misspelled agent name and names the intended agent", async () => {
