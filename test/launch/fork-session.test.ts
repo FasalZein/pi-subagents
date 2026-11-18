@@ -248,6 +248,56 @@ describe("fork session launch behavior", () => {
 		);
 	});
 
+	it("drops the parent's agent index from inherited system messages and compaction state", () => {
+		const dir = createTestDir();
+		const parent = join(dir, "parent.jsonl");
+		const child = join(dir, "child.jsonl");
+		const header = { ...SESSION_HEADER, cwd: dir, timestamp: "2026-08-07T20:00:00.000Z" };
+		const parentIndex = "<subagent_index>\nParent index\n</subagent_index>";
+		const entries = [
+			header,
+			{
+				type: "message",
+				id: "sys-001",
+				parentId: null,
+				timestamp: "2026-08-07T20:00:01.000Z",
+				message: { role: "system", content: "", sections: { preamble: "Base", subagent_index: parentIndex } },
+			},
+			{
+				type: "message",
+				id: "user-001",
+				parentId: "sys-001",
+				timestamp: "2026-08-07T20:00:02.000Z",
+				message: { role: "user", content: [{ type: "text", text: "root" }] },
+			},
+			{
+				type: "compaction",
+				id: "cmp-001",
+				parentId: "user-001",
+				timestamp: "2026-08-07T20:00:03.000Z",
+				summary: "summary",
+				firstKeptEntryId: "user-001",
+				tokensBefore: 10,
+				systemMessage: { role: "system", content: "", sections: { preamble: "Base", subagent_index: parentIndex } },
+			},
+			{
+				type: "message",
+				id: "asst-001",
+				parentId: "cmp-001",
+				timestamp: "2026-08-07T20:00:04.000Z",
+				message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+			},
+		];
+		writeFileSync(parent, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+		seedSubagentSessionFileForTest("fork", parent, child, dir, { activeLeafId: "asst-001" });
+
+		const seeded = getEntries(child) as any[];
+		assert.equal(JSON.stringify(seeded).includes("Parent index"), false);
+		assert.deepEqual(seeded.find((entry) => entry.id === "sys-001")?.message.sections, { preamble: "Base" });
+		assert.deepEqual(seeded.find((entry) => entry.id === "cmp-001")?.systemMessage.sections, { preamble: "Base" });
+	});
+
 	it("creates forked child session files directly", () => {
 		const dir = createTestDir();
 		const parent = join(dir, "parent.jsonl");

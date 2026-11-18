@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../agents/definitions.ts";
+import { AGENT_INDEX_SECTION_NAME } from "../agents/index-section.ts";
 import type { HerdrPlacementPolicy } from "../mux/herdr-surfaces.ts";
 import type { ZellijPlacementPolicy } from "../mux/zellij-placement.ts";
 import type { ParentClosePolicy, SubagentParamsInput } from "../types.ts";
@@ -130,6 +131,31 @@ function writeHeaderOnlySubagentSessionFile(
 	);
 }
 
+type SystemSections = { sections?: Record<string, unknown> };
+
+function withoutIndexSection<T extends SystemSections>(message: T): T {
+	if (!message.sections || !(AGENT_INDEX_SECTION_NAME in message.sections)) return message;
+	const { [AGENT_INDEX_SECTION_NAME]: _parentIndex, ...sections } = message.sections;
+	return { ...message, sections };
+}
+
+/**
+ * A fork child gets the parent's conversation, not the parent's agent index:
+ * the index lists what the parent may launch, and the child writes its own
+ * (D19). The index lives in system messages and in the compaction state.
+ */
+function withoutParentIndex(entry: Record<string, unknown>): Record<string, unknown> {
+	const message = entry.message as ({ role?: unknown } & SystemSections) | undefined;
+	if (entry.type === "message" && message?.role === "system") {
+		return { ...entry, message: withoutIndexSection(message) };
+	}
+	const systemMessage = entry.systemMessage as SystemSections | undefined;
+	if (entry.type === "compaction" && systemMessage) {
+		return { ...entry, systemMessage: withoutIndexSection(systemMessage) };
+	}
+	return entry;
+}
+
 export function seedSubagentSessionFile(
 	mode: Exclude<SubagentSessionMode, "standalone">,
 	parentSessionFile: string,
@@ -167,7 +193,10 @@ export function seedSubagentSessionFile(
 		let prevId: string | null = null;
 		for (const entry of rawBranch) {
 			if ((entry as { customType?: unknown }).customType === "subagent_roster") continue;
-			const e = entry as unknown as Record<string, unknown> & { id?: unknown; parentId?: unknown };
+			const e = withoutParentIndex(entry as unknown as Record<string, unknown>) as Record<string, unknown> & {
+				id?: unknown;
+				parentId?: unknown;
+			};
 			branch.push({ ...e, ...(typeof e.id === "string" ? { parentId: prevId } : {}) });
 			if (typeof e.id === "string") prevId = e.id;
 		}
