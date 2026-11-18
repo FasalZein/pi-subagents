@@ -48,10 +48,6 @@ _Avoid_: operator mode, manual mode
 The record that a run ends with: an outcome, a summary and a report file. A run has a result only when it ends while its parent process watches it.
 _Avoid_: completion, output, response
 
-**Generation**:
-The number of one result within its run. A retry of a verified fan-out makes a new generation; every other run has one.
-_Avoid_: version, attempt
-
 **Outcome**:
 The one-word state of a result: done, partial, blocked, failed, timed out or cancelled.
 _Avoid_: status, verdict, exit state
@@ -76,21 +72,17 @@ The file that holds one run's report.
 _Avoid_: handle, artifact (an artifact is a file the child chose to write)
 
 **Delivery**:
-The handover of one result to the parent: a wait returns it, or a message that carries it is committed to the parent session. A delivered result is not yet received.
-_Avoid_: receipt
+The handover of one result to the parent: a wait returns it, or a message that carries it is committed to the parent session. Delivery happens at least once and does not mean that the model read the result.
+_Avoid_: receipt, consumption
 
-**Received**:
-A delivered result is received when a model request of the parent contains it, or contains the result of the workflow script that waited for it and that script ended without error.
-_Avoid_: consumed, acknowledged, seen
-
-**Stub**:
-The one line that replaces a received result in the parent's context: name, outcome, report file and run id.
-_Avoid_: tombstone, placeholder
+**Lookup**:
+A request for a copy of a delivered result by its run id, or for the list of recently ended runs of a parent session. It changes nothing.
+_Avoid_: replay, retrieval
 
 ### Orchestration
 
 **Wait**:
-The parent's blocking request for the results of named runs. A wait holds the runs it claims until it returns or stops.
+The parent's blocking request for the results of named runs, or of all its outstanding runs.
 _Avoid_: join, await, blocking launch
 
 **Turn boundary**:
