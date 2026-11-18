@@ -3,7 +3,13 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
-import { assertModelAllowed, buildModelRef, splitModelRef } from "../agents/model-refs.ts";
+import {
+	assertModelAllowed,
+	buildModelRef,
+	parseAllowedModels,
+	resolveModelChoice,
+	splitModelRef,
+} from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import { getPiInvocation, getSubagentChildProcessEnv } from "../launch/child-command.ts";
@@ -149,7 +155,28 @@ export function resolveResumeLaunchMetadataForInvocation(
 	if (!baseModel) {
 		throw new Error("Cannot apply thinking override without a persisted model.");
 	}
-	const requested = splitResumeModelRef(baseModel, requestedThinking ?? launchMetadata.thinking);
+	const implicitDefaultRef = buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking);
+	const implicitAllowed = implicitDefaultRef
+		? [implicitDefaultRef]
+		: launchMetadata.modelSource === "parent" && launchMetadata.modelRef
+			? [launchMetadata.modelRef]
+			: [];
+	// D22: a resume with a model follows the launch rules. A thinking-only
+	// resume keeps the persisted model as an exact ref.
+	const accepted = parseAllowedModels(launchMetadata.allowedModels);
+	const defaultRef = implicitDefaultRef ?? launchMetadata.modelRef;
+	const requested = requestedModel
+		? resolveModelChoice({
+				requested: requestedModel,
+				requestedThinking,
+				accepted: accepted.length > 0 ? [...implicitAllowed, ...accepted] : [],
+				known: (modelRegistry?.getAvailable() ?? []).map((model) => `${model.provider}/${model.id}`),
+				defaultRef,
+				defaultThinking: defaultRef ? splitModelRef(defaultRef).thinking : undefined,
+				fallbackThinking: launchMetadata.thinking,
+				agentName: launchMetadata.agent,
+			})
+		: splitResumeModelRef(baseModel, requestedThinking ?? launchMetadata.thinking);
 	const explicitThinking = requested.explicitThinking || requestedThinking != null;
 	const resolved = resolveAvailableModelRef(
 		requested.model,
@@ -159,12 +186,6 @@ export function resolveResumeLaunchMetadataForInvocation(
 		launchMetadata.modelRef,
 	);
 	const { effectiveModel, effectiveThinking, effectiveModelRef } = normalizeModelRef(resolved.model, resolved.thinking);
-	const implicitDefaultRef = buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking);
-	const implicitAllowed = implicitDefaultRef
-		? [implicitDefaultRef]
-		: launchMetadata.modelSource === "parent" && launchMetadata.modelRef
-			? [launchMetadata.modelRef]
-			: [];
 	assertModelAllowed(effectiveModelRef, launchMetadata.allowedModels, launchMetadata.name, implicitAllowed);
 	return {
 		...launchMetadata,

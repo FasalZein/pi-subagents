@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { AgentDefaults } from "../agents/definitions.ts";
-import { assertModelAllowed, splitModelRef } from "../agents/model-refs.ts";
+import { assertModelAllowed, parseAllowedModels, resolveModelChoice, splitModelRef } from "../agents/model-refs.ts";
 import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import { generateSubagentSessionFile, type ResumeMode } from "../session/session-files.ts";
 import { addToolModeDeniedNames, resolveDenyTools } from "../tools/policy.ts";
@@ -182,21 +182,35 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		return normalizeModelRef(available.model, available.thinking);
 	};
 
-	const requestedModel = params.model ?? agentDefs?.model ?? options.parentModelRef;
-	const { effectiveModel, effectiveThinking, effectiveModelRef } = resolveRef(
-		requestedModel,
-		params.thinking ?? agentDefs?.thinking ?? options.parentThinking,
-		{
-			resolveAlways: params.model != null,
-			explicitThinking: params.thinking != null,
-		},
-	);
+	const fallbackThinking = agentDefs?.thinking ?? options.parentThinking;
+	const defaultModelRef = resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
+		resolveAlways: false,
+		explicitThinking: false,
+	}).effectiveModelRef;
+	const resolveCallModel = (requested: string) => {
+		// D22: a model in the call is searched in the accepted list (default
+		// included), or in Pi's known models when the agent has no list.
+		const accepted = parseAllowedModels(agentDefs?.allowedModels);
+		const choice = resolveModelChoice({
+			requested,
+			requestedThinking: params.thinking,
+			accepted: accepted.length > 0 && defaultModelRef ? [defaultModelRef, ...accepted] : accepted,
+			known: (options.modelRegistry?.getAvailable() ?? []).map((model) => `${model.provider}/${model.id}`),
+			defaultRef: defaultModelRef,
+			defaultThinking: defaultModelRef ? splitModelRef(defaultModelRef).thinking : undefined,
+			fallbackThinking,
+			agentName: params.agent,
+		});
+		return resolveRef(choice.model, choice.thinking, { resolveAlways: true, explicitThinking: choice.explicitThinking });
+	};
+	const { effectiveModel, effectiveThinking, effectiveModelRef } =
+		params.model != null
+			? resolveCallModel(params.model)
+			: resolveRef(agentDefs?.model ?? options.parentModelRef, params.thinking ?? fallbackThinking, {
+					resolveAlways: false,
+					explicitThinking: params.thinking != null,
+				});
 	if (hasAllowedModels) {
-		const defaultModelRef = resolveRef(
-			agentDefs?.model ?? options.parentModelRef,
-			agentDefs?.thinking ?? options.parentThinking,
-			{ resolveAlways: false, explicitThinking: false },
-		).effectiveModelRef;
 		assertModelAllowed(
 			effectiveModelRef,
 			agentDefs?.allowedModels,
