@@ -199,6 +199,7 @@ describe("no-session child results", () => {
 		assert.equal(child.exitCode, 0, "the child made its last write and exited");
 		assert.ok(result.reportFile, "the result is published before the deletion");
 		assert.equal(existsSync(running.sessionFile), false, "no file remains after the child's last write");
+		assert.equal(existsSync(`${running.sessionFile}.exit`), false, "no late exit record remains");
 	});
 
 	it("terminate: a parent quit returns only after the child exited and its temporary session file is gone", async () => {

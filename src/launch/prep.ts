@@ -6,6 +6,7 @@ import type { AgentDefaults } from "../agents/definitions.ts";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { getDeleteOnExitMarkerPath } from "../session/delete-on-exit.ts";
+import { getSubagentExitSidecarPath } from "../session/exit-sidecar.ts";
 import {
 	buildIdentityBlock,
 	type PersistedSubagentLaunchMetadata,
@@ -314,11 +315,15 @@ export async function getPersistedSessionParityArgs(
 	return args;
 }
 
-/** Deletes the temporary session file of a no-session run; safe to call more than once. */
+/**
+ * Deletes the temporary session file of a no-session run, with the exit record a late shutdown
+ * write can leave after the watcher consumed the first one; safe to call more than once.
+ */
 export function cleanupNoSessionSessionFile(running: Pick<RunningSubagent, "noSession" | "sessionFile">): void {
 	if (!running.noSession) return;
 	try {
 		rmSync(running.sessionFile, { force: true });
+		rmSync(getSubagentExitSidecarPath(running.sessionFile), { force: true });
 		rmSync(getDeleteOnExitMarkerPath(running.sessionFile), { force: true });
 	} catch {}
 }
