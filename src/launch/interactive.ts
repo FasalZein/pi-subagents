@@ -1,9 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle, isSetTabTitleToolEnabled } from "../agents/titles.ts";
-import { createZellijCommandSurface } from "../mux/zellij-placement.ts";
-import { getZellijShellCommand, resolveZellijTarget } from "../mux/zellij-runtime.ts";
-import { createSurface, getMuxBackend, sendShellCommand } from "../mux.ts";
+import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -145,8 +143,8 @@ export async function launchInteractiveSubagent(
 	}
 
 	const startTime = Date.now();
-	const zellijTarget = !surfacePreCreated && getMuxBackend() === "zellij" ? await resolveZellijTarget() : undefined;
-	const ordinarySurface = zellijTarget
+	const programSession = surfacePreCreated ? undefined : await currentMuxAdapter()?.openProgramSession?.();
+	const ordinarySurface = programSession
 		? undefined
 		: (options?.surface ??
 			(await createSurface(surfaceName, {
@@ -155,7 +153,7 @@ export async function launchInteractiveSubagent(
 			})));
 	const envVars = {
 		...launch.envVars,
-		...(zellijTarget ? { ZELLIJ_SESSION_NAME: zellijTarget.sessionName } : {}),
+		...programSession?.childEnv,
 		...(ordinarySurface ? { PI_SUBAGENT_SURFACE: ordinarySurface } : {}),
 		// The child receives the parent's clock, not its own: pane startup time
 		// belongs to the same deadline the watcher enforces.
@@ -183,20 +181,20 @@ export async function launchInteractiveSubagent(
 		envOverrides: envVars,
 		denyEnv: prepared.agentDefs?.denyEnv,
 		doneSentinelFile,
-		...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
+		...(programSession ? { deriveZellijPaneSurface: true } : {}),
 	});
 	let surface: string;
 	try {
 		surface =
 			ordinarySurface ??
-			(await createZellijCommandSurface(surfaceName, zellijTarget!, getZellijShellCommand(command), zellijContext));
+			(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
 		traceSubagentLaunch("interactive.surface", {
 			id,
 			name: params.name,
 			surface,
 			surfacePreCreated,
 		});
-		if (!surfacePreCreated && !zellijTarget) {
+		if (!surfacePreCreated && !programSession) {
 			await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
 		}
 		traceSubagentLaunch("interactive.send", {
@@ -209,7 +207,7 @@ export async function launchInteractiveSubagent(
 			capsulePath,
 			envKeys: Object.keys(envVars).sort(),
 		});
-		if (!zellijTarget) sendShellCommand(surface, command);
+		if (!programSession) sendShellCommand(surface, command);
 	} catch (error) {
 		// The pane never received the command, so nothing will consume the
 		// capsule. Delete it rather than leaving credentials on disk.
@@ -240,6 +238,6 @@ export async function launchInteractiveSubagent(
 		modelRef: prepared.effectiveModelRef,
 		launchMetadata: launch.launchMetadata,
 		doneSentinelFile,
-		zellijTarget,
+		zellijTarget: programSession?.target,
 	};
 }

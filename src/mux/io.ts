@@ -1,16 +1,8 @@
-import { execFileSync } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	execFileAsync,
-	isFishShell,
-	requireMuxBackend,
-	shellEscape,
-	tailLines,
-	zellijActionSync,
-	zellijPaneId,
-} from "./core.ts";
+import type { MuxSessionTarget } from "./backend.ts";
+import { isFishShell, muxBackendAdapter, requireMuxBackend, shellEscape } from "./core.ts";
 import {
 	closeHerdrPane,
 	readHerdrPaneScreen,
@@ -18,36 +10,15 @@ import {
 	runHerdrPaneCommand,
 	sendHerdrPaneEnter,
 } from "./herdr.ts";
-import { cmuxBackend } from "./cmux.ts";
-import { tmuxBackend } from "./tmux.ts";
-import { weztermBackend } from "./wezterm.ts";
-import { closeZellijSurface } from "./zellij-runtime.ts";
 
 export function sendCommand(surface: string, command: string): void {
-	const backend = requireMuxBackend();
-	if (backend === "cmux") {
-		cmuxBackend.sendCommand(surface, command);
+	const adapter = muxBackendAdapter(requireMuxBackend());
+	if (adapter) {
+		adapter.sendCommand(surface, command);
 		return;
 	}
-	if (backend === "tmux") {
-		tmuxBackend.sendCommand(surface, command);
-		return;
-	}
-	if (backend === "wezterm") {
-		weztermBackend.sendCommand(surface, command);
-		return;
-	}
-	if (backend === "zellij") {
-		zellijActionSync(["write-chars", command], surface);
-		zellijActionSync(["write", "13"], surface);
-		return;
-	}
-	if (backend === "herdr") {
-		if (command.length > 0) runHerdrPaneCommand(surface, command);
-		else sendHerdrPaneEnter(surface);
-		return;
-	}
-	throw new Error("Unsupported mux backend");
+	if (command.length > 0) runHerdrPaneCommand(surface, command);
+	else sendHerdrPaneEnter(surface);
 }
 
 function stageShellCommand(command: string): string {
@@ -81,67 +52,29 @@ export function sendShellCommand(surface: string, command: string): void {
 }
 
 export function readScreen(surface: string, lines = 50): string {
-	const backend = requireMuxBackend();
-	if (backend === "cmux") return cmuxBackend.readScreen(surface, lines);
-	if (backend === "tmux") return tmuxBackend.readScreen(surface, lines);
-	if (backend === "wezterm") return weztermBackend.readScreen(surface, lines);
-	if (backend === "zellij") {
-		const raw = execFileSync("zellij", ["action", "dump-screen", "--pane-id", zellijPaneId(surface)], {
-			encoding: "utf8",
-		});
-		return tailLines(raw, lines);
-	}
-	if (backend === "herdr") return readHerdrPaneScreen(surface, lines);
-	throw new Error("Unsupported mux backend");
+	const adapter = muxBackendAdapter(requireMuxBackend());
+	return adapter ? adapter.readScreen(surface, lines) : readHerdrPaneScreen(surface, lines);
 }
 
 export async function readScreenAsync(surface: string, lines = 50): Promise<string> {
-	const backend = requireMuxBackend();
-	if (backend === "cmux") return cmuxBackend.readScreenAsync(surface, lines);
-	if (backend === "tmux") return tmuxBackend.readScreenAsync(surface, lines);
-	if (backend === "wezterm") return weztermBackend.readScreenAsync(surface, lines);
-	if (backend === "zellij") {
-		const { stdout } = await execFileAsync("zellij", ["action", "dump-screen", "--pane-id", zellijPaneId(surface)], {
-			encoding: "utf8",
-		});
-		return tailLines(stdout, lines);
-	}
-	if (backend === "herdr") return readHerdrPaneScreenAsync(surface, lines);
-	throw new Error("Unsupported mux backend");
+	const adapter = muxBackendAdapter(requireMuxBackend());
+	return adapter ? adapter.readScreenAsync(surface, lines) : readHerdrPaneScreenAsync(surface, lines);
 }
 
-export async function closeSurfaceAsync(
-	surface: string,
-	zellijTarget?: { sessionName: string; parentPaneId: number },
-): Promise<void> {
-	if (requireMuxBackend() === "zellij") {
-		await closeZellijSurface(surface, zellijTarget);
-		return;
-	}
-	closeSurface(surface);
+/** Closes the surface and settles when the backend has closed it. */
+export async function closeSurfaceAsync(surface: string, target?: MuxSessionTarget): Promise<void> {
+	const adapter = muxBackendAdapter(requireMuxBackend());
+	if (adapter) await adapter.closeSurface(surface, target);
+	else closeHerdrPane(surface);
 }
 
+/** Starts the close and does not wait for an asynchronous close, which can then fail unseen. */
 export function closeSurface(surface: string): void {
-	const backend = requireMuxBackend();
-	if (backend === "cmux") {
-		cmuxBackend.closeSurface(surface);
-		return;
-	}
-	if (backend === "tmux") {
-		tmuxBackend.closeSurface(surface);
-		return;
-	}
-	if (backend === "wezterm") {
-		weztermBackend.closeSurface(surface);
-		return;
-	}
-	if (backend === "zellij") {
-		void closeZellijSurface(surface).catch(() => {});
-		return;
-	}
-	if (backend === "herdr") {
+	const adapter = muxBackendAdapter(requireMuxBackend());
+	if (!adapter) {
 		closeHerdrPane(surface);
 		return;
 	}
-	throw new Error("Unsupported mux backend");
+	const closing = adapter.closeSurface(surface);
+	if (closing) void closing.catch(() => {});
 }

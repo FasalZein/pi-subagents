@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Surface state for the node fakes of the cmux and wezterm contract tests.
+ * Surface state for the node fakes of the cmux, wezterm and zellij contract tests.
  * Per surface id N in $FAKE_TERMINAL_STATE: screen-N holds the screen, pending-N the
  * typed text that is not submitted yet, submitted-N one line per submitted command
  * (a newline in the typed text moves pending-N there). titles holds the recorded renames.
@@ -62,6 +62,14 @@ export function seedCallerSurface(stateDir: string, id: string): void {
 export function readRecordedTitles(stateDir: string): string[] {
 	const file = join(stateDir, "titles");
 	return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+}
+
+/** All text typed into surface id: the submitted lines, then the pending text. */
+export function readTypedText(stateDir: string, id: string): string {
+	return ["submitted", "pending"]
+		.map((kind) => join(stateDir, `${kind}-${id}`))
+		.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : ""))
+		.join("");
 }
 
 export function readSubmittedCommands(stateDir: string, id: string): string[] {
