@@ -25,7 +25,9 @@ export interface IndexLaunchPolicy {
 	forcesWait: boolean;
 }
 
-const FORCED_WAIT_LINE = "Every launch here waits for its result.";
+// Kept short: in a startup-prompt session with a pane the line costs what the
+// dropped [manual] flags saved, and every fixture row must still fit (D19).
+const FORCED_WAIT_LINE = "Launches wait.";
 
 const DESCRIPTION_CHARS = 100;
 

@@ -34,6 +34,10 @@ const FIXTURE_AGENTS = join(
 );
 const PANE: IndexLaunchPolicy = { paneAvailable: true, forcesWait: false };
 const PRINT: IndexLaunchPolicy = { paneAvailable: false, forcesWait: true };
+// An interactive session with a mux that was started with a prompt: the first
+// prompt forces a wait, the next ones use the pane policy.
+const STARTUP: IndexLaunchPolicy = { paneAvailable: true, forcesWait: true };
+const HEADLESS: IndexLaunchPolicy = { paneAvailable: false, forcesWait: false };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
 
 function entry(
@@ -60,7 +64,8 @@ describe("agent index section", () => {
 		else process.env.PI_CODING_AGENT_DIR = savedDir;
 	});
 
-	it("lists every agent of the sanitized fixture with the three fixed lines within the limit", () => {
+	for (const [mode, policy] of [["pane", PANE], ["print", PRINT], ["startup-prompt", STARTUP], ["headless", HEADLESS]] as const)
+	it(`lists every agent of the sanitized fixture with the three fixed lines within the limit (${mode})`, () => {
 		const dir = createTestDir();
 		const configDir = join(dir, "agent-root");
 		mkdirSync(configDir, { recursive: true });
@@ -74,7 +79,7 @@ describe("agent index section", () => {
 			file.replace(/\.md$/, ""),
 		);
 		assert.equal(entries.length, names.length);
-		const section = renderAgentIndexSection(entries, PANE);
+		const section = renderAgentIndexSection(entries, policy);
 		assert.ok(section);
 		const rendered = renderAgentIndexRequestText(section);
 		assert.ok(
@@ -178,7 +183,7 @@ describe("agent index section", () => {
 		assert.doesNotMatch(manualPane, /\[pane\]|\[manual\]/);
 		assert.doesNotMatch(lines.find((line) => line.startsWith("- bg-manual: ")) ?? "", /\[manual\]/);
 		assert.doesNotMatch(lines.find((line) => line.startsWith("- blocking: ")) ?? "", /\[waits\]/);
-		assert.ok(lines.includes("Every launch here waits for its result."));
+		assert.ok(lines.includes("Launches wait."));
 		assert.equal(lines.slice(0, 3).join("\n"), renderAgentIndexSection([entry("x")], PANE)?.split("\n").slice(0, 3).join("\n"));
 		// In a pane session a background agent closes itself whatever auto-exit says.
 		const pane = renderAgentIndexSection([entry("bg-manual", { mode: "background", autoExit: false })], PANE);
