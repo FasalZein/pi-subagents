@@ -64,14 +64,21 @@ export function launchedRuns(events, launchTool) {
  * Entries of the parent that hold child output, in order: result messages and
  * results of allowed tools, one row per finished run an entry names. runId is
  * null when the entry names no finished run.
- * @returns {Array<{index: number, runId: string | null, tool: string | null, text: string}>}
+ * @returns {Array<{kind: "result-message" | "tool-result", index: number,
+ *   runId: string | null, tool: string | null, text: string}>}
  */
 export function carriers(events, parentToolAllowlist) {
 	const found = [];
 	events.forEach((e, index) => {
 		if (e?.type === "custom_message" && e.customType === RESULT_MESSAGE) {
 			const runId = typeof e.details?.id === "string" ? e.details.id : null;
-			found.push({ index, runId, tool: null, text: textOf(e.content) });
+			found.push({
+				kind: "result-message",
+				index,
+				runId,
+				tool: null,
+				text: textOf(e.content),
+			});
 			return;
 		}
 		const m = e?.type === "message" ? e.message : null;
@@ -88,7 +95,13 @@ export function carriers(events, parentToolAllowlist) {
 		// An entry without a run is a digest candidate. A single run owns the entry's
 		// text; a batch result binds each run to its own summary, not the joined text.
 		if (runs.length === 0)
-			found.push({ index, runId: null, tool: m.toolName, text });
+			found.push({
+				kind: "tool-result",
+				index,
+				runId: null,
+				tool: m.toolName,
+				text,
+			});
 		for (const run of runs) {
 			const own =
 				runs.length === 1 && !Array.isArray(m.details?.children)
@@ -96,7 +109,13 @@ export function carriers(events, parentToolAllowlist) {
 					: typeof run.summary === "string"
 						? run.summary
 						: "";
-			found.push({ index, runId: run.id, tool: m.toolName, text: own });
+			found.push({
+				kind: "tool-result",
+				index,
+				runId: run.id,
+				tool: m.toolName,
+				text: own,
+			});
 		}
 	});
 	return found;
@@ -226,7 +245,8 @@ export function deliveryAccounting({
 	return {
 		runs: rows,
 		transfers: rows.reduce((sum, row) => sum + row.transfers, 0),
-		duplicated: rows.reduce(
+		// Extra copies: carriers beyond the first of each run (three carriers of one run are two).
+		extraCopies: rows.reduce(
 			(sum, row) =>
 				sum + (row.handover === "duplicate-carrier" ? row.transfers - 1 : 0),
 			0,
@@ -244,6 +264,12 @@ export function deliveryAccounting({
 			duplicate: count("outcome", "duplicate"),
 			auxiliary: count("outcome", "auxiliary"),
 		},
+		// The carrier stream without text, so the transport classes can be recomputed:
+		// entry index and run id of each carrier, and the index of the scored reply.
+		carrierEvents: carried
+			.filter((c) => c.runId)
+			.map(({ kind, index, runId }) => ({ kind, index, runId })),
+		answeredAt,
 		cleanYieldShare: rows.length
 			? count("outcome", "clean_yield") / rows.length
 			: null,

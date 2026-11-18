@@ -89,7 +89,7 @@ test("one carrier per run id is a clean delivery and a clean yield", () => {
 		],
 	);
 	assert.deepEqual(
-		[record.transfers, record.duplicated, record.undelivered],
+		[record.transfers, record.extraCopies, record.undelivered],
 		[2, 0, 0],
 	);
 	assert.equal(record.cleanYieldShare, 1);
@@ -169,7 +169,7 @@ test("[T02b-2] transport counts every handover by run id, apart from the correct
 			["delivered", 1, true],
 		],
 	);
-	assert.deepEqual([record.transfers, record.duplicated], [3, 1]);
+	assert.deepEqual([record.transfers, record.extraCopies], [3, 1]);
 	// A batch result binds each child's own summary, not the joined batch text.
 	const batch = launch(
 		[
@@ -198,6 +198,28 @@ test("[T02b-2] transport counts every handover by run id, apart from the correct
 	assert.equal(joined.transfers, 2);
 });
 
+test("[T02b-record] the record keeps the carrier events by run id, without message text", () => {
+	const record = account(
+		[
+			LAUNCH,
+			result("r1", "x-1"),
+			result("r1", "x-1"),
+			result("r2", "y-2"),
+			assistant("stop", "x-1 y-2"),
+		],
+		[child("a", "x-1"), child("b", "y-2")],
+	);
+	assert.deepEqual(record.carrierEvents, [
+		{ kind: "result-message", index: 1, runId: "r1" },
+		{ kind: "result-message", index: 2, runId: "r1" },
+		{ kind: "result-message", index: 3, runId: "r2" },
+	]);
+	assert.equal(record.answeredAt, 4);
+	// Extra copies: one run carried twice gives one extra copy.
+	assert.equal(record.extraCopies, 1);
+	assert.equal(JSON.stringify(record).includes("x-1"), false);
+});
+
 test("transfers count by run id: repeated text in later requests is no transfer", () => {
 	const record = account(
 		[
@@ -211,7 +233,7 @@ test("transfers count by run id: repeated text in later requests is no transfer"
 		[child("a", "x-1"), child("b", "y-2")],
 	);
 	assert.equal(record.transfers, 2);
-	assert.equal(record.duplicated, 0);
+	assert.equal(record.extraCopies, 0);
 });
 
 test("[T02b-7] a duplicate carrier, a declared digest and a missing handover are told apart; a sibling's quote is no digest", () => {
@@ -240,7 +262,7 @@ test("[T02b-7] a duplicate carrier, a declared digest and a missing handover are
 		["duplicate-carrier", "undelivered", "delivered", "undelivered"],
 	);
 	assert.deepEqual(
-		[record.transfers, record.duplicated, record.digests, record.undelivered],
+		[record.transfers, record.extraCopies, record.digests, record.undelivered],
 		[3, 1, 0, 2],
 	);
 	// Only a scenario that declares a digest-producing operation and the runs it
@@ -336,7 +358,7 @@ test("[T02b-3] transport counts to the sample boundary, not to the last assistan
 		[child("a", "x-1")],
 	);
 	assert.deepEqual(
-		[record.runs[0].handover, record.transfers, record.duplicated],
+		[record.runs[0].handover, record.transfers, record.extraCopies],
 		["duplicate-carrier", 2, 1],
 	);
 	assert.deepEqual(

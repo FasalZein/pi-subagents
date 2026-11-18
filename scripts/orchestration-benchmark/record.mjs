@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 // 3: final.delivery (outcome classes, transfers by run id), keyed answers.
-// 4: transport apart from correctness, availableToAnswer, undelivered with subClass.
+// 4: transport apart from correctness, availableToAnswer, undelivered with subClass,
+//    extraCopies (was duplicated), carrierEvents and answeredAt.
 export const RECORD_SCHEMA = 4;
 
 /**
