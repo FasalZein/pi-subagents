@@ -216,7 +216,7 @@ export const tmuxBackend: MuxBackendAdapter = {
 	isAvailable: () => !!process.env.TMUX && defaultMuxRuntimeProbe.hasCommand("tmux"),
 	setupHint: () => "Start pi inside tmux (`tmux new -A -s pi 'pi'`).",
 	createSurface: async (name) => createTmuxSurface(name),
-	createSplit: (name, direction, fromSurface) => createTmuxSplit(name, direction, fromSurface),
+	createSplit: createTmuxSplit,
 	sendCommand: sendTmuxCommand,
 	readScreen: readTmuxScreen,
 	readScreenAsync: readTmuxScreenAsync,

@@ -18,7 +18,8 @@
  * - Nothing else touches that checkout while a sample runs.
  * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
  *
- * Scenarios: smoke (launcher check), recon (G2.1 scenario (a): 6 children, 7 keyed facts)
+ * Scenarios: smoke (launcher check), recon (G2.1 scenario (a): 6 children, 7 keyed facts),
+ * review (G2.1 scenario (b): 8 children, 8 verdicts keyed by target)
  * and review-fix (G2.1 scenario (c): build, review, fix; a held-out test decides).
  * A scenario may declare inspectWorkspace(workDir): it runs after the parent ends and
  * before cleanup, and its facts land in the attempt and in final.workspace.
@@ -177,13 +178,20 @@ async function loadScenario(name) {
 	};
 }
 
-/** Hash of the launcher and its modules (tests and scenarios excluded; scenarios have their own hash). */
+/**
+ * Hash of the launcher, its modules and the frozen agent fixture of the fixed-cost
+ * probe (tests and scenarios excluded; scenarios have their own hash).
+ */
 function harnessHash() {
 	const modules = readdirSync(BENCH_DIR)
 		.filter((name) => /\.(mjs|ts)$/.test(name) && !name.endsWith(".test.mjs"))
 		.map((name) => join(BENCH_DIR, name));
 	return hashFiles(
-		[join(SCRIPTS_DIR, "orchestration-benchmark.mjs"), ...modules],
+		[
+			join(SCRIPTS_DIR, "orchestration-benchmark.mjs"),
+			...modules,
+			join(BENCH_DIR, "agent-fixture"),
+		],
 		SCRIPTS_DIR,
 	);
 }
