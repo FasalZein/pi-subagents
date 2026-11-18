@@ -11,6 +11,33 @@ import { renderResult } from "./result-render.ts";
 export interface ResultTarget {
 	store: ResultStore;
 	reservation: Reservation;
+	/**
+	 * The receiving parent's working directory (its ctx.cwd, which a resumed parent takes from its
+	 * saved session, not process.cwd()); Pi's read tool resolves a relative report locator from it.
+	 */
+	parentCwd: string;
+	/** Launch warnings the rendering repeats inside its frame, so every carrier shows the same text. */
+	warnings: readonly string[];
+}
+
+/** D14 and the context-warning policy: why a run that wrapped up under context pressure cannot resume. */
+export const CONTEXT_PRESSURE_RESUME_REASON =
+	"stopped early by its context-warning policy and its context window is spent; launch a fresh sub-agent for unfinished work";
+
+/**
+ * True for a tool result that carries a published rendering (its details name the run id, as the
+ * wait path sets them only then); its text already holds the launch warnings.
+ */
+export function isRenderedResult(result: { details?: unknown }): boolean {
+	return typeof (result.details as { runId?: unknown } | undefined)?.runId === "string";
+}
+
+/** Splits a joined launch warning ("" when none) into renderer lines without the "Warning: " prefix. */
+export function launchWarningLines(warning: string): string[] {
+	return warning
+		.split("\n\n")
+		.map((line) => line.replace(/^Warning:\s*/, "").trim())
+		.filter(Boolean);
 }
 
 export interface HeadlessResult {
@@ -23,14 +50,14 @@ export interface HeadlessResult {
 
 /**
  * D13 and D14: assembles, publishes and renders the result of a headless child that exited on its
- * own with code 0. Time-limit, error, ping and context-pressure ends keep their own texts until
- * their tickets move them here (T09).
+ * own with code 0, also after a context-pressure wrap-up. Time-limit, error and ping ends keep their
+ * own texts until their tickets move them here (T09).
  */
 export function publishHeadlessResult(
 	running: RunningSubagent,
 	target: ResultTarget,
 	exitSignal: PollResult | null,
-	contextUsage: { contextTokens?: number; contextWindow?: number },
+	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean },
 ): HeadlessResult {
 	const assembled = assembleResult({
 		runId: target.reservation.runId,
@@ -49,12 +76,15 @@ export function publishHeadlessResult(
 			contextUsage.contextTokens !== undefined
 				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
 				: undefined,
-		resume: { resumable: true },
+		resume: contextUsage.contextWarned
+			? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
+			: { resumable: true },
 	});
 	const record = target.store.publish(target.reservation, assembled);
 	const text = renderResult(record, {
-		cwd: process.cwd(),
+		cwd: target.parentCwd,
 		homeDir: homedir(),
+		warnings: target.warnings,
 		showContextUsage: running.reportContextUsage !== false,
 	});
 	const noText = !record.typed && assembled.report === `${record.summary}\n\n${NO_REPORT_LINE}`;

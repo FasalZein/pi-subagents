@@ -69,7 +69,7 @@ import {
 	PI_SUBAGENT_TIMEOUT_STARTED_AT,
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
-import type { RunningSubagent, SubagentResult } from "../types.ts";
+import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -102,6 +102,7 @@ export interface ResumeSessionInput {
 	sessionFile: string;
 	/** The parent session's results folder; the resume reserves its run id there (D13). */
 	resultsDir: string;
+	parent: ResultParent; // The receiving parent's cwd and the warnings its rendered result repeats (D14).
 	task?: string;
 	name?: string;
 	agent?: string;
@@ -454,9 +455,8 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
 	const reservation = sessionResultStore(input.resultsDir).reserve();
-	const id = reservation.runId;
 	const running: RunningSubagent = {
-		id,
+		id: reservation.runId,
 		name,
 		task: task ?? "resumed session",
 		agent: resumedAgent,
@@ -480,7 +480,7 @@ async function resumeSubagentSessionWithoutWidth(
 		modelContextWindow: runtime.getContextWindow(invocationMetadata?.modelRef),
 		modelRef: invocationMetadata?.modelRef,
 		launchMetadata: resumedInvocationMetadata,
-		resultTarget: { store: sessionResultStore(input.resultsDir), reservation },
+		resultTarget: { store: sessionResultStore(input.resultsDir), reservation, ...input.parent },
 	};
 
 	if (metadata.mode === "background") {
@@ -540,7 +540,7 @@ async function resumeSubagentSessionWithoutWidth(
 					herdr: herdrContext,
 					zellij: zellijContext,
 				});
-		const doneSentinelFile = getDoneSentinelFile(sessionFile, id);
+		const doneSentinelFile = getDoneSentinelFile(sessionFile, running.id);
 		const piArgs = buildResumePiArgs(sessionFile, "interactive");
 		piArgs.push(...extensionArgs, ...parityArgs);
 		if (expandedTask !== undefined) {
@@ -581,7 +581,7 @@ async function resumeSubagentSessionWithoutWidth(
 		}
 		if (resumedInvocationMetadata) writeSubagentLaunchMetadataEntry(sessionFile, resumedInvocationMetadata);
 	}
-	runtime.runningSubagents.set(id, running);
+	runtime.runningSubagents.set(running.id, running);
 	runtime.startWidgetRefresh();
 
 	const watcherAbort = new AbortController();

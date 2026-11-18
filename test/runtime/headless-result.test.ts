@@ -1,12 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { deliverCompletedSubagentResult } from "../../src/runtime/result-router.ts";
 import { buildCompletedSubagentResult } from "../../src/runtime/state.ts";
 import { waitForSubagentResult } from "../../src/runtime/wait-result.ts";
+import { withToolWarningForTest } from "../../src/testing/test-helpers.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
@@ -19,8 +22,14 @@ const END_MARKER = "<<T07-END>>";
 const LONG_ANSWER = `${START_MARKER}${"lorem ipsum dolor sit amet\n".repeat(800).slice(0, 20_000 - START_MARKER.length - END_MARKER.length)}${END_MARKER}`;
 const TOOL_OUTPUT = "UNRELATED-TOOL-OUTPUT secret listing";
 
-function makeRunning(sessionFile: string, childProcess: ChildProcess): RunningSubagent {
-	const store = new ResultStore(testResultsDir(), () => {});
+interface TargetOptions {
+	resultsDir?: string;
+	parentCwd?: string;
+	warnings?: readonly string[];
+}
+
+function makeRunning(sessionFile: string, childProcess: ChildProcess, options: TargetOptions): RunningSubagent {
+	const store = new ResultStore(options.resultsDir ?? testResultsDir(), () => {});
 	const reservation = store.reserve();
 	return {
 		id: reservation.runId,
@@ -35,17 +44,25 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess): RunningSu
 		startTime: Date.now(),
 		sessionFile,
 		childProcess,
-		resultTarget: { store, reservation },
+		resultTarget: {
+			store,
+			reservation,
+			parentCwd: options.parentCwd ?? process.cwd(),
+			warnings: options.warnings ?? [],
+		},
 	};
 }
 
-async function finishHeadless(entries: object[]): Promise<{ running: RunningSubagent; result: SubagentResult }> {
+async function finishHeadless(
+	entries: object[],
+	options: TargetOptions & { exitPayload?: object } = {},
+): Promise<{ running: RunningSubagent; result: SubagentResult }> {
 	const dir = createTestDir();
 	dirs.push(dir);
 	const sessionFile = createSessionFile(dir, entries);
 	const child = new EventEmitter() as ChildProcess;
-	writeSubagentExitSidecar(sessionFile, { type: "done" });
-	const running = makeRunning(sessionFile, child);
+	writeSubagentExitSidecar(sessionFile, options.exitPayload ?? { type: "done" });
+	const running = makeRunning(sessionFile, child, options);
 	const promise = watchBackgroundSubagent(
 		running,
 		{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
@@ -67,10 +84,13 @@ function messageText(result: SubagentResult, running: RunningSubagent): string {
 	return sent[0].content;
 }
 
-async function waitText(result: SubagentResult, running: RunningSubagent): Promise<string> {
+async function waitText(result: SubagentResult, running: RunningSubagent, launchWarning = ""): Promise<string> {
 	const cached = buildCompletedSubagentResult(running, result);
 	const reply = await waitForSubagentResult({ id: running.id }, { findTrackedSubagent: () => ({ cached }) } as never);
-	return (reply.content[0] as { text: string }).text;
+	// The launch tool wraps the waited reply with its launch warning (subagent-tools, resume-tool).
+	const content = withToolWarningForTest(reply, launchWarning).content as Array<{ type: string; text?: string }>;
+	assert.equal(content.length, 1, "the waiting launch returns one text block");
+	return content[0].text ?? "";
 }
 
 describe("headless results through the assembler (T07)", () => {
@@ -96,6 +116,58 @@ describe("headless results through the assembler (T07)", () => {
 	it("gives the message path and the waiting-launch path the same text", async () => {
 		const { running, result } = await finishHeadless([assistantText(LONG_ANSWER)]);
 		assert.equal(await waitText(result, running), messageText(result, running));
+	});
+
+	it("keeps launch warnings inside the rendering, the same text on the waiting launch and the message path", async () => {
+		const warnings = [
+			"Warning: background launches always use auto-exit: true; auto-exit: false is ignored.",
+			"Warning: agent 'scout' sets allow-model-override: false; model 'alpha' from the call ignored. The child runs on the agent's own model.",
+		];
+		const { running, result } = await finishHeadless([assistantText(LONG_ANSWER)], {
+			warnings: warnings.map((w) => w.replace(/^Warning: /, "")),
+		});
+		const launchText = await waitText(result, running, warnings.join("\n\n"));
+		const message = messageText(result, running);
+		assert.equal(launchText, message);
+		assert.ok(launchText.length <= RESULT_TEXT_MAX_CHARS, `text is ${launchText.length} characters`);
+		assert.ok(launchText.includes("warning: background launches always use auto-exit: true"), launchText);
+	});
+
+	it("publishes a context-pressure wrap-up through the assembler and says why it cannot resume", async () => {
+		const { running, result } = await finishHeadless([assistantText(LONG_ANSWER)], {
+			exitPayload: { type: "done", completionReason: "context-pressure", contextTokens: 900, contextWindow: 1000 },
+		});
+		const message = messageText(result, running);
+		assert.equal(await waitText(result, running), message);
+		assert.ok(message.length <= RESULT_TEXT_MAX_CHARS, `text is ${message.length} characters`);
+		assert.ok(message.includes(START_MARKER) && !message.includes(END_MARKER));
+		assert.match(message, /not resumable: stopped early by its context-warning policy/);
+		assert.ok(result.reportFile, "the result names its report file");
+		assert.equal(readFileSync(result.reportFile, "utf8"), LONG_ANSWER);
+	});
+
+	it("names the report by a locator that resolves from the parent's working directory, not the process's", async () => {
+		const processDir = createTestDir();
+		const parentCwd = createTestDir();
+		dirs.push(processDir, parentCwd);
+		// process.cwd() reports the real path; the results folder lives under it.
+		const resultsDir = join(realpathSync(processDir), "results");
+		mkdirSync(resultsDir);
+		const previousCwd = process.cwd();
+		process.chdir(processDir);
+		let finished: Awaited<ReturnType<typeof finishHeadless>>;
+		try {
+			finished = await finishHeadless([assistantText("short answer")], { resultsDir, parentCwd });
+		} finally {
+			process.chdir(previousCwd);
+		}
+		const { running, result } = finished;
+		const locator = /^report: (.+)$/m.exec(messageText(result, running))?.[1];
+		assert.ok(locator, "the text names the report");
+		assert.ok(result.reportFile);
+		// Pi's read tool expands a leading ~ and resolves any other relative path from its cwd.
+		const expanded = locator.startsWith("~/") ? join(homedir(), locator.slice(2)) : locator;
+		assert.equal(resolve(parentCwd, expanded), result.reportFile);
 	});
 
 	it("does not report unrelated tool output for a run that stops at a tool call with no text", async () => {

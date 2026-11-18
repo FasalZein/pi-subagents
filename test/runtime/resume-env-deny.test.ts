@@ -85,7 +85,7 @@ printenv | sort > '${envLog}'
 
 
 			await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -176,7 +176,7 @@ printenv | sort > '${envLog}'
 
 			const quietResult = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), sessionFile },
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -260,7 +260,7 @@ esac
 			});
 
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), sessionFile, task: "Interactive deny-env probe." },
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Interactive deny-env probe." },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -359,7 +359,7 @@ esac
 
 			await assert.rejects(
 				resumeSubagentSession(
-					{ resultsDir: testResultsDir(), sessionFile, task: "Failure probe." },
+					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Failure probe." },
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,

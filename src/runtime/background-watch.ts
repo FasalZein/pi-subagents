@@ -395,7 +395,6 @@ function watchBackgroundGeneration(
 				!exitSignal?.ping &&
 				!errorMessage &&
 				!finalContextUsage.errorMessage &&
-				!finalContextUsage.contextWarned &&
 				!running.timeoutWrapUp;
 			if (running.resultTarget && !running.noSession && endedOnItsOwn && existsSync(running.sessionFile)) {
 				published = publishHeadlessResult(running, running.resultTarget, exitSignal, finalContextUsage);

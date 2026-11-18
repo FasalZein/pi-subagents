@@ -147,7 +147,7 @@ describe("timeout resume guard", () => {
 			const sessionFile = writeTimedOutSession(dir, "recoverable-child.jsonl", { blocksResume: false });
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
@@ -175,7 +175,7 @@ describe("timeout resume guard", () => {
 			});
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
 			);
 
 			assert.deepEqual(running.timeoutBudget, { timeoutSeconds: 45, idleTimeoutSeconds: 20 });
@@ -200,7 +200,7 @@ describe("timeout resume guard", () => {
 			});
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
 			);
 
 			assert.deepEqual(running.timeoutBudget, { timeoutSeconds: 30 });
