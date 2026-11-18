@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
-import { sessionResultStore } from "./result-files.ts";
+import { discardReservation, sessionResultStore } from "./result-files.ts";
+import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -36,6 +37,7 @@ import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import {
+	closeSurface,
 	createSurface,
 	currentMuxAdapter,
 	muxSetupHint,
@@ -249,7 +251,7 @@ export async function resumeSubagentSession(
 
 	let claimedRunning: RunningSubagent | undefined;
 	try {
-		const running = await resumeSubagentSessionWithoutWidth(input, runtime);
+		const running = await withLaunchUndo((undo) => resumeSubagentSessionWithoutWidth(input, runtime, undo));
 		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
@@ -266,6 +268,8 @@ export async function resumeSubagentSession(
 async function resumeSubagentSessionWithoutWidth(
 	input: ResumeSessionInput,
 	runtime: ResumeServiceRuntime,
+	// The resumed session file is never registered: a failed resume keeps it unchanged (D6).
+	undo: LaunchUndo,
 ): Promise<RunningSubagent> {
 	const { sessionFile, task } = input;
 
@@ -454,6 +458,7 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
 	const reservation = sessionResultStore(input.resultsDir).reserve();
+	undo.add(() => discardReservation(reservation));
 	const running: RunningSubagent = {
 		id: reservation.runId,
 		name,
@@ -536,6 +541,7 @@ async function resumeSubagentSessionWithoutWidth(
 					herdr: herdrContext,
 					zellij: zellijContext,
 				});
+		if (ordinarySurface) undo.add(() => closeSurface(ordinarySurface));
 		const doneSentinelFile = getDoneSentinelFile(sessionFile, running.id);
 		const piArgs = buildResumePiArgs(sessionFile, "interactive");
 		piArgs.push(...extensionArgs, ...parityArgs);
@@ -553,23 +559,19 @@ async function resumeSubagentSessionWithoutWidth(
 			doneSentinelFile,
 			...(programSession ? { deriveZellijPaneSurface: true } : {}),
 		});
-		try {
-			const surface =
-				ordinarySurface ??
-				(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
-			if (!programSession) {
-				await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
-				sendShellCommand(surface, command);
-			}
-			running.surface = surface;
-			running.doneSentinelFile = doneSentinelFile;
-			running.zellijTarget = programSession?.target;
-		} catch (error) {
-			// Nothing consumed the capsule; do not leave credentials behind.
-			dispose();
-			throw error;
+		// Nothing consumes the capsule until the pane receives the command.
+		undo.add(dispose);
+		const surface = ordinarySurface ?? (await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+		if (!programSession) {
+			await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
+			sendShellCommand(surface, command);
 		}
+		running.surface = surface;
+		running.doneSentinelFile = doneSentinelFile;
+		running.zellijTarget = programSession?.target;
 	}
+	// The child runs and owns its run folder, surface and capsule.
+	undo.commit();
 
 	if (shouldPersistInvocationMetadata) {
 		if (invocationMetadata.modelSource === "resume-override") {

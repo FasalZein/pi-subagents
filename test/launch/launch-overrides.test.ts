@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { launchBackgroundSubagent } from "../../src/launch/background.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
+import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import {
 	getLaunchEnvCollisions,
 	resolveForcedChildCwd,
@@ -147,7 +148,7 @@ describe("internal launch overrides (forcedCwd/launchEnv)", () => {
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "background" },
+			{ mode: "background", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.forcedCwd, worktree);

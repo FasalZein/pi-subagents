@@ -2,8 +2,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle, isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { reserveRunId } from "../runtime/result-files.ts";
-import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
+import { discardReservation, reserveRunId } from "../runtime/result-files.ts";
+import { closeSurface, createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -12,6 +12,7 @@ import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
+import { type LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { buildInteractiveShellCommand } from "./shell-command.ts";
 import { PI_SUBAGENT_TIMEOUT_STARTED_AT } from "../tools/timeout-reminders.ts";
 import {
@@ -48,9 +49,22 @@ export async function launchInteractiveSubagent(
 	runtime: InteractiveLaunchRuntime,
 	options?: { surface?: string },
 ): Promise<RunningSubagent> {
-	const id = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId())).runId;
+	return withLaunchUndo((undo) => startInteractiveSubagent(params, ctx, runtime, undo, options));
+}
+
+async function startInteractiveSubagent(
+	params: SubagentParamsInput,
+	ctx: SubagentLaunchContext,
+	runtime: InteractiveLaunchRuntime,
+	undo: LaunchUndo,
+	options?: { surface?: string },
+): Promise<RunningSubagent> {
+	const reservation = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
+	undo.add(() => discardReservation(reservation));
+	const id = reservation.runId;
 	const launch = await coordinateSubagentLaunch(params, ctx, {
 		mode: "interactive",
+		undo,
 	});
 	const { prepared, sessionMode, noSession, directTask } = launch;
 	traceSubagentLaunch("interactive.prepared", {
@@ -153,6 +167,8 @@ export async function launchInteractiveSubagent(
 				herdr: herdrContext,
 				zellij: zellijContext,
 			})));
+	// A caller-made surface stays the caller's to close.
+	if (ordinarySurface && !surfacePreCreated) undo.add(() => closeSurface(ordinarySurface));
 	const envVars = {
 		...launch.envVars,
 		...programSession?.childEnv,
@@ -185,37 +201,30 @@ export async function launchInteractiveSubagent(
 		doneSentinelFile,
 		...(programSession ? { deriveZellijPaneSurface: true } : {}),
 	});
-	let surface: string;
-	try {
-		surface =
-			ordinarySurface ??
-			(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
-		traceSubagentLaunch("interactive.surface", {
-			id,
-			name: params.name,
-			surface,
-			surfacePreCreated,
-		});
-		if (!surfacePreCreated && !programSession) {
-			await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
-		}
-		traceSubagentLaunch("interactive.send", {
-			id,
-			name: params.name,
-			surface,
-			sessionFile: prepared.subagentSessionFile,
-			doneSentinelFile,
-			piArgs,
-			capsulePath,
-			envKeys: Object.keys(envVars).sort(),
-		});
-		if (!programSession) sendShellCommand(surface, command);
-	} catch (error) {
-		// The pane never received the command, so nothing will consume the
-		// capsule. Delete it rather than leaving credentials on disk.
-		dispose();
-		throw error;
+	// Until the pane receives the command, nothing consumes the capsule: a failed
+	// launch deletes it rather than leaving credentials on disk.
+	undo.add(dispose);
+	const surface = ordinarySurface ?? (await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+	traceSubagentLaunch("interactive.surface", {
+		id,
+		name: params.name,
+		surface,
+		surfacePreCreated,
+	});
+	if (!surfacePreCreated && !programSession) {
+		await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
 	}
+	traceSubagentLaunch("interactive.send", {
+		id,
+		name: params.name,
+		surface,
+		sessionFile: prepared.subagentSessionFile,
+		doneSentinelFile,
+		piArgs,
+		capsulePath,
+		envKeys: Object.keys(envVars).sort(),
+	});
+	if (!programSession) sendShellCommand(surface, command);
 	return {
 		id,
 		name: params.name,

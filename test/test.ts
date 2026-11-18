@@ -36,6 +36,7 @@ import "./launch/child-env.test.ts";
 import "./launch/env-capsule.test.ts";
 import "./launch/run-child.test.ts";
 import "./launch/shell-command.test.ts";
+import "./launch/failed-launch-cleanup.test.ts";
 import "./launch/interactive-delivery-failure.test.ts";
 import "./launch/launch-coordinator.test.ts";
 import "./launch/launch-overrides.test.ts";
