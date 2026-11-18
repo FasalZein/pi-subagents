@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+	answerMatches,
+	answerParser,
 	canonicalJson,
 	endsWithProviderError,
 	loadEvidence,
@@ -15,6 +17,9 @@ import {
 	terminalAnswer,
 	totals,
 } from "./record.mjs";
+import recon from "./scenarios/recon/scenario.mjs";
+import review from "./scenarios/review/scenario.mjs";
+import reviewFix from "./scenarios/review-fix/scenario.mjs";
 
 const KEY_PARTS = {
 	checkoutRevision: "cf6dbf4",
@@ -357,3 +362,23 @@ test("a provider error is the last parent request ending in error", () => {
 		false,
 	);
 });
+
+// Review finding 6: a parent answer with two different values for one key is a
+// wrong answer in every keyed scenario; the same value repeated is fine.
+for (const scenario of [recon, review, reviewFix])
+	test(`[T04 finding 6] ${scenario.name}: a key with two different values does not match`, () => {
+		const parse = answerParser(scenario);
+		const facts = Object.entries(scenario.expectedFacts);
+		const answer = (extra) =>
+			[...extra, ...facts.map(([key, value]) => `${key}: ${value}`)].join(
+				"\n",
+			);
+		const [firstKey, firstValue] = facts[0];
+		assert.equal(answerMatches(parse(answer([])), scenario), true);
+		// The conflicting line comes first, so a last-line-wins parser would pass it.
+		const conflict = parse(answer([`${firstKey}: wrong-value-1`]));
+		assert.equal(answerMatches(conflict, scenario), false);
+		assert.deepEqual(conflict[firstKey], ["wrong-value-1", firstValue]);
+		const repeated = parse(answer([`${firstKey}: ${firstValue}`]));
+		assert.equal(answerMatches(repeated, scenario), true);
+	});
