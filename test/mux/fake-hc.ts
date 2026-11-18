@@ -69,6 +69,17 @@ switch (args[0]) {
       if (!fs.existsSync(S)) process.exit(0);
       const dropFile = path.join(S, "drop");
       if (fs.existsSync(dropFile)) { fs.rmSync(dropFile); process.exit(0); }
+      // An armed race: the child writes its exit file and its terminal finishes while the watch listens.
+      const vanish = path.join(S, "vanish-on-query");
+      if (fs.existsSync(vanish)) {
+        const armed = JSON.parse(fs.readFileSync(vanish, "utf8"));
+        fs.rmSync(vanish);
+        fs.writeFileSync(armed.path, armed.content);
+        const term = terminal(armed.address);
+        Object.assign(term, { state: "finished", exit_code: 1, reason: "exited", signal: null, finished_ms: Date.now() });
+        fs.writeFileSync(termFile(term.address), JSON.stringify(term));
+        emit(term, "finished", { exit_code: 1, finished_ms: term.finished_ms, reason: "exited", signal: null });
+      }
       if (!fs.existsSync(eventsFile)) return;
       const text = fs.readFileSync(eventsFile, "utf8");
       const fresh = text.slice(offset);

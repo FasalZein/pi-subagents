@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { sessionResultStore } from "../runtime/result-files.ts";
+import { discardReservation, sessionResultStore } from "../runtime/result-files.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -11,8 +11,10 @@ import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { getPiInvocation, getSubagentChildProcessEnv } from "./child-command.ts";
 import { resolveDenyEnvPatterns } from "./child-env.ts";
+import { waitForChildSpawn } from "./child-spawn.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
+import { LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { PI_SUBAGENT_TIMEOUT_STARTED_AT } from "../tools/timeout-reminders.ts";
 import {
 	resolveSubagentNoContextFiles,
@@ -61,9 +63,14 @@ export interface BackgroundLaunchPlan {
 export async function buildBackgroundLaunchPlan(
 	params: SubagentParamsInput,
 	ctx: SubagentLaunchContext,
-	options: { frozenTaskArg?: string; frozenFullTask?: string; spawningDenied?: boolean } = {},
+	// Without an undo (verified fan-out), the plan's files are left to the caller, as before D6.
+	options: { frozenTaskArg?: string; frozenFullTask?: string; spawningDenied?: boolean; undo?: LaunchUndo } = {},
 ): Promise<BackgroundLaunchPlan> {
-	const launch = await coordinateSubagentLaunch(params, { ...ctx, autoExit: true }, { mode: "background" });
+	const launch = await coordinateSubagentLaunch(
+		params,
+		{ ...ctx, autoExit: true },
+		{ mode: "background", undo: options.undo ?? new LaunchUndo() },
+	);
 	const { prepared, directTask } = launch;
 	const subagentDonePath = join(dirname(dirname(fileURLToPath(import.meta.url))), "tools", "subagent-done.ts");
 	let fullTask: string;
@@ -135,10 +142,20 @@ export async function launchBackgroundSubagent(
 	ctx: SubagentLaunchContext,
 	runtime: BackgroundLaunchRuntime,
 ): Promise<RunningSubagent> {
+	return withLaunchUndo((undo) => startBackgroundSubagent(params, ctx, runtime, undo));
+}
+
+async function startBackgroundSubagent(
+	params: SubagentParamsInput,
+	ctx: SubagentLaunchContext,
+	runtime: BackgroundLaunchRuntime,
+	undo: LaunchUndo,
+): Promise<RunningSubagent> {
 	const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
 	const reservation = store.reserve();
+	undo.add(() => discardReservation(reservation));
 	const id = reservation.runId;
-	const plan = await buildBackgroundLaunchPlan(params, ctx);
+	const plan = await buildBackgroundLaunchPlan(params, ctx, { undo });
 	const { launch, invocation, denyPatterns } = plan;
 	const { prepared, noSession } = launch;
 
@@ -160,6 +177,8 @@ export async function launchBackgroundSubagent(
 		env: getSubagentChildProcessEnv(invocation, envVars, denyPatterns),
 	});
 	child.unref();
+	// A spawn error rejects through the undo: the seed and the run folder are removed.
+	await waitForChildSpawn(child);
 	const running: RunningSubagent = {
 		id,
 		name: params.name,

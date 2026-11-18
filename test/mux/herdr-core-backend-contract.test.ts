@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { herdrCoreBackend } from "../../src/mux/herdr-core.ts";
 import { writeExecutable } from "../support/index.ts";
@@ -32,5 +32,8 @@ runMuxBackendContract({
 			return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as string[]) : undefined;
 		},
 		typedText: readTypedText,
+		vanishDuringLivenessQuery(stateDir, surface, file) {
+			writeFileSync(join(stateDir, "vanish-on-query"), JSON.stringify({ address: surface, ...file }));
+		},
 	},
 });

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { zellijBackend } from "../../src/mux/zellij.ts";
 import { getZellijShellCommand } from "../../src/mux/zellij-runtime.ts";
@@ -47,11 +47,20 @@ if (args[0] === "--session") {
 if (args[0] !== "action") fail("fake zellij: unsupported " + args.join(" "));
 const rest = args.slice(2);
 switch (args[1]) {
-  case "list-panes":
+  case "list-panes": {
     if (rest.join(" ") !== "--all --json" && rest.join(" ") !== "--json --geometry --state --tab")
       fail("fake zellij: unsupported list-panes " + rest.join(" "));
+    // An armed race: the child writes its exit file and its pane closes while this query runs.
+    const vanish = path.join(S, "vanish-on-list");
+    if (fs.existsSync(vanish)) {
+      const armed = JSON.parse(fs.readFileSync(vanish, "utf8"));
+      fs.rmSync(vanish);
+      fs.writeFileSync(armed.path, armed.content);
+      closeSurface(armed.id);
+    }
     console.log(panesJson());
     break;
+  }
   case "new-pane":
     if (rest.slice(0, 4).join(" ") === "--floating --pinned true --near-current-pane") {
       requireSurface(process.env.ZELLIJ_PANE_ID);
@@ -129,5 +138,8 @@ runMuxBackendContract({
 			return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as string[]) : undefined;
 		},
 		typedText: (stateDir, surface) => readTypedText(stateDir, stateId(surface)),
+		vanishDuringLivenessQuery(stateDir, surface, file) {
+			writeFileSync(join(stateDir, "vanish-on-list"), JSON.stringify({ id: stateId(surface), ...file }));
+		},
 	},
 });

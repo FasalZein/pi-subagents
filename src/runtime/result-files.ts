@@ -1,5 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	renameSync,
+	rmdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
@@ -61,6 +72,14 @@ export function reserveRunId(resultsDir: string, draw: () => RunId = drawRunId):
 	} catch (error) {
 		return { runId, error: errorText(error) };
 	}
+}
+
+/**
+ * D6: a failed launch gives back its run folder before the id reaches any reply. Only an empty
+ * folder is removed, so a folder that holds results is never lost.
+ */
+export function discardReservation(reservation: Reservation): void {
+	if (reservation.folder !== undefined) rmdirSync(reservation.folder);
 }
 
 /** Low-level file steps, replaceable in tests to fail one step. */

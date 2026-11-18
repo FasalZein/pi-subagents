@@ -1,4 +1,5 @@
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
+import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import { buildBackgroundLaunchPlan } from "../../src/launch/background.ts";
 import {
 	ASSISTANT_MSG,
@@ -92,7 +93,7 @@ describe("launch coordinator", () => {
 					getLeafId: () => "asst-001",
 				},
 			},
-			{ mode: "background" },
+			{ mode: "background", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.sessionMode, "fork");
@@ -159,7 +160,7 @@ describe("launch coordinator", () => {
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "interactive" },
+			{ mode: "interactive", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.launchMetadata.zellijPlacementPolicy, "down-stack");
@@ -200,7 +201,7 @@ describe("launch coordinator", () => {
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "interactive" },
+			{ mode: "interactive", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.launchMetadata.zellijPlacementPolicy, "right-stack");
@@ -240,7 +241,7 @@ describe("launch coordinator", () => {
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "interactive" },
+			{ mode: "interactive", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.launchMetadata.zellijPlacementPolicy, "down-stack");
@@ -277,7 +278,7 @@ describe("launch coordinator", () => {
 				agent: "scout",
 			},
 			context,
-			{ mode: "interactive" },
+			{ mode: "interactive", undo: new LaunchUndo() },
 		);
 		const reviewer = await coordinateSubagentLaunch(
 			{
@@ -287,7 +288,7 @@ describe("launch coordinator", () => {
 				agent: "reviewer",
 			},
 			context,
-			{ mode: "interactive" },
+			{ mode: "interactive", undo: new LaunchUndo() },
 		);
 
 		assert.equal(scout.launchMetadata.zellijPlacementGroupKey, parentSession);
@@ -346,7 +347,7 @@ exit 1
 						getLeafId: () => null,
 					},
 				},
-				{ mode: "interactive" },
+				{ mode: "interactive", undo: new LaunchUndo() },
 			);
 
 			assert.equal(launch.launchMetadata.herdrPlacementPolicy, "tab");
@@ -394,7 +395,7 @@ exit 1
 						getLeafId: () => null,
 					},
 				},
-				{ mode: "interactive" },
+				{ mode: "interactive", undo: new LaunchUndo() },
 			);
 
 			assert.equal(launch.launchMetadata.herdrPlacementPolicy, undefined);
@@ -440,7 +441,7 @@ exit 1
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "background" },
+			{ mode: "background", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.systemPrompt?.flag, "--append-system-prompt");
@@ -489,7 +490,7 @@ exit 1
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "background" },
+			{ mode: "background", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.systemPrompt, undefined);

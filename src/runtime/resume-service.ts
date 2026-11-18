@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
-import { sessionResultStore } from "./result-files.ts";
+import { discardReservation, sessionResultStore } from "./result-files.ts";
+import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -13,8 +13,6 @@ import {
 	resolveImplicitModelGrant,
 	splitModelRefThinking,
 } from "../launch/child-launch-plan.ts";
-import { getPiInvocation, getSubagentChildProcessEnv } from "../launch/child-command.ts";
-import { resolveDenyEnvPatterns } from "../launch/child-env.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
 import { parseEnvString } from "../launch/env.ts";
 import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
@@ -26,28 +24,13 @@ import {
 	normalizeModelRef,
 	resolveAvailableModelRef,
 } from "../launch/prep.ts";
-import { writeResumeTaskArtifact } from "../launch/prompt-artifacts.ts";
-import {
-	buildResumePiArgs,
-	getResumeCwd,
-	resolveResumeLaunchMetadata,
-} from "../launch/resume.ts";
+import { getResumeCwd, resolveResumeLaunchMetadata } from "../launch/resume.ts";
 import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
-import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
-import {
-	createSurface,
-	currentMuxAdapter,
-	muxSetupHint,
-	resolveHerdrPlacementPolicy,
-	resolveZellijPlacementPolicy,
-	sendShellCommand,
-} from "../mux.ts";
-import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
-import { clearSubagentTimeoutSidecar, readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
+import { muxSetupHint } from "../mux.ts";
+import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { getEntryCount } from "../session/session.ts";
 import {
-	getDoneSentinelFile,
 	isResumeMode,
 	type PersistedSubagentLaunchMetadata,
 	readSubagentExtensionEntry,
@@ -69,6 +52,7 @@ import {
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
 import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
+import { setAsidePreviousVerdicts, startResumedChild } from "./resume-start.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -108,26 +92,6 @@ export interface ResumeSessionInput {
 	mode?: "interactive" | "background";
 	model?: string;
 	thinking?: string;
-}
-
-export function resolveResumeHerdrPlacementPolicy(
-	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
-	parentPolicy: string | undefined,
-): ReturnType<typeof resolveHerdrPlacementPolicy> | undefined {
-	const agentPolicy = parseEnvString(launchMetadata?.env).PI_SUBAGENT_HERDR_PLACEMENT;
-	if (agentPolicy !== undefined) return resolveHerdrPlacementPolicy(agentPolicy);
-	if (parentPolicy !== undefined) return resolveHerdrPlacementPolicy(parentPolicy);
-	return launchMetadata?.herdrPlacementPolicy;
-}
-
-export function resolveResumeZellijPlacementPolicy(
-	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
-	parentPolicy: string | undefined,
-): ReturnType<typeof resolveZellijPlacementPolicy> | undefined {
-	const agentPolicy = parseEnvString(launchMetadata?.env).PI_SUBAGENT_ZELLIJ_PLACEMENT;
-	if (agentPolicy !== undefined) return resolveZellijPlacementPolicy(agentPolicy);
-	if (parentPolicy !== undefined) return resolveZellijPlacementPolicy(parentPolicy);
-	return launchMetadata?.zellijPlacementPolicy;
 }
 
 export function resolveResumeLaunchMetadataForInvocation(
@@ -249,7 +213,7 @@ export async function resumeSubagentSession(
 
 	let claimedRunning: RunningSubagent | undefined;
 	try {
-		const running = await resumeSubagentSessionWithoutWidth(input, runtime);
+		const running = await withLaunchUndo((undo) => resumeSubagentSessionWithoutWidth(input, runtime, undo));
 		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
@@ -266,6 +230,8 @@ export async function resumeSubagentSession(
 async function resumeSubagentSessionWithoutWidth(
 	input: ResumeSessionInput,
 	runtime: ResumeServiceRuntime,
+	// The resumed session file is never registered: a failed resume keeps it unchanged (D6).
+	undo: LaunchUndo,
 ): Promise<RunningSubagent> {
 	const { sessionFile, task } = input;
 
@@ -342,15 +308,14 @@ async function resumeSubagentSessionWithoutWidth(
 	}
 
 	const entryCountBefore = getEntryCount(sessionFile);
-	clearSubagentExitSidecar(sessionFile);
-	// Read the previous verdict before clearing it: it carries the budgets the
+	// Read the previous verdict before setting it aside: it carries the budgets the
 	// killed run was under, which is the only record for a session mode that
 	// never persisted launch metadata.
 	const previousTimeout = readSubagentTimeoutSidecar(sessionFile);
-	// The previous run's verdict is spent. Clearing it here is what lets a
-	// resumed run that finishes cleanly release a session an earlier timeout
-	// had flagged, while a resumed run that times out again writes a fresh one.
-	clearSubagentTimeoutSidecar(sessionFile);
+	// The previous run's verdicts are spent once the child starts: that lets a resumed run
+	// that finishes cleanly release a session an earlier timeout had flagged, while a resumed
+	// run that times out again writes a fresh one. A failed resume puts them back (D6).
+	const discardPreviousVerdicts = setAsidePreviousVerdicts(sessionFile, undo);
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
 	const savedExtensions = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
 	const extensionArgs =
@@ -454,6 +419,7 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
 	const reservation = sessionResultStore(input.resultsDir).reserve();
+	undo.add(() => discardReservation(reservation));
 	const running: RunningSubagent = {
 		id: reservation.runId,
 		name,
@@ -482,101 +448,36 @@ async function resumeSubagentSessionWithoutWidth(
 		resultTarget: { store: sessionResultStore(input.resultsDir), reservation, ...input.parent },
 	};
 
-	if (metadata.mode === "background") {
-		const invocation = getPiInvocation([
-			...buildResumePiArgs(sessionFile, "background"),
-			...extensionArgs,
-			...parityArgs,
-		]);
-		const child = spawn(invocation.command, invocation.args, {
-			...(resumeCwd ? { cwd: resumeCwd } : {}),
-			detached: true,
-			stdio:
-				running.parentClosePolicy === "continue"
-					? (["pipe", "ignore", "ignore"] as const)
-					: (["pipe", "pipe", "pipe"] as const),
-			env: getSubagentChildProcessEnv(invocation, resumeEnvVars, resolveDenyEnvPatterns(invocationMetadata?.denyEnv)),
-		});
-		if (expandedTask !== undefined) {
-			child.stdin?.end(expandedTask);
-		} else {
-			child.stdin?.end();
-		}
-		child.unref();
-		running.childProcess = child;
-		child.stdout?.on("data", (chunk: Buffer) => {
-			running.stdoutTail = rememberTail(running.stdoutTail, chunk);
-		});
-		child.stderr?.on("data", (chunk: Buffer) => {
-			running.stderrTail = rememberTail(running.stderrTail, chunk);
-		});
-	} else {
-		const surfaceName = invocationMetadata?.sessionTitle ?? displayName;
-		const adapter = currentMuxAdapter();
-		const herdrContext = adapter?.resolveHerdrPlacementPolicy
-			? { policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT) }
-			: undefined;
-		const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
-		const configuredZellijPolicy = resolveResumeZellijPlacementPolicy(
-			invocationMetadata,
-			process.env.PI_SUBAGENT_ZELLIJ_PLACEMENT,
-		);
-		const zellijContext =
-			invocationMetadata?.zellijPlacementGroupKey && Number.isInteger(parentPaneId)
-				? {
-						groupKey: invocationMetadata.zellijPlacementGroupKey,
-						parentPaneId,
-						policy: configuredZellijPolicy,
-					}
-				: undefined;
-		const programSession = await adapter?.openProgramSession?.();
-		const ordinarySurface = programSession
-			? undefined
-			: await createSurface(surfaceName, {
-					herdr: herdrContext,
-					zellij: zellijContext,
-				});
-		const doneSentinelFile = getDoneSentinelFile(sessionFile, running.id);
-		const piArgs = buildResumePiArgs(sessionFile, "interactive");
-		piArgs.push(...extensionArgs, ...parityArgs);
-		if (expandedTask !== undefined) {
-			const taskPath = writeResumeTaskArtifact(name, expandedTask, sessionFile, resumeCwd ?? process.cwd());
-			piArgs.push(`@${taskPath}`);
-		}
-		if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
-		if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
-		const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
-			cwd: resumeCwd ?? undefined,
-			piArgs,
-			envOverrides: resumeEnvVars,
-			denyEnv: invocationMetadata?.denyEnv,
-			paneIdentity: adapter?.paneIdentity,
-			doneSentinelFile,
-			...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),
-		});
-		try {
-			const surface =
-				ordinarySurface ??
-				(await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
-			if (!programSession) {
-				await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
-				sendShellCommand(surface, command);
-			}
-			running.surface = surface;
-			running.doneSentinelFile = doneSentinelFile;
-			running.zellijTarget = programSession?.target;
-		} catch (error) {
-			// Nothing consumed the capsule; do not leave credentials behind.
-			dispose();
-			throw error;
-		}
-	}
+	await startResumedChild({
+		running,
+		sessionFile,
+		mode: metadata.mode,
+		extensionArgs,
+		parityArgs,
+		resumeCwd,
+		expandedTask,
+		envVars: resumeEnvVars,
+		invocationMetadata,
+		surfaceName: invocationMetadata?.sessionTitle ?? displayName,
+		taskName: name,
+		shellReadyDelayMs: runtime.getShellReadyDelayMs(),
+		undo,
+	});
+	// The child runs and owns its run folder, surface and capsule.
+	undo.commit();
+	discardPreviousVerdicts();
 
 	if (shouldPersistInvocationMetadata) {
-		if (invocationMetadata.modelSource === "resume-override") {
-			writeSubagentModelStateEntries(sessionFile, invocationMetadata);
+		// A live child is never rolled back: a failed write becomes a warning on its result (D6).
+		try {
+			if (invocationMetadata.modelSource === "resume-override") {
+				writeSubagentModelStateEntries(sessionFile, invocationMetadata);
+			}
+			if (resumedInvocationMetadata) writeSubagentLaunchMetadataEntry(sessionFile, resumedInvocationMetadata);
+		} catch (error) {
+			const warning = `the resumed child runs, but its launch metadata was not saved to ${sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
+			running.resultTarget = { ...running.resultTarget!, warnings: [...(running.resultTarget?.warnings ?? []), warning] };
 		}
-		if (resumedInvocationMetadata) writeSubagentLaunchMetadataEntry(sessionFile, resumedInvocationMetadata);
 	}
 	runtime.runningSubagents.set(running.id, running);
 	runtime.startWidgetRefresh();
@@ -591,6 +492,3 @@ async function resumeSubagentSessionWithoutWidth(
 	return running;
 }
 
-function rememberTail(current: string | undefined, chunk: Buffer | string): string {
-	return `${current ?? ""}${chunk.toString()}`.slice(-4000);
-}
