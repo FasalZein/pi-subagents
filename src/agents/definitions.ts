@@ -130,7 +130,13 @@ function parseAgentDefinition(
 		const message = error instanceof Error ? error.message : String(error);
 		return {
 			kind: "malformed",
-			file: { name: get("name") ?? basename(path, ".md"), source, path, error: message, visibleTo: readVisibleTo(content) },
+			file: {
+				name: get("name") ?? basename(path, ".md"),
+				source,
+				path,
+				error: message,
+				visibleTo: readVisibleTo(content),
+			},
 		};
 	}
 }

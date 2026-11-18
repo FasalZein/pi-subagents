@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { renderAgentIndexSection } from "../../src/agents/index-section.ts";
+import { resolveCallModelRef } from "../../src/launch/child-launch-plan.ts";
 import {
 	afterEach,
 	assert,
@@ -167,10 +168,7 @@ describe("subagent_agents tool", () => {
 		assert.equal(broad.length, 5);
 		assert.ok(broad.every((line) => /^- agent-\d{3}: Handles task family/.test(line)));
 		assert.equal((await call({ query: "summary", limit: 2 })).split("\n").length, 2);
-		assert.match(
-			await call({ query: "nothing-like-this" }),
-			/^No agent matches the query\. 101 agents in total\.$/,
-		);
+		assert.match(await call({ query: "nothing-like-this" }), /^No agent matches the query\. 101 agents in total\.$/);
 	});
 
 	it("returns the count in at most 200 characters, also with 100 pinned agents", async () => {
@@ -232,5 +230,148 @@ describe("subagent_agents tool", () => {
 
 		const parseError = await call({ name: "broken-allowed" });
 		assert.match(parseError, /^Agent 'broken-allowed' is malformed in .*broken-allowed\.md: .*timeout/);
+	});
+
+	it("withholds a helper's grant past the caller's view and budget (review 1)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(
+			agentsDir,
+			"helper",
+			"name: helper\ndescription: Helps\nspawning: private-worker, scout\nspawn-depth: 3",
+		);
+		writeAgent(agentsDir, "private-worker", "name: private-worker\ndescription: Private");
+		writeAgent(agentsDir, "scout", "name: scout\ndescription: Scouts");
+		process.env.PI_SUBAGENT_AGENT = "coordinator";
+		process.env.PI_SUBAGENT_SPAWNABLE = "helper,scout";
+		// Budget 1: the helper receives budget 0 (getChildBudget) and launches nothing.
+		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
+		const exhausted = await loadAgentsTool(cwd)({ name: "helper" });
+		assert.match(exhausted, /^may launch: none$/m);
+		assert.doesNotMatch(exhausted, /private-worker/);
+		// Budget 3: the helper receives min(3, 3 - 1) = 2 levels; the caller cannot see private-worker.
+		process.env.PI_SUBAGENT_SPAWN_BUDGET = "3";
+		const open = await loadAgentsTool(cwd)({ name: "helper" });
+		assert.match(open, /^may launch: scout \(depth 2, width 16\)$/m);
+		assert.doesNotMatch(open, /private-worker/);
+	});
+
+	it("keeps the stated visibility of a malformed file (review 2)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		// visible-to is readable; the unrelated timeout: 0 makes the file malformed.
+		writeAgent(agentsDir, "root-only", "name: root-only\ndescription: Root only\nvisible-to: root\ntimeout: 0");
+		// visible-to itself is invalid, so no caller may see the file.
+		writeAgent(agentsDir, "unreadable", "name: unreadable\ndescription: Unreadable\nvisible-to: all, root");
+		writeAgent(agentsDir, "granted", "name: granted\ndescription: Granted\ntimeout: 0");
+		writeAgent(agentsDir, "worker", "name: worker\ndescription: Works");
+		process.env.PI_SUBAGENT_AGENT = "coordinator";
+		process.env.PI_SUBAGENT_SPAWNABLE = "true";
+		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
+		const call = loadAgentsTool(cwd);
+		const hidden = /root-only|unreadable/;
+		assert.match(await call({}), /^2 agents that you may launch \(1 malformed\)\. /);
+		assert.doesNotMatch(await call({ name: "root-only" }), hidden);
+		assert.doesNotMatch(await call({ name: "unreadable" }), hidden);
+		assert.doesNotMatch(await call({ name: "root-onyl" }), hidden);
+		assert.doesNotMatch(await call({ query: "root only unreadable granted worker" }), hidden);
+		assert.match(await call({ name: "granted" }), /^Agent 'granted' is malformed in .*granted\.md: .*timeout/);
+		// The root session may see the root-only file, with its parse error.
+		delete process.env.PI_SUBAGENT_AGENT;
+		delete process.env.PI_SUBAGENT_SPAWNABLE;
+		delete process.env.PI_SUBAGENT_SPAWN_BUDGET;
+		assert.match(await loadAgentsTool(cwd)({ name: "root-only" }), /^Agent 'root-only' is malformed in /);
+	});
+
+	it("answers only when the session may launch (review 3)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(agentsDir, "helper", "name: helper\ndescription: Helps");
+		const denied = "This session may not launch agents, so it has none to look up.";
+		// deny-tools: subagent reaches the child as PI_DENY_TOOLS (resolveDenyTools).
+		process.env.PI_DENY_TOOLS = "subagent";
+		for (const params of [{}, { name: "helper" }, { query: "helps" }]) {
+			assert.equal(await loadAgentsTool(cwd)(params), denied);
+		}
+		delete process.env.PI_DENY_TOOLS;
+		// A session whose model cannot call the launch tool (--exclude-tools subagent).
+		assert.equal(await loadAgentsTool(cwd, { hasUI: true, inactiveTools: ["subagent"] })({}), denied);
+		assert.match(await loadAgentsTool(cwd)({}), /^1 agents that you may launch\. /);
+	});
+
+	it("finds a launchable agent without a description (review 4)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(agentsDir, "scout", "name: scout");
+		const call = loadAgentsTool(cwd);
+		assert.match(await call({}), /^1 agents that you may launch\. /);
+		assert.match(await call({ name: "scout" }), /^scout \(global\): $/m);
+		assert.equal(await call({ query: "scout" }), "- scout: ");
+		assert.equal(await call({ name: "scuot" }), "No agent of that name that you may launch. Closest: scout.");
+	});
+
+	it("shows the models the launch resolver accepts (review 5)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(agentsDir, "helper", "name: helper\ndescription: Helps\nallowed-models: beta/small");
+		const session = { hasUI: true, model: { provider: "alpha", id: "base" }, thinking: "high" };
+		const detail = await loadAgentsTool(cwd, session)({ name: "helper" });
+		assert.match(detail, /^default model: alpha\/base:high$/m);
+		assert.match(detail, /^models: alpha: base:high; beta: small$/m);
+		// Differential: launch accepts each shown ref (buildChildLaunchPlan passes the parent ref as inherited).
+		for (const model of ["alpha/base:high", "beta/small"]) {
+			assert.doesNotThrow(() =>
+				resolveCallModelRef({
+					model,
+					config: { allowedModels: "beta/small", agentName: "helper" },
+					inheritedModelRef: "alpha/base:high",
+					fallbackThinking: "high",
+				}),
+			);
+		}
+	});
+
+	it("states the child that a launch from this session gets (review 6)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(agentsDir, "helper", "name: helper\ndescription: Helps");
+		writeAgent(agentsDir, "keeper", "name: keeper\ndescription: Keeps open\nmode: background\nauto-exit: false");
+		// A print session (no UI) forces every launch to wait and close itself.
+		const print = loadAgentsTool(cwd, { hasUI: false });
+		assert.match(await print({ name: "helper" }), /^child: headless, closes itself, launch waits for the result$/m);
+		// A headless child closes itself also with auto-exit: false (applySynchronousLaunchPolicy).
+		const ui = loadAgentsTool(cwd, { hasUI: true });
+		assert.match(await ui({ name: "keeper" }), /^child: headless, closes itself, launch returns at once$/m);
+	});
+
+	it("lists every enforced limit (review 7)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(
+			agentsDir,
+			"bounded",
+			[
+				"name: bounded",
+				"description: Bounded",
+				"timeout: 900",
+				"timeout-warn-threshold: 50%",
+				"on-timeout: block-resume",
+				"idle-timeout: 120",
+				"context-warn-threshold: 70%",
+				"context-warn-step: 10%",
+				"spawning: true",
+				"spawn-depth: 2",
+				"spawn-width: 3",
+			].join("\n"),
+		);
+		const detail = await loadAgentsTool(cwd)({ name: "bounded" });
+		// 900 s at 50% is a report stop at 450 s; the schedule is 70, 80, 90 (step 10).
+		assert.match(
+			detail,
+			/^limits: timeout 15m \(report at 450s\), no resume after it, idle-timeout 2m, context warnings at 70%, 80%, 90%$/m,
+		);
+		assert.match(detail, /^may launch: any agent \(depth 2, width 3\)$/m);
+	});
+
+	it("keeps a miss within one line (review 8)", async () => {
+		const { cwd, agentsDir } = createAgentRoot();
+		writeAgent(agentsDir, "worker", "name: worker\ndescription: Does work");
+		const call = loadAgentsTool(cwd);
+		const multiline = "zebra\nquokka\nyak\nnarwhal\nokapi\naxolotl";
+		assert.equal(await call({ query: multiline }), "No agent matches the query. 1 agents in total.");
+		assert.equal(await call({ name: multiline }).then((text) => text.split("\n").length), 1);
 	});
 });
