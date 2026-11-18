@@ -52,7 +52,7 @@ export interface BackgroundLaunchPlan {
 
 /**
  * Resolve one background launch up to (but not including) the spawn. The
- * verified fan-out orchestrator reuses this to build N launches: with a
+ * verified fan-out driver reuses this to build N launches: with a
  * frozen `taskArg` the task is not re-expanded and no new artifact is
  * written, so every candidate receives byte-identical prompt bytes.
  */

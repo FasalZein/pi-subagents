@@ -197,7 +197,7 @@ describe("verified fan-out supervisor (live processes)", () => {
 	});
 });
 
-describe("verified fan-out orchestrator (one logical child)", () => {
+describe("verified fan-out driver (one logical child)", () => {
 	function setupProject(agentFrontmatter: string): { repo: string; parent: string; fakePi: string; captureDir: string; ctx: unknown } {
 		const { repo, parent, fakePi, captureDir } = setupFixture();
 		fixtureRoot = parent;

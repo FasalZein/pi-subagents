@@ -182,7 +182,7 @@ try {
 	writeAgent(AGENT_MANUAL, "agent-browser=manual, safari-agent, tdd");
 	const parentEnv = { ...process.env };
 	for (const key of Object.keys(parentEnv)) {
-		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS" || key === "PI_ORCHESTRATOR_MODE") {
+		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS") {
 			delete parentEnv[key];
 		}
 	}

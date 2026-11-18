@@ -59,14 +59,6 @@ export function getFooterHints(state: OverlayState): FooterHint[] {
 		];
 	}
 
-	if (state.view.kind === "orchestrator-confirm") {
-		return [
-			{ key: "←→", action: "choose" },
-			{ key: "Enter", action: "select" },
-			{ key: "Esc", action: "cancel" },
-		];
-	}
-
 	const hints: FooterHint[] = [
 		{ key: "↑↓", action: "navigate" },
 		{ key: "←→", action: "tabs" },
@@ -81,9 +73,6 @@ export function getFooterHints(state: OverlayState): FooterHint[] {
 	if (state.activeTab === "agents" && state.items.length > 0) {
 		const selected = state.items[state.selectedIndex];
 		hints.push({ key: "Space", action: selected?.enabled === false ? "enable" : "disable" });
-	}
-	if (state.activeTab === "orchestrator") {
-		hints.push({ key: "Enter", action: "select" });
 	}
 	if (state.items.length > 0) {
 		hints.push({ key: "Enter", action: "details" });
@@ -151,13 +140,5 @@ function wrapFooterHints(hints: FooterHint[], theme: Theme, width: number): stri
 
 function compactTabLabel(label: string, width: number): string {
 	if (label.length <= width) return label;
-	const orchestratorModePrefix = "Orchestrator: ";
-	if (label.startsWith(orchestratorModePrefix)) {
-		const mode = label.slice(orchestratorModePrefix.length);
-		const compact = `Orch. ${mode}`;
-		if (compact.length <= width) return compact;
-		if (mode.length <= width) return mode;
-	}
-	if (label === "Orchestrator" && width >= 4) return "Orch.".slice(0, width);
 	return label.slice(0, width);
 }
