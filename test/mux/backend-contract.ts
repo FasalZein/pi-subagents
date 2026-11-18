@@ -33,6 +33,8 @@ export interface MuxBackendContractFixture {
 	 * "any-suffices": one key alone makes it available; without all of them it is unavailable.
 	 */
 	runtimeEnvKeysRule?: "each-required" | "any-suffices";
+	/** False when the backend renames no tab, so renameCurrentTab records nothing (Rex: no call targets the parent block). Default true. */
+	renamesTab?: boolean;
 	/** False when the backend has no workspace to rename, so renameWorkspace records nothing. Default true. */
 	renamesWorkspace?: boolean;
 	/** Titles that the fake recorded from renameCurrentTab and renameWorkspace, in call order. */
@@ -48,6 +50,11 @@ export interface MuxBackendContractFixture {
 	 * Typed text without Enter must not appear. A bare Enter appears as "".
 	 */
 	submittedCommands(stateDir: string, surface: string): string[];
+	/**
+	 * Stops process-wide state that the adapter keeps for the test's surfaces (herdr-core exit watches).
+	 * Runs after each test, before the fake state is removed.
+	 */
+	stopSurfaceWatches?(): void;
 }
 
 /** Fixture of a backend that starts a program as the surface's own process (openProgramSession). */
@@ -103,6 +110,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		});
 
 		afterEach(() => {
+			fixture.stopSurfaceWatches?.();
 			for (const [key, value] of savedEnv) {
 				if (value === undefined) delete process.env[key];
 				else process.env[key] = value;
@@ -222,7 +230,10 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		it("renames the current tab and the workspace", () => {
 			adapter.renameCurrentTab("Contract Tab");
 			adapter.renameWorkspace("Contract Workspace");
-			const expected = fixture.renamesWorkspace === false ? ["Contract Tab"] : ["Contract Tab", "Contract Workspace"];
+			const expected = [
+				...(fixture.renamesTab === false ? [] : ["Contract Tab"]),
+				...(fixture.renamesWorkspace === false ? [] : ["Contract Workspace"]),
+			];
 			assert.deepEqual(fixture.recordedTitles(stateDir), expected);
 		});
 

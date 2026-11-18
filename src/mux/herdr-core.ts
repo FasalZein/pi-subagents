@@ -15,12 +15,22 @@ import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
 /** Bound of the detection call: the same 2,000 ms as old herdr's bounded CLI calls (runHerdrJsonAsync). */
-const APP_CHECK_TIMEOUT_MS = 2_000;
+export const APP_CHECK_TIMEOUT_MS = 2_000;
 /** Label that carries the title of the caller terminal; herdr-core has no tab or workspace of its own. */
 const TITLE_LABEL_KEY = "pi-subagents.title";
 
 /** Exit watches of the direct-program terminals of this process, by terminal address. */
 const exitWatches = new Map<string, LabelExitWatch>();
+
+/**
+ * Stops and forgets every exit watch of this process. Test seam: a watch whose terminal never finished
+ * keeps its `hc events` stream; when a test removes the fake's state the stream drops, and the watch
+ * subscribes again with the env of whatever test runs then (test/test.ts runs every suite in one process).
+ */
+export function stopExitWatchesForTest(): void {
+	for (const watch of exitWatches.values()) watch.stop();
+	exitWatches.clear();
+}
 
 function callerTerminal(): string {
 	const caller = process.env.HC_TERMINAL_ID;
