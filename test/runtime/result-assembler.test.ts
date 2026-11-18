@@ -62,7 +62,12 @@ describe("result assembler: outcomes", () => {
 	it("a caller_ping is a typed blocked result whose full message is the report", () => {
 		const message = "x".repeat(SUMMARY_MAX_CHARS + 300);
 		const { record, report } = assembleResult(
-			facts([sessionHeader(), assistant("earlier text"), toolCall(CALLER_PING_TOOL_NAME, { message }, "p1")]),
+			facts([
+				sessionHeader(),
+				assistant("earlier text"),
+				toolCall(CALLER_PING_TOOL_NAME, { message }, "p1"),
+				toolResult(CALLER_PING_TOOL_NAME, "p1", "ok"),
+			]),
 		);
 		assert.equal(record.outcome, "blocked");
 		assert.equal(record.typed, true);
@@ -130,7 +135,7 @@ describe("result assembler: typed and untyped", () => {
 
 	it("a call with a data error is typed with the error and no data", () => {
 		const { record } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { bad: true } }, "c1")], {
+			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { bad: true } }, "c1"), toolResult(DONE, "c1", "ok")], {
 				dataError: "data/count: must be integer",
 			}),
 		);
@@ -141,7 +146,7 @@ describe("result assembler: typed and untyped", () => {
 
 	it("a call carries its data", () => {
 		const { record } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { count: 2 } }, "c1")]),
+			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { count: 2 } }, "c1"), toolResult(DONE, "c1", "ok")]),
 		);
 		assert.deepEqual(record.data, { count: 2 });
 	});
@@ -172,6 +177,7 @@ describe("result assembler: report source (D12)", () => {
 				toolCall("bash", { command: "ls" }, "b1"),
 				toolResult("bash", "b1", "BASH OUTPUT"),
 				toolCall(DONE, { outcome: "done", summary: "s" }, "c1"),
+				toolResult(DONE, "c1", "ok"),
 			]),
 		);
 		assert.equal(report, "final report");
@@ -199,7 +205,7 @@ describe("result assembler: report source (D12)", () => {
 
 	it("a typed call with no assistant text gives the summary plus the no-report line", () => {
 		const { record, report } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "All good." }, "c1")]),
+			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "All good." }, "c1"), toolResult(DONE, "c1", "ok")]),
 		);
 		assert.equal(record.summary, "All good.");
 		assert.equal(report, `All good.\n\n${NO_REPORT_LINE}`);
@@ -222,14 +228,207 @@ describe("result assembler: report source (D12)", () => {
 			user("call subagent_done"),
 			assistant("after nudge"),
 			toolCall(DONE, { outcome: "done", summary: "s" }, "c1"),
+			toolResult(DONE, "c1", "ok"),
 		];
 		assert.equal(assembleResult(facts(entries, { nudgeEntryIndex: 2 })).report, "after nudge");
 	});
 
 	it("text in the same message before the call counts", () => {
 		const { report } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s" }, "c1", "inline report")]),
+			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s" }, "c1", "inline report"), toolResult(DONE, "c1", "ok")]),
 		);
 		assert.equal(report, "inline report");
 	});
 });
+
+describe("result assembler: completion facts (D12, D14)", () => {
+	const PING = CALLER_PING_TOOL_NAME;
+
+	it("a request without its result is not a completion", () => {
+		const { record } = assembleResult(
+			facts([sessionHeader(), assistant("notes"), toolCall(DONE, { outcome: "partial", summary: "s" }, "c1")], {
+				end: { kind: "failed", error: "process died", code: 1 },
+			}),
+		);
+		assert.equal(record.typed, false);
+		assert.equal(record.outcome, "failed");
+	});
+
+	it("a codemode-only child's nested ping is a typed blocked result", () => {
+		const nested = [{ id: "k1/1", name: PING, status: "ok" as const, arguments: { message: "Which database?" } }];
+		const { record, report } = assembleResult(
+			facts([
+				sessionHeader(),
+				assistant("I need a decision."),
+				toolCall("codemode", { code: "await tools.caller_ping(...)" }, "k1"),
+				toolResult("codemode", "k1", "script done", false, nested),
+			]),
+		);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "blocked");
+		assert.equal(record.summary, "Which database?");
+		assert.equal(report, "Which database?");
+	});
+
+	it("a nested completion call that succeeded types the result", () => {
+		const nested = [{ id: "k1/1", name: DONE, status: "ok" as const, arguments: { outcome: "partial", summary: "Half." } }];
+		const { record, report } = assembleResult(
+			facts([
+				sessionHeader(),
+				assistant("Nested report."),
+				toolCall("codemode", { code: "..." }, "k1"),
+				toolResult("codemode", "k1", "ok", false, nested),
+			]),
+		);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.equal(report, "Nested report.");
+	});
+
+	for (const status of ["error", "unfinished"] as const) {
+		it(`a nested completion call with status ${status} is not a completion`, () => {
+			const nested = [{ id: "k1/1", name: DONE, status, arguments: { outcome: "done", summary: "s" } }];
+			const { record } = assembleResult(
+				facts([
+					sessionHeader(),
+					assistant("text"),
+					toolCall("codemode", { code: "..." }, "k1"),
+					toolResult("codemode", "k1", "ok", false, nested),
+				]),
+			);
+			assert.equal(record.typed, false);
+		});
+	}
+});
+
+describe("result assembler: end precedence (D7, D12)", () => {
+	const calledPartial = () => [
+		sessionHeader(),
+		assistant("Report before the stop."),
+		toolCall(DONE, { outcome: "partial", summary: "s" }, "c1"),
+		toolResult(DONE, "c1", "ok"),
+	];
+
+	it("a requested stop is cancelled and untyped, whatever the child wrote", () => {
+		const { record, report } = assembleResult(facts(calledPartial(), { end: { kind: "cancelled", reason: "stopped" } }));
+		assert.equal(record.outcome, "cancelled");
+		assert.equal(record.typed, false);
+		assert.equal(report, "Report before the stop.");
+	});
+
+	it("a report-only wrap-up is untyped and timed out, even with a call", () => {
+		const { record } = assembleResult(
+			facts(calledPartial(), { end: { kind: "timed_out", budget: "timeout", seconds: 60, wrapUp: true } }),
+		);
+		assert.equal(record.outcome, "timed_out");
+		assert.equal(record.typed, false);
+	});
+
+	it("a completion before a hard time limit stays typed (D7)", () => {
+		const { record } = assembleResult(
+			facts(calledPartial(), { end: { kind: "timed_out", budget: "timeout", seconds: 60, wrapUp: false } }),
+		);
+		assert.equal(record.outcome, "partial");
+		assert.equal(record.typed, true);
+	});
+});
+
+describe("result assembler: report boundary (D12)", () => {
+	it("with a call, the text after the nudge and before the call is the report", () => {
+		const entries = [
+			sessionHeader(),
+			assistant("old text"),
+			user("call subagent_done"),
+			assistant("new text"),
+			toolCall(DONE, {}, "c1"),
+			toolResult(DONE, "c1", "ok"),
+		];
+		const { record, report } = assembleResult(facts(entries, { nudgeEntryIndex: 2 }));
+		assert.equal(record.typed, false);
+		assert.equal(report, "new text");
+	});
+
+	it("text after a call and a takeover is the report, even after a nudge", () => {
+		const entries = [
+			sessionHeader(),
+			assistant("old text"),
+			user("call subagent_done"),
+			toolCall(DONE, { outcome: "done", summary: "s" }, "c1"),
+			toolResult(DONE, "c1", "ok"),
+			user("operator: one more thing"),
+			assistant("new text"),
+		];
+		const { record, report } = assembleResult(facts(entries, { nudgeEntryIndex: 2 }));
+		assert.equal(record.typed, false);
+		assert.equal(report, "new text");
+	});
+});
+
+describe("result assembler: report text is kept whole", () => {
+	it("every text block of the selected message is kept, joined by a newline", () => {
+		const message = assistant("first part", "last part");
+		assert.equal(assembleResult(facts([sessionHeader(), message])).report, "first part\nlast part");
+		const typed = assembleResult(
+			facts([
+				sessionHeader(),
+				assistant("first part", "last part"),
+				toolCall(DONE, { outcome: "done", summary: "s" }, "c1"),
+				toolResult(DONE, "c1", "ok"),
+			]),
+		);
+		assert.equal(typed.report, "first part\nlast part");
+	});
+
+	it("blocks of the call message after the call do not count", () => {
+		const entry = {
+			type: "message",
+			id: "call-message",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "before the call" },
+					{ type: "toolCall", id: "c1", name: DONE, arguments: { outcome: "done", summary: "s" } },
+					{ type: "text", text: "after the call" },
+				],
+			},
+		};
+		const { record, report } = assembleResult(facts([sessionHeader(), entry, toolResult(DONE, "c1", "ok")]));
+		assert.equal(record.typed, true, "text in the call's own message is not text after a takeover");
+		assert.equal(report, "before the call");
+	});
+
+	it("indentation and trailing space of report, summary and ping text stay", () => {
+		const text = "    const x = 1;\n    return x;\n";
+		assert.equal(assembleResult(facts([sessionHeader(), assistant(text)])).report, text);
+		const long = ` ${"s".repeat(SUMMARY_MAX_CHARS + 10)}`;
+		const typed = assembleResult(
+			facts([
+				sessionHeader(),
+				assistant("body"),
+				toolCall(DONE, { outcome: "done", summary: long }, "c1"),
+				toolResult(DONE, "c1", "ok"),
+			]),
+		);
+		assert.equal(typed.report, `${long}\n\nbody`);
+		const ping = "  indented question\n";
+		const pinged = assembleResult(
+			facts([sessionHeader(), toolCall(CALLER_PING_TOOL_NAME, { message: ping }, "p1"), toolResult(CALLER_PING_TOOL_NAME, "p1", "ok")]),
+		);
+		assert.equal(pinged.report, ping);
+		assert.equal(pinged.record.summary, ping);
+	});
+});
+
+describe("result assembler: session path (D14)", () => {
+	it("a watcher error that names the session file keeps the path in exit facts only", () => {
+		const sessionFile = "/tmp/sessions/child-session-file.jsonl";
+		const error = `Invalid session JSONL at ${sessionFile}:7: Unexpected end of JSON input`;
+		const { record, report } = assembleResult(
+			facts([sessionHeader()], { sessionFile, end: { kind: "failed", error, code: 1 } }),
+		);
+		assert.equal(record.exit.error, error);
+		assert.ok(!record.summary.includes(sessionFile), record.summary);
+		assert.ok(!report.includes(sessionFile), report);
+	});
+});
+

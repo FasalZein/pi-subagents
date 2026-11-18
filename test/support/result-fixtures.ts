@@ -13,8 +13,10 @@ export function user(text: string): SessionEntry {
 	return { type: "message", id: id(), message: { role: "user", content: [{ type: "text", text }] } };
 }
 
-export function assistant(text: string): SessionEntry {
-	return { type: "message", id: id(), message: { role: "assistant", content: [{ type: "text", text }] } };
+/** One assistant message with one text block per argument. */
+export function assistant(...texts: string[]): SessionEntry {
+	const content = texts.map((text) => ({ type: "text", text }));
+	return { type: "message", id: id(), message: { role: "assistant", content } };
 }
 
 /** One assistant message with optional text, then one tool call. */
@@ -24,11 +26,28 @@ export function toolCall(name: string, args: Record<string, unknown>, callId: st
 	return { type: "message", id: id(), message: { role: "assistant", content, stopReason: "toolUse" } };
 }
 
-export function toolResult(name: string, callId: string, text: string, isError = false): SessionEntry {
+/** A nested call record as Pi stores it on the outer tool result (pi-ai NestedToolCallRecord). */
+export interface NestedCall {
+	id: string;
+	name: string;
+	arguments?: Record<string, unknown>;
+	argumentsBytes?: number;
+	status: "ok" | "error" | "unfinished";
+}
+
+export function toolResult(name: string, callId: string, text: string, isError = false, nestedCalls?: NestedCall[]): SessionEntry {
+	const nested = nestedCalls && { calls: nestedCalls, complete: nestedCalls.every((c) => c.status !== "unfinished") };
 	return {
 		type: "message",
 		id: id(),
-		message: { role: "toolResult", toolName: name, toolCallId: callId, isError, content: [{ type: "text", text }] },
+		message: {
+			role: "toolResult",
+			toolName: name,
+			toolCallId: callId,
+			isError,
+			content: [{ type: "text", text }],
+			...(nested ? { nestedCalls: nested } : {}),
+		},
 	};
 }
 

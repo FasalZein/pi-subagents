@@ -12,7 +12,7 @@ import {
 	shortestReadLocator,
 } from "../../src/runtime/result-render.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
-import { assistant, facts, sessionHeader, syntheticReport, toolCall } from "../support/result-fixtures.ts";
+import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult } from "../support/result-fixtures.ts";
 import { assert, describe, it } from "../support/index.ts";
 
 const HOME = homedir();
@@ -28,6 +28,7 @@ function recordFor(reportLength: number, typed: boolean, report: ReportStorage):
 				sessionHeader(),
 				assistant(text),
 				toolCall(SUBAGENT_DONE_TOOL_NAME, { outcome: "partial", summary: text.slice(0, 1_500), data: { n: 1 } }, "c1"),
+				toolResult(SUBAGENT_DONE_TOOL_NAME, "c1", "ok"),
 			]
 		: [sessionHeader(), assistant(text)];
 	const { record } = assembleResult(

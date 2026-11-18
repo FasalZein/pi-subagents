@@ -55,21 +55,34 @@ export interface AssembledResult {
 	report: string;
 }
 
-/** Position of an assistant content block: entry index, then block index. */
-type Position = readonly [entry: number, block: number];
+/**
+ * Position of a session fact: entry index, then block index in an assistant message or call index in
+ * the nested-call record of a tool result.
+ */
+type Position = readonly [entry: number, index: number];
 
+/** One non-blank text block of an assistant message, untrimmed. */
 interface AssistantText {
 	at: Position;
 	text: string;
 }
 
-type CompletionCall =
-	| { tool: "done"; at: Position; args: Record<string, unknown> }
-	| { tool: "ping"; at: Position; args: Record<string, unknown> };
+type CompletionTool = "done" | "ping";
+
+/**
+ * A completion call that ran and succeeded: a direct call with its successful tool result, or a
+ * nested call (for example from a codemode script) that Pi recorded with status ok. `args` is
+ * undefined when Pi omitted oversize nested arguments; such a call ends the run untyped.
+ */
+interface CompletionCall {
+	tool: CompletionTool;
+	at: Position;
+	args: Record<string, unknown> | undefined;
+}
 
 interface RunTranscript {
 	texts: AssistantText[];
-	/** The last completion call that was not refused, if any. */
+	/** The last completion call that succeeded, if any. */
 	call?: CompletionCall;
 }
 
@@ -81,35 +94,61 @@ function before(a: Position, b: Position): boolean {
 	return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
 }
 
-/** Reads assistant text and completion calls of this run; tool output never counts as text (D12). */
+function completionTool(name: unknown): CompletionTool | undefined {
+	return name === SUBAGENT_DONE_TOOL_NAME ? "done" : name === CALLER_PING_TOOL_NAME ? "ping" : undefined;
+}
+
+function isNonBlank(value: unknown): value is string {
+	return typeof value === "string" && value.trim() !== "";
+}
+
+/** Nested completion calls that Pi recorded as finished without error on one tool result. */
+function nestedCompletions(message: Record<string, unknown>, entry: number): CompletionCall[] {
+	const nested = message.nestedCalls;
+	if (!isRecord(nested) || !Array.isArray(nested.calls)) return [];
+	const calls: CompletionCall[] = [];
+	nested.calls.forEach((record: unknown, index) => {
+		if (!isRecord(record) || record.status !== "ok") return;
+		const tool = completionTool(record.name);
+		if (tool) calls.push({ tool, at: [entry, index], args: isRecord(record.arguments) ? record.arguments : undefined });
+	});
+	return calls;
+}
+
+/**
+ * Reads assistant text and completion facts of this run; tool output never counts as text (D12).
+ * A completion is accepted only from its successful result, never from a request alone (D14).
+ */
 function readTranscript(entries: readonly SessionEntry[], launchEntryCount: number): RunTranscript {
 	const texts: AssistantText[] = [];
-	const calls: Array<CompletionCall & { id?: string }> = [];
-	const refusedCallIds = new Set<string>();
+	const requested = new Map<string, CompletionCall>();
+	const completed: CompletionCall[] = [];
 	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
 		const entry = entries[i];
 		if (entry.type !== "message" || !isRecord(entry.message)) continue;
 		const message = entry.message;
 		if (message.role === "toolResult") {
-			if (message.isError === true && typeof message.toolCallId === "string") refusedCallIds.add(message.toolCallId);
+			const request = typeof message.toolCallId === "string" ? requested.get(message.toolCallId) : undefined;
+			if (request && message.isError === false) completed.push(request);
+			completed.push(...nestedCompletions(message, i));
 			continue;
 		}
 		if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
 		message.content.forEach((block: unknown, b) => {
 			if (!isRecord(block)) return;
-			if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
-				texts.push({ at: [i, b], text: block.text.trim() });
-			} else if (block.type === "toolCall" && isRecord(block.arguments)) {
-				const tool =
-					block.name === SUBAGENT_DONE_TOOL_NAME ? "done" : block.name === CALLER_PING_TOOL_NAME ? "ping" : undefined;
-				const id = typeof block.id === "string" ? block.id : undefined;
-				if (tool) calls.push({ tool, at: [i, b], args: block.arguments, id });
+			if (block.type === "text" && isNonBlank(block.text)) {
+				texts.push({ at: [i, b], text: block.text });
+			} else if (block.type === "toolCall" && typeof block.id === "string") {
+				const tool = completionTool(block.name);
+				if (tool) requested.set(block.id, { tool, at: [i, b], args: isRecord(block.arguments) ? block.arguments : {} });
 			}
 		});
 	}
-	const accepted = calls.filter((call) => call.id === undefined || !refusedCallIds.has(call.id));
-	const last = accepted.at(-1);
-	return { texts, call: last && { tool: last.tool, at: last.at, args: last.args } };
+	const call = completed.reduce<CompletionCall | undefined>(
+		(last, c) => (!last || before(last.at, c.at) ? c : last),
+		undefined,
+	);
+	return { texts, call };
 }
 
 /** Cuts `text` to at most `max` characters with the cut mark, never inside a surrogate pair. */
@@ -129,18 +168,37 @@ function cutAtLineEnd(text: string, max: number): string {
 	return `${text.slice(0, lineEnd).trimEnd()}${CUT_MARK}`;
 }
 
-function lastText(texts: readonly AssistantText[]): string | undefined {
-	return texts.at(-1)?.text;
+/** The text of the message of the last candidate block: its candidate blocks joined as session.ts does. */
+function lastMessageText(candidates: readonly AssistantText[]): string | undefined {
+	const last = candidates.at(-1);
+	if (!last) return undefined;
+	return candidates
+		.filter((t) => t.at[0] === last.at[0])
+		.map((t) => t.text)
+		.join("\n");
 }
 
-/** D12 report source of a run without an accepted call: text before the nudge wins over text after it. */
-function untypedReportText(texts: readonly AssistantText[], nudgeEntryIndex: number | undefined): string | undefined {
-	if (nudgeEntryIndex === undefined) return lastText(texts);
-	return lastText(texts.filter((t) => t.at[0] < nudgeEntryIndex)) ?? lastText(texts);
+/**
+ * D12 report boundary, chosen apart from the typed flag. With a call: the last text before it, or the
+ * last text of a later message (a takeover). Without a call: text before the nudge wins over text
+ * after it.
+ */
+function reportText(texts: readonly AssistantText[], call: CompletionCall | undefined, nudgeEntryIndex: number | undefined): string | undefined {
+	if (call) {
+		if (textAfterCall(texts, call)) return lastMessageText(texts);
+		return lastMessageText(texts.filter((t) => before(t.at, call.at)));
+	}
+	if (nudgeEntryIndex === undefined) return lastMessageText(texts);
+	return lastMessageText(texts.filter((t) => t.at[0] < nudgeEntryIndex)) ?? lastMessageText(texts);
 }
 
-function nonEmptyString(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+/** Text in a message after the call's own message: the person took over the pane (D12). */
+function textAfterCall(texts: readonly AssistantText[], call: CompletionCall): boolean {
+	return texts.some((t) => t.at[0] > call.at[0]);
+}
+
+function nonBlankString(value: unknown): string | undefined {
+	return isNonBlank(value) ? value : undefined;
 }
 
 function parseCallOutcome(value: unknown): CallOutcome | undefined {
@@ -155,12 +213,17 @@ function withNoReportLine(summary: string): string {
 	return `${summary}\n\n${NO_REPORT_LINE}`;
 }
 
-function describeEnd(end: RunEnd): string {
+/** The session path leaves the parent's text (D14); the exit facts keep the raw error. */
+function withoutSessionPath(error: string, sessionFile: string | undefined): string {
+	return sessionFile ? error.split(sessionFile).join("the session file") : error;
+}
+
+function describeEnd(end: RunEnd, sessionFile: string | undefined): string {
 	switch (end.kind) {
 		case "exited":
 			return "the run ended without assistant text";
 		case "failed":
-			return `failed: ${end.error}`;
+			return `failed: ${withoutSessionPath(end.error, sessionFile)}`;
 		case "timed_out":
 			return `timed out after ${end.seconds}s (${end.budget})`;
 		case "cancelled":
@@ -206,9 +269,11 @@ interface Body {
 }
 
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */
-function typedBody(call: CompletionCall, transcript: RunTranscript, dataError: string | undefined): Body | undefined {
+function typedBody(call: CompletionCall, text: string | undefined, dataError: string | undefined): Body | undefined {
+	const args = call.args;
+	if (!args) return undefined;
 	if (call.tool === "ping") {
-		const message = nonEmptyString(call.args.message);
+		const message = nonBlankString(args.message);
 		if (!message) return undefined;
 		return {
 			typing: { typed: true },
@@ -218,50 +283,47 @@ function typedBody(call: CompletionCall, transcript: RunTranscript, dataError: s
 			artifacts: [],
 		};
 	}
-	const outcome = parseCallOutcome(call.args.outcome);
-	const fullSummary = nonEmptyString(call.args.summary);
+	const outcome = parseCallOutcome(args.outcome);
+	const fullSummary = nonBlankString(args.summary);
 	if (!outcome || !fullSummary) return undefined;
-	const text = lastText(transcript.texts.filter((t) => before(t.at, call.at)));
 	const longSummary = fullSummary.length > SUMMARY_MAX_CHARS;
-	const report = text
-		? longSummary
-			? `${fullSummary}\n\n${text}`
-			: text
-		: withNoReportLine(fullSummary);
-	const typing: ResultTyping =
-		dataError !== undefined ? { typed: true, dataError } : { typed: true, data: call.args.data };
+	const report = text ? (longSummary ? `${fullSummary}\n\n${text}` : text) : withNoReportLine(fullSummary);
+	const typing: ResultTyping = dataError !== undefined ? { typed: true, dataError } : { typed: true, data: args.data };
 	return {
 		typing,
 		outcome,
 		summary: cutText(fullSummary, SUMMARY_MAX_CHARS),
 		report,
-		artifacts: parseArtifacts(call.args.artifacts),
+		artifacts: parseArtifacts(args.artifacts),
 	};
 }
 
-function untypedBody(facts: RunFacts, transcript: RunTranscript): Body {
-	const text = untypedReportText(transcript.texts, facts.nudgeEntryIndex);
+function untypedBody(facts: RunFacts, text: string | undefined): Body {
 	const outcome = endOutcome(facts.end);
 	if (!text) {
-		const summary = cutText(describeEnd(facts.end), SUMMARY_MAX_CHARS);
+		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
 		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts: [] };
 	}
 	return { typing: { typed: false }, outcome, summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS), report: text, artifacts: [] };
 }
 
+/** D7 and D12: a requested stop and a report-only wrap-up decide the outcome over any call. */
+function endOverridesCall(end: RunEnd): boolean {
+	return end.kind === "cancelled" || (end.kind === "timed_out" && end.wrapUp);
+}
+
 /**
  * D14: turns the facts of one finished run into its record and report text. Pure: no file access.
  *
- * An accepted completion call types the result, whatever way the process then ended: the call is the
- * child's own end of the run. Assistant text after the call (a pane child after a takeover) makes the
- * result untyped again, built from that text (D12).
+ * A completion call that succeeded types the result, unless a requested stop or a report-only
+ * wrap-up ended the run, or assistant text in a later message (a takeover) followed the call (D7,
+ * D12). The report boundary is chosen apart from the typed flag.
  */
 export function assembleResult(facts: RunFacts): AssembledResult {
-	const transcript = readTranscript(facts.entries, facts.launchEntryCount);
-	const call = transcript.call;
-	const textAfterCall = call !== undefined && transcript.texts.some((t) => before(call.at, t.at));
-	const typed = call && !textAfterCall ? typedBody(call, transcript, facts.dataError) : undefined;
-	const body = typed ?? untypedBody(facts, transcript);
+	const { texts, call } = readTranscript(facts.entries, facts.launchEntryCount);
+	const text = reportText(texts, call, facts.nudgeEntryIndex);
+	const typing = call && !textAfterCall(texts, call) && !endOverridesCall(facts.end);
+	const body = (typing ? typedBody(call, text, facts.dataError) : undefined) ?? untypedBody(facts, text);
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,
