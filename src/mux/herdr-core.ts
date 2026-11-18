@@ -101,7 +101,8 @@ async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 	try {
 		const reply = await hcRequest("terminal.run", {
 			argv: [...launch.launcherArgv],
-			...(launch.cwd ? { cwd: launch.cwd } : {}),
+			// Without a cwd hc runs the program in the core's own directory; the child runs in the parent cwd (README).
+			cwd: launch.cwd ?? process.cwd(),
 			labels: { [HERDR_CORE_LAUNCH_LABEL_KEY]: label },
 			caller: callerTerminal(),
 			no_notify: true,
