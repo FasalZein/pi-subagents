@@ -1,0 +1,291 @@
+// Run: node --test scripts/orchestration-benchmark/launcher.test.mjs
+// Checks of ownership, credentials, cleanup and attempt classification. No model, no Pi.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { after, test } from "node:test";
+import { classifyAttempt, observe } from "./attempt.mjs";
+import { acquireClaim, holdsClaim, releaseClaim } from "./claim.mjs";
+import { checkoutState } from "./run-state.mjs";
+import {
+	createAttemptRoot,
+	recoverAbandonedRoots,
+	selectProviderAuth,
+	selectProviderModels,
+	settingsFingerprint,
+} from "./sample-home.mjs";
+import { classifySessions, parseJsonlStrict } from "./session-evidence.mjs";
+
+// Every folder of this file lives below one private scratch base, removed at the end.
+// The shared benchmark base is never touched.
+const scratchBase = mkdtempSync(join(tmpdir(), "bench-test-"));
+after(() => rmSync(scratchBase, { recursive: true, force: true }));
+const scratch = () => mkdtempSync(join(scratchBase, "s-"));
+const ALIVE = { pid: 1, start: "alive" };
+const DEAD = { pid: 2, start: "dead" };
+const alive = (identity) => identity.start === "alive";
+
+test("[F4] two jobs for one key: only one holds the claim; a release never frees the other job's claim", () => {
+	const marker = join(scratch(), "s.json.claim");
+	const a = acquireClaim(marker, { identity: ALIVE, alive });
+	const b = acquireClaim(marker, { identity: ALIVE, alive });
+	assert.ok("token" in a);
+	assert.match(b.busy, /another job holds/);
+	assert.equal(releaseClaim(marker, "not-a-token"), false);
+	assert.equal(holdsClaim(marker, a.token), true);
+	assert.equal(releaseClaim(marker, a.token), true);
+	assert.equal(existsSync(marker), false);
+});
+
+test("[F4] a claim of a dead job is taken over once; a second taker is refused", () => {
+	const marker = join(scratch(), "s.json.claim");
+	acquireClaim(marker, { identity: DEAD, alive });
+	const taker = acquireClaim(marker, { identity: ALIVE, alive });
+	assert.ok("token" in taker);
+	assert.ok("busy" in acquireClaim(marker, { identity: ALIVE, alive }));
+	assert.equal(holdsClaim(marker, taker.token), true);
+});
+
+test("[F1] only the requested provider enters a sample; an OAuth refresh token is blanked", () => {
+	const now = 1_000;
+	const auth = {
+		wanted: {
+			type: "oauth",
+			access: "A",
+			refresh: "R",
+			expires: now + 3_600_000,
+		},
+		other: { type: "oauth", access: "B", refresh: "S", expires: 0 },
+	};
+	const picked = selectProviderAuth(auth, "wanted", now, 1_800_000);
+	assert.deepEqual(Object.keys(picked), ["wanted"]);
+	assert.equal(picked.wanted.refresh, "");
+	assert.equal(picked.wanted.access, "A");
+	assert.throws(
+		() => selectProviderAuth(auth, "wanted", now + 3_000_000, 1_800_000),
+		/expires within/,
+	);
+	assert.throws(() => selectProviderAuth(auth, "missing", now, 0), /no entry/);
+	assert.deepEqual(
+		selectProviderModels(
+			{ providers: { wanted: { baseUrl: "u" }, other: { baseUrl: "v" } } },
+			"wanted",
+		),
+		{
+			providers: { wanted: { baseUrl: "u" } },
+		},
+	);
+});
+
+test("[F13] the settings fingerprint keeps non-secret provider settings and drops secrets", () => {
+	const fingerprint = settingsFingerprint({
+		providers: {
+			p: {
+				baseUrl: "u",
+				apiKey: "k",
+				headers: { x: 1 },
+				models: [{ id: "m", cost: { input: 3 } }],
+			},
+		},
+	});
+	assert.deepEqual(fingerprint, {
+		providers: {
+			p: { baseUrl: "u", models: [{ id: "m", cost: { input: 3 } }] },
+		},
+	});
+});
+
+test("[F2][F3] recovery removes only tagged roots of dead owners inside the private base", () => {
+	const base = scratch();
+	const dead = createAttemptRoot(base);
+	writeFileSync(
+		join(dead, "bench-owner.json"),
+		JSON.stringify({
+			tag: "pi-orchestration-benchmark",
+			owner: { pid: 999_999, start: "gone" },
+		}),
+	);
+	const live = createAttemptRoot(base);
+	const foreign = mkdtempSync(join(base, "x-"));
+	writeFileSync(join(foreign, "keep.txt"), "not ours");
+	const stopped = [];
+	const removed = recoverAbandonedRoots((socket) => stopped.push(socket), base);
+	assert.equal(existsSync(dead), false);
+	assert.equal(existsSync(live), true);
+	assert.equal(existsSync(foreign), true);
+	assert.deepEqual(stopped, [join(dead, "tmux.sock")]);
+	assert.deepEqual(removed, [basename(dead)]);
+});
+
+test("[F8] malformed lines are counted; a fork copy without a probe is not taken for the parent", () => {
+	assert.equal(parseJsonlStrict('{"a":1}\n{half\n').malformed, 1);
+	const prompt = { type: "message", message: { role: "user", content: "go" } };
+	const reply = {
+		type: "message",
+		message: { role: "assistant", stopReason: "stop", content: [] },
+	};
+	const sessions = [
+		{ file: "/r/fork.jsonl", events: [prompt, reply] },
+		{ file: "/r/parent.jsonl", events: [prompt, reply] },
+	];
+	const result = classifySessions(sessions, [
+		{ sessionFile: "/r/parent.jsonl", agent: null },
+	]);
+	assert.equal(result.parent.file, "/r/parent.jsonl");
+	assert.deepEqual(result.unattributed, ["/r/fork.jsonl"]);
+});
+
+const u = (input, cost) => ({
+	input,
+	cacheRead: 0,
+	cacheWrite: 0,
+	output: 1,
+	cost: { total: cost },
+});
+const reply = (stopReason, text, toolCalls = []) => ({
+	type: "message",
+	message: {
+		role: "assistant",
+		stopReason,
+		usage: u(10, 0.01),
+		content: [
+			{ type: "text", text },
+			...toolCalls.map((name) => ({ type: "toolCall", name })),
+		],
+	},
+});
+const childSession = (stopReasons) => ({
+	file: "/r/c.jsonl",
+	events: [
+		{
+			type: "custom",
+			customType: "pi-subagents_launch_metadata",
+			data: { agent: "reader" },
+		},
+		...stopReasons.map((s) => reply(s, "x")),
+	],
+});
+const CLI = { checkout: "/c", model: "p/m", thinking: "high" };
+const SCENARIO = {
+	expectedAnswer: "w",
+	expectedChildRoles: ["reader"],
+	parentToolAllowlist: ["subagent"],
+	parentLoadTool: "subagent",
+	childLoadTool: "subagent_done",
+};
+const probes = [
+	{
+		sessionFile: "/r/p.jsonl",
+		agent: null,
+		model: "p/m",
+		thinking: "high",
+		tools: [{ name: "subagent", path: "/c/src/index.ts" }],
+	},
+	{
+		sessionFile: "/r/c.jsonl",
+		agent: "reader",
+		model: "p/m",
+		thinking: "high",
+		tools: [{ name: "subagent_done", path: "/c/src/d.ts" }],
+	},
+];
+const evidence = (child, extra = {}) => ({
+	parent: {
+		file: "/r/p.jsonl",
+		events: [reply("toolUse", "", ["subagent"]), reply("stop", "ANSWER: w")],
+	},
+	children: child ? [child] : [],
+	unattributed: [],
+	parentProbes: 1,
+	probes,
+	malformed: 0,
+	...extra,
+});
+const classify = (ev, observed = { kind: "answered", answer: "w" }) =>
+	classifyAttempt({
+		observed,
+		evidence: ev,
+		cli: CLI,
+		scenario: SCENARIO,
+		checkoutChanged: false,
+	});
+
+test("[F6][F7] classification: pass needs the child; missing load proof is infra", () => {
+	assert.equal(classify(evidence(childSession(["stop"]))).verdict, "pass");
+	assert.equal(classify(evidence(null)).verdict, "wrong-delegation");
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { probes: [probes[0]] }))
+			.infraReason,
+		"load probe missing",
+	);
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { malformed: 1 })).infraReason,
+		"malformed session lines",
+	);
+});
+
+test("[F11] a child provider error makes the attempt a counted provider error", () => {
+	assert.equal(
+		classify(evidence(childSession(["error", "stop"]))).kind,
+		"provider-error",
+	);
+});
+
+test("[F13] a model or thinking level other than the request is infra, not a measured result", () => {
+	const clamped = [{ ...probes[0], thinking: "medium" }, probes[1]];
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { probes: clamped })).infraReason,
+		"model or thinking differs from the request",
+	);
+});
+
+test("[F10] attempt metrics keep requests and child cost of the attempt", () => {
+	const result = classify(evidence(childSession(["error", "stop"])));
+	assert.equal(result.parent.all.requests, 2);
+	assert.equal(result.children.cost, 0.02);
+	assert.equal(result.children.errorRequests, 1);
+});
+
+test("[F5] attempt results carry no message text", () => {
+	const result = classify(evidence(childSession(["stop"])));
+	assert.equal(JSON.stringify(result).includes("ANSWER"), false);
+});
+
+test("[F12] the deadline counts from submission and wins over a late answer", async () => {
+	const root = scratch();
+	const parentFile = join(root, "p.jsonl");
+	writeFileSync(parentFile, `${JSON.stringify(reply("stop", "ANSWER: w"))}\n`);
+	const parent = { socket: join(root, "none.sock"), paneId: "%0" };
+	const deadlineMs = 600_000;
+	const late = await observe({
+		parent,
+		parentFile,
+		root,
+		submittedAt: Date.now() - deadlineMs - 1,
+		deadlineMs,
+	});
+	assert.deepEqual(late, { kind: "verdict", verdict: "timeout" });
+	const inTime = await observe({
+		parent,
+		parentFile,
+		root,
+		submittedAt: Date.now(),
+		deadlineMs,
+	});
+	assert.deepEqual(inTime, { kind: "answered", answer: "w" });
+});
+
+test("[F14] a checkout with an untracked file is refused", () => {
+	const repo = scratch();
+	const git = (...args) =>
+		execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+	git("init", "-q");
+	writeFileSync(join(repo, "a.ts"), "x");
+	git("add", ".");
+	git("-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "a");
+	assert.ok(checkoutState(repo).commit);
+	writeFileSync(join(repo, "new-module.ts"), "y");
+	assert.throws(() => checkoutState(repo), /untracked/);
+});

@@ -7,10 +7,18 @@
  */
 import { createHash } from "node:crypto";
 
-export const RECORD_SCHEMA = 1;
+export const RECORD_SCHEMA = 2;
 
-/** Verdicts of a completed sample. A completed sample keeps its verdict on rerun. */
-const VERDICTS = Object.freeze(["pass", "wrong-answer", "timeout"]);
+/**
+ * Verdicts of a completed sample. A completed sample keeps its verdict on rerun.
+ * wrong-delegation: the answer came, but not through the expected children.
+ */
+const VERDICTS = Object.freeze([
+	"pass",
+	"wrong-answer",
+	"wrong-delegation",
+	"timeout",
+]);
 
 export function sha256(text) {
 	return createHash("sha256").update(text).digest("hex");
@@ -105,6 +113,141 @@ export function rerunDecision(existingText, key) {
 	};
 }
 
+// ---- Usage ledger -------------------------------------------------------------
+
+const LAUNCH_METADATA = "pi-subagents_launch_metadata";
+
+/**
+ * Every usage-bearing entry of one session, in order: assistant messages and any
+ * other entry type that carries a usage object (usage, compaction, branch summary).
+ * Entries without a usage object where one is required count as missing evidence.
+ * @returns {{ledger: Array<object>, missingUsage: number}}
+ */
+export function usageLedger(events) {
+	const ledger = [];
+	let missingUsage = 0;
+	for (const event of events) {
+		const isAssistant =
+			event?.type === "message" && event.message?.role === "assistant";
+		const usage = isAssistant ? event.message.usage : event?.usage;
+		if (!usage || typeof usage !== "object") {
+			if (isAssistant) missingUsage += 1;
+			continue;
+		}
+		const fields = ["input", "cacheRead", "cacheWrite", "output"];
+		if (
+			fields.some((field) => typeof usage[field] !== "number") ||
+			typeof usage.cost?.total !== "number"
+		) {
+			missingUsage += 1;
+			continue;
+		}
+		ledger.push({
+			id: event.id ?? null,
+			type: isAssistant ? "assistant" : event.type,
+			kind: event.kind ?? null,
+			stopReason: isAssistant ? (event.message.stopReason ?? null) : null,
+			input: usage.input,
+			cacheRead: usage.cacheRead,
+			cacheWrite: usage.cacheWrite,
+			output: usage.output,
+			cost: usage.cost.total,
+		});
+	}
+	return { ledger, missingUsage };
+}
+
+/** Totals of ledger rows. requests counts provider calls: every row is one. */
+export function totals(rows) {
+	const sum = {
+		requests: rows.length,
+		input: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		output: 0,
+		cost: 0,
+	};
+	for (const row of rows) {
+		for (const field of ["input", "cacheRead", "cacheWrite", "output", "cost"])
+			sum[field] += row[field];
+	}
+	return {
+		...sum,
+		cumulativeInput: sum.input + sum.cacheRead + sum.cacheWrite,
+	};
+}
+
+/**
+ * Parent cost: all model-attributed entries, and the conversational subtotal
+ * (assistant messages only) apart.
+ */
+export function summarizeParent(events) {
+	const { ledger, missingUsage } = usageLedger(events);
+	return {
+		all: totals(ledger),
+		conversation: totals(ledger.filter((row) => row.type === "assistant")),
+		errorRequests: ledger.filter((row) => row.stopReason === "error").length,
+		missingUsage,
+		ledger,
+	};
+}
+
+/**
+ * Index after the child's own launch boundary: the LAST launch marker, because a
+ * nested fork copies its ancestors' markers before its own.
+ */
+function launchBoundary(events) {
+	for (let i = events.length - 1; i >= 0; i--) {
+		if (
+			events[i]?.type === "custom" &&
+			events[i].customType === LAUNCH_METADATA
+		)
+			return i;
+	}
+	return -1;
+}
+
+export function summarizeChild(events) {
+	const boundary = launchBoundary(events);
+	if (boundary < 0) return null;
+	const metadata = events[boundary].data ?? {};
+	const { ledger, missingUsage } = usageLedger(events.slice(boundary));
+	return {
+		role: metadata.agent ?? null,
+		name: metadata.name ?? null,
+		launchedAt: events[boundary].timestamp ?? null,
+		launchEntryId: events[boundary].id ?? null,
+		...totals(ledger),
+		errorRequests: ledger.filter((row) => row.stopReason === "error").length,
+		missingUsage,
+		ledger,
+	};
+}
+
+/** Children in launch order (launch marker time, then entry id for a tie). */
+export function summarizeChildren(childEventLists) {
+	const children = childEventLists
+		.map(summarizeChild)
+		.filter(Boolean)
+		.sort(
+			(a, b) =>
+				String(a.launchedAt).localeCompare(String(b.launchedAt)) ||
+				String(a.launchEntryId).localeCompare(String(b.launchEntryId)),
+		);
+	return {
+		roles: children.map((child) => child.role),
+		children: children.map((child, index) => ({ order: index + 1, ...child })),
+		cost: children.reduce((sum, child) => sum + child.cost, 0),
+		errorRequests: children.reduce(
+			(sum, child) => sum + child.errorRequests,
+			0,
+		),
+		missingUsage: children.reduce((sum, child) => sum + child.missingUsage, 0),
+	};
+}
+
+// ---- Scoring ------------------------------------------------------------------
+
 function assistantMessages(events) {
 	return events
 		.filter(
@@ -114,108 +257,100 @@ function assistantMessages(events) {
 		.map((e) => e.message);
 }
 
-function addUsage(total, usage) {
-	total.input += usage?.input ?? 0;
-	total.cacheRead += usage?.cacheRead ?? 0;
-	total.cacheWrite += usage?.cacheWrite ?? 0;
-	total.output += usage?.output ?? 0;
-	total.cost += usage?.cost?.total ?? 0;
-	return total;
-}
-
-function emptyUsage() {
-	return { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, cost: 0 };
+/** Tool names the parent called, in order. */
+export function parentToolCalls(events) {
+	return assistantMessages(events).flatMap((message) =>
+		(message.content ?? [])
+			.filter((part) => part.type === "toolCall")
+			.map((part) => part.name),
+	);
 }
 
 /**
- * Parent cost from its session events. One assistant message is one provider request.
- * Usage entries outside messages (for example cache warming) are counted apart, by kind.
+ * The parent's terminal reply: the last assistant message, when it ended normally.
+ * Its answer is its last non-empty line when that line is `ANSWER: <value>`, else null.
+ * @returns {{terminal: boolean, answer: string | null}}
  */
-export function summarizeParent(events) {
-	const requests = assistantMessages(events);
-	const usage = requests.reduce(
-		(total, message) => addUsage(total, message.usage),
-		emptyUsage(),
-	);
-	const otherUsage = {};
-	for (const event of events) {
-		if (event?.type !== "usage") continue;
-		const kind = event.kind ?? "unknown";
-		otherUsage[kind] = addUsage(
-			otherUsage[kind] ?? { ...emptyUsage(), requests: 0 },
-			event.usage,
-		);
-		otherUsage[kind].requests += 1;
-	}
-	return {
-		requests: requests.length,
-		errorRequests: requests.filter((message) => message.stopReason === "error")
-			.length,
-		cumulativeInput: {
-			input: usage.input,
-			cacheRead: usage.cacheRead,
-			cacheWrite: usage.cacheWrite,
-			total: usage.input + usage.cacheRead + usage.cacheWrite,
-		},
-		output: usage.output,
-		cost: usage.cost,
-		otherUsage,
-	};
-}
-
-const LAUNCH_METADATA = "pi-subagents_launch_metadata";
-
-/** Child usage counts only after the launch marker; earlier entries can be a seeded parent copy. */
-function summarizeChild(events) {
-	const markerIndex = events.findIndex(
-		(e) => e?.type === "custom" && e.customType === LAUNCH_METADATA,
-	);
-	if (markerIndex < 0) return null;
-	const metadata = events[markerIndex].data ?? {};
-	const header = events.find((e) => e?.type === "session");
-	const usage = assistantMessages(events.slice(markerIndex)).reduce(
-		(t, m) => addUsage(t, m.usage),
-		emptyUsage(),
-	);
-	return {
-		role: metadata.agent ?? null,
-		name: metadata.name ?? null,
-		startedAt: header?.timestamp ?? events[markerIndex].timestamp ?? null,
-		requests: assistantMessages(events.slice(markerIndex)).length,
-		cost: usage.cost,
-		input: usage.input + usage.cacheRead + usage.cacheWrite,
-		output: usage.output,
-	};
-}
-
-/** Children in launch order. */
-export function summarizeChildren(childEventLists) {
-	const children = childEventLists
-		.map(summarizeChild)
+export function terminalAnswer(events) {
+	const last = assistantMessages(events).at(-1);
+	if (last?.stopReason !== "stop") return { terminal: false, answer: null };
+	const text = (last.content ?? [])
+		.filter((part) => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+	const line = text
+		.split("\n")
+		.map((l) => l.trim())
 		.filter(Boolean)
-		.sort((a, b) => String(a.startedAt).localeCompare(String(b.startedAt)));
-	return {
-		roles: children.map((child) => child.role),
-		children: children.map((child, index) => ({ order: index + 1, ...child })),
-		cost: children.reduce((sum, child) => sum + child.cost, 0),
-	};
+		.at(-1);
+	const match = line?.match(/^ANSWER:\s*`?([^\s`]+?)`?\.?$/);
+	return { terminal: true, answer: match ? match[1] : null };
 }
 
-/** Final answer of the parent: the last `ANSWER: <value>` in an assistant text that ended normally. */
-export function findParentAnswer(events) {
-	let answer = null;
-	for (const message of assistantMessages(events)) {
-		if (message.stopReason !== "stop") continue;
-		for (const part of message.content ?? []) {
-			if (part.type !== "text") continue;
-			for (const match of part.text.matchAll(/ANSWER:\s*(\S+)/g))
-				answer = match[1].replace(/^[`*]+|[`*.]+$/g, "");
-		}
-	}
-	return answer;
+/**
+ * Verdict of a finished attempt. The answer must be right AND the work must have
+ * gone through exactly the expected children, with the parent calling only the
+ * tools the scenario allows.
+ * @param {{answer: string | null, childRoles: string[], parentTools: string[],
+ *   scenario: {expectedAnswer: string, expectedChildRoles: string[], parentToolAllowlist: string[]}}} input
+ */
+export function scoreAttempt({ answer, childRoles, parentTools, scenario }) {
+	if (answer !== scenario.expectedAnswer) return "wrong-answer";
+	const sameChildren =
+		canonicalJson(childRoles) === canonicalJson(scenario.expectedChildRoles);
+	const allowed = parentTools.every((name) =>
+		scenario.parentToolAllowlist.includes(name),
+	);
+	return sameChildren && allowed ? "pass" : "wrong-delegation";
 }
 
 /** True when the last parent request ended with a provider error. */
 export function endsWithProviderError(events) {
 	return assistantMessages(events).at(-1)?.stopReason === "error";
+}
+
+// ---- Load evidence ------------------------------------------------------------
+
+/**
+ * Proof that each process loaded the extension from the checkout: a probe per
+ * session lists the registered tools and the file each came from (Pi sourceInfo).
+ * @param {Array<{sessionFile: string, agent: string | null, tools: Array<{name: string, path: string}>}>} probes
+ * @param {{parentFile: string, childFiles: string[], checkout: string, parentTool: string, childTool: string}} input
+ */
+export function loadEvidence(
+	probes,
+	{ parentFile, childFiles, checkout, parentTool, childTool },
+) {
+	const bySession = new Map(probes.map((probe) => [probe.sessionFile, probe]));
+	const fromCheckout = (probe, tool) =>
+		Boolean(
+			probe?.tools.some(
+				(t) => t.name === tool && t.path.startsWith(`${checkout}/`),
+			),
+		);
+	const parent = bySession.get(parentFile);
+	const children = childFiles.map((file) => ({
+		file,
+		probe: bySession.get(file),
+	}));
+	const missing = [
+		parent ? null : "parent",
+		...children.filter((c) => !c.probe).map(() => "child"),
+	].filter(Boolean);
+	return {
+		checkout,
+		missingProbes: missing.length,
+		parentLoadedCheckout: fromCheckout(parent, parentTool),
+		childrenLoadedCheckout: children.every((child) =>
+			fromCheckout(child.probe, childTool),
+		),
+		parentModel: parent?.model ?? null,
+		parentThinking: parent?.thinking ?? null,
+		children: children.map((child) => ({
+			agent: child.probe?.agent ?? null,
+			loadedCheckout: fromCheckout(child.probe, childTool),
+			model: child.probe?.model ?? null,
+			thinking: child.probe?.thinking ?? null,
+		})),
+	};
 }

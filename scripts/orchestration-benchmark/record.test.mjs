@@ -4,13 +4,15 @@ import { test } from "node:test";
 import {
 	canonicalJson,
 	endsWithProviderError,
-	findParentAnswer,
+	loadEvidence,
 	rerunDecision,
 	sampleKey,
 	sampleKeyId,
+	scoreAttempt,
 	sealRecord,
 	summarizeChildren,
 	summarizeParent,
+	terminalAnswer,
 } from "./record.mjs";
 
 const KEY_PARTS = {
@@ -105,80 +107,64 @@ test("canonical JSON ignores key order", () => {
 	);
 });
 
-const assistant = (usage, stopReason = "toolUse", text = "") => ({
+const usage = (input, cacheRead, cacheWrite, output, cost) => ({
+	input,
+	cacheRead,
+	cacheWrite,
+	output,
+	cost: { total: cost },
+});
+const assistant = (u, stopReason = "toolUse", text = "") => ({
 	type: "message",
 	message: {
 		role: "assistant",
 		stopReason,
-		usage,
+		usage: u,
 		content: text ? [{ type: "text", text }] : [],
 	},
 });
 
-test("parent input is split into input, cache read and cache write over all requests", () => {
+test("[F9] parent totals include every usage-bearing entry; the conversation subtotal stays apart", () => {
 	const events = [
 		{ type: "session" },
 		{ type: "message", message: { role: "user", content: "go" } },
-		assistant({
-			input: 100,
-			cacheRead: 0,
-			cacheWrite: 2000,
-			output: 50,
-			cost: { total: 0.01 },
-		}),
-		assistant(
-			{
-				input: 30,
-				cacheRead: 2000,
-				cacheWrite: 400,
-				output: 20,
-				cost: { total: 0.002 },
-			},
-			"stop",
-			"ANSWER: x",
-		),
-		{
-			type: "usage",
-			kind: "cache_warm",
-			usage: {
-				input: 0,
-				cacheRead: 2400,
-				cacheWrite: 0,
-				cost: { total: 0.001 },
-			},
-		},
+		assistant(usage(100, 0, 2000, 50, 0.01)),
+		assistant(usage(30, 2000, 400, 20, 0.002), "stop", "ANSWER: x"),
+		{ type: "usage", kind: "cache_warm", usage: usage(0, 2400, 0, 0, 0.001) },
+		{ type: "compaction", usage: usage(500, 0, 0, 100, 0.003) },
 	];
 	const summary = summarizeParent(events);
-	assert.equal(summary.requests, 2);
-	assert.deepEqual(summary.cumulativeInput, {
-		input: 130,
-		cacheRead: 2000,
-		cacheWrite: 2400,
-		total: 4530,
-	});
-	assert.equal(summary.otherUsage.cache_warm.requests, 1);
-	assert.equal(summary.otherUsage.cache_warm.cacheRead, 2400);
+	assert.equal(summary.all.requests, 4);
+	assert.equal(summary.all.cumulativeInput, 130 + 4400 + 2400 + 500);
+	assert.equal(summary.conversation.requests, 2);
+	assert.equal(summary.conversation.cumulativeInput, 4530);
+	assert.equal(summary.ledger.length, 4);
 });
 
-test("children come in launch order with their roles and cost after the launch marker", () => {
-	const child = (agent, startedAt, cost) => [
-		{ type: "session", timestamp: startedAt },
-		assistant({ input: 999, cost: { total: 5 } }), // seeded copy before the marker: not counted
+test("[F8] a request without usage is counted as missing evidence, not as zero", () => {
+	const events = [
 		{
-			type: "custom",
-			customType: "pi-subagents_launch_metadata",
-			data: { agent, name: agent },
+			type: "message",
+			message: { role: "assistant", stopReason: "stop", content: [] },
 		},
-		assistant(
-			{
-				input: 10,
-				cacheRead: 5,
-				cacheWrite: 1,
-				output: 2,
-				cost: { total: cost },
-			},
-			"stop",
-		),
+	];
+	assert.equal(summarizeParent(events).missingUsage, 1);
+});
+
+test("children come in launch order; a nested fork counts from its own (last) launch marker", () => {
+	const marker = (agent, timestamp, id) => ({
+		type: "custom",
+		customType: "pi-subagents_launch_metadata",
+		timestamp,
+		id,
+		data: { agent, name: agent },
+	});
+	const child = (agent, at, cost) => [
+		{ type: "session" },
+		marker("ancestor", "2026-01-01T00:00:00Z", "m0"),
+		assistant(usage(999, 0, 0, 0, 5)), // inherited before its own marker: not counted
+		marker(agent, at, `m-${agent}`),
+		assistant(usage(10, 5, 1, 2, cost), "stop"),
 	];
 	const summary = summarizeChildren([
 		child("reviewer", "2026-01-01T00:00:02Z", 0.25),
@@ -187,24 +173,102 @@ test("children come in launch order with their roles and cost after the launch m
 	]);
 	assert.deepEqual(summary.roles, ["worker", "reviewer"]);
 	assert.equal(summary.cost, 0.75);
-	assert.equal(summary.children[0].input, 16);
+	assert.equal(summary.children[0].cumulativeInput, 16);
 });
 
-test("the parent answer is the last ANSWER line of a normally ended reply", () => {
+test("[F6] the answer is the last line of the terminal reply only", () => {
 	assert.equal(
-		findParentAnswer([assistant({}, "stop", "ANSWER: `lantern-4127`")]),
+		terminalAnswer([assistant({}, "stop", "ANSWER: `lantern-4127`")]).answer,
 		"lantern-4127",
 	);
+	assert.deepEqual(
+		terminalAnswer([assistant({}, "toolUse", "ANSWER: early")]),
+		{ terminal: false, answer: null },
+	);
+	// An embedded quotation is not the answer line.
 	assert.equal(
-		findParentAnswer([assistant({}, "toolUse", "ANSWER: early")]),
+		terminalAnswer([
+			assistant(
+				{},
+				"stop",
+				"The note says ANSWER: lantern-4127 but I am unsure.",
+			),
+		]).answer,
 		null,
 	);
 	assert.equal(
-		findParentAnswer([
+		terminalAnswer([
 			assistant({}, "stop", "ANSWER: a"),
-			assistant({}, "stop", "ANSWER: b."),
-		]),
+			assistant({}, "stop", "Thinking.\nANSWER: b."),
+		]).answer,
 		"b",
+	);
+	assert.deepEqual(
+		terminalAnswer([assistant({}, "stop", "I could not find it.")]),
+		{ terminal: true, answer: null },
+	);
+});
+
+const SCENARIO = {
+	expectedAnswer: "w",
+	expectedChildRoles: ["reader"],
+	parentToolAllowlist: ["subagent"],
+};
+
+test("[F6] a right answer passes only through exactly the expected children and allowed parent tools", () => {
+	const score = (childRoles, parentTools, answer = "w") =>
+		scoreAttempt({ answer, childRoles, parentTools, scenario: SCENARIO });
+	assert.equal(score(["reader"], ["subagent"]), "pass");
+	assert.equal(score([], ["read"]), "wrong-delegation");
+	assert.equal(score(["reader"], ["subagent", "read"]), "wrong-delegation");
+	assert.equal(score(["reader", "reader"], ["subagent"]), "wrong-delegation");
+	assert.equal(score(["other"], ["subagent"]), "wrong-delegation");
+	assert.equal(score(["reader"], ["subagent"], null), "wrong-answer");
+});
+
+test("[F7] load evidence needs a registered tool from the checkout per session, not a named path", () => {
+	const tool = (name, path) => ({ name, path });
+	const probes = [
+		{
+			sessionFile: "/s/p.jsonl",
+			agent: null,
+			model: "p/m",
+			thinking: "high",
+			tools: [tool("subagent", "/c/src/index.ts")],
+		},
+		{
+			sessionFile: "/s/c1.jsonl",
+			agent: "reader",
+			tools: [tool("subagent_done", "/c/src/tools/subagent-done.ts")],
+		},
+		{
+			sessionFile: "/s/c2.jsonl",
+			agent: "reader",
+			tools: [tool("read", "builtin:read")],
+		},
+	];
+	const input = {
+		parentFile: "/s/p.jsonl",
+		checkout: "/c",
+		parentTool: "subagent",
+		childTool: "subagent_done",
+	};
+	const one = loadEvidence(probes, { ...input, childFiles: ["/s/c1.jsonl"] });
+	assert.equal(one.parentLoadedCheckout && one.childrenLoadedCheckout, true);
+	// One reporting child cannot stand in for another that did not load.
+	assert.equal(
+		loadEvidence(probes, {
+			...input,
+			childFiles: ["/s/c1.jsonl", "/s/c2.jsonl"],
+		}).childrenLoadedCheckout,
+		false,
+	);
+	assert.equal(
+		loadEvidence(probes, {
+			...input,
+			childFiles: ["/s/c1.jsonl", "/s/c3.jsonl"],
+		}).missingProbes,
+		1,
 	);
 });
 

@@ -16,13 +16,20 @@ export function shellQuote(value) {
 	return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
+/** Errors name the tmux subcommand and exit status only: the command line carries the model ref. */
 function tmux(socket, args, env) {
-	return execFileSync("tmux", ["-S", socket, ...args], {
-		encoding: "utf8",
-		timeout: TMUX_TIMEOUT_MS,
-		stdio: ["ignore", "pipe", "pipe"],
-		...(env ? { env } : {}),
-	});
+	try {
+		return execFileSync("tmux", ["-S", socket, ...args], {
+			encoding: "utf8",
+			timeout: TMUX_TIMEOUT_MS,
+			stdio: ["ignore", "pipe", "ignore"],
+			...(env ? { env } : {}),
+		});
+	} catch (error) {
+		throw new Error(
+			`tmux ${args[0]} failed (status ${error.status ?? error.code ?? "unknown"})`,
+		);
+	}
 }
 
 /**
@@ -62,21 +69,6 @@ export function isAlive(parent) {
 		return true;
 	} catch {
 		return false;
-	}
-}
-
-export function readScreen(parent) {
-	try {
-		return tmux(parent.socket, [
-			"capture-pane",
-			"-p",
-			"-t",
-			parent.paneId,
-			"-S",
-			"-80",
-		]);
-	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
 	}
 }
 
