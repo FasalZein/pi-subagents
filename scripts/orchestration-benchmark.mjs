@@ -269,6 +269,7 @@ async function main() {
 		final: {
 			parent: last.parent?.all ?? null,
 			parentConversation: last.parent?.conversation ?? null,
+			parentToolAttributed: last.parent?.toolAttributed ?? null,
 			childRoles: last.children?.roles ?? null,
 			childCost: last.children?.cost ?? null,
 		},

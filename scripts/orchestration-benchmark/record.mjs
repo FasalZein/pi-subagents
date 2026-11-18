@@ -118,18 +118,21 @@ export function rerunDecision(existingText, key) {
 const LAUNCH_METADATA = "pi-subagents_launch_metadata";
 
 /**
- * Every usage-bearing entry of one session, in order: assistant messages and any
- * other entry type that carries a usage object (usage, compaction, branch summary).
- * Entries without a usage object where one is required count as missing evidence.
+ * Every usage-bearing entry of one session, in order. Shapes of the Pi 1.5.2
+ * session format (docs/session-format.md, docs/message-types.md):
+ * - message entries: `message.usage`, required on assistant messages, optional on
+ *   others (a tool result carries the nested model work of its tool);
+ * - other entries: top-level `usage` (usage, compaction, branch_summary).
+ * An assistant message without usage counts as missing evidence.
  * @returns {{ledger: Array<object>, missingUsage: number}}
  */
 export function usageLedger(events) {
 	const ledger = [];
 	let missingUsage = 0;
 	for (const event of events) {
-		const isAssistant =
-			event?.type === "message" && event.message?.role === "assistant";
-		const usage = isAssistant ? event.message.usage : event?.usage;
+		const isMessage = event?.type === "message";
+		const isAssistant = isMessage && event.message?.role === "assistant";
+		const usage = isMessage ? event.message?.usage : event?.usage;
 		if (!usage || typeof usage !== "object") {
 			if (isAssistant) missingUsage += 1;
 			continue;
@@ -144,8 +147,9 @@ export function usageLedger(events) {
 		}
 		ledger.push({
 			id: event.id ?? null,
-			type: isAssistant ? "assistant" : event.type,
+			type: isMessage ? (event.message.role ?? "message") : event.type,
 			kind: event.kind ?? null,
+			tool: isMessage ? (event.message.toolName ?? null) : null,
 			stopReason: isAssistant ? (event.message.stopReason ?? null) : null,
 			input: usage.input,
 			cacheRead: usage.cacheRead,
@@ -157,7 +161,10 @@ export function usageLedger(events) {
 	return { ledger, missingUsage };
 }
 
-/** Totals of ledger rows. requests counts provider calls: every row is one. */
+/**
+ * Totals of ledger rows. requests counts usage rows: an assistant row is one
+ * provider call; a tool-result row may stand for several nested calls.
+ */
 export function totals(rows) {
 	const sum = {
 		requests: rows.length,
@@ -177,15 +184,19 @@ export function totals(rows) {
 	};
 }
 
+const toolAttributed = (ledger) =>
+	totals(ledger.filter((row) => row.type === "toolResult"));
+
 /**
- * Parent cost: all model-attributed entries, and the conversational subtotal
- * (assistant messages only) apart.
+ * Parent cost: all model-attributed entries; the conversational subtotal
+ * (assistant messages only) and the tool-attributed subtotal (tool results) apart.
  */
 export function summarizeParent(events) {
 	const { ledger, missingUsage } = usageLedger(events);
 	return {
 		all: totals(ledger),
 		conversation: totals(ledger.filter((row) => row.type === "assistant")),
+		toolAttributed: toolAttributed(ledger),
 		errorRequests: ledger.filter((row) => row.stopReason === "error").length,
 		missingUsage,
 		ledger,
@@ -218,6 +229,7 @@ export function summarizeChild(events) {
 		launchedAt: events[boundary].timestamp ?? null,
 		launchEntryId: events[boundary].id ?? null,
 		...totals(ledger),
+		toolAttributed: toolAttributed(ledger),
 		errorRequests: ledger.filter((row) => row.stopReason === "error").length,
 		missingUsage,
 		ledger,

@@ -49,7 +49,9 @@ function hasLaunchMarker(events) {
 function hasUsage(events) {
 	return events.some(
 		(e) =>
-			(e?.type === "message" && e.message?.role === "assistant") || e?.usage,
+			(e?.type === "message" &&
+				(e.message?.role === "assistant" || e.message?.usage)) ||
+			e?.usage,
 	);
 }
 

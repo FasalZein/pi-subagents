@@ -141,6 +141,37 @@ test("[F9] parent totals include every usage-bearing entry; the conversation sub
 	assert.equal(summary.ledger.length, 4);
 });
 
+test("[F9] nested usage of a tool result counts for parent and child, apart from the conversation", () => {
+	const toolResult = (u) => ({
+		type: "message",
+		message: { role: "toolResult", toolName: "ask", isError: false, usage: u },
+	});
+	const parent = summarizeParent([
+		assistant(usage(10, 0, 0, 1, 0.01)),
+		toolResult(usage(21, 0, 0, 3, 0.01)),
+		{ type: "message", message: { role: "toolResult", toolName: "read" } },
+	]);
+	assert.equal(parent.all.cumulativeInput, 31);
+	assert.equal(parent.all.cost, 0.02);
+	assert.equal(parent.conversation.cumulativeInput, 10);
+	assert.equal(parent.toolAttributed.cumulativeInput, 21);
+	assert.equal(parent.missingUsage, 0);
+	const child = summarizeChildren([
+		[
+			{
+				type: "custom",
+				customType: "pi-subagents_launch_metadata",
+				data: { agent: "r" },
+			},
+			assistant(usage(5, 0, 0, 1, 0.5), "stop"),
+			toolResult(usage(7, 0, 0, 1, 0.25)),
+		],
+	]);
+	assert.equal(child.cost, 0.75);
+	assert.equal(child.children[0].cumulativeInput, 12);
+	assert.equal(child.children[0].toolAttributed.cumulativeInput, 7);
+});
+
 test("[F8] a request without usage is counted as missing evidence, not as zero", () => {
 	const events = [
 		{
