@@ -373,13 +373,31 @@ export const resultTokens = (contract) =>
 	Array.isArray(contract.returns) ? contract.returns : [contract.returns];
 
 /**
+ * True when text holds the contract's result. A keyed contract (facts: KEY to
+ * value) needs each value on its own `KEY: value` line, so a value under
+ * another key does not count; else every result token as a whole token.
+ */
+export function holdsResult(text, contract) {
+	if (contract.facts) {
+		const found = keyedAnswer(Object.keys(contract.facts))(text);
+		return Object.entries(contract.facts).every(
+			([key, value]) => found?.[key] === value,
+		);
+	}
+	const tokens = resultTokens(contract);
+	return (
+		tokens.length > 0 && tokens.every((token) => containsToken(text, token))
+	);
+}
+
+/**
  * Whether a child met the contract its scenario declares for its role: it read
  * every named fixture file with a successful read call, and its final reply
- * contains every result token it must return as a whole token. Only entries after its own launch marker count.
+ * holds its result (holdsResult: by key for a keyed contract). Only entries after its own launch marker count.
  * A read counts by its path inside the fixture copy (workDir), resolved against
  * the child's session cwd, so a file of the same name elsewhere does not count.
  * @param {object[]} events - the child's session
- * @param {{returns: string | string[], reads: string[]}} contract
+ * @param {{returns: string | string[], reads: string[], facts?: Record<string, string>}} contract
  * @param {string} workDir - the fixture copy the attempt runs in
  * @returns {{read: boolean, returned: boolean}}
  */
@@ -413,9 +431,7 @@ export function childFulfils(events, contract, workDir) {
 		),
 		returned:
 			last?.stopReason === "stop" &&
-			resultTokens(contract).every((token) =>
-				containsToken(textOf(last.content), token),
-			),
+			holdsResult(textOf(last.content), contract),
 	};
 }
 

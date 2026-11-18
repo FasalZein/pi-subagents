@@ -16,9 +16,11 @@ const facts = {
 
 const childResults = {};
 for (let i = 1; i <= 6; i++) {
+	const keys = i === 4 ? ["FACT-4", "FACT-7"] : [`FACT-${i}`];
 	childResults[`bench-recon-${i}`] = {
-		returns:
-			i === 4 ? [facts["FACT-4"], facts["FACT-7"]] : [facts[`FACT-${i}`]],
+		returns: keys.map((key) => facts[key]),
+		// Keyed: a child's value counts only under its own key.
+		facts: Object.fromEntries(keys.map((key) => [key, facts[key]])),
 		reads: [`recon/area-${i}.md`],
 	};
 }

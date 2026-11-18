@@ -33,12 +33,7 @@
  * its result reached the parent by its own run id and the parent's terminal reply
  * contains it; auxiliary otherwise.
  */
-import {
-	containsToken,
-	resolveReadPath,
-	resultTokens,
-	textOf,
-} from "./record.mjs";
+import { holdsResult, resolveReadPath, textOf } from "./record.mjs";
 
 const RESULT_MESSAGE = "subagent_result";
 // Tool result states that announce a run but carry no result yet.
@@ -124,12 +119,11 @@ function terminalIndex(events) {
 
 /**
  * Handover class of one run (see the module header).
- * @param {{runId: string | null, tokens: string[], ended: boolean, carried: object[],
+ * @param {{runId: string | null, contract: object | undefined, ended: boolean, carried: object[],
  *   answeredAt: number}} input - answeredAt: entry index of the scored reply
  */
-export function handover({ runId, tokens, ended, carried, answeredAt }) {
-	const holds = (c) =>
-		tokens.length > 0 && tokens.every((token) => containsToken(c.text, token));
+export function handover({ runId, contract, ended, carried, answeredAt }) {
+	const holds = (c) => Boolean(contract) && holdsResult(c.text, contract);
 	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
 	const own = carried.filter((c) => c.runId === runId);
 	const correct = own.some((c) => c.index < answeredAt && holds(c));
@@ -181,10 +175,9 @@ export function deliveryAccounting({
 	const rows = children.map((child) => {
 		const named = runs.filter((run) => run.name && run.name === child.name);
 		const runId = named.length === 1 ? named[0].runId : null;
-		const tokens = child.contract ? resultTokens(child.contract) : [];
 		const { correct, ...result } = handover({
 			runId,
-			tokens,
+			contract: child.contract,
 			ended: child.ended,
 			carried,
 			answeredAt,
@@ -194,9 +187,9 @@ export function deliveryAccounting({
 		);
 		// Delivered for the verdict: an own carrier held the expected result before the scored reply.
 		const byOwnRun = correct;
+		// By key for a keyed contract: a value under another key is not surfaced.
 		const surfaced =
-			tokens.length > 0 &&
-			tokens.every((token) => containsToken(finalText, token));
+			Boolean(child.contract) && holdsResult(finalText, child.contract);
 		const outcome = readByParent
 			? "duplicate"
 			: child.fulfils.read && child.fulfils.returned && byOwnRun && surfaced

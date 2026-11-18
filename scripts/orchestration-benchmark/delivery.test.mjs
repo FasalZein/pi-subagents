@@ -9,6 +9,7 @@ import { deliveryAccounting } from "./delivery.mjs";
 import {
 	answerMatches,
 	answerParser,
+	childFulfils,
 	scoreAttempt,
 	terminalAnswer,
 } from "./record.mjs";
@@ -391,6 +392,79 @@ test("the recon oracle compares the final reply by key", () => {
 		false,
 	);
 	assert.equal(answer("No facts."), null);
+});
+
+test("[T02b-6] a clean yield needs the child's fact under its own key", () => {
+	const roles = Object.keys(recon.childResults);
+	const facts = recon.expectedFacts;
+	const keyed = (keys) => keys.map((k) => `${k}: ${facts[k]}`).join("\n");
+	const keysOf = (i) => (i === 4 ? ["FACT-4", "FACT-7"] : [`FACT-${i}`]);
+	const children = roles.map((role) => ({
+		name: role,
+		role,
+		contract: recon.childResults[role],
+		ended: true,
+		fulfils: { read: true, returned: true },
+	}));
+	// The parent swaps the values of FACT-1 and FACT-2; both tokens stay in its text.
+	const swapped = Object.keys(facts)
+		.map((k) => {
+			const value =
+				k === "FACT-1"
+					? facts["FACT-2"]
+					: k === "FACT-2"
+						? facts["FACT-1"]
+						: facts[k];
+			return `${k}: ${value}`;
+		})
+		.join("\n");
+	const record = account(
+		[
+			launch(roles.map((role, i) => [`r${i + 1}`, role])),
+			...roles.map((_, i) => result(`r${i + 1}`, keyed(keysOf(i + 1)))),
+			assistant("stop", swapped),
+		],
+		children,
+	);
+	assert.equal(record.outcomeClasses.clean_yield, 4);
+	// The child contract matches key and value too.
+	const childEvents = (text) => [
+		{ type: "session", cwd: WORK },
+		{
+			type: "custom",
+			customType: "pi-subagents_launch_metadata",
+			data: { agent: roles[0] },
+		},
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [
+					{
+						type: "toolCall",
+						id: "t1",
+						name: "read",
+						arguments: { path: "recon/area-1.md" },
+					},
+				],
+			},
+		},
+		{
+			type: "message",
+			message: { role: "toolResult", toolCallId: "t1", content: [] },
+		},
+		assistant("stop", text),
+	];
+	const contract = recon.childResults[roles[0]];
+	assert.deepEqual(
+		childFulfils(childEvents(`FACT-2: ${facts["FACT-1"]}`), contract, WORK),
+		{ read: true, returned: false },
+	);
+	assert.deepEqual(
+		childFulfils(childEvents(`FACT-1: ${facts["FACT-1"]}`), contract, WORK),
+		{ read: true, returned: true },
+	);
 });
 
 test("a batch with any launch order passes when the scenario allows any order", () => {
