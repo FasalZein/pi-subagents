@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
 import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
-import { applyAgentIndexSection, renderAgentIndexSection } from "./agents/index-section.ts";
+import { applyAgentIndexSection, renderAgentIndexSection, selectIndexTargets } from "./agents/index-section.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
 	formatMalformedAgentNotice,
@@ -78,7 +78,9 @@ import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
 	markInitialPromptLaunchComplete,
 	registerSubagentCoreTools,
+	shouldForceSynchronousLaunch,
 } from "./tools/subagent-tools.ts";
+import { isToolCallable } from "./tools/policy.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
 import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
@@ -232,10 +234,14 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// changed agent file shows in the next request. Pi keeps the section with
 	// the session and patches it only when its text changed (D19).
 	pi.on("before_agent_start", (event, ctx) => {
-		if (!shouldRegister(SUBAGENT_TOOL_NAME)) return undefined;
-		const section = renderAgentIndexSection(getAgentListEntries(ctx.cwd));
+		if (!shouldRegister(SUBAGENT_TOOL_NAME) || !isToolCallable(pi, SUBAGENT_TOOL_NAME)) return undefined;
+		const spawnEnv = parseSpawnEnv(process.env);
+		const section = renderAgentIndexSection(selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv), {
+			paneAvailable: ctx.hasUI && isMuxAvailable(),
+			forcesWait: shouldForceSynchronousLaunch(ctx.hasUI),
+		});
 		if (!section) return undefined;
-		return applyAgentIndexSection(event, section, parseSpawnEnv(process.env).callerAgent !== null);
+		return applyAgentIndexSection(event, section, spawnEnv.callerAgent !== null);
 	});
 
 	pi.on("input", () => {

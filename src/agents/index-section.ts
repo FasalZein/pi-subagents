@@ -1,10 +1,31 @@
+import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import type { AgentListEntry } from "./agent-list.ts";
 
-/** Name of the system-prompt section that holds the agent index (D19). */
-export const AGENT_INDEX_SECTION_NAME = "subagent_index";
+/**
+ * Name of the system-prompt section that holds the agent index (D19). The tags
+ * count against the limit, so a short name leaves room for agent lines.
+ */
+export const AGENT_INDEX_SECTION_NAME = "index";
 
-/** Upper bound of the section text, in characters (D19). */
+/** Upper bound of the section as Pi renders it into the request, tags included (D19). */
 export const AGENT_INDEX_MAX_CHARS = 1_600;
+
+/** The section as Pi renders it into the request. */
+export function renderAgentIndexRequestText(section: string): string {
+	return `<${AGENT_INDEX_SECTION_NAME}>\n${section}\n</${AGENT_INDEX_SECTION_NAME}>`;
+}
+
+const WRAPPER_CHARS = renderAgentIndexRequestText("").length;
+
+/** How a solo launch from this session runs, which decides the flags of a line. */
+export interface IndexLaunchPolicy {
+	/** The session has a UI and a multiplexer, so a non-background agent opens a pane. */
+	paneAvailable: boolean;
+	/** Every launch waits for the helper and closes it (print, headless or startup-prompt run). */
+	forcesWait: boolean;
+}
+
+const FORCED_WAIT_LINE = "Every launch here waits for its result.";
 
 const DESCRIPTION_CHARS = 100;
 
@@ -14,27 +35,55 @@ const FIXED_LINES = [
 	"More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).",
 ] as const;
 
-function getFlags(entry: AgentListEntry): string[] {
+function getFlags(entry: AgentListEntry, policy: IndexLaunchPolicy): string[] {
 	// The common case is a headless, fresh, self-closing helper whose launch
-	// returns at once; only a difference from it gets a flag.
-	const manual =
-		entry.autoExit === false ||
-		(entry.autoExit === undefined && entry.mode !== "background");
+	// returns at once; only a difference from it gets a flag. The flags follow
+	// the solo launch policy (shouldUseBackgroundLaunch, applySynchronousLaunchPolicy):
+	// a headless or forced-wait launch always closes itself, and a forced wait
+	// is stated once for the session instead of on every line.
+	const pane = policy.paneAvailable && entry.mode !== "background" && entry.llmAsVerifier !== true;
+	const manual = pane && !policy.forcesWait && entry.autoExit !== true;
 	return [
-		entry.mode !== "background" ? "[pane]" : undefined,
+		pane ? "[pane]" : undefined,
 		entry.sessionMode === "fork" ? "[fork]" : undefined,
 		manual ? "[manual]" : undefined,
-		entry.async === false ? "[waits]" : undefined,
+		!policy.forcesWait && entry.async === false ? "[waits]" : undefined,
 	].filter((flag): flag is string => flag !== undefined);
 }
 
-function renderAgentLine(entry: AgentListEntry): string {
+/**
+ * The entries this session may launch directly: the same spawn policy the
+ * launch tool applies, without the caller itself.
+ */
+export function selectIndexTargets(
+	entries: readonly AgentListEntry[],
+	spawnEnv: ParsedSpawnEnv,
+): AgentListEntry[] {
+	return entries.filter(
+		(entry) =>
+			entry.name !== spawnEnv.callerAgent &&
+			resolveSpawnPolicy({
+				callerAgent: spawnEnv.callerAgent,
+				targetAgent: entry.name,
+				callerBudget: spawnEnv.callerBudget,
+				callerSpawnable: spawnEnv.callerSpawnable,
+				targetSpawning: entry.spawning,
+				targetSpawnDepth: entry.spawnDepth,
+				targetSpawnWidth: entry.spawnWidth,
+				targetVisibleTo: entry.visibleTo,
+				envDepthCeiling: spawnEnv.envDepthCeiling,
+				envWidthCeiling: spawnEnv.envWidthCeiling,
+			}).allowed,
+	);
+}
+
+function renderAgentLine(entry: AgentListEntry, policy: IndexLaunchPolicy): string {
 	const description = (entry.description ?? "")
 		.replace(/\s+/g, " ")
 		.trim()
 		.slice(0, DESCRIPTION_CHARS)
 		.trimEnd();
-	return [`- ${entry.name}: ${description}`, ...getFlags(entry)].join(" ");
+	return [`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" ");
 }
 
 function renderCountLine(rest: number): string {
@@ -49,18 +98,20 @@ function compareIndexOrder(a: AgentListEntry, b: AgentListEntry): number {
 /**
  * The index section text for the agents a session may launch, or undefined
  * when it may launch none. Pinned agents come first, then the others, each
- * group by name; agent lines are added while the text, with a count line for
- * the rest, stays within AGENT_INDEX_MAX_CHARS.
+ * group by name; agent lines are added while the rendered section, with a
+ * count line for the rest, stays within AGENT_INDEX_MAX_CHARS.
  */
 export function renderAgentIndexSection(
 	entries: readonly AgentListEntry[],
+	policy: IndexLaunchPolicy,
 ): string | undefined {
 	const described = entries.filter((entry) => entry.description?.trim());
 	if (described.length === 0) return undefined;
-	const lines = [...described].sort(compareIndexOrder).map(renderAgentLine);
-	const fixed = FIXED_LINES.join("\n");
+	const lines = [...described].sort(compareIndexOrder).map((entry) => renderAgentLine(entry, policy));
+	const fixed = [...FIXED_LINES, ...(policy.forcesWait ? [FORCED_WAIT_LINE] : [])].join("\n");
 	// Length with the first k agent lines: each line adds itself and one newline.
 	const lengthWith = (k: number, prefix: number) =>
+		WRAPPER_CHARS +
 		fixed.length +
 		prefix +
 		(k < lines.length ? 1 + renderCountLine(lines.length - k).length : 0);
@@ -102,7 +153,7 @@ export function applyAgentIndexSection(
 	event.systemPromptOptions.sections[AGENT_INDEX_SECTION_NAME] = section;
 	const forced = event.systemPromptOptions.forceSystemPrompt;
 	if (forced === undefined || !isChild) return undefined;
-	const tagged = `<${AGENT_INDEX_SECTION_NAME}>\n${section}\n</${AGENT_INDEX_SECTION_NAME}>`;
+	const tagged = renderAgentIndexRequestText(section);
 	if (forced.includes(tagged)) return undefined;
 	return { systemPrompt: `${forced}\n\n${tagged}` };
 }

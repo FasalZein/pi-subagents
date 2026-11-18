@@ -1,3 +1,4 @@
+import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
 import subagentsExtension from "../../src/subagents.ts";
 import {
 	afterEach,
@@ -91,6 +92,6 @@ describe("parent prompt-start hooks", () => {
 		for (const result of results) {
 			assert.equal((result as { systemPrompt?: string } | undefined)?.systemPrompt, undefined);
 		}
-		assert.match(event.systemPromptOptions.sections.subagent_index ?? "", /- worker: Worker/);
+		assert.match(event.systemPromptOptions.sections[AGENT_INDEX_SECTION_NAME] ?? "", /- worker: Worker/);
 	});
 });

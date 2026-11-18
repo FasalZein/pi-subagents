@@ -192,7 +192,11 @@ export function seedSubagentSessionFile(
 		const branch: Array<Record<string, unknown>> = [];
 		let prevId: string | null = null;
 		for (const entry of rawBranch) {
-			if ((entry as { customType?: unknown }).customType === "subagent_roster") continue;
+			const customType = (entry as { customType?: unknown }).customType;
+			// An ancestor's launch metadata names the ancestor's grant; the fork
+			// child's own metadata is appended after seeding and must be the
+			// only entry resume reads.
+			if (customType === "subagent_roster" || customType === SUBAGENT_LAUNCH_METADATA_CUSTOM_TYPE) continue;
 			const e = withoutParentIndex(entry as unknown as Record<string, unknown>) as Record<string, unknown> & {
 				id?: unknown;
 				parentId?: unknown;

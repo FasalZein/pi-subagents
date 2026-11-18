@@ -7,8 +7,12 @@ import {
 	AGENT_INDEX_MAX_CHARS,
 	AGENT_INDEX_SECTION_NAME,
 	applyAgentIndexSection,
+	type IndexLaunchPolicy,
+	renderAgentIndexRequestText,
 	renderAgentIndexSection,
+	selectIndexTargets,
 } from "../../src/agents/index-section.ts";
+import { parseSpawnEnv } from "../../src/spawn/policy.ts";
 import {
 	afterEach,
 	assert,
@@ -28,6 +32,8 @@ const FIXTURE_AGENTS = join(
 	"agent-fixture",
 	"agents",
 );
+const PANE: IndexLaunchPolicy = { paneAvailable: true, forcesWait: false };
+const PRINT: IndexLaunchPolicy = { paneAvailable: false, forcesWait: true };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
 
 function entry(
@@ -68,11 +74,12 @@ describe("agent index section", () => {
 			file.replace(/\.md$/, ""),
 		);
 		assert.equal(entries.length, names.length);
-		const section = renderAgentIndexSection(entries);
+		const section = renderAgentIndexSection(entries, PANE);
 		assert.ok(section);
+		const rendered = renderAgentIndexRequestText(section);
 		assert.ok(
-			section.length <= AGENT_INDEX_MAX_CHARS,
-			`${section.length} characters\n${section}`,
+			rendered.length <= AGENT_INDEX_MAX_CHARS,
+			`${rendered.length} characters\n${rendered}`,
 		);
 		const lines = section.split("\n");
 		assert.match(
@@ -101,12 +108,10 @@ describe("agent index section", () => {
 			const entries = Array.from({ length: 100 }, (_, i) =>
 				entry(`agent-${String(i).padStart(3, "0")}`, { pinned }),
 			);
-			const section = renderAgentIndexSection(entries);
+			const section = renderAgentIndexSection(entries, PANE);
 			assert.ok(section);
-			assert.ok(
-				section.length <= AGENT_INDEX_MAX_CHARS,
-				`${section.length} characters`,
-			);
+			const rendered = renderAgentIndexRequestText(section).length;
+			assert.ok(rendered <= AGENT_INDEX_MAX_CHARS, `${rendered} characters`);
 			const lines = section.split("\n");
 			const shown = lines.filter((line) => line.startsWith("- ")).length;
 			assert.ok(shown > 0);
@@ -123,7 +128,7 @@ describe("agent index section", () => {
 			entry("zeta", { pinned: true }),
 			entry("beta"),
 			entry("omega", { pinned: true }),
-		]);
+		], PANE);
 		const names = section
 			?.split("\n")
 			.filter((line) => line.startsWith("- "))
@@ -137,7 +142,7 @@ describe("agent index section", () => {
 			entry("pane", { mode: "interactive", autoExit: undefined }),
 			entry("forked", { sessionMode: "fork", async: false }),
 			entry("long", { description: "x".repeat(300) }),
-		]);
+		], PANE);
 		const lines = section?.split("\n") ?? [];
 		assert.ok(
 			lines.includes(
@@ -159,10 +164,41 @@ describe("agent index section", () => {
 		assert.ok(lines.includes(`- long: ${"x".repeat(100)}`));
 	});
 
+	it("flags lines by the solo launch policy of a headless or forced-wait session", () => {
+		const lines =
+			renderAgentIndexSection([
+				entry("manual-pane", { mode: "interactive", autoExit: false }),
+				entry("bg-manual", { mode: "background", autoExit: false }),
+				entry("blocking", { async: false }),
+			], PRINT)?.split("\n") ?? [];
+		// A print parent launches every agent headless, closes it and waits
+		// (shouldUseBackgroundLaunch, applySynchronousLaunchPolicy).
+		const manualPane = lines.find((line) => line.startsWith("- manual-pane: "));
+		assert.ok(manualPane);
+		assert.doesNotMatch(manualPane, /\[pane\]|\[manual\]/);
+		assert.doesNotMatch(lines.find((line) => line.startsWith("- bg-manual: ")) ?? "", /\[manual\]/);
+		assert.doesNotMatch(lines.find((line) => line.startsWith("- blocking: ")) ?? "", /\[waits\]/);
+		assert.ok(lines.includes("Every launch here waits for its result."));
+		assert.equal(lines.slice(0, 3).join("\n"), renderAgentIndexSection([entry("x")], PANE)?.split("\n").slice(0, 3).join("\n"));
+		// In a pane session a background agent closes itself whatever auto-exit says.
+		const pane = renderAgentIndexSection([entry("bg-manual", { mode: "background", autoExit: false })], PANE);
+		assert.doesNotMatch(pane ?? "", /\[manual\]/);
+	});
+
+	it("never lists the caller and matches the launch tool's spawn policy", () => {
+		const entries = [entry("coordinator", { spawning: true }), entry("scout")];
+		const names = (env: Record<string, string>) =>
+			selectIndexTargets(entries, parseSpawnEnv(env)).map((e) => e.name);
+		assert.deepEqual(names({ PI_SUBAGENT_AGENT: "coordinator", PI_SUBAGENT_SPAWNABLE: "true" }), ["scout"]);
+		assert.deepEqual(names({ PI_SUBAGENT_AGENT: "coordinator", PI_SUBAGENT_SPAWNABLE: "coordinator" }), []);
+		assert.deepEqual(names({ PI_SUBAGENT_AGENT: "coordinator", PI_SUBAGENT_SPAWN_BUDGET: "0" }), []);
+		assert.deepEqual(names({}), ["coordinator", "scout"]);
+	});
+
 	it("returns no section when no agent may be launched", () => {
-		assert.equal(renderAgentIndexSection([]), undefined);
+		assert.equal(renderAgentIndexSection([], PANE), undefined);
 		assert.equal(
-			renderAgentIndexSection([entry("blank", { description: "  " })]),
+			renderAgentIndexSection([entry("blank", { description: "  " })], PANE),
 			undefined,
 		);
 	});

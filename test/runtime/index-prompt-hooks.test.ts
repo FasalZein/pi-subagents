@@ -2,8 +2,10 @@ import {
 	buildSystemPrompt,
 	normalizeBuildSystemPromptOptions,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js";
+import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
 import subagentsExtension from "../../src/subagents.ts";
 import { applyChildSystemPromptOverrides } from "../../src/tools/child-system-prompt.ts";
+import { cpSync } from "node:fs";
 import {
 	afterEach,
 	assert,
@@ -42,7 +44,11 @@ function writeAgent(agentsDir: string, name: string, frontmatter: string) {
 	);
 }
 
-function setup() {
+type ToolInfoStub = { name: string; exposure?: string };
+const LOADOUT: ToolInfoStub[] = [{ name: "read" }, { name: "bash" }, { name: "subagent" }];
+const FIXTURE_AGENTS = join(import.meta.dirname, "..", "..", "scripts", "orchestration-benchmark", "agent-fixture", "agents");
+
+function setup(tools: { all: ToolInfoStub[]; active: string[] } = { all: LOADOUT, active: ["read", "bash", "subagent"] }) {
 	const dir = createTestDir();
 	const configDir = join(dir, "agent-root");
 	const agentsDir = join(configDir, "agents");
@@ -69,12 +75,8 @@ function setup() {
 		registerMessageRenderer() {},
 		sendMessage() {},
 		appendEntry() {},
-		getActiveTools: () => ["read", "bash", "subagent"],
-		getAllTools: () => [
-			{ name: "read" },
-			{ name: "bash" },
-			{ name: "subagent" },
-		],
+		getActiveTools: () => tools.active,
+		getAllTools: () => tools.all,
 		setActiveTools() {},
 		getThinkingLevel: () => "low",
 	} as never);
@@ -130,7 +132,9 @@ async function promptStart(handlers: Handler[], ctx: { cwd: string }) {
 	}
 	return {
 		prompt: buildSystemPrompt(options),
-		section: options.sections.subagent_index,
+		section: options.sections[AGENT_INDEX_SECTION_NAME],
+		// The section as the request carries it, whatever its name.
+		rendered: /<(\w+)>\nHelpers: launch with subagent[\s\S]*?\n<\/\1>/.exec(buildSystemPrompt(options))?.[0],
 		forced: options.forceSystemPrompt,
 		messages,
 	};
@@ -196,7 +200,7 @@ describe("agent index at prompt start", () => {
 		);
 		assert.match(
 			(await promptStart(start, ctx)).section ?? "",
-			/\n- researcher: Investigate open questions \[pane\] \[manual\]\n/,
+			/\n- researcher: Investigate open questions\n/,
 		);
 	});
 
@@ -235,7 +239,7 @@ describe("agent index at prompt start", () => {
 			denied.ctx,
 		);
 		assert.equal(run.section, undefined);
-		assert.doesNotMatch(run.prompt, /subagent_index/);
+		assert.doesNotMatch(run.prompt, new RegExp(`<${AGENT_INDEX_SECTION_NAME}>`));
 	});
 
 	for (const order of ["index first", "whole prompt first"] as const) {
@@ -257,14 +261,81 @@ describe("agent index at prompt start", () => {
 			assert.match(run.prompt, /INHERITED APPENDED TEXT/);
 			assert.match(
 				run.prompt,
-				/<subagent_index>\nHelpers: launch with subagent[\s\S]*\n- scout: Map the code before a change\n<\/subagent_index>/,
+				new RegExp(
+					`<${AGENT_INDEX_SECTION_NAME}>\\nHelpers: launch with subagent[\\s\\S]*\\n- scout: Map the code before a change\\n</${AGENT_INDEX_SECTION_NAME}>`,
+				),
 			);
 			assert.doesNotMatch(run.prompt, /reviewer/);
 			assert.equal(
-				run.prompt.split("<subagent_index>").length,
+				run.prompt.split(`<${AGENT_INDEX_SECTION_NAME}>`).length,
 				2,
 				"one copy of the section",
 			);
 		});
 	}
+
+	it("keeps the rendered section within the limit for the fixture and for 100 generated or pinned definitions", async () => {
+		const fixture = setup();
+		cpSync(FIXTURE_AGENTS, fixture.agentsDir, { recursive: true });
+		const start = fixture.handlers.get("before_agent_start") ?? [];
+		const run = await promptStart(start, fixture.ctx);
+		assert.ok(run.rendered);
+		assert.ok(run.rendered.length <= 1_600, `${run.rendered.length} characters`);
+		for (const name of ["architect", "cleaner", "design", "design-builder", "github", "hardener", "researcher", "reviewer", "scout", "worker"])
+			assert.match(run.rendered, new RegExp(`\\n- ${name}: `), name);
+		for (const pinned of [false, true]) {
+			const many = setup();
+			for (let i = 0; i < 100; i++)
+				writeAgent(
+					many.agentsDir,
+					`agent-${String(i).padStart(3, "0")}`,
+					`description: Agent ${i} does one kind of work and reports back with a short summary of the result.\nmode: background${pinned ? "\npinned: true" : ""}`,
+				);
+			const r = await promptStart(many.handlers.get("before_agent_start") ?? [], many.ctx);
+			assert.ok(r.rendered);
+			assert.ok(r.rendered.length <= 1_600, `${r.rendered.length} characters`);
+			assert.match(r.rendered, /\n\+\d+ more: subagent_agents with a query\n<\/\w+>$/);
+		}
+	});
+
+	it("never lists the caller, including under a self-only grant", async () => {
+		process.env.PI_SUBAGENT_AGENT = "coordinator";
+		process.env.PI_SUBAGENT_SPAWNABLE = "true";
+		const any = setup();
+		writeAgent(any.agentsDir, "coordinator", "description: Coordinate the work\nmode: background\nspawning: true");
+		const section = (await promptStart(any.handlers.get("before_agent_start") ?? [], any.ctx)).section;
+		assert.match(section ?? "", /- scout: /);
+		assert.doesNotMatch(section ?? "", /- coordinator: /);
+		resetSubagentStateForTest();
+
+		process.env.PI_SUBAGENT_SPAWNABLE = "coordinator";
+		const selfOnly = setup();
+		writeAgent(selfOnly.agentsDir, "coordinator", "description: Coordinate the work\nmode: background\nspawning: true");
+		assert.equal((await promptStart(selfOnly.handlers.get("before_agent_start") ?? [], selfOnly.ctx)).section, undefined);
+	});
+
+	it("shows the section only when the session can call the launch tool", async () => {
+		const cases: Array<[string, { all: ToolInfoStub[]; active: string[] }, boolean]> = [
+			["excluded by Pi", { all: [{ name: "read" }], active: ["read"] }, false],
+			["registered but inactive", { all: LOADOUT, active: ["read"] }, false],
+			["hidden", { all: [{ name: "subagent", exposure: "hidden" }], active: [] }, false],
+			["callable through codemode only", { all: [{ name: "codemode" }, { name: "subagent", exposure: "codemode" }], active: ["codemode"] }, true],
+			["active", { all: LOADOUT, active: ["subagent"] }, true],
+		];
+		for (const [label, tools, shown] of cases) {
+			const { handlers, ctx } = setup(tools);
+			const run = await promptStart(handlers.get("before_agent_start") ?? [], ctx);
+			assert.equal(run.section !== undefined, shown, label);
+			resetSubagentStateForTest();
+		}
+	});
+
+	it("flags lines by the launch policy of a print session", async () => {
+		const { agentsDir, handlers, ctx } = setup();
+		writeAgent(agentsDir, "design", "description: Design the change\nmode: interactive\nauto-exit: false\nasync: true");
+		writeAgent(agentsDir, "keeper", "description: Keep running\nmode: background\nauto-exit: false");
+		const lines = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section?.split("\n") ?? [];
+		assert.ok(lines.includes("- design: Design the change"), lines.join("\n"));
+		assert.ok(lines.includes("- keeper: Keep running"), lines.join("\n"));
+	});
 });

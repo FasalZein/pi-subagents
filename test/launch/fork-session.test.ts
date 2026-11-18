@@ -28,6 +28,12 @@ import {
 	waitForSubagentForTest,
 	writeFileSync,
 } from "../support/index.ts";
+import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
+import {
+	type PersistedSubagentLaunchMetadata,
+	readSubagentLaunchMetadataEntries,
+	writeSubagentLaunchMetadataEntry,
+} from "../../src/session/session-files.ts";
 
 describe("fork session launch behavior", () => {
 	afterEach(() => {
@@ -253,7 +259,7 @@ describe("fork session launch behavior", () => {
 		const parent = join(dir, "parent.jsonl");
 		const child = join(dir, "child.jsonl");
 		const header = { ...SESSION_HEADER, cwd: dir, timestamp: "2026-08-07T20:00:00.000Z" };
-		const parentIndex = "<subagent_index>\nParent index\n</subagent_index>";
+		const parentIndex = `<${AGENT_INDEX_SECTION_NAME}>\nParent index\n</${AGENT_INDEX_SECTION_NAME}>`;
 		const entries = [
 			header,
 			{
@@ -261,7 +267,7 @@ describe("fork session launch behavior", () => {
 				id: "sys-001",
 				parentId: null,
 				timestamp: "2026-08-07T20:00:01.000Z",
-				message: { role: "system", content: "", sections: { preamble: "Base", subagent_index: parentIndex } },
+				message: { role: "system", content: "", sections: { preamble: "Base", [AGENT_INDEX_SECTION_NAME]: parentIndex } },
 			},
 			{
 				type: "message",
@@ -278,7 +284,7 @@ describe("fork session launch behavior", () => {
 				summary: "summary",
 				firstKeptEntryId: "user-001",
 				tokensBefore: 10,
-				systemMessage: { role: "system", content: "", sections: { preamble: "Base", subagent_index: parentIndex } },
+				systemMessage: { role: "system", content: "", sections: { preamble: "Base", [AGENT_INDEX_SECTION_NAME]: parentIndex } },
 			},
 			{
 				type: "message",
@@ -296,6 +302,34 @@ describe("fork session launch behavior", () => {
 		assert.equal(JSON.stringify(seeded).includes("Parent index"), false);
 		assert.deepEqual(seeded.find((entry) => entry.id === "sys-001")?.message.sections, { preamble: "Base" });
 		assert.deepEqual(seeded.find((entry) => entry.id === "cmp-001")?.systemMessage.sections, { preamble: "Base" });
+	});
+
+	it("does not copy an ancestor's launch metadata into a fork, so resume reads the child's own grant", () => {
+		const dir = createTestDir();
+		const parent = join(dir, "parent.jsonl");
+		const child = join(dir, "child.jsonl");
+		const metadata = (agent: string) =>
+			({ version: 1, agent, mode: "background", sessionMode: "fork", cwd: dir }) as unknown as PersistedSubagentLaunchMetadata;
+		writeFileSync(
+			parent,
+			`${[
+				{ ...SESSION_HEADER, cwd: dir },
+				{ type: "message", id: "user-001", parentId: null, timestamp: "2026-08-07T20:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "go" }] } },
+			]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n")}\n`,
+		);
+		// The parent is itself a spawning coordinator child: its own launch metadata is in its file.
+		writeSubagentLaunchMetadataEntry(parent, metadata("coordinator"));
+		const leaf = (getEntries(parent) as any[]).at(-1).id;
+
+		seedSubagentSessionFileForTest("fork", parent, child, dir, { activeLeafId: leaf });
+		writeSubagentLaunchMetadataEntry(child, metadata("reviewer"));
+
+		assert.deepEqual(
+			readSubagentLaunchMetadataEntries(child).map((entry) => entry.agent),
+			["reviewer"],
+		);
 	});
 
 	it("creates forked child session files directly", () => {
