@@ -83,12 +83,14 @@ describe("parent prompt-start hooks", () => {
 			type: "before_agent_start",
 			prompt: "hello",
 			systemPrompt: "BASE SYSTEM PROMPT",
-			systemPromptOptions: {},
+			// Pi always passes normalized options, whose sections map exists.
+			systemPromptOptions: { sections: {} as Record<string, string> },
 		};
 		const results = await Promise.all((handlers.get("before_agent_start") ?? []).map((handler) => handler(event, ctx)));
 		assert.ok(results.length > 0);
 		for (const result of results) {
 			assert.equal((result as { systemPrompt?: string } | undefined)?.systemPrompt, undefined);
 		}
+		assert.match(event.systemPromptOptions.sections.subagent_index ?? "", /- worker: Worker/);
 	});
 });

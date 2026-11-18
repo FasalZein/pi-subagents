@@ -19,7 +19,6 @@ import {
 	mkdirSync,
 	resetSubagentStateForTest,
 	setRunningSubagentForTest,
-	subagentsExtension,
 	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
@@ -400,50 +399,6 @@ describe("coordinator-turn launch hardening", () => {
 			else process.env.PI_ARTIFACT_PROJECT_ROOT = saved.artifactRoot;
 			rmSync(artifactRoot, { recursive: true, force: true });
 			rmSync(parent, { recursive: true, force: true });
-		}
-	});
-
-	it("wires await-all roster guidance only for a headless session", () => {
-		const dir = createTestDir();
-		const configDir = join(dir, "agent-root");
-		mkdirSync(join(configDir, "agents"), { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-		writeFileSync(
-			join(configDir, "agents", "worker.md"),
-			"---\nname: worker\ndescription: A roster worker\nmode: background\n---\n\nWorker body.",
-		);
-
-		const originalArgv = process.argv;
-		process.argv = ["node", "pi"];
-		try {
-			const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-			subagentsExtension({
-				on(event: string, handler: (event: unknown, ctx: unknown) => unknown) {
-					handlers.set(event, handler);
-				},
-				registerTool() {},
-				registerCommand() {},
-				registerMessageRenderer() {},
-				sendMessage() {},
-			} as never);
-			const ctx = {
-				cwd: dir,
-				hasUI: true,
-				ui: { setWidget() {} },
-				sessionManager: {
-					getHeader: () => ({ id: "parent", type: "session", timestamp: "", cwd: dir }),
-				},
-			};
-			handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
-			const message = (handlers.get("before_agent_start")?.({ type: "before_agent_start" }, ctx) as {
-				message?: { content: string };
-			} | undefined)?.message;
-			assert.ok(message);
-			assert.match(message.content, /tool_return: later_message/);
-			assert.match(message.content, /tool_return=later_message/);
-			assert.doesNotMatch(message.content, /In this session every launch waits/);
-		} finally {
-			process.argv = originalArgv;
 		}
 	});
 });

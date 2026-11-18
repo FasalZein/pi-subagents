@@ -77,6 +77,8 @@ export interface ResolvedAgentDefinition extends AgentDefaults {
 	description?: string;
 	source: "project" | "global";
 	path: string;
+	/** `pinned: true` puts the agent first in the index (D19). */
+	pinned?: boolean;
 }
 
 /** An enabled agent file whose frontmatter failed to parse (D24). */
@@ -235,6 +237,7 @@ function parseAgentDefinitionContent(
 		...(spawnWidth !== undefined ? { spawnWidth } : {}),
 		visibleTo,
 		autoExit: autoExitRaw != null ? autoExitRaw === "true" : undefined,
+		...(get("pinned") === "true" ? { pinned: true } : {}),
 		systemPromptMode: systemPromptRaw === "append" || systemPromptRaw === "replace" ? systemPromptRaw : undefined,
 		cwd: get("cwd"),
 		cwdBase,

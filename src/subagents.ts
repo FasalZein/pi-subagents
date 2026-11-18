@@ -2,15 +2,11 @@ import { registerOutstandingWorkReporting } from "./runtime/work-reporting.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
-import {
-	getAgentListEntries as getAgentListEntriesFromDefinitions,
-	getAgentListSignature,
-	renderAgentListReminder,
-} from "./agents/agent-list.ts";
+import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
+import { applyAgentIndexSection, renderAgentIndexSection } from "./agents/index-section.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
 	formatMalformedAgentNotice,
-	getEffectiveAgentDefinitions,
 	loadAgentCatalog,
 	loadAgentDefaults as loadAgentDefaultsFromDefinitions,
 } from "./agents/definitions.ts";
@@ -80,7 +76,6 @@ import {
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
-	isHeadlessLaunchSession,
 	markInitialPromptLaunchComplete,
 	registerSubagentCoreTools,
 } from "./tools/subagent-tools.ts";
@@ -137,17 +132,10 @@ function resolveTaskSessionMode(agentDefs: AgentDefaults | null): SubagentSessio
 	return resolveTaskSessionModeFromSessionFiles(agentDefs, resolveSubagentNoSession, getNoSessionSeedMode);
 }
 
-let lastAmbientRosterSignature: string | null = null;
 // Pi reloads extension modules without a cache, so module state does not
 // survive /reload. The session that saw the malformed-agent notice is kept on
 // globalThis, so a reload of that session shows no second notice (D24).
 const MALFORMED_AGENT_NOTICE_SESSION_KEY = Symbol.for("pi-subagents/malformed-agent-notice-session");
-let pendingAmbientRoster: {
-	signature: string;
-	content: string;
-	entries: AgentListEntry[];
-	supersedes?: true;
-} | null = null;
 
 function muxUnavailableResult(kind: "subagents" | "tab-title" = "subagents") {
 	const text =
@@ -187,7 +175,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let latestContext: ExtensionContext | undefined;
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
-	pi.on("session_start", (event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		initializeSpawnWidthForSession();
 		void workReporting.start(ctx);
 		latestContext = ctx;
@@ -238,74 +226,16 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			// Adoption is best-effort at startup; a failure must never block
 			// the session from starting.
 		});
-
-		if (!shouldRegister(SUBAGENT_TOOL_NAME)) return;
-
-		// Reset the cached signature on every fresh session so module-level state
-		// does not leak between sessions. The reload path still uses the cached
-		// signature to avoid duplicating the notification within the same session.
-		if (event.reason !== "reload") {
-			lastAmbientRosterSignature = null;
-		}
-
-		const entries = getAgentListEntries(ctx.cwd);
-		const signature = getAgentListSignature(entries);
-		// A headless parent awaits every launch, so the roster must not promise
-		// a later report the model would otherwise plan around.
-		const rosterOptions = { awaitAllLaunches: isHeadlessLaunchSession(ctx.hasUI) };
-		if (entries.length === 0) {
-			const hasDescribedAgents = getEffectiveAgentDefinitions(ctx.cwd).some((agent) => agent.description?.trim());
-			if (!hasDescribedAgents && lastAmbientRosterSignature === null) {
-				pendingAmbientRoster = null;
-				return;
-			}
-			if (signature === lastAmbientRosterSignature) {
-				pendingAmbientRoster = null;
-				return;
-			}
-			pendingAmbientRoster = {
-				signature,
-				content: renderAgentListReminder(entries, rosterOptions),
-				entries,
-				supersedes: true,
-			};
-			return;
-		}
-
-		if (signature === lastAmbientRosterSignature) {
-			pendingAmbientRoster = null;
-			return;
-		}
-
-		pendingAmbientRoster = {
-			signature,
-			content: renderAgentListReminder(entries, rosterOptions),
-			entries,
-			supersedes: event.reason === "reload" ? true : undefined,
-		};
 	});
 
-	pi.on("before_agent_start", () => {
-		const rosterResult = pendingAmbientRoster
-			? {
-					message: {
-						customType: "subagent_roster",
-						content: pendingAmbientRoster.content,
-						display: false,
-						details: {
-							entries: pendingAmbientRoster.entries,
-							signature: pendingAmbientRoster.signature,
-							...(pendingAmbientRoster.supersedes ? { supersedes: true } : {}),
-						},
-					},
-				}
-			: undefined;
-		if (pendingAmbientRoster) {
-			lastAmbientRosterSignature = pendingAmbientRoster.signature;
-			pendingAmbientRoster = null;
-		}
-
-		return rosterResult;
+	// The index is written at every prompt start from the current files, so a
+	// changed agent file shows in the next request. Pi keeps the section with
+	// the session and patches it only when its text changed (D19).
+	pi.on("before_agent_start", (event, ctx) => {
+		if (!shouldRegister(SUBAGENT_TOOL_NAME)) return undefined;
+		const section = renderAgentIndexSection(getAgentListEntries(ctx.cwd));
+		if (!section) return undefined;
+		return applyAgentIndexSection(event, section, parseSpawnEnv(process.env).callerAgent !== null);
 	});
 
 	pi.on("input", () => {
