@@ -4,13 +4,18 @@ import { FAKE_TERMINAL_STATE_JS } from "./fake-terminal-state.ts";
 
 /** The caller terminal of the parent Pi in the fake. */
 export const FAKE_HC_CALLER = "t1";
+/** The working directory of the fake core: an API start without cwd runs there, never in the parent cwd. */
+export const FAKE_HC_DAEMON_CWD = "/fake-hc-daemon-cwd";
 
 /**
  * Stateful fake hc. It replays the shapes of the 2026-11-18 live checks
  * (live-hc-window-checks.md, "Shapes for fakes") for the subcommands that src/mux/herdr-core*.ts sends.
  * State in $FAKE_TERMINAL_STATE: term-<address>.json per terminal, events (one JSON object per
  * line: labels and the event line), calls (one line per hc call), requests (JSON-RPC requests).
- * "hc events" drops its stream when the file drop exists. Every call is also logged to $FAKE_MUX_LOG.
+ * "hc events" drops its stream when the file drop exists. A terminal.run reply waits while the file
+ * hold-run exists. Every call is also logged to $FAKE_MUX_LOG.
+ * Requests are checked against hc 0.1.21's schema (hc/schema.json) for the fields production sends:
+ * terminal.run params and their types, and the terminal name rule "1-32 of a-z 0-9 - _ .".
  */
 export const FAKE_HC = `#!/usr/bin/env node
 ${FAKE_TERMINAL_STATE_JS}
@@ -52,6 +57,25 @@ function labelMatches(labels, filter) {
 }
 function short(term) {
   return JSON.stringify({ address: term.address, agent: "sh", cwd: term.cwd, name: term.name, state: term.state, turn: 0 });
+}
+const NAME_RULE = /^[a-z0-9_.-]{1,32}$/;
+const RUN_PARAMS = ["argv", "caller", "cwd", "die_with_parent", "display", "env", "keep", "labels", "line", "name",
+  "no_notify", "no_parent", "on", "outlive_parent", "parent", "rm", "size", "timeout", "wait"];
+const isStringOrNull = (value) => value === undefined || value === null || typeof value === "string";
+const isStringMap = (value) => value === undefined || (value !== null && typeof value === "object" && !Array.isArray(value)
+  && Object.values(value).every((v) => typeof v === "string"));
+/** Why hc would reject these terminal.run params, or undefined. */
+function runParamsError(p) {
+  if (p === null || typeof p !== "object" || Array.isArray(p)) return "params must be an object";
+  for (const key of Object.keys(p)) if (!RUN_PARAMS.includes(key)) return "unknown field " + key;
+  if (p.argv !== undefined && !(Array.isArray(p.argv) && p.argv.every((a) => typeof a === "string"))) return "argv: string array";
+  for (const key of ["caller", "cwd", "name", "parent"]) if (!isStringOrNull(p[key])) return key + ": string or null";
+  if (!isStringMap(p.labels)) return "labels: map of strings";
+  if (!isStringMap(p.env)) return "env: map of strings";
+  for (const key of ["no_notify", "die_with_parent", "keep", "no_parent", "outlive_parent", "rm", "wait"])
+    if (p[key] !== undefined && typeof p[key] !== "boolean") return key + ": boolean";
+  if (typeof p.name === "string" && !NAME_RULE.test(p.name)) return "name: 1-32 of a-z 0-9 - _ .";
+  return undefined;
 }
 function flag(name) {
   const index = args.indexOf(name);
@@ -104,18 +128,29 @@ switch (args[0]) {
       if (process.env.FAKE_MUX_LOG) fs.appendFileSync(process.env.FAKE_MUX_LOG, JSON.stringify(request) + "\\n");
       if (request.method !== "terminal.run") fail("fake hc: unsupported method " + request.method);
       const p = request.params;
+      const invalid = runParamsError(p);
+      if (invalid) {
+        console.log(JSON.stringify({ error: { code: -32602, data: { kind: "invalid_params" }, message: "invalid_params: " + invalid }, id: request.id, jsonrpc: "2.0" }));
+        process.exit(0);
+      }
       terminal(p.caller);
-      const term = newTerminal({ argv: p.argv, cwd: p.cwd || "/tmp", labels: p.labels || {}, name: p.name, notify: !p.no_notify, parent: p.caller });
+      const term = newTerminal({ argv: p.argv, cwd: p.cwd || ${JSON.stringify(FAKE_HC_DAEMON_CWD)}, labels: p.labels || {}, name: p.name ?? null, notify: !p.no_notify, parent: p.caller });
       fs.writeFileSync(file("program", term.address), JSON.stringify(p.argv));
-      console.log(JSON.stringify({ id: request.id, jsonrpc: "2.0", result: term }));
-      process.exit(0);
+      const reply = () => {
+        if (fs.existsSync(path.join(S, "hold-run"))) return setTimeout(reply, 20);
+        console.log(JSON.stringify({ id: request.id, jsonrpc: "2.0", result: term }));
+        process.exit(0);
+      };
+      reply();
     });
     break;
   }
   case "run": {
     const separator = args.indexOf("--");
     terminal(flag("--parent"));
-    const term = newTerminal({ argv: args.slice(separator + 1), cwd: flag("--cwd") || "/tmp", name: flag("--name"),
+    const name = flag("--name");
+    if (name !== undefined && !NAME_RULE.test(name)) fail("hc: invalid name " + JSON.stringify(name) + ": 1-32 of a-z 0-9 - _ .");
+    const term = newTerminal({ argv: args.slice(separator + 1), cwd: flag("--cwd") || process.cwd(), name: name ?? null,
       notify: !args.includes("--no-notify"), parent: flag("--parent") });
     console.log(short(term));
     break;
@@ -169,20 +204,26 @@ export function seedFakeHcCaller(stateDir: string): void {
 	);
 }
 
-/** Ends a terminal with an exit code, as the launcher's exit would. emitEvent false loses the finished event. */
-export function finishFakeTerminal(stateDir: string, address: string, exitCode: number, emitEvent = true): void {
+/**
+ * Ends a terminal with an exit code, as the launcher's exit would, or by a signal (hc's Terminal schema: an
+ * integer signal and a null exit_code). emitEvent false loses the finished event.
+ */
+export function finishFakeTerminal(
+	stateDir: string,
+	address: string,
+	exit: number | { signal: number },
+	emitEvent = true,
+): void {
 	const path = join(stateDir, `term-${address}.json`);
 	const term = JSON.parse(readFileSync(path, "utf8"));
-	Object.assign(term, {
-		state: "finished",
-		exit_code: exitCode,
-		reason: "exited",
-		signal: null,
-		finished_ms: Date.now(),
-	});
+	const facts =
+		typeof exit === "number"
+			? { exit_code: exit, reason: "exited", signal: null }
+			: { exit_code: null, reason: "killed", signal: exit.signal };
+	Object.assign(term, { state: "finished", ...facts, finished_ms: Date.now() });
 	writeFileSync(path, JSON.stringify(term));
 	if (!emitEvent) return;
-	const data = { exit_code: exitCode, finished_ms: term.finished_ms, reason: "exited", signal: null };
+	const data = { ...facts, finished_ms: term.finished_ms };
 	const line = JSON.stringify({
 		jsonrpc: "2.0",
 		method: "event",
