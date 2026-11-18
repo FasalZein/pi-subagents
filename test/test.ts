@@ -111,6 +111,7 @@ import "./mux/zellij-backend-contract.test.ts";
 import "./mux/herdr-backend-contract.test.ts";
 import "./mux/herdr-core-backend-contract.test.ts";
 import "./mux/herdr-core-exit.test.ts";
+import "./mux/herdr-core-close.test.ts";
 import "./mux/herdr-core-detection.test.ts";
 import "./mux/herdr-core-placement.test.ts";
 import "./mux/rex-backend-contract.test.ts";

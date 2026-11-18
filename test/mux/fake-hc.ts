@@ -15,6 +15,9 @@ export const FAKE_HC_DAEMON_CWD = "/fake-hc-daemon-cwd";
  * line: labels and the event line), calls (one line per hc call), requests (JSON-RPC requests).
  * "hc events" drops its stream when the file drop exists. A terminal.run reply waits while the file
  * hold-run exists. "hc label" never answers while the file hang-label exists.
+ * The file lose-reply makes "hc connect" close without a reply to terminal.run, as a killed connection did in
+ * the live drop probes: "create" makes the terminal first, "none" makes nothing, "delay:<ms>" makes the
+ * terminal but hides it from "hc ls" for that long.
  * Every call is also logged to $FAKE_MUX_LOG.
  * Requests are checked against hc 0.1.21's schema (hc/schema.json) for the fields production sends:
  * terminal.run params and their types, and the terminal name rule "1-32 of a-z 0-9 - _ .".
@@ -140,8 +143,13 @@ switch (args[0]) {
         process.exit(0);
       }
       terminal(p.caller);
-      const term = newTerminal({ argv: p.argv, cwd: p.cwd || ${JSON.stringify(FAKE_HC_DAEMON_CWD)}, labels: p.labels || {}, name: p.name ?? null, notify: !p.no_notify, parent: p.caller });
+      const loseFile = path.join(S, "lose-reply");
+      const lose = fs.existsSync(loseFile) ? fs.readFileSync(loseFile, "utf8").trim() : undefined;
+      if (lose === "none") process.exit(0);
+      const hiddenUntil = lose && lose.startsWith("delay:") ? Date.now() + Number(lose.slice(6)) : undefined;
+      const term = newTerminal({ argv: p.argv, cwd: p.cwd || ${JSON.stringify(FAKE_HC_DAEMON_CWD)}, labels: p.labels || {}, name: p.name ?? null, notify: !p.no_notify, parent: p.caller, ...(hiddenUntil ? { hidden_until: hiddenUntil } : {}) });
       fs.writeFileSync(file("program", term.address), JSON.stringify(p.argv));
+      if (lose) process.exit(0);
       const reply = () => {
         if (fs.existsSync(path.join(S, "hold-run"))) return setTimeout(reply, 20);
         console.log(JSON.stringify({ id: request.id, jsonrpc: "2.0", result: term }));
@@ -171,6 +179,16 @@ switch (args[0]) {
   case "get":
     console.log(JSON.stringify(terminal(args[1])));
     break;
+  case "ls": {
+    // hc ls --all --label k=v --json (live shapes); this fake supports only that form.
+    const filter = flag("--label");
+    if (!args.includes("--all") || !args.includes("--json") || !filter) fail("fake hc: unsupported " + args.join(" "));
+    const now = Date.now();
+    const found = fs.readdirSync(S).filter((n) => n.startsWith("term-")).map((n) => JSON.parse(fs.readFileSync(path.join(S, n), "utf8")))
+      .filter((t) => labelMatches(t.labels, filter) && !(t.hidden_until > now));
+    console.log(JSON.stringify({ hidden_finished: 0, terminals: found.map((t) => JSON.parse(short(t))) }));
+    break;
+  }
   case "kill": {
     const term = terminal(args[1]);
     if (term.state !== "finished") {
