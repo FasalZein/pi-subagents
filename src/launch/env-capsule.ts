@@ -30,8 +30,11 @@ export interface EnvCapsule {
 	 */
 	requiredPaneIdentityKeys?: string[];
 	processIdFile?: string;
-	/** Derive PI_SUBAGENT_SURFACE as `pane:$ZELLIJ_PANE_ID` in the child pane. */
-	deriveZellijPaneSurface?: boolean;
+	/**
+	 * Derive PI_SUBAGENT_SURFACE as prefix + the value of this name in the child's surface env
+	 * (zellij: `pane:$ZELLIJ_PANE_ID`, herdr-core: `$HC_TERMINAL_ID`).
+	 */
+	surfaceFromEnv?: { name: string; prefix: string };
 }
 
 export const ENV_CAPSULE_DIR_PREFIX = "pi-subagent-env-";

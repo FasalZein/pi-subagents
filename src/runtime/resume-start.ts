@@ -130,18 +130,18 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 	}
 	if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 	if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
-	const { command, dispose } = buildInteractiveShellCommand({
+	const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
 		cwd: start.resumeCwd ?? undefined,
 		piArgs,
 		envOverrides: resumeEnvVars,
 		denyEnv: invocationMetadata?.denyEnv,
 		paneIdentity: adapter?.paneIdentity,
 		doneSentinelFile,
-		...(programSession ? { deriveZellijPaneSurface: true } : {}),
+		...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),
 	});
 	// Nothing consumes the capsule until the pane receives the command.
 	undo.add(dispose);
-	const surface = ordinarySurface ?? (await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+	const surface = ordinarySurface ?? (await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
 	if (!programSession) {
 		await new Promise<void>((resolve) => setTimeout(resolve, start.shellReadyDelayMs));
 		sendShellCommand(surface, command);

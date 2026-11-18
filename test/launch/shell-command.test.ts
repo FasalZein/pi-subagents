@@ -105,16 +105,17 @@ describe("interactive shell command builder", () => {
 		}
 	});
 
-	it("marks the capsule for zellij pane surface derivation", () => {
-		const { capsulePath } = buildInteractiveShellCommand({
+	it("marks the capsule for surface derivation and gives the launcher argv", () => {
+		const { capsulePath, launch } = buildInteractiveShellCommand({
 			paneIdentity: undefined,
 			piArgs: [],
 			envOverrides: {},
 			doneSentinelFile: "/tmp/done.txt",
-			deriveZellijPaneSurface: true,
+			surfaceFromEnv: { name: "HC_TERMINAL_ID", prefix: "" },
 		});
 		const capsule = JSON.parse(readFileSync(capsulePath, "utf8"));
-		assert.equal(capsule.deriveZellijPaneSurface, true);
+		assert.deepEqual(capsule.surfaceFromEnv, { name: "HC_TERMINAL_ID", prefix: "" });
+		assert.deepEqual(launch.launcherArgv, [process.execPath, getRunChildLauncherPath(), capsulePath]);
 		assert.ok(Array.isArray(capsule.paneIdentityKeys) && capsule.paneIdentityKeys.length > 0);
 		rmSync(capsulePath.slice(0, capsulePath.lastIndexOf("/")), { recursive: true, force: true });
 	});
