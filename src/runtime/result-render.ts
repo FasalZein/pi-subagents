@@ -1,23 +1,16 @@
 import { isAbsolute, relative } from "node:path";
 import { formatElapsedSeconds } from "../tools/overlay/render-helpers.ts";
 import { cutText } from "./result-assembler.ts";
-import { type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
+import { CUT_MARK, type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
 
 /** D14: everything around the summary, unless a long report locator needs more. */
 export const FRAME_MAX_CHARS = 400;
 /** D14 and G1.3: the whole rendered text. */
 export const RESULT_TEXT_MAX_CHARS = 1900;
 
-/**
- * Room the frame keeps for the report locator. A longer locator widens the frame by its excess only
- * (D14), so the other footer lines keep the room they have with a short locator.
- */
-const LOCATOR_ALLOWANCE_CHARS = 160;
 /** Header names and short footer facts stay this short so the summary keeps its room. */
 const NAME_MAX_CHARS = 60;
 const FACT_MAX_CHARS = 160;
-/** An optional footer line shorter than this carries too little to keep. */
-const MIN_OPTIONAL_LINE_CHARS = 24;
 
 export interface RenderOptions {
 	/** The parent's working directory, for the relative report locator. */
@@ -69,19 +62,15 @@ function headerLine(record: ResultRecord): string {
 	return parts.join(" · ");
 }
 
-function reportLine(record: ResultRecord, options: RenderOptions): { line: string; locatorExcess: number } {
-	if (!record.report.saved) return { line: cutText(`report not saved: ${record.report.error}`, FACT_MAX_CHARS), locatorExcess: 0 };
-	const locator = shortestReadLocator(record.report.path, options.cwd, options.homeDir);
-	return { line: `report: ${locator}`, locatorExcess: Math.max(0, locator.length - LOCATOR_ALLOWANCE_CHARS) };
+function reportLine(record: ResultRecord, options: RenderOptions): string {
+	if (!record.report.saved) return cutText(`report not saved: ${record.report.error}`, FACT_MAX_CHARS);
+	return `report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}`;
 }
 
-/** Footer lines that may be shortened or dropped, most important first. */
-function optionalLines(record: ResultRecord, options: RenderOptions): string[] {
-	const lines: string[] = [];
+/** Footer lines D14 requires: the report file, the run id, why a run cannot resume, requested context usage. */
+function requiredLines(record: ResultRecord, options: RenderOptions): string[] {
+	const lines = [reportLine(record, options), `run: ${record.runId}`];
 	if (!record.resume.resumable) lines.push(cutText(`not resumable: ${record.resume.reason}`, FACT_MAX_CHARS));
-	if (options.verifierFooter) lines.push(options.verifierFooter);
-	if (record.exit.error) lines.push(cutText(`error: ${record.exit.error}`, FACT_MAX_CHARS));
-	for (const warning of options.warnings ?? []) lines.push(`warning: ${warning}`);
 	if (options.showContextUsage && record.contextUsage) {
 		const { tokens, window } = record.contextUsage;
 		lines.push(window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens`);
@@ -89,22 +78,28 @@ function optionalLines(record: ResultRecord, options: RenderOptions): string[] {
 	return lines;
 }
 
+/** Footer lines that get only the room the required fields leave, most important first. */
+function optionalLines(options: RenderOptions): string[] {
+	const lines = options.verifierFooter ? [options.verifierFooter] : [];
+	for (const warning of options.warnings ?? []) lines.push(`warning: ${warning}`);
+	return lines;
+}
+
 /**
- * D14: one text for the parent: header, summary, footer. The frame around the summary stays within
- * FRAME_MAX_CHARS; a report locator that does not fit widens the frame by its excess only and cuts
- * the summary further, so the text stays within RESULT_TEXT_MAX_CHARS. The session path and the
- * resume command line are not part of the text.
+ * D14: one text for the parent: header, summary, footer. The required fields come first; optional
+ * lines fill the rest of FRAME_MAX_CHARS. The frame exceeds FRAME_MAX_CHARS only when the required
+ * fields with the whole report locator do not fit; the summary is then cut further, so the text
+ * stays within RESULT_TEXT_MAX_CHARS. The session path, raw watcher errors and the resume command
+ * line are not part of the text.
  */
 export function renderResult(record: ResultRecord, options: RenderOptions): string {
 	const header = headerLine(record);
-	const report = reportLine(record, options);
-	const footer = [report.line, `run: ${record.runId}`];
+	const footer = requiredLines(record, options);
 	// Two newlines join header, summary and footer; one more joins each footer line.
 	const frameLength = (lines: readonly string[]) => header.length + 2 + lines.reduce((n, l) => n + l.length + 1, -1);
-	const frameMax = FRAME_MAX_CHARS + report.locatorExcess;
-	for (const line of optionalLines(record, options)) {
-		const room = frameMax - frameLength(footer) - 1;
-		if (room < MIN_OPTIONAL_LINE_CHARS) break;
+	for (const line of optionalLines(options)) {
+		const room = FRAME_MAX_CHARS - frameLength(footer) - 1;
+		if (room <= CUT_MARK.length) break;
 		footer.push(cutText(line, room));
 	}
 	const summaryRoom = Math.min(SUMMARY_MAX_CHARS, RESULT_TEXT_MAX_CHARS - frameLength(footer));

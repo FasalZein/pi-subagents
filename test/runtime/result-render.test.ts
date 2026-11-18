@@ -69,6 +69,7 @@ describe("result renderer: G1.3 bounded text", () => {
 				assert.ok(frameLength(text, record.summary) <= FRAME_MAX_CHARS, `frame ${frameLength(text, record.summary)}`);
 				assert.match(text.split("\n")[0], typed ? / · partial · .* · typed · data error$/ : / · done · .* · untyped$/);
 				assert.ok(text.includes("run: r-0001"));
+				assert.ok(text.includes("context: 91000/100000 tokens"), "the requested context line stays");
 				assert.ok(text.includes("report: ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
 				assert.ok(!text.includes(SESSION_FILE), "no session path");
 				assert.ok(!/--session|--resume|subagent_resume\(/.test(text), "no resume command line");
@@ -86,7 +87,8 @@ describe("result renderer: G1.3 bounded text", () => {
 		const locator = `~/${path.slice(HOME.length + 1)}`;
 		assert.ok(text.includes(`report: ${locator}\n`), "the footer names the whole ~ locator");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
-		assert.ok(text.includes(VERIFIER_FOOTER), "the verifier footer keeps its room");
+		// D14: the locator may widen the frame, optional lines may not; the required fields fill it.
+		assert.ok(!text.includes(VERIFIER_FOOTER), "optional lines get no room beyond 400 characters");
 		const summary = renderedSummary(text);
 		assert.ok(frameLength(text, summary) <= FRAME_MAX_CHARS + locator.length, "only the locator widens the frame");
 		assert.ok(summary.endsWith(CUT_MARK), "the summary is cut further with a cut mark");
@@ -149,3 +151,32 @@ describe("result renderer: report locator (D14)", () => {
 		}
 	});
 });
+
+describe("result renderer: frame budget (D14)", () => {
+	const path = `/${"r".repeat(196)}.md`;
+	const warning = "w".repeat(400);
+	const record = (): ResultRecord => ({ ...recordFor(1_500, true, { saved: true, path }), summary: "s".repeat(1_500) });
+
+	it("a warning never widens the frame past 400 when the required fields fit", () => {
+		assert.equal(path.length, 200);
+		const text = renderResult(record(), { cwd: CWD, homeDir: HOME, warnings: [warning] });
+		assert.ok(text.includes("s".repeat(1_500)), "the whole summary stays");
+		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
+	});
+
+	it("a requested context-usage line is never dropped for warnings", () => {
+		const text = renderResult(record(), { cwd: CWD, homeDir: HOME, warnings: [warning], showContextUsage: true });
+		assert.ok(text.includes("context: 91000/100000 tokens"), text);
+		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS);
+	});
+
+	it("a watcher error that names the session file never reaches the text", () => {
+		const error = `Invalid session JSONL at ${SESSION_FILE}:7: Unexpected end of JSON input`;
+		const { record: failed } = assembleResult(
+			facts([sessionHeader()], { sessionFile: SESSION_FILE, end: { kind: "failed", error, code: 1 } }),
+		);
+		const text = renderResult({ ...failed, report: { saved: true, path: "/tmp/r.md" } }, { cwd: CWD, homeDir: HOME });
+		assert.ok(!text.includes(SESSION_FILE), text);
+	});
+});
+
