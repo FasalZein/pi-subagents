@@ -1,14 +1,13 @@
 /**
  * Sample plan of a gate run (G2.1): pure functions only.
  *
- * A gate run is 3 scenarios x 2 models x 3 repetitions. A planned sample is
- * finished when the run folder holds a sealed record with a verdict for its
- * scenario, repetition, model, thinking and checkout commit. Everything else
- * (no file, damaged file, infrastructure failure) runs again. The launcher
- * still decides on the full key; this plan only keeps finished samples out
- * of the job queue and the job log.
+ * A gate run is 3 scenarios x 2 models x 3 repetitions. The launcher computes
+ * each planned sample's full key (checkout, fixture, harness, model and
+ * thinking, settings with the Pi version, scenario, repetition; launcher
+ * --plan), and the queue applies the launcher's own rerun rule to that key:
+ * a sample runs unless its file holds a sealed verdict under the same key.
  */
-import { hasValidChecksum } from "./record.mjs";
+import { rerunDecision, sampleKeyId } from "./record.mjs";
 
 export const GATE_SCENARIOS = Object.freeze(["recon", "review", "review-fix"]);
 export const GATE_REPETITIONS = 3;
@@ -16,56 +15,42 @@ export const GATE_REPETITIONS = 3;
 export const MODEL_ENV = Object.freeze(["BENCH_MODEL_1", "BENCH_MODEL_2"]);
 
 /**
- * Model part of a ref, as the launcher records it (a thinking suffix is dropped).
- * @param {string} ref
- */
-export function modelOfRef(ref) {
-	const colon = ref.lastIndexOf(":");
-	const slash = ref.indexOf("/");
-	return colon > slash ? ref.slice(0, colon) : ref;
-}
-
-/**
  * Repetition-major order, so a stopped run still has every scenario and model
  * at the lowest repetitions.
  * @param {Array<{label: string, ref: string}>} models
- * @returns {Array<{label: string, ref: string, model: string, scenario: string, rep: number}>}
+ * @returns {Array<{label: string, ref: string, scenario: string, rep: number}>}
  */
 export function samplePlan(models) {
 	const plan = [];
 	for (let rep = 1; rep <= GATE_REPETITIONS; rep++)
 		for (const scenario of GATE_SCENARIOS)
 			for (const { label, ref } of models)
-				plan.push({ label, ref, model: modelOfRef(ref), scenario, rep });
+				plan.push({ label, ref, scenario, rep });
 	return plan;
 }
 
-/** A record that a rerun keeps: sealed, with a verdict. */
-export function isFinishedRecord(record) {
-	return (
-		hasValidChecksum(record) &&
-		record.outcome === "verdict" &&
-		typeof record.verdict === "string"
-	);
+/**
+ * Refuses a plan where two samples share one full key (for example the same
+ * model in both slots): such a plan counts one sample twice.
+ * @param {Array<{key: object}>} planned
+ */
+export function assertDistinctKeys(planned) {
+	const ids = new Set(planned.map(({ key }) => sampleKeyId(key)));
+	if (ids.size !== planned.length)
+		throw new Error(
+			`the plan has ${planned.length} samples but ${ids.size} distinct keys`,
+		);
 }
 
 /**
- * Planned samples without a finished record.
- * @param {ReturnType<typeof samplePlan>} plan
- * @param {Array<object>} records - parsed records of the run folder (unparsable files left out)
- * @param {{commit: string, thinking: string}} run
+ * Planned samples that the launcher would run: no sealed verdict under their full key.
+ * @template {{key: object, file: string}} T
+ * @param {T[]} planned - plan entries with the launcher's key and sample file name
+ * @param {(file: string) => string | null} readText - text of a top-level set file, null when absent
+ * @returns {T[]}
  */
-export function pendingSamples(plan, records, { commit, thinking }) {
-	const finished = records.filter(isFinishedRecord);
-	return plan.filter(
-		(sample) =>
-			!finished.some(
-				({ key }) =>
-					key.checkoutRevision === commit &&
-					key.thinking === thinking &&
-					key.model === sample.model &&
-					key.scenario === sample.scenario &&
-					key.rep === sample.rep,
-			),
+export function pendingSamples(planned, readText) {
+	return planned.filter(
+		({ key, file }) => rerunDecision(readText(file), key).action === "run",
 	);
 }

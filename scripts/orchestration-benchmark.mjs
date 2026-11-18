@@ -3,8 +3,10 @@
  * Orchestration benchmark launcher: runs one sample and writes one JSON record.
  *
  *   PI_SUBAGENT_LIVE_MODEL=<provider/model:thinking> node scripts/orchestration-benchmark.mjs \\
- *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>]
+ *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>] [--plan]
  *
+ * --plan prints the sample's full key and file name as one JSON line and runs nothing;
+ * the gate runner (orchestration-benchmark-gate.mjs) plans its queue with it.
  * The thinking level is required: as a suffix of the model ref or with --thinking.
  * The model comes only from the environment, so no model ref lands in the repository.
  * Records always go to ~/.pi/artifacts/pi-subagents/benchmark, outside any repository;
@@ -35,7 +37,12 @@
  * - T04: on a timeout, a child probe without a session file (no task arrived) keeps the
  *   timeout verdict; the record counts it as load.unfiledProbes, not as infra.
  * - F11: a child provider error can cause both a native recovery and a harness retry.
+ * - T04 finding 5: on a timeout, an unfiled child probe is forgiven without checking
+ *   that it names this attempt's session root, model and checkout.
  * - Revisit all of these before parallel benchmark jobs run on one checkout.
+ * - T04 finding 1: scenario (b) has the v2.9.2 arm only (direct launches). The candidate
+ *   arm (workflow script, G2.1) gets its own scenario folder at T59, so the baseline
+ *   fixture hash does not change.
  * - Namesakes: children join their run ids by launch name. A scenario must give
  *   its children unique launch names; an attempt where two launched children
  *   share a name ends as an infrastructure error. Revisit when a scenario needs
@@ -126,6 +133,7 @@ function parseCli() {
 			rep: { type: "string" },
 			thinking: { type: "string" },
 			set: { type: "string" },
+			plan: { type: "boolean" },
 		},
 	});
 	const live = process.env.PI_SUBAGENT_LIVE_MODEL?.trim();
@@ -156,7 +164,15 @@ function parseCli() {
 	if (checkout === realpathSync(REPO_ROOT))
 		throw new BenchError("--checkout must not be the harness repository");
 	const outDir = values.set ? join(OUT_DIR, values.set) : OUT_DIR;
-	return { checkout, scenario: values.scenario, rep, model, thinking, outDir };
+	return {
+		checkout,
+		scenario: values.scenario,
+		rep,
+		model,
+		thinking,
+		outDir,
+		plan: values.plan === true,
+	};
 }
 
 async function loadScenario(name) {
@@ -188,11 +204,17 @@ async function loadScenario(name) {
 
 /**
  * Hash of the launcher, its modules and the frozen agent fixture of the fixed-cost
- * probe (tests and scenarios excluded; scenarios have their own hash).
+ * probe (tests and scenarios excluded; scenarios have their own hash). The gate's
+ * plan and report modules (baseline-*.mjs) do not change a sample and stay out.
  */
 function harnessHash() {
 	const modules = readdirSync(BENCH_DIR)
-		.filter((name) => /\.(mjs|ts)$/.test(name) && !name.endsWith(".test.mjs"))
+		.filter(
+			(name) =>
+				/\.(mjs|ts)$/.test(name) &&
+				!name.endsWith(".test.mjs") &&
+				!name.startsWith("baseline-"),
+		)
 		.map((name) => join(BENCH_DIR, name));
 	return hashFiles(
 		[
@@ -241,7 +263,8 @@ async function main() {
 			"--checkout needs src/index.ts and installed node_modules",
 		);
 	}
-	const recovered = recoverAbandonedRoots(stopServer);
+	// A plan run starts nothing, so it leaves other runs' attempt folders alone.
+	const recovered = cli.plan ? [] : recoverAbandonedRoots(stopServer);
 	if (recovered.length)
 		console.log(`removed ${recovered.length} abandoned attempt folder(s)`);
 	const checkout = assertPrivateCheckout(cli.checkout);
@@ -269,6 +292,10 @@ async function main() {
 		scenario: scenario.name,
 		rep: cli.rep,
 	});
+	if (cli.plan) {
+		console.log(JSON.stringify({ key, file: sampleFileName(key) }));
+		return;
+	}
 	mkdirSync(cli.outDir, { recursive: true, mode: 0o700 });
 	const samplePath = join(cli.outDir, sampleFileName(key));
 	const markerPath = `${samplePath}.claim`;

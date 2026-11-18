@@ -370,9 +370,7 @@ for (const scenario of [recon, review, reviewFix])
 		const parse = answerParser(scenario);
 		const facts = Object.entries(scenario.expectedFacts);
 		const answer = (extra) =>
-			[...extra, ...facts.map(([key, value]) => `${key}: ${value}`)].join(
-				"\n",
-			);
+			[...extra, ...facts.map(([key, value]) => `${key}: ${value}`)].join("\n");
 		const [firstKey, firstValue] = facts[0];
 		assert.equal(answerMatches(parse(answer([])), scenario), true);
 		// The conflicting line comes first, so a last-line-wins parser would pass it.
