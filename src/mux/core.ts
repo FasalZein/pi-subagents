@@ -1,9 +1,11 @@
 import { execFile, execFileSync } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
+import { cmuxBackend } from "./cmux.ts";
 import { isHerdrRuntimeAvailable } from "./herdr.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 import { tmuxBackend } from "./tmux.ts";
+import { weztermBackend } from "./wezterm.ts";
 
 export const execFileAsync = promisify(execFile);
 
@@ -21,20 +23,8 @@ function muxPreference(): MuxBackend | null {
 	return null;
 }
 
-function isCmuxRuntimeAvailable(): boolean {
-	return !!process.env.CMUX_SOCKET_PATH && hasCommand("cmux");
-}
-
-function isTmuxRuntimeAvailable(): boolean {
-	return tmuxBackend.isAvailable();
-}
-
 function isZellijRuntimeAvailable(): boolean {
 	return !!(process.env.ZELLIJ || process.env.ZELLIJ_SESSION_NAME) && hasCommand("zellij");
-}
-
-function isWezTermRuntimeAvailable(): boolean {
-	return !!process.env.WEZTERM_UNIX_SOCKET && hasCommand("wezterm");
 }
 
 function isHerdrMuxRuntimeAvailable(): boolean {
@@ -42,11 +32,11 @@ function isHerdrMuxRuntimeAvailable(): boolean {
 }
 
 export function isCmuxAvailable(): boolean {
-	return isCmuxRuntimeAvailable();
+	return cmuxBackend.isAvailable();
 }
 
 export function isTmuxAvailable(): boolean {
-	return isTmuxRuntimeAvailable();
+	return tmuxBackend.isAvailable();
 }
 
 export function isZellijAvailable(): boolean {
@@ -59,17 +49,17 @@ export function isHerdrAvailable(): boolean {
 
 export function getMuxBackend(): MuxBackend | null {
 	const pref = muxPreference();
-	if (pref === "cmux") return isCmuxRuntimeAvailable() ? "cmux" : null;
-	if (pref === "tmux") return isTmuxRuntimeAvailable() ? "tmux" : null;
+	if (pref === "cmux") return isCmuxAvailable() ? "cmux" : null;
+	if (pref === "tmux") return isTmuxAvailable() ? "tmux" : null;
 	if (pref === "zellij") return isZellijRuntimeAvailable() ? "zellij" : null;
-	if (pref === "wezterm") return isWezTermRuntimeAvailable() ? "wezterm" : null;
+	if (pref === "wezterm") return weztermBackend.isAvailable() ? "wezterm" : null;
 	if (pref === "herdr") return isHerdrMuxRuntimeAvailable() ? "herdr" : null;
 
 	if (isHerdrMuxRuntimeAvailable()) return "herdr";
-	if (isCmuxRuntimeAvailable()) return "cmux";
-	if (isTmuxRuntimeAvailable()) return "tmux";
+	if (isCmuxAvailable()) return "cmux";
+	if (isTmuxAvailable()) return "tmux";
 	if (isZellijRuntimeAvailable()) return "zellij";
-	if (isWezTermRuntimeAvailable()) return "wezterm";
+	if (weztermBackend.isAvailable()) return "wezterm";
 	return null;
 }
 
@@ -79,12 +69,12 @@ export function isMuxAvailable(): boolean {
 
 export function muxSetupHint(): string {
 	const pref = muxPreference();
-	if (pref === "cmux") return "Start pi inside cmux (`cmux pi`).";
+	if (pref === "cmux") return cmuxBackend.setupHint();
 	if (pref === "tmux") return tmuxBackend.setupHint();
 	if (pref === "zellij") {
 		return "Start pi inside zellij (`zellij --session pi`, then run `pi`).";
 	}
-	if (pref === "wezterm") return "Start pi inside WezTerm.";
+	if (pref === "wezterm") return weztermBackend.setupHint();
 	if (pref === "herdr") return "Start pi inside Herdr (`herdr`, then run `pi`).";
 	return "Start pi inside Herdr (`herdr`, then run `pi`), cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
 }
