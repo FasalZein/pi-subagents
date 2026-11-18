@@ -321,6 +321,26 @@ test("[F6] a pass needs the child's own result, from its read of the fixture, de
 	assert.equal(verdict(childSession(["stop"])), "pass");
 });
 
+test("[F6] the expected result matches as a whole token, not as a substring", () => {
+	const verdict = (text, answer = CODE) =>
+		classify(
+			evidence(childSession(["stop"], { text }), {
+				parent: { file: "/r/p.jsonl", events: parentEvents(text) },
+			}),
+			{ kind: "answered", answer },
+		).verdict;
+	// A longer word or number that starts with the expected result fails.
+	assert.equal(verdict(`CODE WORD: ${CODE}0`), "wrong-delegation");
+	assert.equal(verdict(`CODE WORD: x${CODE}`), "wrong-delegation");
+	assert.equal(verdict(`CODE WORD: ${CODE}-b`), "wrong-delegation");
+	// The parent's final answer must equal the expected answer.
+	assert.equal(verdict(`CODE WORD: ${CODE}`, `${CODE}0`), "wrong-answer");
+	// The exact word passes, also inside a sentence with punctuation.
+	assert.equal(verdict(CODE), "pass");
+	assert.equal(verdict(`The code word is "${CODE}", as read.`), "pass");
+	assert.equal(verdict(`Found it (${CODE}).`), "pass");
+});
+
 test("[F8] probes and session files match one to one: either side alone is infra, not a verdict", () => {
 	// A launched child has a probe, but its session file is absent.
 	assert.deepEqual(

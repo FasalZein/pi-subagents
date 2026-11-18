@@ -306,6 +306,18 @@ function textOf(content) {
 		.join("\n");
 }
 
+/**
+ * True when text contains token as a whole word: no letter, digit, underscore or
+ * hyphen directly before or after it, so "lantern-41270" does not contain "lantern-4127".
+ */
+export function containsToken(text, token) {
+	const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(
+		`(?<![\\p{L}\\p{N}_-])${escaped}(?![\\p{L}\\p{N}_-])`,
+		"u",
+	).test(text);
+}
+
 /** True when the child's own last reply ended its turn normally. */
 export function childEnded(events) {
 	const own = events.slice(Math.max(0, launchBoundary(events)) + 1);
@@ -320,7 +332,7 @@ const baseName = (path) =>
 /**
  * Whether a child met the contract its scenario declares for its role: it read
  * every named fixture file with a successful read call, and its final reply
- * contains the result it must return. Only entries after its own launch marker count.
+ * contains the result it must return as a whole token. Only entries after its own launch marker count.
  * @param {object[]} events - the child's session
  * @param {{returns: string, reads: string[]}} contract
  * @returns {{read: boolean, returned: boolean}}
@@ -352,12 +364,12 @@ export function childFulfils(events, contract) {
 		read: contract.reads.every((file) => readFiles.includes(file)),
 		returned:
 			last?.stopReason === "stop" &&
-			textOf(last.content).includes(contract.returns),
+			containsToken(textOf(last.content), contract.returns),
 	};
 }
 
 /**
- * Whether a text reached the parent before its terminal reply, through a
+ * Whether a text, as a whole token, reached the parent before its terminal reply, through a
  * delivery entry (a custom message) or a result of a tool the parent may call.
  */
 export function deliveredToParent(events, text, parentToolAllowlist) {
@@ -367,12 +379,15 @@ export function deliveredToParent(events, text, parentToolAllowlist) {
 			lastAssistant = index;
 	});
 	return events.slice(0, Math.max(0, lastAssistant)).some((e) => {
-		if (e?.type === "custom_message") return textOf(e.content).includes(text);
+		if (e?.type === "custom_message")
+			return containsToken(textOf(e.content), text);
 		if (e?.type !== "message") return false;
 		const { role, toolName, content } = e.message ?? {};
 		const viaTool =
 			role === "toolResult" && parentToolAllowlist.includes(toolName);
-		return (role === "custom" || viaTool) && textOf(content).includes(text);
+		return (
+			(role === "custom" || viaTool) && containsToken(textOf(content), text)
+		);
 	});
 }
 
