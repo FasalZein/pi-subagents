@@ -60,7 +60,6 @@ function registerToolWithRuntime(runtimeOverrides: Partial<SubagentToolRuntime> 
 		wireSubagentSteerBack: () => {},
 		startWidgetRefresh: () => {},
 		getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "started" }], details: {} }),
-		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 		listLaunchableAgents: () => [],
 		...runtimeOverrides,

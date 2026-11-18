@@ -99,7 +99,7 @@ export class LabelExitWatch {
 			});
 			child.on("error", (error) => {
 				clearTimeout(timer);
-				reject(error);
+				reject(new Error(`hc events for label ${this.label} failed: ${error.message}`));
 			});
 			child.on("close", () => {
 				clearTimeout(timer);
