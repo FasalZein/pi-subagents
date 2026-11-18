@@ -86,7 +86,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** The three closest launchable names to a name that matched none (D23). */
-export function closestAgentNames(name: string, names: readonly string[]): string[] {
+function closestAgentNames(name: string, names: readonly string[]): string[] {
 	const wanted = name.toLowerCase();
 	return names
 		.map((candidate) => ({ candidate, distance: editDistance(wanted, candidate.toLowerCase()) }))
@@ -99,8 +99,13 @@ function renderByName(name: string, agents: readonly LaunchableAgent[], context:
 	const agent = agents.find((candidate) => nameOf(candidate) === name);
 	if (agent?.kind === "agent") return renderAgentDetail(agent.entry, context);
 	if (agent?.kind === "malformed") return renderParseError(agent.file);
+	return renderUnknownAgentRefusal(name, agents.map(nameOf));
+}
+
+/** The refusal of a name that matched no launchable agent, with the closest names (D23). */
+export function renderUnknownAgentRefusal(name: string, names: readonly string[]): string {
 	// The name is not echoed: a reply stays one bounded line for any input.
-	const closest = closestAgentNames(name, agents.map(nameOf));
+	const closest = closestAgentNames(name, names);
 	return `No agent of that name that you may launch.${closest.length > 0 ? ` Closest: ${closest.join(", ")}.` : ""}`;
 }
 

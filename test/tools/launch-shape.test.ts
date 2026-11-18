@@ -236,7 +236,10 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 	});
 
 	it("gives a mixed list with one blocking child the child lines, one batch line and both reports", async () => {
-		const tool = fakeLaunchTool({ scout: { mode: "background", async: true }, worker: { mode: "background", async: false } });
+		const tool = fakeLaunchTool({
+			scout: { mode: "background", async: true },
+			worker: { mode: "background", async: false },
+		});
 		const result = await tool.call([child("scout", "bg-scout"), child("worker", "fg-worker")]);
 		const text = result.content[0].text as string;
 		const lines = text.split("\n");
@@ -262,7 +265,10 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		const cwd = createTestDir();
 		const agentsDir = join(cwd, "agent-root", "agents");
 		mkdirSync(agentsDir, { recursive: true });
-		for (const [name, async] of [["blocker", false], ["slow", true]] as const) {
+		for (const [name, async] of [
+			["blocker", false],
+			["slow", true],
+		] as const) {
 			writeFileSync(
 				join(agentsDir, `${name}.md`),
 				`---\nname: ${name}\ndescription: ${name} agent\nmode: background\nauto-exit: true\nasync: ${async}\n---\n\nBody.`,
@@ -298,8 +304,18 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 	it("refuses a misspelled agent name and names the intended agent", async () => {
 		const launch = realLaunchTool({ reviewer: "", scout: "", worker: "" });
 		await assert.rejects(launch("reviwer"), (error: Error) => {
-			assert.match(error.message, /no agent named "reviwer"/);
 			assert.match(error.message, /Closest: reviewer\b/);
+			return true;
+		});
+	});
+
+	it("refuses a long unknown name in one bounded line that does not echo it", async () => {
+		const launch = realLaunchTool({ reviewer: "", scout: "" });
+		const name = "x".repeat(5000);
+		await assert.rejects(launch(name), (error: Error) => {
+			assert.ok(!error.message.includes("xxxxxxxx"), error.message.slice(0, 200));
+			assert.ok(error.message.length < 200, `${error.message.length} characters`);
+			assert.match(error.message, /Closest: reviewer, scout\.$/);
 			return true;
 		});
 	});

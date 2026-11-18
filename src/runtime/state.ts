@@ -132,9 +132,9 @@ export function requestSubagentBatchStop(): void {
 /** The one launch-reply line that says how the reports of detached children return (D23). */
 export function getLaunchReturnLine(): string {
 	if (isCoordinatorOnlyTurnDisabled()) {
-		return "Each report arrives later as its own message; until then do only work that does not overlap, and do not poll, redo the delegated work or claim its results.";
+		return "Each report arrives later; until then do only work that does not overlap, and do not poll, redo the delegated work or claim its results.";
 	}
-	return "Each report arrives later as its own message, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.";
+	return "Each report arrives later, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.";
 }
 
 export function getSubagentBatchStopMetadata(): { terminate?: true } {

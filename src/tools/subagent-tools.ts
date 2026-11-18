@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
-import { closestAgentNames, type LaunchableAgent, nameOf } from "../agents/launchable-agents.ts";
+import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agents/launchable-agents.ts";
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
@@ -46,10 +46,13 @@ export const SubagentChildParams = Type.Object({
 	task: Type.String({ description: "The work for this child, in Markdown for anything beyond one line." }),
 	model: Type.Optional(
 		Type.String({
-			description: "Leave unset unless the user named a concrete model for this launch; the format is provider/model.",
+			description:
+				"Leave unset unless the user named a concrete model or thinking level for this launch; give provider/model, a model fragment, or a model name without a provider.",
 		}),
 	),
-	thinking: Type.Optional(Type.String({ description: "Thinking level for this child, such as high." })),
+	thinking: Type.Optional(
+		Type.String({ description: "Thinking level for this child, such as high; the rule for model applies." }),
+	),
 });
 
 export const SubagentParams = Type.Object({
@@ -86,10 +89,7 @@ export interface SubagentToolRuntime {
 
 /** D23: an unknown agent is refused with the three closest names the caller may launch. */
 function getUnknownAgentError(agent: string, launchable: () => LaunchableAgent[]): string {
-	const closest = closestAgentNames(agent, launchable().map(nameOf));
-	return closest.length > 0
-		? `Error: no agent named ${JSON.stringify(agent)} that you may launch. Closest: ${closest.join(", ")}.`
-		: `Error: no agent named ${JSON.stringify(agent)} that you may launch, and this session may launch none.`;
+	return `Error: ${renderUnknownAgentRefusal(agent, launchable().map(nameOf))}`;
 }
 
 function getSpawnWidthError(text: string): ToolResult {
