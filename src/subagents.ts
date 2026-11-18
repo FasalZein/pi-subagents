@@ -9,7 +9,9 @@ import {
 } from "./agents/agent-list.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
+	formatMalformedAgentNotice,
 	getEffectiveAgentDefinitions,
+	loadAgentCatalog,
 	loadAgentDefaults as loadAgentDefaultsFromDefinitions,
 } from "./agents/definitions.ts";
 import {
@@ -124,6 +126,7 @@ function resolveTaskSessionMode(agentDefs: AgentDefaults | null): SubagentSessio
 }
 
 let lastAmbientRosterSignature: string | null = null;
+let malformedAgentNoticeShown = false;
 let pendingAmbientRoster: {
 	signature: string;
 	content: string;
@@ -146,7 +149,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// Register nothing when the user has no named agents. The factory re-runs
 	// on every session replacement (/new, /resume, /fork) and on /reload, so
 	// creating an agent file and starting a session restores the full surface.
-	if (getEffectiveAgentDefinitions().length === 0) return;
+	// A malformed file still registers the surface, so its launch is refused
+	// with the parse error instead of an unknown-agent answer (D24).
+	const startupCatalog = loadAgentCatalog();
+	if (startupCatalog.definitions.length === 0 && startupCatalog.malformedFiles.length === 0) return;
 
 	publishRunningSubagentCount(() => runningSubagents.size);
 	const workReporting = registerOutstandingWorkReporting(pi);
@@ -178,6 +184,13 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		applySubagentLineage(ctx);
 		attachWidgetContext(ctx);
 		orchestrator.handleSessionStart(ctx);
+		// One notice per session (D24); a reload stays in the same session.
+		if (event.reason !== "reload") malformedAgentNoticeShown = false;
+		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd).malformedFiles);
+		if (malformedNotice && !malformedAgentNoticeShown) {
+			malformedAgentNoticeShown = true;
+			ctx.ui.notify(malformedNotice, "warning");
+		}
 		// Verified fan-outs outlive their parent session: deliver finished
 		// results exactly once to their authorized recipient and re-watch live
 		// runs (detached supervisors keep candidates running across

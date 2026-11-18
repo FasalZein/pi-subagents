@@ -79,6 +79,27 @@ export interface ResolvedAgentDefinition extends AgentDefaults {
 	path: string;
 }
 
+/** An enabled agent file whose frontmatter failed to parse (D24). */
+export interface MalformedAgentFile {
+	name: string;
+	source: "project" | "global";
+	path: string;
+	error: string;
+}
+
+type ParsedAgentFile =
+	| { kind: "agent"; definition: ResolvedAgentDefinition }
+	| { kind: "malformed"; file: MalformedAgentFile };
+
+export interface AgentCatalog {
+	/** Valid definitions after project files shadow global ones. */
+	definitions: ResolvedAgentDefinition[];
+	/** Every enabled malformed file, including ones a valid project file shadows. */
+	malformedFiles: MalformedAgentFile[];
+	/** The effective entry for a name: a project file shadows a global one even when malformed. */
+	lookup(name: string): ParsedAgentFile | undefined;
+}
+
 export function getAgentConfigDir(): string {
 	return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
@@ -88,8 +109,28 @@ function parseAgentDefinition(
 	source: "project" | "global",
 	cwdBase: string,
 	includeDisabled = false,
-): ResolvedAgentDefinition | null {
+): ParsedAgentFile | null {
 	const content = readFileSync(path, "utf8");
+	try {
+		const definition = parseAgentDefinitionContent(content, path, source, cwdBase, includeDisabled);
+		return definition ? { kind: "agent", definition } : null;
+	} catch (error) {
+		const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+		const get = (key: string) => frontmatter.match(new RegExp(`^${key}:[ \\t]*(.+)$`, "m"))?.[1].trim();
+		// A disabled file is never launched, so its parse error is not news.
+		if (get("enabled") === "false") return null;
+		const message = error instanceof Error ? error.message : String(error);
+		return { kind: "malformed", file: { name: get("name") ?? basename(path, ".md"), source, path, error: message } };
+	}
+}
+
+function parseAgentDefinitionContent(
+	content: string,
+	path: string,
+	source: "project" | "global",
+	cwdBase: string,
+	includeDisabled: boolean,
+): ResolvedAgentDefinition | null {
 	const match = content.match(/^---\n([\s\S]*?)\n---/);
 	if (!match) return null;
 	const frontmatter = match[1];
@@ -359,8 +400,17 @@ export function getEffectiveAgentDefinitions(
 	baseCwd = process.cwd(),
 	options: { includeDisabled?: boolean } = {},
 ): ResolvedAgentDefinition[] {
+	return loadAgentCatalog(baseCwd, options).definitions;
+}
+
+/**
+ * Load every agent file. A malformed file is isolated: it never stops the
+ * other files from loading, and its name resolves to the parse error (D24).
+ */
+export function loadAgentCatalog(baseCwd = process.cwd(), options: { includeDisabled?: boolean } = {}): AgentCatalog {
 	const configDir = getAgentConfigDir();
-	const agents = new Map<string, ResolvedAgentDefinition>();
+	const agents = new Map<string, ParsedAgentFile>();
+	const malformedFiles: MalformedAgentFile[] = [];
 	const dirs = [
 		{
 			path: join(configDir, "agents"),
@@ -378,12 +428,23 @@ export function getEffectiveAgentDefinitions(
 		for (const file of readdirSync(dir)
 			.filter((entry) => entry.endsWith(".md"))
 			.sort((a, b) => a.localeCompare(b))) {
-			const definition = parseAgentDefinition(join(dir, file), source, cwdBase, options.includeDisabled === true);
-			if (!definition) continue;
-			agents.set(definition.name, definition);
+			const parsed = parseAgentDefinition(join(dir, file), source, cwdBase, options.includeDisabled === true);
+			if (!parsed) continue;
+			if (parsed.kind === "malformed") malformedFiles.push(parsed.file);
+			agents.set(parsed.kind === "agent" ? parsed.definition.name : parsed.file.name, parsed);
 		}
 	}
-	return [...agents.values()].sort((a, b) => a.name.localeCompare(b.name));
+	const definitions = [...agents.values()]
+		.flatMap((entry) => (entry.kind === "agent" ? [entry.definition] : []))
+		.sort((a, b) => a.name.localeCompare(b.name));
+	return { definitions, malformedFiles, lookup: (name) => agents.get(name) };
+}
+
+/** One session notice naming every malformed agent file, or null when there is none. */
+export function formatMalformedAgentNotice(files: MalformedAgentFile[]): string | null {
+	if (files.length === 0) return null;
+	const lines = files.map((file) => `- ${file.path}: ${file.error}`);
+	return `Skipped ${files.length} malformed agent file(s); launches of these agents are refused:\n${lines.join("\n")}`;
 }
 
 /**
@@ -414,5 +475,9 @@ export function loadAgentDefaults(
 	resolveAgentCwd: ResolveAgentCwd,
 ): AgentDefaults | null {
 	const resolvedBaseCwd = resolveAgentCwd(cwdHint ?? null, baseCwd);
-	return getEffectiveAgentDefinitions(resolvedBaseCwd).find((agent) => agent.name === agentName) ?? null;
+	const entry = loadAgentCatalog(resolvedBaseCwd).lookup(agentName);
+	if (entry?.kind === "malformed") {
+		throw new Error(`Agent "${agentName}" is malformed in ${entry.file.path}: ${entry.file.error}`);
+	}
+	return entry?.definition ?? null;
 }
