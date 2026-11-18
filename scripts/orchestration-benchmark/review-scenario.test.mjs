@@ -34,10 +34,10 @@ const planted = () => {
 	return readdirSync(dir)
 		.sort()
 		.map((name) => {
-			const lines = readFileSync(join(dir, name), "utf8")
-				.trim()
-				.split("\n");
-			const match = lines.at(-1).match(/^([\w-]+): ((?:approve|reject)-\d{4})$/);
+			const lines = readFileSync(join(dir, name), "utf8").trim().split("\n");
+			const match = lines
+				.at(-1)
+				.match(/^([\w-]+): ((?:approve|reject)-\d{4})$/);
 			assert.ok(match, `${name} ends with a verdict line`);
 			assert.equal(`${match[1]}.md`, name);
 			return [match[1], match[2]];
@@ -47,10 +47,7 @@ const planted = () => {
 test("[T03a-1] the review fixture plants 8 verdicts, one per target file, each read by one child", () => {
 	const verdicts = planted();
 	assert.equal(verdicts.length, 8);
-	assert.deepEqual(
-		Object.fromEntries(verdicts),
-		review.expectedFacts,
-	);
+	assert.deepEqual(Object.fromEntries(verdicts), review.expectedFacts);
 	// Both verdict kinds occur, so a constant guess cannot pass.
 	assert.deepEqual(
 		new Set(verdicts.map(([, v]) => v.split("-")[0])),
@@ -74,10 +71,14 @@ test("[T03a-1] the review fixture plants 8 verdicts, one per target file, each r
 });
 
 test("[T03a-2] children get unique launch names (launcher limit Namesakes)", () => {
-	const names = [...review.prompt.matchAll(/name "([\w-]+)"/g)].map((m) => m[1]);
+	const names = [...review.prompt.matchAll(/name "([\w-]+)"/g)].map(
+		(m) => m[1],
+	);
 	assert.equal(names.length, 8);
 	assert.equal(new Set(names).size, 8);
-	const agents = [...review.prompt.matchAll(/agent "([\w-]+)"/g)].map((m) => m[1]);
+	const agents = [...review.prompt.matchAll(/agent "([\w-]+)"/g)].map(
+		(m) => m[1],
+	);
 	assert.deepEqual([...agents].sort(), [...review.expectedChildRoles].sort());
 });
 
