@@ -401,7 +401,7 @@ describe("subagent launch result delivery", () => {
 
 		const result = await tools.get("subagent").execute(
 			"call-1",
-			{ agent: "scout", name: "scout-1", title: "Recon", task: "Recon" },
+			{ children: [{ agent: "scout", name: "scout-1", title: "Recon", task: "Recon" }] },
 			undefined,
 			undefined,
 			{

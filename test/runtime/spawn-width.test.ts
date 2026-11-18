@@ -142,7 +142,7 @@ describe("spawn width semaphore", () => {
 			},
 		});
 
-		const result = await tool.execute("call-1", child("worker-a"), undefined, undefined, toolContext());
+		const result = await tool.execute("call-1", { children: [child("worker-a")] }, undefined, undefined, toolContext());
 		assert.match(result.content[0].text, /Spawn width limit reached \(1\/1 slots busy\)/);
 		assert.match(result.content[0].text, /subagent_kill/);
 		assert.equal(launches, 0);

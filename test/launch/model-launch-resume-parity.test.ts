@@ -101,7 +101,7 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 	try {
 		const result = await tools.get("subagent").execute(
 			"call-1",
-			{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) },
+			{ children: [{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) }] },
 			undefined,
 			undefined,
 			{

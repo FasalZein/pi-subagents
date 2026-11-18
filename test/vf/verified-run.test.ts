@@ -354,13 +354,13 @@ describe("verified fan-out driver (one logical child)", () => {
 			resolveTaskSessionMode: () => "lineage-only",
 		} as unknown as SubagentToolRuntime;
 		registerSubagentCoreTools(pi as never, () => true, runtime);
-		const params = { name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker" };
+		const params = { children: [{ name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker" }] };
 		await assert.rejects(
 			tools.get("subagent").execute("c1", params, undefined, undefined, { ...(ctx as object), hasUI: false }),
 			/unterminated quote/,
 		);
 		assert.equal(getLiveSlotCount(), 1, "subagent tool: the other child keeps its slot");
-		await assert.rejects(launchVerifiedFanOut(params, loadVfAgent(repo)!, ctx as never), /unterminated quote/);
+		await assert.rejects(launchVerifiedFanOut(params.children[0], loadVfAgent(repo)!, ctx as never), /unterminated quote/);
 		assert.equal(getLiveSlotCount(), 1, "direct launch: the fan-out gives back all N slots it reserved");
 	});
 
