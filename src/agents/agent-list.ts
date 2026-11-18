@@ -19,6 +19,7 @@ export interface AgentListEntry {
 	async?: boolean;
 	autoExit?: boolean;
 	description?: string;
+	pinned?: boolean;
 	model?: string;
 	thinking?: string;
 	allowedModels?: string;
@@ -70,6 +71,7 @@ export function getAgentListEntries(
 			async: agent.async,
 			autoExit: agent.autoExit,
 			description: agent.description,
+			...(agent.pinned ? { pinned: true } : {}),
 			model: agent.model,
 			thinking: agent.thinking,
 			allowedModels: agent.allowedModels,

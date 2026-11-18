@@ -2,15 +2,11 @@ import { registerOutstandingWorkReporting } from "./runtime/work-reporting.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
-import {
-	getAgentListEntries as getAgentListEntriesFromDefinitions,
-	getAgentListSignature,
-	renderAgentListReminder,
-} from "./agents/agent-list.ts";
+import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
+import { applyAgentIndexSection, renderAgentIndexSection, selectIndexTargets } from "./agents/index-section.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
 	formatMalformedAgentNotice,
-	getEffectiveAgentDefinitions,
 	loadAgentCatalog,
 	loadAgentDefaults as loadAgentDefaultsFromDefinitions,
 } from "./agents/definitions.ts";
@@ -52,6 +48,7 @@ import {
 	resolveTaskSessionMode as resolveTaskSessionModeFromSessionFiles,
 	type SubagentSessionMode,
 } from "./session/session-files.ts";
+import { setResultStorageNotice } from "./runtime/result-files.ts";
 import type { SubagentParamsInput } from "./types.ts";
 
 export {
@@ -80,10 +77,11 @@ import {
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
-	isHeadlessLaunchSession,
 	markInitialPromptLaunchComplete,
 	registerSubagentCoreTools,
+	shouldForceSynchronousLaunch,
 } from "./tools/subagent-tools.ts";
+import { isToolCallable } from "./tools/policy.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
 import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
@@ -137,17 +135,10 @@ function resolveTaskSessionMode(agentDefs: AgentDefaults | null): SubagentSessio
 	return resolveTaskSessionModeFromSessionFiles(agentDefs, resolveSubagentNoSession, getNoSessionSeedMode);
 }
 
-let lastAmbientRosterSignature: string | null = null;
 // Pi reloads extension modules without a cache, so module state does not
 // survive /reload. The session that saw the malformed-agent notice is kept on
 // globalThis, so a reload of that session shows no second notice (D24).
 const MALFORMED_AGENT_NOTICE_SESSION_KEY = Symbol.for("pi-subagents/malformed-agent-notice-session");
-let pendingAmbientRoster: {
-	signature: string;
-	content: string;
-	entries: AgentListEntry[];
-	supersedes?: true;
-} | null = null;
 
 function muxUnavailableResult(kind: "subagents" | "tab-title" = "subagents") {
 	const text =
@@ -187,13 +178,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let latestContext: ExtensionContext | undefined;
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
-	pi.on("session_start", (event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		initializeSpawnWidthForSession();
 		void workReporting.start(ctx);
 		latestContext = ctx;
 		resetSubagentBatchStopRequest();
 		applySubagentLineage(ctx);
 		attachWidgetContext(ctx);
+		// D13: a results-folder failure tells the person once, outside any tool result.
+		setResultStorageNotice((message) => ctx.ui.notify(message, "warning"));
 		// One notice per session (D24). In print mode the notice is not shown:
 		// Pi has no print-mode notice channel and its fallback notify is a no-op.
 		// The launch refusal still names the file and its error. Revisit if Pi
@@ -238,74 +231,20 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			// Adoption is best-effort at startup; a failure must never block
 			// the session from starting.
 		});
-
-		if (!shouldRegister(SUBAGENT_TOOL_NAME)) return;
-
-		// Reset the cached signature on every fresh session so module-level state
-		// does not leak between sessions. The reload path still uses the cached
-		// signature to avoid duplicating the notification within the same session.
-		if (event.reason !== "reload") {
-			lastAmbientRosterSignature = null;
-		}
-
-		const entries = getAgentListEntries(ctx.cwd);
-		const signature = getAgentListSignature(entries);
-		// A headless parent awaits every launch, so the roster must not promise
-		// a later report the model would otherwise plan around.
-		const rosterOptions = { awaitAllLaunches: isHeadlessLaunchSession(ctx.hasUI) };
-		if (entries.length === 0) {
-			const hasDescribedAgents = getEffectiveAgentDefinitions(ctx.cwd).some((agent) => agent.description?.trim());
-			if (!hasDescribedAgents && lastAmbientRosterSignature === null) {
-				pendingAmbientRoster = null;
-				return;
-			}
-			if (signature === lastAmbientRosterSignature) {
-				pendingAmbientRoster = null;
-				return;
-			}
-			pendingAmbientRoster = {
-				signature,
-				content: renderAgentListReminder(entries, rosterOptions),
-				entries,
-				supersedes: true,
-			};
-			return;
-		}
-
-		if (signature === lastAmbientRosterSignature) {
-			pendingAmbientRoster = null;
-			return;
-		}
-
-		pendingAmbientRoster = {
-			signature,
-			content: renderAgentListReminder(entries, rosterOptions),
-			entries,
-			supersedes: event.reason === "reload" ? true : undefined,
-		};
 	});
 
-	pi.on("before_agent_start", () => {
-		const rosterResult = pendingAmbientRoster
-			? {
-					message: {
-						customType: "subagent_roster",
-						content: pendingAmbientRoster.content,
-						display: false,
-						details: {
-							entries: pendingAmbientRoster.entries,
-							signature: pendingAmbientRoster.signature,
-							...(pendingAmbientRoster.supersedes ? { supersedes: true } : {}),
-						},
-					},
-				}
-			: undefined;
-		if (pendingAmbientRoster) {
-			lastAmbientRosterSignature = pendingAmbientRoster.signature;
-			pendingAmbientRoster = null;
-		}
-
-		return rosterResult;
+	// The index is written at every prompt start from the current files, so a
+	// changed agent file shows in the next request. Pi keeps the section with
+	// the session and patches it only when its text changed (D19).
+	pi.on("before_agent_start", (event, ctx) => {
+		if (!shouldRegister(SUBAGENT_TOOL_NAME) || !isToolCallable(pi, SUBAGENT_TOOL_NAME)) return undefined;
+		const spawnEnv = parseSpawnEnv(process.env);
+		const section = renderAgentIndexSection(selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv), {
+			paneAvailable: ctx.hasUI && isMuxAvailable(),
+			forcesWait: shouldForceSynchronousLaunch(ctx.hasUI),
+		});
+		if (!section) return undefined;
+		return applyAgentIndexSection(event, section, spawnEnv.callerAgent !== null);
 	});
 
 	pi.on("input", () => {

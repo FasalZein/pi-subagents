@@ -257,7 +257,8 @@ describe("ambient agents and runtime paths", () => {
 							cwd: dir,
 							hasUI: false,
 							ui: { setWidget() {} },
-							sessionManager: { getSessionFile: () => null },
+							// Pi's session manager always has an id; since T06 a launch reserves its run folder by it.
+							sessionManager: { getSessionFile: () => null, getSessionId: () => "parent-session" },
 						},
 					),
 				{

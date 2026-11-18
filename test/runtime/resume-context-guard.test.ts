@@ -119,7 +119,7 @@ describe("context-exhausted resume guard", () => {
 
 			// The overlay controller calls the service directly; the guard is agent-facing only.
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, mode: "background" }, createResumeRuntime() as any),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as any),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);

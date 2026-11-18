@@ -116,6 +116,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `no-session` | `false` | Use an ephemeral child session file and delete it after completion |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
+| `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
 | `system-prompt` | task body | `append` adds the agent body to the child's own Pi system prompt (Pi's default unless the child has an applicable `SYSTEM.md`); `replace` replaces that base prompt with the agent body. The parent agent's system prompt is never inherited. |
 | `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
 | `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args, including `--approve` / `--no-approve`. Use only as an advanced escape hatch for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
@@ -510,7 +511,7 @@ After a pure async launch, the parent should get out of the way unless it has se
 
 By default, a successful async launch ends the parent turn after the current tool batch. The children keep running. Their results come back later.
 
-A parent without a durable turn cannot receive a later steer, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results, its roster shows `tool_return: wait_here` for every agent, and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way.
+A parent without a durable turn cannot receive a later steer, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way.
 
 ```bash
 PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 pi

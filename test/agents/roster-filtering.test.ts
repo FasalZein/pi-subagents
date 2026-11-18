@@ -1,6 +1,5 @@
 import { getAgentListEntries, getAgentListSignature, renderAgentListReminder } from "../../src/agents/agent-list.ts";
 import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
-import subagentsExtension from "../../src/subagents.ts";
 import {
 	afterEach,
 	assert,
@@ -82,37 +81,5 @@ describe("roster filtering", () => {
 			`---\nname: other-only\ndescription: Caller worker\nvisible-to: all\nspawning: scout, reviewer\nspawn-depth: 2\nspawn-width: 3\n---\n\nCaller body.`,
 		);
 		assert.notEqual(signature, getAgentListSignature(getAgentListEntries(dir, resolveSessionMode, options)));
-	});
-
-	it("emits a superseding no-agents reminder when filtering empties a roster", () => {
-		const dir = createTestDir();
-		writeAgents(dir);
-		process.env.PI_SUBAGENT_AGENT = "hidden-child";
-		process.env.PI_SUBAGENT_SPAWNABLE = "missing-agent";
-		const handlers = new Map<string, any>();
-		subagentsExtension({
-			on(event: string, handler: any) {
-				handlers.set(event, handler);
-			},
-			registerTool() {},
-			registerCommand() {},
-			registerMessageRenderer() {},
-			getThinkingLevel: () => "low",
-		} as any);
-
-		handlers.get("session_start")(
-			{ type: "session_start", reason: "startup" },
-			{
-				cwd: dir,
-				hasUI: false,
-				ui: { setWidget() {} },
-				sessionManager: { getHeader: () => ({ id: "child", type: "session", timestamp: "", cwd: dir }) },
-			},
-		);
-		const result = handlers.get("before_agent_start")({ type: "before_agent_start" });
-		assert.ok(result?.message);
-		assert.equal(result.message.details.supersedes, true);
-		assert.match(result.message.content, /No agents are spawnable in this session/);
-		assert.doesNotMatch(result.message.content, /root-only|other-only|public/);
 	});
 });
