@@ -60,6 +60,8 @@ export interface SubagentLaunchContext {
 	parentModelRef?: string;
 	/** Parent thinking level to inherit when the agent frontmatter doesn't define thinking. */
 	parentThinking?: string;
+	/** Launch warnings the rendered headless result repeats (D14). */
+	resultWarnings?: readonly string[];
 }
 
 export interface PreparedSubagentLaunch {

@@ -37,7 +37,10 @@ function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
 	const contextRef =
 		cached.reportContextUsage === false ? formatContextExitNotice(cached) : formatFinalContextUsage(cached);
 	let text: string;
-	if (cached.timedOut) {
+	if (cached.resultText !== undefined) {
+		// D14: the same rendering the message path shows.
+		text = cached.resultText;
+	} else if (cached.timedOut) {
 		// A budget kill is the dominant fact about this run: without it the parent
 		// reads an ordinary non-zero exit and retries the same runaway.
 		text = `${formatTimeoutOutcome(
@@ -89,6 +92,8 @@ function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
 			contextWindow: cached.contextWindow,
 			summary: cached.summary,
 			sessionFile: cached.sessionFile,
+			...(cached.resultRunId ? { runId: cached.resultRunId } : {}),
+			...(cached.reportFile ? { reportFile: cached.reportFile } : {}),
 			...(cached.deliveryId ? { deliveryId: cached.deliveryId } : {}),
 			...getTimeoutResultDetails(cached),
 			...(cached.timeoutWrapUp ? { timeoutWrapUp: cached.timeoutWrapUp } : {}),

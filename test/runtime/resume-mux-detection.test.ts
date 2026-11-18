@@ -81,7 +81,7 @@ describe("subagent_resume mux detection", () => {
 				boundarySystemPrompt: false,
 			});
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), sessionFile, task: "Detection probe." },
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Detection probe." },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,

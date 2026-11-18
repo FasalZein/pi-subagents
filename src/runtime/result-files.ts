@@ -203,3 +203,21 @@ export class ResultStore {
 		this.notifyStorageFailure(`Subagent results are kept in memory only: ${error}`);
 	}
 }
+
+const sessionStores = new Map<string, ResultStore>();
+let storageNotice: (message: string) => void = () => {};
+
+/** The parent session's UI notice for a storage failure; each store sends it at most once. */
+export function setResultStorageNotice(notify: (message: string) => void): void {
+	storageNotice = notify;
+}
+
+/** One store per results folder, so a parent session reserves its ids and sends its notice once. */
+export function sessionResultStore(resultsDir: string): ResultStore {
+	let store = sessionStores.get(resultsDir);
+	if (!store) {
+		store = new ResultStore(resultsDir, (message) => storageNotice(message));
+		sessionStores.set(resultsDir, store);
+	}
+	return store;
+}
