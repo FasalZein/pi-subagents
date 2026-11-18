@@ -229,6 +229,10 @@ function getNormalCompletionContent(
 	formatElapsed: (elapsed: number) => string,
 	sessionRef: string,
 ): string {
+	// D7: a stopped run is cancelled whatever its exit code; it is never filed as completed.
+	if (completed.status === "cancelled") {
+		return `Sub-agent "${completed.name}" was cancelled (${formatElapsed(completed.elapsed)}).\n\n${completed.summary}${sessionRef}`;
+	}
 	if (completed.exitCode !== 0) {
 		return `Sub-agent "${completed.name}" failed (exit ${completed.exitCode}).\n\n${completed.summary}${sessionRef}`;
 	}
