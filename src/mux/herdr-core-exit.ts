@@ -54,7 +54,11 @@ export class LabelExitWatch {
 	private stopped = false;
 	private stopStream: (() => void) | undefined;
 
-	constructor(readonly label: string) {}
+	readonly label: string;
+
+	constructor(label: string) {
+		this.label = label;
+	}
 
 	/** Resolves when the subscription answered with its snapshot, so no later event is missed. */
 	subscribe(): Promise<void> {
