@@ -8,7 +8,10 @@ import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
-import { writeSubagentLaunchMetadataEntry, type PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
+import {
+	type PersistedSubagentLaunchMetadata,
+	writeSubagentLaunchMetadataEntry,
+} from "../../src/session/session-files.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -76,12 +79,24 @@ describe("extension entries that are gone (D10)", () => {
 		);
 		const local = join(cwd, "local.ts");
 		writeFileSync(local, "export default () => {};\n");
-		const plan = await planFor(cwd, `npm:pi-fancy-footer,git:github.com/example/footer-extension@v2,${local}`, agentDir);
+		const plan = await planFor(
+			cwd,
+			`npm:pi-fancy-footer,git:github.com/example/footer-extension@v2,${local}`,
+			agentDir,
+		);
 		assert.deepEqual(plan.capability.droppedExtensions, []);
 		// A configured npm package and an exact git ref reuse their installation; the local path passes as written.
 		assert.deepEqual(plan.capability.extensions, [npmRoot, gitRoot, local]);
 		assert.deepEqual(getExtensionLaunchArgs(plan.capability.extensions, "/done.ts", false), [
-			"--no-extensions", "-e", "/done.ts", "-e", npmRoot, "-e", gitRoot, "-e", local,
+			"--no-extensions",
+			"-e",
+			"/done.ts",
+			"-e",
+			npmRoot,
+			"-e",
+			gitRoot,
+			"-e",
+			local,
 		]);
 	});
 
@@ -89,7 +104,11 @@ describe("extension entries that are gone (D10)", () => {
 		const cwd = createTestDir();
 		const empty = await planFor(cwd, "none");
 		assert.deepEqual(empty.capability.extensions, []);
-		assert.deepEqual(getExtensionLaunchArgs(empty.capability.extensions, "/done.ts", false), ["--no-extensions", "-e", "/done.ts"]);
+		assert.deepEqual(getExtensionLaunchArgs(empty.capability.extensions, "/done.ts", false), [
+			"--no-extensions",
+			"-e",
+			"/done.ts",
+		]);
 		const none = await planFor(cwd, undefined);
 		assert.equal(none.capability.extensions, undefined);
 		assert.deepEqual(none.capability.droppedExtensions, []);
@@ -111,7 +130,10 @@ describe("extension entries that are gone (D10)", () => {
 		writeFileSync(present, "export default () => {};\n");
 		const gone = join(dir, "deleted-extension.ts");
 		const sessionFile = join(dir, "child.jsonl");
-		writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`);
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+		);
 		writeSubagentLaunchMetadataEntry(sessionFile, {
 			version: 1,
 			timestamp: new Date().toISOString(),
@@ -156,7 +178,9 @@ describe("extension entries that are gone (D10)", () => {
 		process.env.PI_SUBAGENT_PI_COMMAND = bin;
 		process.env.PI_ARTIFACT_PROJECT_ROOT = dirname(bin);
 		try {
-			const result = (await tools.get("subagent_resume")!.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
+			const result = (await tools
+				.get("subagent_resume")!
+				.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
 				content: Array<{ text: string }>;
 			};
 			const reply = result.content.map((block) => block.text).join("\n\n");
@@ -176,7 +200,9 @@ describe("extension entries that are gone (D10)", () => {
 
 	it("names all 12 dropped entries of a waiting launch once and keeps its rendering within 1,900 characters", async () => {
 		const cwd = createTestDir();
-		const gone = Array.from({ length: 12 }, (_, index) => join(cwd, "removed-extensions", `gone-extension-${index + 1}.ts`));
+		const gone = Array.from({ length: 12 }, (_, index) =>
+			join(cwd, "removed-extensions", `gone-extension-${index + 1}.ts`),
+		);
 		const plan = await planFor(cwd, gone.join(","));
 		assert.deepEqual(plan.capability.droppedExtensions, gone);
 		const sessionFile = createSessionFile(cwd, [assistantText(LONG_ANSWER)]);
@@ -215,7 +241,11 @@ describe("extension entries that are gone (D10)", () => {
 				throw new Error("headless parents never open a pane");
 			},
 			watchBackgroundSubagent: (running, signal) => {
-				const done = watchBackgroundSubagent(running, { cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} }, signal);
+				const done = watchBackgroundSubagent(
+					running,
+					{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
+					signal,
+				);
 				setImmediate(() => child.emit("exit", 0));
 				return done;
 			},
@@ -229,17 +259,26 @@ describe("extension entries that are gone (D10)", () => {
 			listLaunchableAgents: () => [],
 		};
 		registerSubagentCoreTools(
-			{ registerTool: (definition: any) => tools.set(definition.name, definition), getThinkingLevel: () => "low" } as any,
+			{
+				registerTool: (definition: any) => tools.set(definition.name, definition),
+				getThinkingLevel: () => "low",
+			} as any,
 			() => true,
 			runtime,
 		);
-		const result = await tools.get("subagent").execute(
-			"call-1",
-			{ children: [{ agent: "scout", name: "ext-scout", title: "Recon", task: "Recon", blocking: true }] },
-			undefined,
-			undefined,
-			{ hasUI: false, cwd, sessionManager: { getSessionFile: () => join(cwd, "parent.jsonl"), getSessionId: () => "parent" } },
-		);
+		const result = await tools
+			.get("subagent")
+			.execute(
+				"call-1",
+				{ children: [{ agent: "scout", name: "ext-scout", title: "Recon", task: "Recon", blocking: true }] },
+				undefined,
+				undefined,
+				{
+					hasUI: false,
+					cwd,
+					sessionManager: { getSessionFile: () => join(cwd, "parent.jsonl"), getSessionId: () => "parent" },
+				},
+			);
 		assert.equal(result.content.length, 1, "the launch emits one reply");
 		const reply: string = result.content[0].text;
 		for (const entry of gone) assert.equal(countOf(reply, `dropped missing extension: ${entry}`), 1, reply);
