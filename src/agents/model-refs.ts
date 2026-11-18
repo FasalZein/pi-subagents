@@ -163,7 +163,9 @@ export function resolveModelChoice(request: ModelChoiceRequest): ModelChoice {
 		);
 	}
 	const defaultLevel =
-		request.defaultThinking && listedLevels.includes(request.defaultThinking) ? request.defaultThinking : listedLevels[0];
+		request.defaultThinking && listedLevels.includes(request.defaultThinking)
+			? request.defaultThinking
+			: listedLevels[0];
 	return { model: chosen, thinking: defaultLevel, explicitThinking: true };
 }
 
@@ -177,7 +179,8 @@ function matchFragment(
 	const fragment = provider === undefined ? name : name.slice(provider.length + 1);
 	const keys = [...pool.keys()];
 	let matches = keys.filter(
-		(key) => (provider === undefined || providerOf(key) === provider) && key.slice(key.indexOf("/") + 1).includes(fragment),
+		(key) =>
+			(provider === undefined || providerOf(key) === provider) && key.slice(key.indexOf("/") + 1).includes(fragment),
 	);
 	// A model part equal to the fragment beats a longer id that only contains it.
 	const exactIds = matches.filter((key) => key.slice(key.indexOf("/") + 1) === fragment);

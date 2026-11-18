@@ -201,7 +201,10 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			fallbackThinking,
 			agentName: params.agent,
 		});
-		return resolveRef(choice.model, choice.thinking, { resolveAlways: true, explicitThinking: choice.explicitThinking });
+		return resolveRef(choice.model, choice.thinking, {
+			resolveAlways: true,
+			explicitThinking: choice.explicitThinking,
+		});
 	};
 	const { effectiveModel, effectiveThinking, effectiveModelRef } =
 		params.model != null

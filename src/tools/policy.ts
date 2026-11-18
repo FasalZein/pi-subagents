@@ -150,6 +150,42 @@ export function getBackgroundAutoExitWarning(
 	};
 }
 
+/**
+ * D22: a definition with `allow-model-override: false` ignores the model and
+ * thinking of a launch or resume call; the reply says so.
+ */
+export function getIgnoredModelOverrideWarning(
+	agentName: string | undefined,
+	allowModelOverride: boolean | undefined,
+	call: { model?: string; thinking?: string },
+): string | null {
+	if (allowModelOverride !== false) return null;
+	const ignored = [
+		call.model ? `model '${call.model}'` : undefined,
+		call.thinking ? `thinking '${call.thinking}'` : undefined,
+	].filter(Boolean);
+	if (ignored.length === 0) return null;
+	return (
+		`Warning: agent '${agentName ?? "subagent"}' sets allow-model-override: false; ` +
+		`${ignored.join(" and ")} from the call ignored. The child runs on the agent's own model.`
+	);
+}
+
+/** Every launch warning for one child, joined for the tool reply ("" when none). */
+export function getChildLaunchWarning(
+	child: Pick<SubagentParamsInput, "agent" | "model" | "thinking">,
+	agentDefs: AgentDefaults | null,
+	usesBackgroundLaunch: boolean,
+): string {
+	return [
+		getIgnoredModelOverrideWarning(child.agent, agentDefs?.allowModelOverride, child),
+		(getSubagentToolsWarning(agentDefs?.tools) ?? getBackgroundAutoExitWarning(agentDefs, usesBackgroundLaunch))
+			?.message,
+	]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
 export function applySynchronousLaunchPolicy(
 	params: SubagentParamsInput,
 	agentDefs: AgentDefaults | null,
