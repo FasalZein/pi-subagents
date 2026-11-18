@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { traceSubagentLaunch } from "../launch/trace.ts";
 import type { PollResult } from "../mux/poll.ts";
-import { isZellijSurfaceLive } from "../mux/zellij-runtime.ts";
-import { consumeSubagentExitSignal, getMuxBackend, pollForExit } from "../mux.ts";
+import type { MuxBackendAdapter } from "../mux/backend.ts";
+import { consumeSubagentExitSignal, currentMuxAdapter, pollForExit } from "../mux.ts";
 import { hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "../session/session.ts";
@@ -253,9 +253,9 @@ async function watchInteractiveGeneration(
 			sessionFile,
 			signalAborted: signal.aborted,
 		});
-		const pollResult =
-			getMuxBackend() === "zellij"
-				? await pollForZellijFiles(running, signal, updateStats)
+		const adapter = currentMuxAdapter();
+		const pollResult = adapter?.checkExit
+			? await pollForProgramSurfaceExit(running, adapter, signal, updateStats)
 				: await (runtime.pollForExit ?? pollForExit)(surface, signal, {
 						interval: 1000,
 						sessionFile,
@@ -407,8 +407,10 @@ function getSummary(
 	};
 }
 
-async function pollForZellijFiles(
+/** Polls the completion files and the backend's own exit check of a direct-program surface. */
+async function pollForProgramSurfaceExit(
 	running: RunningSubagent,
+	adapter: MuxBackendAdapter,
 	signal: AbortSignal,
 	onTick: () => void,
 ): Promise<PollResult> {
@@ -419,16 +421,9 @@ async function pollForZellijFiles(
 			const match = readFileSync(running.doneSentinelFile, "utf8").match(/__SUBAGENT_DONE_(\d+)__/);
 			if (match) return { reason: "sentinel", exitCode: Number(match[1]) };
 		}
-		if (
-			running.zellijTarget &&
-			running.surface &&
-			!(await isZellijSurfaceLive(running.zellijTarget, running.surface))
-		) {
-			return {
-				reason: "error",
-				exitCode: 1,
-				errorMessage: "Zellij child pane exited without a completion signal.",
-			};
+		if (running.zellijTarget && running.surface) {
+			const exited = await adapter.checkExit?.(running.surface, running.zellijTarget);
+			if (exited) return exited;
 		}
 		onTick();
 		await waitForPoll(1000, signal);

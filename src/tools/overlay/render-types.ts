@@ -9,7 +9,7 @@ export type Theme = {
 
 export type OverlayTui = TUI;
 
-export type TabId = "running" | "completed" | "agents" | "orchestrator";
+export type TabId = "running" | "completed" | "agents";
 
 export interface TabDef {
 	id: TabId;
@@ -20,7 +20,6 @@ export const TABS: TabDef[] = [
 	{ id: "running", label: "Running" },
 	{ id: "completed", label: "Completed" },
 	{ id: "agents", label: "Agents" },
-	{ id: "orchestrator", label: "Orchestrator" },
 ];
 
 export interface OverlayItem {
@@ -58,16 +57,7 @@ type ViewState =
 	| { kind: "list" }
 	| { kind: "detail"; item: OverlayItem; scroll: number }
 	| { kind: "confirm"; item: OverlayItem; confirmed: boolean }
-	| { kind: "editor"; itemIndex: number }
-	| { kind: "orchestrator-confirm"; targetMode: boolean; confirmed: boolean };
-
-export type OrchestratorActionId = "session-toggle" | "session-fresh" | "default-toggle";
-
-interface OrchestratorOverlayState {
-	selectedIndex: number;
-	scroll: number;
-	error?: string;
-}
+	| { kind: "editor"; itemIndex: number };
 
 export interface OverlayState {
 	activeTab: TabId;
@@ -76,7 +66,6 @@ export interface OverlayState {
 	items: OverlayItem[];
 	listScroll: Record<TabId, number>;
 	loading: boolean;
-	orchestrator: OrchestratorOverlayState;
 }
 
 export interface FooterHint {

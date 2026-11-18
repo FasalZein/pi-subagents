@@ -16,10 +16,8 @@ import { writeResumeTaskArtifact } from "../launch/prompt-artifacts.ts";
 import { buildResumePiArgs, getResumeCwd } from "../launch/resume.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
-import { createZellijCommandSurface } from "../mux/zellij-placement.ts";
-import { getZellijShellCommand, resolveZellijTarget } from "../mux/zellij-runtime.ts";
 import { closeSurfaceAsync } from "../mux/io.ts";
-import { createSurface, getMuxBackend, sendShellCommand } from "../mux.ts";
+import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { getDoneSentinelFile } from "../session/session-files.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
@@ -188,8 +186,8 @@ export async function restartSubagentForTimeoutWrapUp(
 	}
 
 	const metadata = running.launchMetadata!;
-	const backend = getMuxBackend();
-	const zellijTarget = backend === "zellij" ? await resolveZellijTarget() : undefined;
+	const programSession = await currentMuxAdapter()?.openProgramSession?.();
+	const zellijTarget = programSession?.target;
 	throwIfAborted(signal);
 	const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
 	const zellijContext =
@@ -221,7 +219,7 @@ export async function restartSubagentForTimeoutWrapUp(
 			launch.cwd ?? process.cwd(),
 		);
 		piArgs.push(`@${taskPath}`);
-		if (zellijTarget) launch.env.ZELLIJ_SESSION_NAME = zellijTarget.sessionName;
+		if (programSession) Object.assign(launch.env, programSession.childEnv);
 		if (surface) launch.env.PI_SUBAGENT_SURFACE = surface;
 		const { command, dispose } = buildInteractiveShellCommand({
 			cwd: launch.cwd ?? undefined,
@@ -232,13 +230,10 @@ export async function restartSubagentForTimeoutWrapUp(
 			...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
 		});
 		disposeCapsule = dispose;
-		if (zellijTarget) {
-			surface = await createZellijCommandSurface(
-				metadata.sessionTitle ?? running.title ?? running.name,
-				zellijTarget,
-				getZellijShellCommand(command),
-				zellijContext,
-			);
+		if (programSession) {
+			surface = await programSession.start(metadata.sessionTitle ?? running.title ?? running.name, command, {
+				zellij: zellijContext,
+			});
 			running.surface = surface;
 			running.zellijTarget = zellijTarget;
 			throwIfAborted(signal);

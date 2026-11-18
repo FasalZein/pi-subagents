@@ -28,11 +28,10 @@ import {
 import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
-import { createZellijCommandSurface } from "../mux/zellij-placement.ts";
-import { getZellijShellCommand, resolveZellijTarget } from "../mux/zellij-runtime.ts";
 import {
 	createSurface,
 	getMuxBackend,
+	muxBackendAdapter,
 	muxSetupHint,
 	resolveHerdrPlacementPolicy,
 	resolveZellijPlacementPolicy,
@@ -68,7 +67,6 @@ import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
 	getSpawnWidthLimit,
-	releaseSlots,
 	releaseSpawnWidthSlot,
 	releaseSpawnWidthSlotOnCompletion,
 	tryAcquireSlots,
@@ -222,7 +220,8 @@ export async function resumeSubagentSession(
 		);
 	}
 	const widthLimit = getSpawnWidthLimit();
-	if (!tryAcquireSlots(1, widthLimit)) {
+	const slot = tryAcquireSlots(1, widthLimit);
+	if (!slot) {
 		throw new Error(
 			`Spawn width limit reached (${getLiveSlotCount()}/${widthLimit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
 		);
@@ -231,7 +230,7 @@ export async function resumeSubagentSession(
 	let claimedRunning: RunningSubagent | undefined;
 	try {
 		const running = await resumeSubagentSessionWithoutWidth(input, runtime);
-		claimSpawnWidthSlot(running);
+		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
 			running.completionPromise = releaseSpawnWidthSlotOnCompletion(running, running.completionPromise);
@@ -239,7 +238,7 @@ export async function resumeSubagentSession(
 		return running;
 	} catch (error) {
 		if (claimedRunning) releaseSpawnWidthSlot(claimedRunning);
-		else releaseSlots(1);
+		slot.release();
 		throw error;
 	}
 }
@@ -512,8 +511,8 @@ async function resumeSubagentSessionWithoutWidth(
 						policy: configuredZellijPolicy,
 					}
 				: undefined;
-		const zellijTarget = backend === "zellij" ? await resolveZellijTarget() : undefined;
-		const ordinarySurface = zellijTarget
+		const programSession = backend ? await muxBackendAdapter(backend)?.openProgramSession?.() : undefined;
+		const ordinarySurface = programSession
 			? undefined
 			: await createSurface(surfaceName, {
 					herdr: herdrContext,
@@ -526,7 +525,7 @@ async function resumeSubagentSessionWithoutWidth(
 			const taskPath = writeResumeTaskArtifact(name, expandedTask, sessionFile, resumeCwd ?? process.cwd());
 			piArgs.push(`@${taskPath}`);
 		}
-		if (zellijTarget) resumeEnvVars.ZELLIJ_SESSION_NAME = zellijTarget.sessionName;
+		if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 		if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
 		const { command, dispose } = buildInteractiveShellCommand({
 			cwd: resumeCwd ?? undefined,
@@ -534,19 +533,19 @@ async function resumeSubagentSessionWithoutWidth(
 			envOverrides: resumeEnvVars,
 			denyEnv: invocationMetadata?.denyEnv,
 			doneSentinelFile,
-			...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
+			...(programSession ? { deriveZellijPaneSurface: true } : {}),
 		});
 		try {
 			const surface =
 				ordinarySurface ??
-				(await createZellijCommandSurface(surfaceName, zellijTarget!, getZellijShellCommand(command), zellijContext));
-			if (!zellijTarget) {
+				(await programSession!.start(surfaceName, command, { zellij: zellijContext }));
+			if (!programSession) {
 				await new Promise<void>((resolve) => setTimeout(resolve, runtime.getShellReadyDelayMs()));
 				sendShellCommand(surface, command);
 			}
 			running.surface = surface;
 			running.doneSentinelFile = doneSentinelFile;
-			running.zellijTarget = zellijTarget;
+			running.zellijTarget = programSession?.target;
 		} catch (error) {
 			// Nothing consumed the capsule; do not leave credentials behind.
 			dispose();

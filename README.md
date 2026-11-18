@@ -2,7 +2,7 @@
 
 `pi-subagents` is a highly curated multi-agent framework for [Pi agent harness](https://github.com/earendil-works/pi).
 
-It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, orchestrator mode, and much more!
+It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, and much more!
 
 Use it when one agent should hand work to another agent instead of trying to do everything in one transcript. Interactive children open in Herdr, cmux, tmux, zellij, or WezTerm; background children run headlessly.
 
@@ -54,77 +54,18 @@ The backend command must exist, and Pi must be able to see the current pane or s
 
 Normal launches use a backend-specific surface. Herdr keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. Other backends may use windows, splits, or stacked panes.
 
-### Orchestrator mode
+### Orchestrator mode is removed
 
-You can turn the parent session into an orchestrator — an agent that can only
-delegate. It spawns sub-agents, waits for results, and synthesizes answers.
-It cannot read files, run commands, edit code, or search the codebase itself.
+Earlier versions had an orchestrator mode for the parent session. It removed every parent tool except `subagent`, `subagent_resume`, `subagent_kill`, and `set_tab_title`, and it replaced Pi's system prompt with a delegation-only prompt.
 
-#### Why orchestrator mode exists
+This version removes that mode with its `/subagents` tab, its saved default for new conversations, and the `PI_ORCHESTRATOR_MODE` variable. The parent keeps all of its tools and Pi's own system prompt. Pi ignores `PI_ORCHESTRATOR_MODE` and the orchestrator entries that older conversations saved, so you can delete the variable from your shell configuration.
 
-Models default to doing work themselves. Given the chance, they read the file,
-write the fix, run the test. That works for single-agent tasks. For
-multi-agent workflows it defeats the purpose — you pay for two agents to race
-each other, and the parent floods its context with execution details instead
-of staying focused on coordination.
+A conversation that used orchestrator mode keeps its restricted tool set after the upgrade, also after `/reload`, because Pi restores the tools that the conversation saved. pi-subagents does not change that tool set for you. To get the tools back, do one of these:
 
-Every production multi-agent framework hits this same limit. Anthropic's
-Claude Code has `COORDINATOR_MODE` with the same mechanism: restricted tool
-set, replacement system prompt, worker isolation. OpenAI Codex users file
-issues asking for a mode where the main agent "cannot execute, only
-delegate." The ADCS delegation chain spec encodes it as a scope-intersection
-invariant: each hop narrows permissions, never widens.
+- Start a new conversation with `/new` or a plain `pi`.
+- Continue the old conversation and add the tools again, for example `pi --continue --tools +read,+bash,+edit,+write`.
 
-The research calls it brain/hands separation. The orchestrator holds the
-plan. Workers hold the execution context. You keep them apart because mixing
-them makes both worse — the orchestrator loses sight of the plan when it
-starts reading files, and workers get confused about their role when they see
-orchestrator-level strategy in their context.
-
-#### When to use it
-
-Orchestrator mode shines on tasks that decompose into parallel work:
-independent research questions, multiple implementation targets, verify-after-
-write cycles. The orchestrator defines the structure, dispatches each piece
-to the right agent, reads results, and writes the next round of instructions.
-
-Simple requests do not benefit. A single sub-agent handles those faster.
-
-#### How to use it
-
-Open `/subagents` or press `Alt+S`, then select Orchestrator. You can turn
-the mode on or off in the current conversation, or start a fresh conversation.
-Switching in place keeps your conversation. Starting fresh leaves the old
-conversation available through `/resume`.
-
-If Pi or any sub-agents are working, wait for them to finish or stop them
-before switching. Pi remembers the mode when you reopen the conversation.
-
-You can also choose whether new conversations start in orchestrator mode.
-Changing this default does not change existing conversations. The environment
-variable below overrides this default, but not a conversation's saved choice.
-
-```bash
-PI_ORCHESTRATOR_MODE=1 pi
-```
-
-To use it by default for new conversations, add this to your shell configuration:
-
-```bash
-export PI_ORCHESTRATOR_MODE=1
-```
-
-Enable that and two things change:
-
-1. **Tool restriction.** Removes read, bash, edit, write,
-   grep, find, and every other tool except subagent,
-   subagent_kill, subagent_resume. The LLMs cannot call what they cannot see.
-2. **System prompt replacement.** Pi's "expert coding assistant" prompt gets
-   replaced with one that defines the orchestrator role: decompose, delegate,
-   synthesize. The replacement preserves Pi's `APPEND_SYSTEM.md` content.
-
-Children do not inherit the parent agent's role or system prompt. Each child
-runs as a separate Pi process with its own agent definition and prompt chain.
+Children are not affected. With `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`, a successful async launch still does not end the parent turn.
 
 ## Agent definitions
 
@@ -215,7 +156,7 @@ Children inherit every environment variable from the parent Pi process, in every
 
 `trust-project` controls Pi's project-local trust boundary for resources such as settings, extensions, skills, prompts, themes, `SYSTEM.md`, and `APPEND_SYSTEM.md`. The default `false` passes `--no-approve`, even when the parent project was previously approved. Project context files are separate: Pi still loads applicable `AGENTS.override.md`, `AGENTS.md`, or `CLAUDE.md` files unless `no-context-files: true` passes `--no-context-files`. Background children always generate `--no-approve`; `flags` is the explicit advanced escape hatch if you need to override that safety default.
 
-`task-expansion: shell` prepares task context before launch for small models that should not have to plan tool calls. It is opt-in because the parent task text becomes shell input and runs in the parent Pi process before the child starts. Commands execute in source order from the child's effective `cwd`; each placeholder gets 30 seconds before Pi inserts a timeout diagnostic. Use `$PI_WORKSPACE` or `${PI_WORKSPACE}` inside the shell command to read the workspace path from the environment. This explicit opt-in works in every parent mode, including orchestrator mode. Use explicit shell placeholders:
+`task-expansion: shell` prepares task context before launch for small models that should not have to plan tool calls. It is opt-in because the parent task text becomes shell input and runs in the parent Pi process before the child starts. Commands execute in source order from the child's effective `cwd`; each placeholder gets 30 seconds before Pi inserts a timeout diagnostic. Use `$PI_WORKSPACE` or `${PI_WORKSPACE}` inside the shell command to read the workspace path from the environment. Use explicit shell placeholders:
 
 ````md
 Summarize the files changed.
@@ -909,7 +850,6 @@ User-facing knobs:
 
 | Variable | Use |
 | --- | --- |
-| `PI_ORCHESTRATOR_MODE` | Set `1` to turn the parent into an orchestrator (delegation-only tools, replacement system prompt) |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
 | `PI_SUBAGENT_MUX` | Force `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |

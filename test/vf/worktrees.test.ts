@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { assert, createTestDir, join } from "../support/index.ts";
 import {
@@ -122,7 +122,8 @@ describe("worktree preflight gate", () => {
 
 describe("candidate worktree creation", () => {
 	it("names worktrees <repo>-vf-<runid>-w<i> as siblings of the repo, at the base commit", () => {
-		const outer = createTestDir();
+		// Resolved path: git reports the repo top level as /private/var/... on macOS, tmpdir() as /var/...
+		const outer = realpathSync(createTestDir());
 		const { repoRoot, baseCommit } = makeRepo(outer);
 		const runId = "vf-20260822-101530-ab12cd34";
 		const worktrees = createCandidateWorktrees({ cwd: repoRoot, runId, count: 3 });

@@ -1,11 +1,13 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
+import type { MuxBackendAdapter } from "./backend.ts";
 import { cmuxBackend } from "./cmux.ts";
 import { isHerdrRuntimeAvailable } from "./herdr.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 import { tmuxBackend } from "./tmux.ts";
 import { weztermBackend } from "./wezterm.ts";
+import { zellijBackend } from "./zellij.ts";
 
 export const execFileAsync = promisify(execFile);
 
@@ -23,10 +25,6 @@ function muxPreference(): MuxBackend | null {
 	return null;
 }
 
-function isZellijRuntimeAvailable(): boolean {
-	return !!(process.env.ZELLIJ || process.env.ZELLIJ_SESSION_NAME) && hasCommand("zellij");
-}
-
 function isHerdrMuxRuntimeAvailable(): boolean {
 	return isHerdrRuntimeAvailable(hasCommand);
 }
@@ -40,7 +38,7 @@ export function isTmuxAvailable(): boolean {
 }
 
 export function isZellijAvailable(): boolean {
-	return isZellijRuntimeAvailable();
+	return zellijBackend.isAvailable();
 }
 
 export function isHerdrAvailable(): boolean {
@@ -51,16 +49,41 @@ export function getMuxBackend(): MuxBackend | null {
 	const pref = muxPreference();
 	if (pref === "cmux") return isCmuxAvailable() ? "cmux" : null;
 	if (pref === "tmux") return isTmuxAvailable() ? "tmux" : null;
-	if (pref === "zellij") return isZellijRuntimeAvailable() ? "zellij" : null;
+	if (pref === "zellij") return isZellijAvailable() ? "zellij" : null;
 	if (pref === "wezterm") return weztermBackend.isAvailable() ? "wezterm" : null;
 	if (pref === "herdr") return isHerdrMuxRuntimeAvailable() ? "herdr" : null;
 
 	if (isHerdrMuxRuntimeAvailable()) return "herdr";
 	if (isCmuxAvailable()) return "cmux";
 	if (isTmuxAvailable()) return "tmux";
-	if (isZellijRuntimeAvailable()) return "zellij";
+	if (isZellijAvailable()) return "zellij";
 	if (weztermBackend.isAvailable()) return "wezterm";
 	return null;
+}
+
+/**
+ * The adapter of a backend; undefined for herdr, which keeps its branches until a later ticket.
+ * A switch, not a module-level map: the adapter modules import this one, so a map would read them before they exist.
+ */
+export function muxBackendAdapter(backend: MuxBackend): MuxBackendAdapter | undefined {
+	switch (backend) {
+		case "cmux":
+			return cmuxBackend;
+		case "tmux":
+			return tmuxBackend;
+		case "wezterm":
+			return weztermBackend;
+		case "zellij":
+			return zellijBackend;
+		case "herdr":
+			return undefined;
+	}
+}
+
+/** The adapter of the current backend; undefined when no backend runs or the backend is herdr. */
+export function currentMuxAdapter(): MuxBackendAdapter | undefined {
+	const backend = getMuxBackend();
+	return backend ? muxBackendAdapter(backend) : undefined;
 }
 
 export function isMuxAvailable(): boolean {
@@ -71,9 +94,7 @@ export function muxSetupHint(): string {
 	const pref = muxPreference();
 	if (pref === "cmux") return cmuxBackend.setupHint();
 	if (pref === "tmux") return tmuxBackend.setupHint();
-	if (pref === "zellij") {
-		return "Start pi inside zellij (`zellij --session pi`, then run `pi`).";
-	}
+	if (pref === "zellij") return zellijBackend.setupHint();
 	if (pref === "wezterm") return weztermBackend.setupHint();
 	if (pref === "herdr") return "Start pi inside Herdr (`herdr`, then run `pi`).";
 	return "Start pi inside Herdr (`herdr`, then run `pi`), cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
@@ -104,37 +125,4 @@ export function tailLines(text: string, lines: number): string {
 	const split = text.split("\n");
 	if (split.length <= lines) return text;
 	return split.slice(-lines).join("\n");
-}
-
-export function zellijPaneId(surface: string): string {
-	return surface.startsWith("pane:") ? surface.slice("pane:".length) : surface;
-}
-
-function zellijEnv(surface?: string): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
-	if (surface) env.ZELLIJ_PANE_ID = zellijPaneId(surface);
-	return env;
-}
-
-const ZELLIJ_PANE_SCOPED_ACTIONS = new Set([
-	"close-pane",
-	"dump-screen",
-	"move-pane",
-	"rename-pane",
-	"write",
-	"write-chars",
-]);
-
-function zellijActionArgs(args: string[], surface?: string): string[] {
-	if (!surface || args.includes("--pane-id")) return args;
-	const [action] = args;
-	if (!action || !ZELLIJ_PANE_SCOPED_ACTIONS.has(action)) return args;
-	return [action, "--pane-id", zellijPaneId(surface), ...args.slice(1)];
-}
-
-export function zellijActionSync(args: string[], surface?: string): string {
-	return execFileSync("zellij", ["action", ...zellijActionArgs(args, surface)], {
-		encoding: "utf8",
-		env: zellijEnv(surface),
-	});
 }
