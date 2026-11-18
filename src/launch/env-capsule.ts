@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readdirSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -102,7 +102,13 @@ export function writeEnvCapsule(capsule: EnvCapsule, dir = tmpdir()): string {
 	sweepStaleEnvCapsules(DEFAULT_ENV_CAPSULE_MAX_AGE_MS, root);
 	const capsuleDir = mkdtempSync(join(root, ENV_CAPSULE_DIR_PREFIX));
 	const capsulePath = join(capsuleDir, ENV_CAPSULE_FILE_NAME);
-	writeFileSync(capsulePath, `${JSON.stringify(capsule)}\n`, { mode: 0o600 });
-	chmodSync(capsulePath, 0o600);
+	try {
+		writeFileSync(capsulePath, `${JSON.stringify(capsule)}\n`, { mode: 0o600 });
+		chmodSync(capsulePath, 0o600);
+	} catch (error) {
+		// The caller never receives this path, so the writer removes what it made (D6).
+		rmSync(capsuleDir, { recursive: true, force: true });
+		throw error;
+	}
 	return capsulePath;
 }

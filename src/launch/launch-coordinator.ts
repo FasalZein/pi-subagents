@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { currentMuxAdapter, resolveZellijPlacementPolicy } from "../mux.ts";
 import { ChildSessionStorage } from "../session/child-session-storage.ts";
 import { getEntryCount } from "../session/session.ts";
@@ -12,6 +12,7 @@ import type { SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
+import type { LaunchUndo } from "./launch-undo.ts";
 import { freezeLaunchBlueprint, type LaunchRuntimeOverrides, resolveForcedChildCwd } from "./launch-overrides.ts";
 import { resolveSubagentNoSession } from "./policy.ts";
 import {
@@ -48,7 +49,7 @@ export interface CoordinatedSubagentLaunch {
 export async function coordinateSubagentLaunch(
 	params: SubagentParamsInput,
 	ctx: SubagentLaunchContext,
-	options: { mode: ResumeMode; systemPrompt?: string },
+	options: { mode: ResumeMode; systemPrompt?: string; undo: LaunchUndo },
 ): Promise<CoordinatedSubagentLaunch> {
 	const runtimeOverrides: LaunchRuntimeOverrides = {
 		...(params.forcedCwd ? { forcedCwd: params.forcedCwd } : {}),
@@ -64,6 +65,10 @@ export async function coordinateSubagentLaunch(
 	const noSession = resolveSubagentNoSession(prepared.agentDefs);
 	const noSessionSeedMode = noSession ? getNoSessionSeedMode(sessionMode) : null;
 	const directTask = sessionMode === "fork" || noSessionSeedMode === "fork";
+	// A seeded session file that no process ever opened is removed when the launch fails (D6).
+	if (!existsSync(prepared.subagentSessionFile)) {
+		options.undo.add(() => rmSync(prepared.subagentSessionFile, { force: true }));
+	}
 	const { seedMode, boundarySystemPrompt } = seedPreparedSubagentSession(
 		prepared,
 		params,
