@@ -1,3 +1,4 @@
+import { beforeEach } from "node:test";
 import { closeSurfaceAsync } from "../../src/mux/io.ts";
 import {
 	assert,
@@ -167,6 +168,11 @@ describe("mux.ts", async () => {
 
 	describe("tmux integration", async () => {
 		const maybeIt = canRunTmuxIntegration ? it : it.skip;
+		// Pin the backend under test: auto-detection prefers herdr and cmux over tmux,
+		// so a tmux runner nested in another mux would drive the outer mux instead.
+		beforeEach(() => {
+			process.env.PI_SUBAGENT_MUX = "tmux";
+		});
 
 		maybeIt("creates panes, sends commands, reads output, and closes them", async () => {
 			let baseSurface: string | undefined;

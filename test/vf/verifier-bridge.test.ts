@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { assert, createTestDir, join } from "../support/index.ts";
+import { assert, createTestDir, ignoreUserUvConfig, join } from "../support/index.ts";
 import type { MockVerifierConfig, RunBridgeOptions } from "../../src/vf/verifier/bridge.ts";
 import {
 	defaultVerifierCachePath,
@@ -60,6 +60,7 @@ function writeFake(dir: string, name: string, body: string): string {
 describe("managed verifier venv", () => {
 	const savedRoot = process.env.PI_SUBAGENT_LLM_VERIFIER_VENV;
 	const root = createTestDir();
+	ignoreUserUvConfig();
 
 	after(() => {
 		if (savedRoot === undefined) delete process.env.PI_SUBAGENT_LLM_VERIFIER_VENV;
@@ -122,6 +123,7 @@ describe("verifier bridge (NDJSON one-shot)", () => {
 	const dir = createTestDir();
 	let python: string;
 	const criteriaPath = join(dir, "criteria.md");
+	ignoreUserUvConfig();
 
 	before(() => {
 		writeFileSync(criteriaPath, CRITERIA);

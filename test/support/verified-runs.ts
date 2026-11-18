@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getPackagedCriteriaDir } from "../../src/vf/criteria.ts";
 import { newRunId } from "../../src/vf/supervisor/run-client.ts";
@@ -76,7 +76,9 @@ export function gitRun(cwd: string, ...args: string[]): string {
 }
 
 export function setupVerifiedRunFixture(): { repo: string; parent: string; fakePi: string; captureDir: string } {
-	const parent = createTestDir();
+	// Resolved path: the supervisor plans worktrees from git's top level, which is
+	// /private/var/... on macOS while tmpdir() is /var/...
+	const parent = realpathSync(createTestDir());
 	const repo = join(parent, "repo");
 	mkdirSync(repo, { recursive: true });
 	gitRun(repo, "init", "-q");
