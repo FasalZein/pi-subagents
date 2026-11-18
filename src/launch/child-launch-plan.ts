@@ -311,6 +311,15 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		if (hasAllowedModels) {
 			assertModelAllowed(ref.effectiveModelRef, agentDefs?.allowedModels, params.agent, implicitRef ? [implicitRef] : []);
 		}
+		// A bare default passes to Pi as written; the recorded ref names the one registry
+		// ref Pi picks for it, or stays bare when the name is not unique (D23).
+		if (ref.effectiveModel && !ref.effectiveModel.includes("/")) {
+			const shown = resolveAgentDefaultRef(
+				{ definitionModel: ref.effectiveModel, definitionThinking: ref.effectiveThinking },
+				options.modelRegistry,
+			);
+			return { ...ref, effectiveModelRef: shown };
+		}
 		return ref;
 	};
 	const { effectiveModel, effectiveThinking, effectiveModelRef } =

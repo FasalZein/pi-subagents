@@ -467,6 +467,29 @@ describe("child launch plan", () => {
 		assert.equal(plan.effectiveModel, "some-bare-model");
 	});
 
+	it("reports the registry ref Pi runs for a bare default without allowed-models, and the bare name when not unique", async () => {
+		const cwd = createTestDir();
+		const plan = (providers: string[]) =>
+			buildChildLaunchPlan({
+				params: { name: "code-review", task: "review the diff", title: "Code review", agent: "reviewer" },
+				agentDefs: { model: "bare-model:high" },
+				parentCwd: cwd,
+				parentSessionDir: join(cwd, "parent-sessions"),
+				modelRegistry: {
+					getAvailable: () => [
+						...providers.map((provider) => ({ provider, id: "bare-model" })),
+						{ provider: "synthetic-a", id: "other-model" },
+					],
+				},
+			});
+		const unique = await plan(["synthetic-a"]);
+		assert.equal(unique.effectiveModelRef, "synthetic-a/bare-model:high");
+		// The child command keeps the name as written; Pi resolves it natively.
+		assert.equal(unique.effectiveModel, "bare-model");
+		const ambiguous = await plan(["synthetic-a", "synthetic-b"]);
+		assert.equal(ambiguous.effectiveModelRef, "bare-model:high");
+	});
+
 	it("treats allowed model refs without thinking as model-wide entries", async () => {
 		const cwd = createTestDir();
 		const parentSessionDir = join(cwd, "parent-sessions");
