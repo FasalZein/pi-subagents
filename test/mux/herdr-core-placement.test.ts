@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ProgramLaunch } from "../../src/mux/backend.ts";
@@ -59,6 +60,8 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		setEnv("HC_TERMINAL_ID", FAKE_HC_CALLER);
 		setEnv("HC_TERMINAL_SOCKET", join(stateDir, "hc.sock"));
 		setEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+		// The focus lock lives in tmpdir(); a test root keeps it apart from a real Pi on this host.
+		setEnv("TMPDIR", root);
 	});
 
 	afterEach(async () => {
@@ -130,5 +133,31 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		assert.deepEqual(calls, [...splitTransaction(firstKept), ...splitTransaction(second)]);
 		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE);
 		for (const child of [a, b]) assert.equal(labelsOf(child)["herdr.space"], FAKE_APP_SPACE);
+	});
+
+	const lockDir = () => join(root, `pi-subagents-herdr-app-focus-${userInfo().uid}.lock`);
+	function holdLock(pid: number): void {
+		mkdirSync(lockDir());
+		writeFileSync(join(lockDir(), "pid"), String(pid));
+	}
+
+	it("waits while another live process holds the app's focus lock, then runs its transaction", async () => {
+		// The test runner's parent process stands in for another Pi in the same app.
+		holdLock(process.ppid);
+		const starting = start("Waiting Child");
+		await new Promise((resolve) => setTimeout(resolve, 1_500));
+		assert.deepEqual(appCalls(), [], "no app call while the other process holds the lock");
+		rmSync(lockDir(), { recursive: true });
+		const child = await starting;
+		assert.deepEqual(appCalls(), splitTransaction(child));
+		assert.equal(existsSync(lockDir()), false, "the lock is released");
+	});
+
+	it("removes a focus lock whose owner is dead", async () => {
+		const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+		holdLock(dead);
+		const child = await start("Stale Lock Child");
+		assert.deepEqual(appCalls(), splitTransaction(child));
+		assert.equal(existsSync(lockDir()), false);
 	});
 });

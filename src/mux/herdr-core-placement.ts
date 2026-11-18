@@ -1,3 +1,6 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
 import { execFileAsync } from "./core.ts";
 import { HC_COMMAND } from "./herdr-core-exit.ts";
 
@@ -52,16 +55,63 @@ async function tabInParentSpace(child: string, parent: string): Promise<void> {
 	await execFileAsync(HC_COMMAND, ["label", child, `${SPACE_LABEL_KEY}=${space}`], { encoding: "utf8" });
 }
 
+/** How long a launch waits for another process's focus transaction before it takes the tab fallback. */
+const FOCUS_LOCK_WAIT_MS = 15_000;
+const FOCUS_LOCK_POLL_MS = 25;
+
 /**
- * Tail of the focus transactions of this process. The app has one focus, so at most one transaction
- * runs at a time: a second launch never focuses its parent between the first one's focus and split.
- * Limit: the chain is per process; a child Pi that launches its own children in the same app has its
- * own chain. Revisit with a lock file when nested launches overlap in practice.
+ * The app has one focus and one Herdr app per user session, so the lock is per user: a directory made
+ * atomically with mkdir, holding the owner's pid. A lock whose owner is dead is stale and is removed.
+ */
+function focusLockPath(): string {
+	return join(tmpdir(), `pi-subagents-herdr-app-focus-${userInfo().uid}.lock`);
+}
+
+function ownerAlive(lock: string): boolean {
+	try {
+		process.kill(Number(readFileSync(join(lock, "pid"), "utf8")), 0);
+		return true;
+	} catch (error) {
+		// EPERM: the pid exists under another user. A missing pid file is a lock being made or removed.
+		return (error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "ENOENT";
+	}
+}
+
+async function acquireFocusLock(): Promise<() => void> {
+	const lock = focusLockPath();
+	const deadline = Date.now() + FOCUS_LOCK_WAIT_MS;
+	for (;;) {
+		try {
+			mkdirSync(lock);
+			writeFileSync(join(lock, "pid"), String(process.pid));
+			return () => rmSync(lock, { recursive: true, force: true });
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		}
+		if (!ownerAlive(lock)) rmSync(lock, { recursive: true, force: true });
+		else if (Date.now() > deadline) throw new Error(`focus lock ${lock} held by another process`);
+		else await new Promise((resolve) => setTimeout(resolve, FOCUS_LOCK_POLL_MS));
+	}
+}
+
+/**
+ * Tail of the focus transactions of this process. At most one transaction runs at a time per app:
+ * a second launch never focuses its parent between the first one's focus and split. The queue orders
+ * the launches of this process; the lock file orders them against other Pi processes in the same app,
+ * for example a child Pi that launches its own children.
  */
 let focusQueue: Promise<unknown> = Promise.resolve();
 
 function inFocusTransaction<T>(step: () => Promise<T>): Promise<T> {
-	const run = focusQueue.then(step, step);
+	const locked = async () => {
+		const release = await acquireFocusLock();
+		try {
+			return await step();
+		} finally {
+			release();
+		}
+	};
+	const run = focusQueue.then(locked, locked);
 	focusQueue = run.catch(() => undefined);
 	return run;
 }
