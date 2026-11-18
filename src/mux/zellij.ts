@@ -108,8 +108,9 @@ export const zellijBackend: MuxBackendAdapter = {
 		return {
 			target,
 			childEnv: { ZELLIJ_SESSION_NAME: target.sessionName },
-			start: (name, command, options) =>
-				createZellijCommandSurface(name, target, getZellijShellCommand(command), options?.zellij),
+			surfaceFromEnv: { name: "ZELLIJ_PANE_ID", prefix: "pane:" },
+			start: (name, launch, options) =>
+				createZellijCommandSurface(name, target, getZellijShellCommand(launch.shellCommand), options?.zellij),
 		};
 	},
 	checkExit: async (surface, target) =>

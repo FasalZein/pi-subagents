@@ -129,11 +129,12 @@ export function requestSubagentBatchStop(): void {
 	stopAfterCurrentSubagentBatch = true;
 }
 
-export function getCoordinatorOnlyTurnPrompt(): string {
+/** The one launch-reply line that says how the reports of detached children return (D23). */
+export function getLaunchReturnLine(): string {
 	if (isCoordinatorOnlyTurnDisabled()) {
-		return "You may continue with non-overlapping work after launching a tool_return=later_message helper. Do not redo delegated work or claim results before the later report appears.";
+		return "Each report arrives later; until then do only work that does not overlap, and do not poll, redo the delegated work or claim its results.";
 	}
-	return "For helpers with tool_return=later_message, the runtime may stop after this tool batch so the helper's later report can be inserted into this chat. Do not redo delegated work or claim results before the later report appears.";
+	return "Each report arrives later, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.";
 }
 
 export function getSubagentBatchStopMetadata(): { terminate?: true } {

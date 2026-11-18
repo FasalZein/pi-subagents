@@ -558,9 +558,7 @@ export default function (pi: ExtensionAPI) {
 			name: SUBAGENT_DONE_TOOL_NAME,
 			label: "Subagent Done",
 			description:
-				"Call this tool when you have completed your task. " +
-				"It will close this session and return your results to the main session. " +
-				"Your LAST assistant message before calling this becomes the summary returned to the caller.",
+				"When your task is complete, close this session and return your last assistant message to the caller as your result.",
 			parameters: doneParams,
 			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 				if (takeover.tookOver) {

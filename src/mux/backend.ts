@@ -22,19 +22,37 @@ export interface MuxSessionTarget {
 	parentPaneId: number;
 }
 
+/** One child launch in its two forms; a direct-program backend starts the form it supports. */
+export interface ProgramLaunch {
+	/** The shell command line: sentinel trap, cd prefix, launcher and capsule. */
+	readonly shellCommand: string;
+	/** The launcher with its capsule as argv, for a backend that starts a program without a shell. */
+	readonly launcherArgv: readonly string[];
+	/** Working directory of the child; the launcher also applies it from the capsule. */
+	readonly cwd?: string;
+}
+
+/** The surface env name from which the launcher derives PI_SUBAGENT_SURFACE, as prefix + value. */
+export interface SurfaceFromEnv {
+	readonly name: string;
+	readonly prefix: string;
+}
+
 /** A session resolved for direct-program starts. */
 export interface DirectProgramSession {
 	readonly target: MuxSessionTarget;
 	/** Env that the child needs to reach this session. */
 	readonly childEnv: Record<string, string>;
-	/** Opens a surface whose own process runs the shell command line; nothing is typed into a shell. */
-	start(name: string, command: string, options?: SurfaceCreationOptions): Promise<string>;
+	/** How the child names its own surface: the launcher reads this name from the surface env. */
+	readonly surfaceFromEnv: SurfaceFromEnv;
+	/** Opens a surface whose own process runs the launch; nothing is typed into a shell. */
+	start(name: string, launch: ProgramLaunch, options?: SurfaceCreationOptions): Promise<string>;
 }
 
 /**
  * One terminal multiplexer behind the shared functions of src/mux/ (spec decision D26).
  * Holds only the operations that the shared functions call today.
- * tmux, cmux, wezterm, zellij and old herdr implement it.
+ * tmux, cmux, wezterm, zellij, old herdr and herdr-core implement it.
  */
 export interface MuxBackendAdapter {
 	readonly id: MuxBackend;

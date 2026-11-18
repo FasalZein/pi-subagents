@@ -23,12 +23,13 @@ function blockingAgentDefs(name = "blocker"): AgentDefaults {
 	return { name, async: false } as AgentDefaults;
 }
 
+/** A tool call; a `subagent` call given one child's fields gets the D21 children list. */
 function call(name: string, args: Record<string, unknown> = {}): ToolCallLike {
 	return {
 		type: "toolCall",
 		id: `id-${name}-${Math.random()}`,
 		name,
-		arguments: args,
+		arguments: name === "subagent" && !("children" in args) ? { children: [args] } : args,
 	};
 }
 

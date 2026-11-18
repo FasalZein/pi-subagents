@@ -75,7 +75,7 @@ describe("run-child launcher", () => {
 				overrides: {},
 				paneIdentityKeys: [...PANE_IDENTITY_ENV_PATTERNS],
 				processIdFile,
-				deriveZellijPaneSurface: true,
+				surfaceFromEnv: { name: "ZELLIJ_PANE_ID", prefix: "pane:" },
 			},
 			{ ZELLIJ_PANE_ID: "42", PATH: process.env.PATH ?? "/usr/bin" },
 		);

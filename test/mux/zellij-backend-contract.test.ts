@@ -125,7 +125,14 @@ runMuxBackendContract({
 		checkExit: true,
 		// node runs the private launcher script, which starts SHELL (/bin/sh here) with -c and the command.
 		// Only the launcher script comes from the wrapper; the run in the contract proves that it runs the command.
-		expectedProgram: (command) => [process.execPath, "-e", getZellijShellCommand("")[2]!, "/bin/sh", "-c", command],
+		expectedProgram: (launch) => [
+			process.execPath,
+			"-e",
+			getZellijShellCommand("")[2]!,
+			"/bin/sh",
+			"-c",
+			launch.shellCommand,
+		],
 		startedProgram(stateDir, surface) {
 			const path = join(stateDir, `program-${stateId(surface)}`);
 			return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as string[]) : undefined;

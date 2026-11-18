@@ -46,17 +46,11 @@ type SubagentChildLike = {
 	blocking?: unknown;
 };
 
-/**
- * Mirror getRequestedChildren in src/tools/subagent-tools.ts: when a
- * `children: [...]` array is provided, treat each entry as a separate
- * launch; otherwise the top-level params are the single launch.
- */
-function getRequestedSubagentChildren(args: Record<string, unknown>): SubagentChildLike[] {
-	const children = args.children;
-	if (Array.isArray(children) && children.length > 0) {
-		return children.filter((c): c is SubagentChildLike => !!c && typeof c === "object");
-	}
-	return [args as SubagentChildLike];
+/** D21: the launch tool's input is only its children list; each entry is one launch. */
+export function getLaunchCallChildren(args: unknown): SubagentChildLike[] {
+	const children = (args as { children?: unknown } | null | undefined)?.children;
+	if (!Array.isArray(children)) return [];
+	return children.filter((c): c is SubagentChildLike => !!c && typeof c === "object");
 }
 
 function isAsyncSubagentChildLaunch(child: SubagentChildLike, loadAgentDefaults: AgentDefaultsLoader): boolean {
@@ -72,10 +66,9 @@ function isAsyncSubagentChildLaunch(child: SubagentChildLike, loadAgentDefaults:
 function isAsyncSubagentLaunch(call: ToolCallLike, loadAgentDefaults: AgentDefaultsLoader): boolean {
 	if (call.name === SUBAGENT_TOOL_NAME) {
 		// A `subagent` call is async-launching if ANY of its children
-		// (or its single top-level launch) resolves async. One async child
-		// in the batch is enough to create the race the barrier prevents.
-		const args = call.arguments ?? {};
-		const children = getRequestedSubagentChildren(args);
+		// resolves async. One async child in the batch is enough to create
+		// the race the barrier prevents.
+		const children = getLaunchCallChildren(call.arguments);
 		for (const child of children) {
 			if (isAsyncSubagentChildLaunch(child, loadAgentDefaults)) return true;
 		}

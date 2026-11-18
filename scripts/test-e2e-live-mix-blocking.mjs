@@ -35,9 +35,10 @@ const parentSystemPrompt = [
 const prompt = [
 	"The subagent tool is available in this session.",
 	"Use exactly this sequence in one assistant message/tool-call batch before replying.",
-	'First call subagent with agent: "live-e2e-mix-async-a", name: "mix-async-a", title: "Mix async A smoke test", task: "Follow your exact built-in instructions.".',
-	'Second call subagent with agent: "live-e2e-mix-blocking", name: "mix-blocking-child", title: "Mix blocking child smoke test", task: "Follow your exact built-in instructions.".',
-	'Third call subagent with agent: "live-e2e-mix-async-b", name: "mix-async-b", title: "Mix async B smoke test", task: "Follow your exact built-in instructions.".',
+	"Make three separate subagent calls, each with a children list of exactly one child.",
+	'First call: children [{ agent: "live-e2e-mix-async-a", name: "mix-async-a", title: "Mix async A smoke test", task: "Follow your exact built-in instructions." }].',
+	'Second call: children [{ agent: "live-e2e-mix-blocking", name: "mix-blocking-child", title: "Mix blocking child smoke test", task: "Follow your exact built-in instructions." }].',
+	'Third call: children [{ agent: "live-e2e-mix-async-b", name: "mix-async-b", title: "Mix async B smoke test", task: "Follow your exact built-in instructions." }].',
 	'After all three tools return, reply with exactly "LIVE_E2E_MIX_OK" and nothing else.',
 	"Do not call any other tools.",
 ].join(" ");
@@ -333,7 +334,9 @@ try {
 				event.message?.role === "assistant" &&
 				(event.message.content ?? []).some(
 					(part) =>
-						part.type === "toolCall" && part.name === "subagent" && part.arguments?.name === "mix-blocking-child",
+						part.type === "toolCall" &&
+						part.name === "subagent" &&
+						(part.arguments?.children ?? []).some((child) => child?.name === "mix-blocking-child"),
 				),
 		);
 		const blockingResultEvent = parent.events.find(

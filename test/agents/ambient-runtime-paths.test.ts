@@ -244,12 +244,16 @@ describe("ambient agents and runtime paths", () => {
 					executeWithoutAmbientSpawnGrant(
 						"call-1",
 						{
-							name: "worker-reviewer",
-							task: "check",
-							title: "Review worker package",
-							agent: "reviewer",
-							background: true,
-							cwd: "packages/worker",
+							children: [
+								{
+									name: "worker-reviewer",
+									task: "check",
+									title: "Review worker package",
+									agent: "reviewer",
+									background: true,
+									cwd: "packages/worker",
+								},
+							],
 						},
 						undefined,
 						undefined,
