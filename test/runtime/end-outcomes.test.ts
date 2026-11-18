@@ -3,9 +3,15 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
+import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { TIME_LIMIT_GUIDANCE, TIME_LIMIT_NO_RESUME_GUIDANCE, WRAP_UP_NOTICE } from "../../src/runtime/result-render.ts";
-import { publishRunResult, STOPPED_REASON, TIME_LIMIT_RESUME_REASON, type WatchedEnd } from "../../src/runtime/run-result.ts";
+import {
+	publishRunResult,
+	STOPPED_REASON,
+	TIME_LIMIT_RESUME_REASON,
+	type WatchedEnd,
+} from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -24,8 +30,8 @@ import {
 	setRunningSubagentForTest,
 	sleep,
 } from "../support/index.ts";
-import { assistant, toolCall, toolResult } from "../support/result-fixtures.ts";
 import { waitText } from "../support/result-delivery.ts";
+import { assistant, toolCall, toolResult } from "../support/result-fixtures.ts";
 
 const dirs: string[] = [];
 
@@ -70,7 +76,11 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 	setRunningSubagentForTest(running);
 	const ac = new AbortController();
 	running.abortController = ac;
-	const watch = watchBackgroundSubagent(running, { cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} }, ac.signal);
+	const watch = watchBackgroundSubagent(
+		running,
+		{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
+		ac.signal,
+	);
 	running.completionPromise = watch;
 	const sent: Array<{ content: string; customType: string }> = [];
 	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
@@ -84,7 +94,9 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 			sent.push(message);
 		},
 	};
-	const runtime = { stopRunningSubagent: (r: RunningSubagent) => stopRunningSubagent(r, async () => {}) } as unknown as SubagentToolRuntime;
+	const runtime = {
+		stopRunningSubagent: (r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
+	} as unknown as SubagentToolRuntime;
 	registerSubagentCoreTools(pi as never, () => true, runtime);
 	wireSubagentSteerBack(pi as never, running, watch, String, () => {});
 	await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
@@ -92,7 +104,13 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 	exitWith(child, sessionFile);
 	const routed = await watch;
 	await sleep(10);
-	return { running, routed, cached: getCompletedSubagentResultForTest(running.id)!, sent, record: store.read(reservation.runId) };
+	return {
+		running,
+		routed,
+		cached: getCompletedSubagentResultForTest(running.id)!,
+		sent,
+		record: store.read(reservation.runId),
+	};
 }
 
 const exitZeroWithDone = (child: ChildProcess, sessionFile: string) => {
@@ -143,21 +161,61 @@ describe("end outcomes (T09)", () => {
 		});
 	}
 
+	it("renders a stopped pane child that wrote a done record as cancelled", async () => {
+		const savedMux = process.env.PI_SUBAGENT_MUX;
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		try {
+			const { running, store, reservation, sessionFile } = setup(DONE_CALL, {
+				mode: "interactive",
+				surface: "pi-subagents-nonexistent-surface",
+			});
+			const ac = new AbortController();
+			const result = await watchSubagent(
+				running,
+				{
+					cleanupNoSessionSessionFile() {},
+					async closeRunningSurface() {},
+					async pollForExit() {
+						ac.abort();
+						writeSubagentExitSidecar(sessionFile, { type: "done" });
+						return { reason: "sentinel", exitCode: 0 };
+					},
+				} as never,
+				ac.signal,
+			);
+			assert.equal(result.error, "cancelled");
+			assert.equal(store.read(reservation.runId)?.outcome, "cancelled");
+			assert.match(result.resultText ?? "", /^worker · scout · cancelled · /);
+		} finally {
+			if (savedMux === undefined) delete process.env.PI_SUBAGENT_MUX;
+			else process.env.PI_SUBAGENT_MUX = savedMux;
+		}
+	});
+
 	it("renders a time-limit kill as timed out with one line of guidance", () => {
 		const { running, store, reservation } = setup([assistant("Partial work.")]);
-		const published = publishRunResult(running, watchedEnd({ exitCode: 1, timedOut: { kind: "timeout", seconds: 60 } }));
+		const published = publishRunResult(
+			running,
+			watchedEnd({ exitCode: 1, timedOut: { kind: "timeout", seconds: 60 } }),
+		);
 		const record = store.read(reservation.runId);
 		assert.equal(record?.outcome, "timed_out");
 		assert.deepEqual(record?.timeLimit, { kind: "timeout", seconds: 60, wrapUp: false });
 		const lines = published!.text.split("\n");
 		assert.match(lines[0], /· timed out ·/);
-		assert.deepEqual(lines.filter((l) => l.startsWith("time limit")), [`time limit: 60s for the whole run: ${TIME_LIMIT_GUIDANCE}`]);
+		assert.deepEqual(
+			lines.filter((l) => l.startsWith("time limit")),
+			[`time limit: 60s for the whole run: ${TIME_LIMIT_GUIDANCE}`],
+		);
 		assert.ok(!published!.text.includes("not resumable"));
 	});
 
 	it("renders an idle kill whose agent forbids resume with its reason and guidance", () => {
 		const { running } = setup([], { timeoutBlocksResume: true });
-		const published = publishRunResult(running, watchedEnd({ exitCode: 1, timedOut: { kind: "idle-timeout", seconds: 30 } }));
+		const published = publishRunResult(
+			running,
+			watchedEnd({ exitCode: 1, timedOut: { kind: "idle-timeout", seconds: 30 } }),
+		);
 		assert.equal(published?.record.outcome, "timed_out");
 		assert.deepEqual(published?.record.resume, { resumable: false, reason: TIME_LIMIT_RESUME_REASON });
 		assert.ok(published!.text.includes(`time limit: 30s without output: ${TIME_LIMIT_NO_RESUME_GUIDANCE}`));
