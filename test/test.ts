@@ -79,7 +79,7 @@ import "./runtime/shutdown-policy.test.ts";
 import "./runtime/resume-tool.test.ts";
 import "./runtime/resume-env-deny.test.ts";
 import "./runtime/resume-mux-detection.test.ts";
-import "./runtime/herdr-env-boundary.test.ts";
+import "./runtime/pane-env-boundary.test.ts";
 import "./runtime/skill-visibility-env.test.ts";
 import "./runtime/resume-placement.test.ts";
 import "./runtime/resume-context-guard.test.ts";
