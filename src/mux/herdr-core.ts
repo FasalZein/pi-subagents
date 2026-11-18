@@ -30,15 +30,16 @@ function hcSync(args: string[]): string {
 	return execFileSync(HC_COMMAND, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-/** A terminal for typed commands (createSurface, createSplit): a shell child of the caller, notes off. */
-function runShellTerminal(name: string): string {
+/**
+ * A terminal for typed commands (createSurface, createSplit): a shell child of the caller, notes off.
+ * No name: hc names are 1-32 of a-z 0-9 - _ . and unique among live terminals, which Pi titles are not.
+ */
+function runShellTerminal(): string {
 	const out = hcSync([
 		"run",
 		"--bg",
 		"--no-notify",
 		"--json",
-		"--name",
-		`${name}-${randomUUID().slice(0, 8)}`,
 		"--parent",
 		callerTerminal(),
 		"--cwd",
@@ -91,8 +92,9 @@ function hcRequest(method: string, params: Record<string, unknown>): Promise<Rpc
  * Starts the launcher with its capsule as the terminal's program (D27): the parent terminal is the
  * caller, notes are off, the label is unique to this launch, and no environment map is sent,
  * because herdr-core would add its daemon environment to it. The exit watch subscribes first.
+ * No name: hc's name rule rejects Pi titles, and the label already identifies the launch.
  */
-async function startLauncherTerminal(name: string, launch: ProgramLaunch): Promise<string> {
+async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 	const label = `launch-${randomUUID()}`;
 	const watch = new LabelExitWatch(label);
 	await watch.subscribe();
@@ -100,7 +102,6 @@ async function startLauncherTerminal(name: string, launch: ProgramLaunch): Promi
 		const reply = await hcRequest("terminal.run", {
 			argv: [...launch.launcherArgv],
 			...(launch.cwd ? { cwd: launch.cwd } : {}),
-			name: `${name}-${label.slice(-8)}`,
 			labels: { [HERDR_CORE_LAUNCH_LABEL_KEY]: label },
 			caller: callerTerminal(),
 			no_notify: true,
@@ -142,8 +143,8 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 	isAvailable: () =>
 		!!process.env.HC_TERMINAL_ID && !!process.env.HC_TERMINAL_SOCKET && defaultMuxRuntimeProbe.hasCommand(HC_COMMAND),
 	setupHint: () => "Start pi in a terminal of the Herdr app (herdr-core), with `hc` on PATH.",
-	createSurface: async (name) => runShellTerminal(name),
-	createSplit: (name) => runShellTerminal(name),
+	createSurface: async () => runShellTerminal(),
+	createSplit: () => runShellTerminal(),
 	sendCommand: (surface, command) => {
 		hcSync(["send", surface, command]);
 	},
@@ -164,7 +165,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 		target: { sessionName: callerTerminal(), parentPaneId: 0 },
 		childEnv: {},
 		surfaceFromEnv: { name: "HC_TERMINAL_ID", prefix: "" },
-		start: (name, launch) => startLauncherTerminal(name, launch),
+		start: (_name, launch) => startLauncherTerminal(launch),
 	}),
 	checkExit: async (surface) => {
 		const watch = exitWatches.get(surface);
