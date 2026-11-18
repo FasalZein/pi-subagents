@@ -1,9 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { buildChildLaunchPlan } from "../../src/launch/child-launch-plan.ts";
 import { dropMissingExtensionEntries } from "../../src/launch/extension-entries.ts";
-import { getExtensionLaunchArgs } from "../../src/launch/prep.ts";
+import { getExtensionLaunchArgs, getSubagentsExtensionPath } from "../../src/launch/prep.ts";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
@@ -49,6 +50,82 @@ function planFor(cwd: string, extensions: string | undefined, agentDir = join(cw
 		parentSessionDir: join(cwd, "parent-sessions"),
 		mode: "background",
 	});
+}
+
+async function resumeSavedSession(
+	dir: string,
+	extensions: string[],
+	extra: Partial<PersistedSubagentLaunchMetadata> = {},
+): Promise<{ reply: string; started: RunningSubagent[] }> {
+	const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
+	const sessionFile = join(dir, "child.jsonl");
+	writeFileSync(
+		sessionFile,
+		`${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+	);
+	writeSubagentLaunchMetadataEntry(sessionFile, {
+		version: 1,
+		timestamp: new Date().toISOString(),
+		name: "ext-child",
+		mode: "background",
+		sessionMode: "lineage-only",
+		autoExit: true,
+		parentClosePolicy: "terminate",
+		async: true,
+		denyTools: [],
+		noContextFiles: false,
+		noSession: false,
+		agentConfigDir: dir,
+		cwd: dir,
+		boundarySystemPrompt: false,
+		extensions,
+		...extra,
+	} as PersistedSubagentLaunchMetadata);
+	const started: RunningSubagent[] = [];
+	const empty = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
+	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
+	registerSubagentResumeTool(
+		{ registerTool: (definition: { name: string }) => tools.set(definition.name, definition as never) } as never,
+		() => true,
+		{
+			isMuxAvailable: () => true,
+			getShellReadyDelayMs: () => 0,
+			watchBackgroundSubagent: empty,
+			watchSubagent: empty,
+			getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
+			startWidgetRefresh: () => {},
+			getContextWindow: () => undefined,
+			runningSubagents: new Map<string, unknown>(),
+			wireSubagentSteerBack: () => {},
+			getLaunchedSubagentResult: async (running: RunningSubagent) => {
+				started.push(running);
+				return { content: [{ type: "text", text: "completed" }], details: { status: "completed" } };
+			},
+		} as never,
+		{ mayLaunch: () => true },
+	);
+	const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
+	const originalRoot = process.env.PI_ARTIFACT_PROJECT_ROOT;
+	process.env.PI_SUBAGENT_PI_COMMAND = bin;
+	process.env.PI_ARTIFACT_PROJECT_ROOT = dirname(bin);
+	try {
+		const result = (await tools
+			.get("subagent_resume")!
+			.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
+			content: Array<{ text: string }>;
+		};
+		return { reply: result.content.map((block) => block.text).join("\n\n"), started };
+	} finally {
+		if (originalCommand == null) delete process.env.PI_SUBAGENT_PI_COMMAND;
+		else process.env.PI_SUBAGENT_PI_COMMAND = originalCommand;
+		if (originalRoot == null) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
+		else process.env.PI_ARTIFACT_PROJECT_ROOT = originalRoot;
+	}
+}
+
+/** An npm command that records each call in `marker` and fails, so any run of it is visible. */
+function writeNpmRecorder(dir: string, marker: string): string {
+	return writeExecutable(dir, "npm-recorder", `#!/usr/bin/env bash\necho "$*" >> ${JSON.stringify(marker)}\nexit 1\n`);
 }
 
 describe("extension entries that are gone (D10)", () => {
@@ -115,87 +192,83 @@ describe("extension entries that are gone (D10)", () => {
 		assert.deepEqual(getExtensionLaunchArgs(none.capability.extensions, "/done.ts", false), ["-e", "/done.ts"]);
 	});
 
-	it("never drops the pi-subagents entry, so a missing one still fails the start in Pi", () => {
-		const cwd = createTestDir();
-		const mandatory = join(cwd, "gone", "pi-subagents", "src", "index.ts");
-		const check = dropMissingExtensionEntries([mandatory, join(cwd, "gone.ts")], { cwd, agentDir: join(cwd, "agent") });
-		assert.deepEqual(check.kept, [mandatory]);
-		assert.deepEqual(check.dropped, [join(cwd, "gone.ts")]);
-	});
-
 	it("resumes a saved session whose list names gone entries and names each dropped entry in the reply", async () => {
 		const dir = createTestDir();
-		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
 		const present = join(dir, "present.ts");
 		writeFileSync(present, "export default () => {};\n");
 		const gone = join(dir, "deleted-extension.ts");
-		const sessionFile = join(dir, "child.jsonl");
-		writeFileSync(
-			sessionFile,
-			`${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`,
-		);
-		writeSubagentLaunchMetadataEntry(sessionFile, {
-			version: 1,
-			timestamp: new Date().toISOString(),
-			name: "ext-child",
-			mode: "background",
-			sessionMode: "lineage-only",
-			autoExit: true,
-			parentClosePolicy: "terminate",
-			async: true,
-			denyTools: [],
-			noContextFiles: false,
-			noSession: false,
-			agentConfigDir: dir,
-			cwd: dir,
-			boundarySystemPrompt: false,
-			extensions: [present, gone, GONE_GIT, GONE_NPM],
-		} as PersistedSubagentLaunchMetadata);
-		const started: RunningSubagent[] = [];
-		const empty = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
-		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
-		registerSubagentResumeTool(
-			{ registerTool: (definition: { name: string }) => tools.set(definition.name, definition as never) } as never,
-			() => true,
-			{
-				isMuxAvailable: () => true,
-				getShellReadyDelayMs: () => 0,
-				watchBackgroundSubagent: empty,
-				watchSubagent: empty,
-				getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
-				startWidgetRefresh: () => {},
-				getContextWindow: () => undefined,
-				runningSubagents: new Map<string, unknown>(),
-				wireSubagentSteerBack: () => {},
-				getLaunchedSubagentResult: async (running: RunningSubagent) => {
-					started.push(running);
-					return { content: [{ type: "text", text: "completed" }], details: { status: "completed" } };
-				},
-			} as never,
-		);
-		const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
-		const originalRoot = process.env.PI_ARTIFACT_PROJECT_ROOT;
-		process.env.PI_SUBAGENT_PI_COMMAND = bin;
-		process.env.PI_ARTIFACT_PROJECT_ROOT = dirname(bin);
-		try {
-			const result = (await tools
-				.get("subagent_resume")!
-				.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
-				content: Array<{ text: string }>;
-			};
-			const reply = result.content.map((block) => block.text).join("\n\n");
-			for (const entry of [gone, GONE_GIT, GONE_NPM]) {
-				assert.equal(countOf(reply, `dropped missing extension: ${entry}`), 1, reply);
-			}
-			const args = started[0].childProcess?.spawnargs ?? [];
-			assert.ok(args.includes(present), args.join(" "));
-			for (const entry of [gone, GONE_GIT, GONE_NPM]) assert.ok(!args.includes(entry), args.join(" "));
-		} finally {
-			if (originalCommand == null) delete process.env.PI_SUBAGENT_PI_COMMAND;
-			else process.env.PI_SUBAGENT_PI_COMMAND = originalCommand;
-			if (originalRoot == null) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
-			else process.env.PI_ARTIFACT_PROJECT_ROOT = originalRoot;
+		const { reply, started } = await resumeSavedSession(dir, [present, gone, GONE_GIT, GONE_NPM]);
+		for (const entry of [gone, GONE_GIT, GONE_NPM]) {
+			assert.equal(countOf(reply, `dropped missing extension: ${entry}`), 1, reply);
 		}
+		const args = started[0].childProcess?.spawnargs ?? [];
+		assert.ok(args.includes(present), args.join(" "));
+		for (const entry of [gone, GONE_GIT, GONE_NPM]) assert.ok(!args.includes(entry), args.join(" "));
+	});
+
+	it("keeps the filtered list in the resumed launch metadata, which a time-limit wrap-up restart reuses", async () => {
+		const dir = createTestDir();
+		const present = join(dir, "present.ts");
+		writeFileSync(present, "export default () => {};\n");
+		const { started } = await resumeSavedSession(dir, [present, join(dir, "deleted-extension.ts")]);
+		assert.deepEqual(started[0].launchMetadata?.extensions, [present]);
+	});
+
+	it("discovers named skills of a resume without the dropped entries, so no package install runs", async () => {
+		const dir = createTestDir();
+		const present = join(dir, "present.ts");
+		writeFileSync(present, "export default () => {};\n");
+		mkdirSync(join(dir, "skills", "demo"), { recursive: true });
+		writeFileSync(join(dir, "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo skill.\n---\nDemo.\n");
+		const marker = join(dir, "npm-calls.txt");
+		writeFileSync(join(dir, "settings.json"), JSON.stringify({ npmCommand: [writeNpmRecorder(dir, marker)] }));
+		await resumeSavedSession(dir, [present, GONE_NPM], { skills: "demo" });
+		const calls = existsSync(marker) ? readFileSync(marker, "utf8") : "";
+		assert.ok(!calls.includes("install"), calls);
+	});
+
+	it("checks a package entry without running the npm command an unapproved project sets", () => {
+		const cwd = createTestDir();
+		const marker = join(cwd, "project-npm-ran.txt");
+		mkdirSync(join(cwd, ".pi"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ npmCommand: [writeNpmRecorder(cwd, marker)] }));
+		const check = dropMissingExtensionEntries([GONE_NPM], { cwd, agentDir: join(cwd, "agent") });
+		assert.deepEqual(check.dropped, [GONE_NPM]);
+		assert.equal(existsSync(marker), false, "the project npm command ran");
+	});
+
+	it("keeps only the exact pi-subagents entry and drops lookalikes", () => {
+		const cwd = createTestDir();
+		const goneInsideCheckout = join(cwd, "pi-subagents", ".pi", "extensions", "gone.ts");
+		const check = dropMissingExtensionEntries(
+			["npm:pi-subagents-extra", goneInsideCheckout, "npm:pi-subagents@1.0.0", getSubagentsExtensionPath()],
+			{ cwd, agentDir: join(cwd, "agent") },
+		);
+		assert.deepEqual(check.kept, ["npm:pi-subagents@1.0.0", getSubagentsExtensionPath()]);
+		assert.deepEqual(check.dropped, ["npm:pi-subagents-extra", goneInsideCheckout]);
+	});
+
+	it("still force-loads pi-subagents for a spawning child whose list only has a lookalike", () => {
+		const cwd = createTestDir();
+		const lookalike = join(cwd, "pi-subagents", ".pi", "extensions", "present.ts");
+		mkdirSync(dirname(lookalike), { recursive: true });
+		writeFileSync(lookalike, "export default () => {};\n");
+		assert.deepEqual(getExtensionLaunchArgs([lookalike], "/done.ts", true), [
+			"--no-extensions",
+			"-e",
+			"/done.ts",
+			"-e",
+			lookalike,
+			"-e",
+			getSubagentsExtensionPath(),
+		]);
+		assert.deepEqual(getExtensionLaunchArgs([getSubagentsExtensionPath()], "/done.ts", true), [
+			"--no-extensions",
+			"-e",
+			"/done.ts",
+			"-e",
+			getSubagentsExtensionPath(),
+		]);
 	});
 
 	it("names all 12 dropped entries of a waiting launch once and keeps its rendering within 1,900 characters", async () => {
@@ -254,7 +327,6 @@ describe("extension entries that are gone (D10)", () => {
 			wireSubagentSteerBack: () => {},
 			startWidgetRefresh: () => {},
 			getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
-			stopRunningSubagent: async () => {},
 			muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 			listLaunchableAgents: () => [],
 		};
