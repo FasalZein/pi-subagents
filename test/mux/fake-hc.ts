@@ -14,7 +14,8 @@ export const FAKE_HC_DAEMON_CWD = "/fake-hc-daemon-cwd";
  * State in $FAKE_TERMINAL_STATE: term-<address>.json per terminal, events (one JSON object per
  * line: labels and the event line), calls (one line per hc call), requests (JSON-RPC requests).
  * "hc events" drops its stream when the file drop exists. A terminal.run reply waits while the file
- * hold-run exists. Every call is also logged to $FAKE_MUX_LOG.
+ * hold-run exists. "hc label" never answers while the file hang-label exists.
+ * Every call is also logged to $FAKE_MUX_LOG.
  * Requests are checked against hc 0.1.21's schema (hc/schema.json) for the fields production sends:
  * terminal.run params and their types, and the terminal name rule "1-32 of a-z 0-9 - _ .".
  */
@@ -39,8 +40,12 @@ function emit(term, type, data) {
   fs.appendFileSync(path.join(S, "events"), JSON.stringify({ labels: term.labels, line }) + "\\n");
 }
 function newTerminal(fields) {
+  // Two concurrent starts can read the same counter; the exclusive create of the terminal file decides.
   const counter = path.join(S, "next-terminal");
-  const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) : 2;
+  let n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, "utf8")) : 2;
+  for (;; n++) {
+    try { fs.writeFileSync(termFile("t" + n), "", { flag: "wx" }); break; } catch (error) { if (error.code !== "EEXIST") throw error; }
+  }
   fs.writeFileSync(counter, String(n + 1));
   const address = "t" + n;
   for (const kind of ["screen", "pending", "submitted"]) fs.writeFileSync(file(kind, address), "");
@@ -183,6 +188,7 @@ switch (args[0]) {
     break;
   }
   case "label": {
+    if (fs.existsSync(path.join(S, "hang-label"))) { setInterval(() => {}, 1000); break; }
     const term = terminal(args[1]);
     const [key, ...rest] = args[2].split("=");
     term.labels[key] = rest.join("=");

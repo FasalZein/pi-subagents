@@ -117,7 +117,7 @@ function hcRequest(method: string, params: Record<string, unknown>): Promise<Rpc
  * because herdr-core would add its daemon environment to it. The exit watch subscribes first.
  * No name: hc's name rule rejects Pi titles, and the label already identifies the launch.
  */
-async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
+async function startLauncherTerminal(launch: ProgramLaunch, warn: (warning: string) => void): Promise<string> {
 	const label = `launch-${randomUUID()}`;
 	const watch = new LabelExitWatch(label);
 	await watch.subscribe();
@@ -134,7 +134,7 @@ async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 		if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
 		watch.attach(address);
 		exitWatches.set(address, watch);
-		await placeChildTerminal(address, callerTerminal());
+		await placeChildTerminal(address, callerTerminal(), warn);
 		return address;
 	} catch (error) {
 		watch.stop();
@@ -193,7 +193,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 		target: { sessionName: callerTerminal(), parentPaneId: 0 },
 		childEnv: {},
 		surfaceFromEnv: { name: "HC_TERMINAL_ID", prefix: "" },
-		start: (_name, launch) => startLauncherTerminal(launch),
+		start: (_name, launch, options) => startLauncherTerminal(launch, options?.onPlacementWarning ?? (() => {})),
 	}),
 	checkExit: async (surface) => {
 		const watch = exitWatches.get(surface);

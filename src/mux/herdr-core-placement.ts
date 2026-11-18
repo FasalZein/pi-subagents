@@ -1,6 +1,3 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
 import { execFileAsync } from "./core.ts";
 import { HC_COMMAND } from "./herdr-core-exit.ts";
 
@@ -8,129 +5,128 @@ import { HC_COMMAND } from "./herdr-core-exit.ts";
 export const HERDR_APP_COMMAND = "herdr-app";
 /** The hc label that puts a terminal into a tab of that Herdr app space (live check L5). */
 const SPACE_LABEL_KEY = "herdr.space";
-/** Bound of each app call, so a hung app cannot hold the focus transaction of every later launch. */
-const APP_CALL_TIMEOUT_MS = 5_000;
+/**
+ * Bound of each app and fallback call, so a hung app or hc cannot hold the focus transaction of every
+ * later launch, nor hold a started child before the runtime registers it.
+ */
+const PLACEMENT_CALL_TIMEOUT_MS = 5_000;
+const BOUNDED = { encoding: "utf8", timeout: PLACEMENT_CALL_TIMEOUT_MS, killSignal: "SIGKILL" } as const;
 
-export type ChildPlacement = "split" | "tab" | "hidden";
+/** Runs one bounded call; a failure names the call and its reply (herdr-app and hc print errors on stdout). */
+async function run(command: string, args: string[]): Promise<string> {
+	try {
+		return (await execFileAsync(command, args, BOUNDED)).stdout;
+	} catch (error) {
+		const failed = error as { killed?: boolean; stdout?: string; message: string };
+		const detail = failed.killed ? `no reply within ${PLACEMENT_CALL_TIMEOUT_MS} ms` : failed.stdout?.trim() || failed.message;
+		throw new Error(`${command} ${args.join(" ")}: ${detail}`);
+	}
+}
 
 /** Runs one herdr-app call and parses its JSON reply; a failure is exit 1 with {"error": "..."} (live shapes). */
 async function app(args: string[]): Promise<Record<string, unknown>> {
-	const { stdout } = await execFileAsync(HERDR_APP_COMMAND, args, {
-		encoding: "utf8",
-		timeout: APP_CALL_TIMEOUT_MS,
-		killSignal: "SIGKILL",
-	});
-	const reply = JSON.parse(stdout) as Record<string, unknown>;
+	const reply = JSON.parse(await run(HERDR_APP_COMMAND, args)) as Record<string, unknown>;
 	if (typeof reply.error === "string") throw new Error(`herdr-app ${args.join(" ")}: ${reply.error}`);
 	return reply;
 }
 
-async function focusedPane(): Promise<string> {
-	const pane = (await app(["status"])).focused_pane;
-	if (typeof pane !== "string") throw new Error("herdr-app status gave no focused_pane");
-	return pane;
+/** pane.focus answers {"ok": true} (live shapes); any other reply is not an acknowledged focus. */
+async function focus(args: string[]): Promise<void> {
+	const reply = await app(["do", "pane.focus", ...args]);
+	if (reply.ok !== true) throw new Error(`herdr-app do pane.focus ${args.join(" ")} gave no ok: true`);
+}
+
+/** Where the owner looks: the shown space and tab and the focused pane (status, live baseline). */
+type AppFocus = { space?: string; tab?: string; pane: string };
+
+async function readFocus(): Promise<AppFocus> {
+	const status = await app(["status"]);
+	if (typeof status.focused_pane !== "string") throw new Error("herdr-app status gave no focused_pane");
+	const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+	return { space: text(status.space), tab: text(status.tab), pane: status.focused_pane };
 }
 
 /**
- * The split transaction (D27): terminal.keep splits the focused pane and moves focus (live checks L1, L2),
- * so save the focus, focus the parent by address, keep the child as a split, and focus the saved pane
- * again, also when a step fails. Without a saved focus nothing has moved, so nothing is restored.
+ * Focuses the saved pane, then reads the status again and compares space, tab and pane: an
+ * acknowledged focus is not proof that the view is back. Adapted from upstream PR #33
+ * (restoreFocus/sameFocus in its herdr-app.ts). PR #33 also selects space and tab; here pane.focus
+ * alone restored all three on the live check L2, so a mismatch is reported, not repaired.
  */
-async function splitBesideParent(child: string, parent: string): Promise<void> {
-	const saved = await focusedPane();
+async function restoreFocus(want: AppFocus): Promise<void> {
+	await focus(["--pane", want.pane]);
+	const now = await readFocus();
+	if (now.pane !== want.pane || (want.space && now.space !== want.space) || (want.tab && now.tab !== want.tab)) {
+		throw new Error(`herdr-app status shows ${JSON.stringify(now)} instead of ${JSON.stringify(want)}`);
+	}
+}
+
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The split transaction (D27): terminal.keep splits the focused pane and moves focus (live checks L1, L2),
+ * so save the focus, focus the parent by address, keep the child as a split, and restore the saved focus,
+ * also when a step fails. Without a saved focus nothing has moved, so nothing is restored. A failed
+ * restore is a warning of its own: the split result does not depend on it.
+ * Recorded limit: the app's terminal.keep has no target-pane argument (herdr-app 0.1.16), so an owner
+ * who selects another pane between the parent focus and keep gets the split there, and the restore
+ * can override that newer choice.
+ */
+async function splitBesideParent(child: string, parent: string, warn: (warning: string) => void): Promise<void> {
+	const saved = await readFocus();
 	try {
-		await app(["do", "pane.focus", "--terminal", parent]);
+		await focus(["--terminal", parent]);
 		const kept = await app(["do", "terminal.keep", "--terminal", child, "--place", "right"]);
 		if (typeof kept.pane !== "string") throw new Error(`herdr-app terminal.keep gave no pane for ${child}`);
 	} finally {
-		await app(["do", "pane.focus", "--pane", saved]).catch(() => undefined);
+		await restoreFocus(saved).catch((error) =>
+			warn(`the Herdr app focus was not restored to pane ${saved.pane} after placing ${child}: ${message(error)}`),
+		);
 	}
 }
 
 /** The tab fallback (D27): the parent's space label on the same terminal; no focus moves (live checks L4, L5). */
 async function tabInParentSpace(child: string, parent: string): Promise<void> {
-	const { stdout } = await execFileAsync(HC_COMMAND, ["get", parent, "--json"], { encoding: "utf8" });
-	const space = (JSON.parse(stdout) as { labels?: Record<string, string> }).labels?.[SPACE_LABEL_KEY];
+	const parentTerminal = await run(HC_COMMAND, ["get", parent, "--json"]);
+	const space = (JSON.parse(parentTerminal) as { labels?: Record<string, string> }).labels?.[SPACE_LABEL_KEY];
 	if (!space) throw new Error(`parent terminal ${parent} has no ${SPACE_LABEL_KEY} label`);
-	await execFileAsync(HC_COMMAND, ["label", child, `${SPACE_LABEL_KEY}=${space}`], { encoding: "utf8" });
-}
-
-/** How long a launch waits for another process's focus transaction before it takes the tab fallback. */
-const FOCUS_LOCK_WAIT_MS = 15_000;
-const FOCUS_LOCK_POLL_MS = 25;
-
-/**
- * The app has one focus and one Herdr app per user session, so the lock is per user: a directory made
- * atomically with mkdir, holding the owner's pid. A lock whose owner is dead is stale and is removed.
- */
-function focusLockPath(): string {
-	return join(tmpdir(), `pi-subagents-herdr-app-focus-${userInfo().uid}.lock`);
-}
-
-function ownerAlive(lock: string): boolean {
-	try {
-		process.kill(Number(readFileSync(join(lock, "pid"), "utf8")), 0);
-		return true;
-	} catch (error) {
-		// EPERM: the pid exists under another user. A missing pid file is a lock being made or removed.
-		return (error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "ENOENT";
-	}
-}
-
-async function acquireFocusLock(): Promise<() => void> {
-	const lock = focusLockPath();
-	const deadline = Date.now() + FOCUS_LOCK_WAIT_MS;
-	for (;;) {
-		try {
-			mkdirSync(lock);
-			writeFileSync(join(lock, "pid"), String(process.pid));
-			return () => rmSync(lock, { recursive: true, force: true });
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		if (!ownerAlive(lock)) rmSync(lock, { recursive: true, force: true });
-		else if (Date.now() > deadline) throw new Error(`focus lock ${lock} held by another process`);
-		else await new Promise((resolve) => setTimeout(resolve, FOCUS_LOCK_POLL_MS));
-	}
+	await run(HC_COMMAND, ["label", child, `${SPACE_LABEL_KEY}=${space}`]);
 }
 
 /**
- * Tail of the focus transactions of this process. At most one transaction runs at a time per app:
- * a second launch never focuses its parent between the first one's focus and split. The queue orders
- * the launches of this process; the lock file orders them against other Pi processes in the same app,
- * for example a child Pi that launches its own children.
+ * Tail of the focus transactions of this Pi process: at most one runs at a time, so a second launch
+ * never focuses its parent between the first one's focus and split (D27). Exclusion, not order, is the
+ * requirement; the promise chain gives both.
+ * Recorded limit: the exclusion covers this process only. Two Pi processes in one Herdr app (for
+ * example a pane child that launches its own pane child while its parent launches) can interleave
+ * their focus transactions. Revisit when the app can split beside a given pane without focus.
  */
 let focusQueue: Promise<unknown> = Promise.resolve();
 
 function inFocusTransaction<T>(step: () => Promise<T>): Promise<T> {
-	const locked = async () => {
-		const release = await acquireFocusLock();
-		try {
-			return await step();
-		} finally {
-			release();
-		}
-	};
-	const run = focusQueue.then(locked, locked);
+	const run = focusQueue.then(step, step);
 	focusQueue = run.catch(() => undefined);
 	return run;
 }
 
 /**
  * Gives a started child terminal a pane: a split beside the parent, else a tab in the parent's space.
- * When both fail the terminal keeps running without a pane ("hidden"); its result still arrives
- * through the exit watch, so a placement failure never fails the launch or starts a second terminal.
+ * When both fail the terminal keeps running without a pane; its result still arrives through the exit
+ * watch, so a placement failure never fails the launch or starts a second terminal. It is a warning.
  */
-export async function placeChildTerminal(child: string, parent: string): Promise<ChildPlacement> {
+export async function placeChildTerminal(
+	child: string,
+	parent: string,
+	warn: (warning: string) => void,
+): Promise<void> {
 	try {
-		await inFocusTransaction(() => splitBesideParent(child, parent));
-		return "split";
-	} catch {
+		await inFocusTransaction(() => splitBesideParent(child, parent, warn));
+	} catch (splitError) {
 		try {
 			await tabInParentSpace(child, parent);
-			return "tab";
-		} catch {
-			return "hidden";
+		} catch (tabError) {
+			warn(
+				`the child terminal ${child} runs without a pane in the Herdr app: split failed (${message(splitError)}); tab failed (${message(tabError)})`,
+			);
 		}
 	}
 }

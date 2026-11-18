@@ -11,6 +11,8 @@ export type SurfaceSplitDirection = "left" | "right" | "up" | "down";
 export interface SurfaceCreationOptions {
 	herdr?: HerdrPlacementContext;
 	zellij?: ZellijPlacementContext;
+	/** A backend reports here when a started surface runs with degraded placement; the launch goes on. */
+	onPlacementWarning?: (warning: string) => void;
 }
 
 /**

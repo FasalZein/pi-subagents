@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { ProgramLaunch } from "../../src/mux/backend.ts";
 import { herdrCoreBackend } from "../../src/mux/herdr-core.ts";
+import { placeChildTerminal } from "../../src/mux/herdr-core-placement.ts";
 import { writeExecutable } from "../support/index.ts";
 import { FAKE_HC, FAKE_HC_CALLER, readFakeHcCalls, readFakeHcRequests, seedFakeHcCaller } from "./fake-hc.ts";
 import {
+	addFakeAppPane,
 	FAKE_APP_OWNER_PANE,
 	FAKE_APP_SPACE,
+	FAKE_APP_TAB,
 	FAKE_HERDR_APP,
 	fakeAppPaneOf,
+	fakeAppTabOf,
 	readFakeAppCalls,
 	readFakeAppFocus,
 	seedFakeHerdrApp,
@@ -24,20 +27,25 @@ const LAUNCH: ProgramLaunch = {
 	cwd: "/work",
 };
 
-/** The split transaction of D27 for one child, as herdr-app calls (live check L2 sequence). */
-function splitTransaction(child: string): string[] {
+/** The split transaction of D27 for one child, as herdr-app calls (live check L2 sequence, then the status check). */
+function splitTransaction(child: string, parent = FAKE_HC_CALLER): string[] {
 	return [
 		"herdr-app status",
-		`herdr-app do pane.focus --terminal ${FAKE_HC_CALLER}`,
+		`herdr-app do pane.focus --terminal ${parent}`,
 		`herdr-app do terminal.keep --terminal ${child} --place right`,
 		`herdr-app do pane.focus --pane ${FAKE_APP_OWNER_PANE}`,
+		"herdr-app status",
 	];
 }
+
+/** The bound of each placement call in src/mux/herdr-core-placement.ts (5 s), plus process start slack. */
+const PLACEMENT_CALL_BOUND_MS = 5_000;
 
 describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 	let root = "";
 	let stateDir = "";
 	let saved = new Map<string, string | undefined>();
+	let warnings: string[] = [];
 	const started: string[] = [];
 
 	function setEnv(key: string, value: string): void {
@@ -47,6 +55,7 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 
 	beforeEach(() => {
 		saved = new Map();
+		warnings = [];
 		root = mkdtempSync(join(tmpdir(), "herdr-core-placement-"));
 		stateDir = join(root, "state");
 		const binDir = join(root, "bin");
@@ -60,11 +69,10 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		setEnv("HC_TERMINAL_ID", FAKE_HC_CALLER);
 		setEnv("HC_TERMINAL_SOCKET", join(stateDir, "hc.sock"));
 		setEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
-		// The focus lock lives in tmpdir(); a test root keeps it apart from a real Pi on this host.
-		setEnv("TMPDIR", root);
 	});
 
 	afterEach(async () => {
+		for (const name of ["hang-label", "fail-keep", "fail-restore", "focus-no-ok"]) rmSync(join(stateDir, name), { force: true });
 		for (const surface of started.splice(0)) await herdrCoreBackend.closeSurface(surface);
 		for (const [key, value] of saved) {
 			if (value === undefined) delete process.env[key];
@@ -75,7 +83,7 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 
 	async function start(name: string): Promise<string> {
 		const session = await herdrCoreBackend.openProgramSession!();
-		const surface = await session.start(name, LAUNCH);
+		const surface = await session.start(name, LAUNCH, { onPlacementWarning: (warning) => warnings.push(warning) });
 		started.push(surface);
 		return surface;
 	}
@@ -85,17 +93,22 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		(JSON.parse(readFileSync(join(stateDir, `term-${address}.json`), "utf8")) as { labels: Record<string, string> })
 			.labels;
 	const terminals = () => readdirSync(stateDir).filter((name) => name.startsWith("term-"));
+	const tabLabelCalls = () => readFakeHcCalls(stateDir).filter((call) => call.startsWith("label "));
+	/** A live hc terminal outside the launch path, for direct placement calls. */
+	function seedTerminal(address: string, labels: Record<string, string> = {}): void {
+		writeFileSync(
+			join(stateDir, `term-${address}.json`),
+			JSON.stringify({ address, labels, state: "live", exit_code: null, signal: null, reason: null }),
+		);
+	}
 
-	it("reads the status, focuses the parent by address, keeps the child as a split, then focuses the saved pane", async () => {
+	it("reads the status, focuses the parent by address, keeps the child as a split, then restores and checks the focus", async () => {
 		const child = await start("Split Child");
 		assert.deepEqual(appCalls(), splitTransaction(child));
-		assert.ok(fakeAppPaneOf(stateDir, child), "the child has a pane");
+		assert.equal(fakeAppTabOf(stateDir, fakeAppPaneOf(stateDir, child)!), FAKE_APP_TAB, "the child is in the parent's tab");
 		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE, "focus is back on the saved pane");
-		assert.equal(
-			readFakeHcCalls(stateDir).some((call) => call.startsWith("label ")),
-			false,
-			"no tab label after a split",
-		);
+		assert.deepEqual(tabLabelCalls(), [], "no tab label after a split");
+		assert.deepEqual(warnings, []);
 	});
 
 	it("gives the same terminal a tab through the parent's space label when the split fails", async () => {
@@ -105,9 +118,47 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE);
 		assert.equal(fakeAppPaneOf(stateDir, child), undefined, "no split pane");
 		assert.equal(labelsOf(child)["herdr.space"], FAKE_APP_SPACE, "the parent's space label is on the child");
-		assert.ok(readFakeHcCalls(stateDir).includes(`label ${child} herdr.space=${FAKE_APP_SPACE}`));
+		assert.deepEqual(tabLabelCalls(), [`label ${child} herdr.space=${FAKE_APP_SPACE}`]);
 		assert.equal(readFakeHcRequests(stateDir).length, 1, "one start request");
 		assert.deepEqual(terminals().sort(), [`term-${child}.json`, `term-${FAKE_HC_CALLER}.json`].sort());
+		assert.deepEqual(warnings, [], "a tab is a placement, not a warning");
+	});
+
+	it("does not count a parent focus without ok: true as focused, and takes the tab fallback", async () => {
+		writeFileSync(join(stateDir, "focus-no-ok"), "");
+		const child = await start("Unacknowledged Child");
+		assert.deepEqual(appCalls(), [
+			"herdr-app status",
+			`herdr-app do pane.focus --terminal ${FAKE_HC_CALLER}`,
+			`herdr-app do pane.focus --pane ${FAKE_APP_OWNER_PANE}`,
+			"herdr-app status",
+		]);
+		assert.equal(fakeAppPaneOf(stateDir, child), undefined, "no keep after an unacknowledged focus");
+		assert.equal(labelsOf(child)["herdr.space"], FAKE_APP_SPACE);
+		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE);
+	});
+
+	it("keeps the split and warns separately when the focus restore fails", async () => {
+		writeFileSync(join(stateDir, "fail-restore"), "");
+		const child = await start("Unrestored Child");
+		assert.ok(fakeAppPaneOf(stateDir, child), "the split stands");
+		assert.deepEqual(tabLabelCalls(), [], "a failed restore does not start the tab fallback");
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]!, new RegExp(`focus was not restored to pane ${FAKE_APP_OWNER_PANE} after placing ${child}`));
+		assert.match(warnings[0]!, /focus refused/);
+	});
+
+	it("warns when split and tab both fail, and bounds the hung tab fallback", async () => {
+		writeFileSync(join(stateDir, "fail-keep"), "");
+		writeFileSync(join(stateDir, "hang-label"), "");
+		const begin = Date.now();
+		const child = await start("Hidden Child");
+		const elapsed = Date.now() - begin;
+		assert.ok(elapsed < PLACEMENT_CALL_BOUND_MS + 3_000, `start returned after ${elapsed} ms`);
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]!, new RegExp(`child terminal ${child} runs without a pane in the Herdr app`));
+		assert.match(warnings[0]!, /split failed \(.*"split failed".*\); tab failed \(.*no reply within 5000 ms\)/s);
+		assert.equal(readFakeHcRequests(stateDir).length, 1, "no second terminal");
 	});
 
 	it("runs overlapping focus transactions on one app one after the other", async () => {
@@ -124,9 +175,7 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 	it("restores the saved focus when a step of the first transaction fails, then runs the next one", async () => {
 		setEnv("FAKE_HERDR_APP_DELAY_MS", "100");
 		writeFileSync(join(stateDir, "fail-keep"), "");
-		const first = start("Failing Child");
-		// The split of the first child fails while the second launch waits for the transaction.
-		const [a, b] = await Promise.all([first, start("Second Child")]);
+		const [a, b] = await Promise.all([start("Failing Child"), start("Second Child")]);
 		const calls = appCalls();
 		const firstKept = calls[2]?.includes(`--terminal ${a} `) ? a : b;
 		const second = firstKept === a ? b : a;
@@ -135,29 +184,24 @@ describe("herdr-core placement in the Herdr app (T47, D27)", () => {
 		for (const child of [a, b]) assert.equal(labelsOf(child)["herdr.space"], FAKE_APP_SPACE);
 	});
 
-	const lockDir = () => join(root, `pi-subagents-herdr-app-focus-${userInfo().uid}.lock`);
-	function holdLock(pid: number): void {
-		mkdirSync(lockDir());
-		writeFileSync(join(lockDir(), "pid"), String(pid));
-	}
-
-	it("waits while another live process holds the app's focus lock, then runs its transaction", async () => {
-		// The test runner's parent process stands in for another Pi in the same app.
-		holdLock(process.ppid);
-		const starting = start("Waiting Child");
-		await new Promise((resolve) => setTimeout(resolve, 1_500));
-		assert.deepEqual(appCalls(), [], "no app call while the other process holds the lock");
-		rmSync(lockDir(), { recursive: true });
-		const child = await starting;
-		assert.deepEqual(appCalls(), splitTransaction(child));
-		assert.equal(existsSync(lockDir()), false, "the lock is released");
-	});
-
-	it("removes a focus lock whose owner is dead", async () => {
-		const dead = spawnSync(process.execPath, ["-e", ""]).pid;
-		holdLock(dead);
-		const child = await start("Stale Lock Child");
-		assert.deepEqual(appCalls(), splitTransaction(child));
-		assert.equal(existsSync(lockDir()), false);
+	it("puts each child beside its own parent when two parents in different tabs place at once", async () => {
+		const otherTab = "tbaaaa0011223344556677889900aabbcc";
+		const otherPane = "paaaa0aa11bb22cc33dd44ee55ff66778";
+		seedTerminal("t50", { "herdr.space": FAKE_APP_SPACE, "herdr.tab": otherTab });
+		addFakeAppPane(stateDir, "t50", otherPane, otherTab);
+		seedTerminal("t51");
+		seedTerminal("t52");
+		// Each app reply takes 150 ms, so an interleaved transaction would keep a child in the other parent's tab.
+		setEnv("FAKE_HERDR_APP_DELAY_MS", "150");
+		await Promise.all([
+			placeChildTerminal("t51", FAKE_HC_CALLER, (warning) => warnings.push(warning)),
+			placeChildTerminal("t52", "t50", (warning) => warnings.push(warning)),
+		]);
+		assert.equal(fakeAppTabOf(stateDir, fakeAppPaneOf(stateDir, "t51")!), FAKE_APP_TAB, "t51 beside parent t1");
+		assert.equal(fakeAppTabOf(stateDir, fakeAppPaneOf(stateDir, "t52")!), otherTab, "t52 beside parent t50");
+		assert.equal(labelsOf("t51")["herdr.tab"], FAKE_APP_TAB);
+		assert.equal(labelsOf("t52")["herdr.tab"], otherTab);
+		assert.equal(readFakeAppFocus(stateDir), FAKE_APP_OWNER_PANE);
+		assert.deepEqual(warnings, []);
 	});
 });

@@ -31,6 +31,7 @@ import {
 } from "../tools/timeout-reminders.ts";
 import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
 import type { RunningSubagent } from "../types.ts";
+import { addResultWarning } from "./run-result.ts";
 
 export interface TimeoutWrapUpRuntime {
 	getShellReadyDelayMs(): number;
@@ -235,6 +236,7 @@ export async function restartSubagentForTimeoutWrapUp(
 		if (programSession) {
 			surface = await programSession.start(metadata.sessionTitle ?? running.title ?? running.name, programLaunch, {
 				zellij: zellijContext,
+				onPlacementWarning: (warning) => addResultWarning(running, warning),
 			});
 			running.surface = surface;
 			running.zellijTarget = zellijTarget;

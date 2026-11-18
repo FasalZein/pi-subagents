@@ -23,6 +23,7 @@ import {
 } from "../support/index.ts";
 import { testResultsDir } from "../support/result-fixtures.ts";
 import { FAKE_HC, seedFakeHcCaller } from "../mux/fake-hc.ts";
+import { FAKE_HERDR_APP, seedFakeHerdrApp } from "../mux/fake-herdr-app.ts";
 import "../support/ambient-spawn-grant.ts";
 
 // Old herdr fake: answers the availability probes and one split surface; "pane run" only logs the staged script.
@@ -239,9 +240,12 @@ function useFakeParent(backend: BackendFake): Fixture {
 	const logFile = join(dir, "mux.log");
 	writeFileSync(logFile, "");
 	writeExecutable(binDir, backend.bin, backend.script);
+	// herdr-core places its child through herdr-app: the fake shadows a real app on PATH, whose focus it would move.
+	writeExecutable(binDir, "herdr-app", FAKE_HERDR_APP);
 	const hcState = join(dir, "hc-state");
 	mkdirSync(hcState);
 	seedFakeHcCaller(hcState);
+	seedFakeHerdrApp(hcState, "t1");
 	const probe = makeProbeDir();
 	const { command, args } = presenceProbeCommand(
 		probe.outFile,
