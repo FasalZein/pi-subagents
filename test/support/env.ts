@@ -1,4 +1,4 @@
-import { afterEach, beforeEach } from "node:test";
+import { after, afterEach, before, beforeEach } from "node:test";
 
 export const TRACKED_ENV_KEYS = [
 	"CMUX_SOCKET_PATH",
@@ -86,6 +86,25 @@ export function restoreTrackedEnv(): void {
 beforeEach(() => {
 	clearIsolatedSubagentEnv();
 });
+
+/**
+ * Call inside a describe whose tests provision the managed verifier venv:
+ * sets UV_NO_CONFIG=1 so the uv calls of ensureVerifierRuntime() ignore the
+ * user's uv.toml. Why: a user uv config can require hashes, and the managed
+ * install of llm-verifier has no hash lock, so uv refuses it.
+ * Limit: a real verified fan-out launch under require-hashes still fails;
+ * revisit (hash-lock the install) if the owner starts using llm-verifier.
+ */
+export function ignoreUserUvConfig(): void {
+	const saved = process.env.UV_NO_CONFIG;
+	before(() => {
+		process.env.UV_NO_CONFIG = "1";
+	});
+	after(() => {
+		if (saved === undefined) delete process.env.UV_NO_CONFIG;
+		else process.env.UV_NO_CONFIG = saved;
+	});
+}
 
 afterEach(() => {
 	restoreTrackedEnv();
