@@ -66,11 +66,14 @@ function loadAgentsTool(
 	session: SessionOptions = { hasUI: true },
 ): (params: { name?: string; query?: string; limit?: number }) => Promise<string> {
 	const tools = new Map<string, AgentsTool>();
+	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const api = {
 		getAllTools: () => [...tools.keys()].map((name) => ({ name })),
 		getActiveTools: () => [...tools.keys()].filter((name) => !session.inactiveTools?.includes(name)),
 		getThinkingLevel: () => session.thinking ?? "off",
-		on() {},
+		on(event: string, handler: (event: unknown, ctx: unknown) => unknown) {
+			handlers.set(event, handler);
+		},
 		registerTool(tool: AgentsTool & { name: string }) {
 			tools.set(tool.name, tool);
 		},
@@ -85,6 +88,17 @@ function loadAgentsTool(
 	} finally {
 		process.chdir(previous);
 	}
+	// D21: the tool is registered at session start.
+	handlers.get("session_start")?.(
+		{ type: "session_start", reason: "startup" },
+		{
+			cwd,
+			hasUI: false,
+			mode: "print",
+			ui: { notify() {}, setWidget() {} },
+			sessionManager: { getHeader: () => undefined, getSessionId: () => "agents-tool", getSessionFile: () => "" },
+		},
+	);
 	const tool = tools.get("subagent_agents");
 	assert.ok(tool, "subagent_agents is registered");
 	const ctx = { cwd, hasUI: session.hasUI, model: session.model };

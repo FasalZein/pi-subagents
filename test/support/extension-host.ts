@@ -29,6 +29,9 @@ export async function loadExtension(cwd: string, sessionId = `session-${moduleGe
 		registerTool(tool: RegisteredTool) {
 			tools.set(tool.name, tool);
 		},
+		// Pi activates direct tools on registration; these tests declare every tool directly.
+		getActiveTools: () => [...tools.keys()],
+		getAllTools: () => [...tools.keys()].map((name) => ({ name })),
 		registerCommand() {},
 		registerShortcut() {},
 		registerMessageRenderer() {},
