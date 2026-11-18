@@ -34,7 +34,11 @@ export interface LauncherRun {
 }
 
 /** Run the launcher on a capsule inside a synthetic surface env (the pane or daemon env). */
-export function runLauncherInSurface(capsulePath: string, surfaceEnv: Record<string, string>, outFile: string): LauncherRun {
+export function runLauncherInSurface(
+	capsulePath: string,
+	surfaceEnv: Record<string, string>,
+	outFile: string,
+): LauncherRun {
 	const result = spawnSync(process.execPath, [LAUNCHER_PATH, capsulePath], {
 		env: { PATH: process.env.PATH ?? "/usr/bin", ...surfaceEnv },
 		encoding: "utf8",

@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
-import { assert, createTestDir, describe, it, readFileSync, rmSync, writeExecutable } from "../support/index.ts";
+import { HERDR_PANE_IDENTITY } from "../../src/launch/child-env.ts";
 import { buildInteractiveShellCommand, getRunChildLauncherPath } from "../../src/launch/shell-command.ts";
+import { assert, createTestDir, describe, it, readFileSync, rmSync, writeExecutable } from "../support/index.ts";
 
 describe("interactive shell command builder", () => {
 	it("exposes a packaged launcher path", () => {
@@ -16,6 +17,7 @@ describe("interactive shell command builder", () => {
 		process.env.LEAK_PROBE = "leaky-secret-value";
 		try {
 			const { command, capsulePath } = buildInteractiveShellCommand({
+				paneIdentity: undefined,
 				cwd: "/some/cwd",
 				piArgs: ["--session", "/tmp/s.jsonl", "@/tmp/task.md"],
 				envOverrides: { PI_SUBAGENT_NAME: "child", SECRET_OVERRIDE: "override-secret" },
@@ -58,6 +60,7 @@ describe("interactive shell command builder", () => {
 		process.env.PI_SUBAGENT_ENV_DENY = "TEST_DENY_*";
 		try {
 			const { capsulePath } = buildInteractiveShellCommand({
+				paneIdentity: undefined,
 				piArgs: [],
 				envOverrides: {},
 				doneSentinelFile: "/tmp/done.txt",
@@ -77,8 +80,34 @@ describe("interactive shell command builder", () => {
 		}
 	});
 
+	it("removes the parent's exact identity names and records the required ones (D34)", () => {
+		const saved = { pane: process.env.HERDR_PANE_ID, tab: process.env.HERDR_TAB_ID };
+		process.env.HERDR_PANE_ID = "parent-pane";
+		process.env.HERDR_TAB_ID = "parent-tab";
+		try {
+			const { capsulePath } = buildInteractiveShellCommand({
+				paneIdentity: HERDR_PANE_IDENTITY,
+				piArgs: [],
+				envOverrides: {},
+				doneSentinelFile: "/tmp/done.txt",
+			});
+			const capsule = JSON.parse(readFileSync(capsulePath, "utf8"));
+			assert.equal("HERDR_PANE_ID" in capsule.parentEnv, false);
+			assert.equal("HERDR_TAB_ID" in capsule.parentEnv, false);
+			assert.deepEqual(capsule.requiredPaneIdentityKeys, ["HERDR_ENV", "HERDR_PANE_ID"]);
+			assert.equal(capsule.paneIdentityKeys.includes("HERDR*"), false, "old herdr copies exact names only");
+			rmSync(capsulePath.slice(0, capsulePath.lastIndexOf("/")), { recursive: true, force: true });
+		} finally {
+			if (saved.pane === undefined) delete process.env.HERDR_PANE_ID;
+			else process.env.HERDR_PANE_ID = saved.pane;
+			if (saved.tab === undefined) delete process.env.HERDR_TAB_ID;
+			else process.env.HERDR_TAB_ID = saved.tab;
+		}
+	});
+
 	it("marks the capsule for zellij pane surface derivation", () => {
 		const { capsulePath } = buildInteractiveShellCommand({
+			paneIdentity: undefined,
 			piArgs: [],
 			envOverrides: {},
 			doneSentinelFile: "/tmp/done.txt",

@@ -51,7 +51,11 @@ export const HERDR_CORE_PANE_IDENTITY: PaneIdentityPolicy = {
 };
 
 /** Rex block identity (D34). Its backend lands in T48. */
-export const REX_PANE_IDENTITY: PaneIdentityPolicy = { kind: "exact", required: ["REX_SESSION", "REX_BLOCK"], optional: [] };
+export const REX_PANE_IDENTITY: PaneIdentityPolicy = {
+	kind: "exact",
+	required: ["REX_SESSION", "REX_BLOCK"],
+	optional: [],
+};
 
 /** Terminal names that every backend takes from the surface. */
 const TERMINAL_IDENTITY_ENV_KEYS = ["COLORTERM", "TERM"] as const;
@@ -69,7 +73,10 @@ export function paneIdentityCapsuleFields(policy: PaneIdentityPolicy): {
 }
 
 /** Remove the exact identity names of a policy, so a child never carries the parent's identity. */
-export function withoutExactIdentityEnv(env: Record<string, string>, policy: PaneIdentityPolicy): Record<string, string> {
+export function withoutExactIdentityEnv(
+	env: Record<string, string>,
+	policy: PaneIdentityPolicy,
+): Record<string, string> {
 	if (policy.kind === "prefix") return env;
 	const names = new Set([...policy.required, ...policy.optional]);
 	return Object.fromEntries(Object.entries(env).filter(([key]) => !names.has(key)));

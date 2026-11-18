@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentMuxAdapter, shellEscape } from "../mux.ts";
+import { shellEscape } from "../mux.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { getPiInvocation } from "./child-command.ts";
 import {
@@ -26,8 +26,8 @@ export interface InteractiveShellCommandInput {
 	doneSentinelFile: string;
 	/** Derive PI_SUBAGENT_SURFACE from the child pane's ZELLIJ_PANE_ID. */
 	deriveZellijPaneSurface?: boolean;
-	/** Identity names of the child's surface; defaults to the policy of the current backend. */
-	paneIdentity?: PaneIdentityPolicy;
+	/** Identity names of the child's surface (the backend adapter's paneIdentity); undefined: v2.9.2 prefixes. */
+	paneIdentity: PaneIdentityPolicy | undefined;
 }
 
 export interface InteractiveShellCommand {
@@ -55,7 +55,7 @@ export function getRunChildLauncherPath(): string {
  */
 export function buildInteractiveShellCommand(input: InteractiveShellCommandInput): InteractiveShellCommand {
 	const invocation = getPiInvocation(input.piArgs);
-	const paneIdentity = input.paneIdentity ?? currentMuxAdapter()?.paneIdentity ?? PREFIX_PANE_IDENTITY;
+	const paneIdentity = input.paneIdentity ?? PREFIX_PANE_IDENTITY;
 	const capsulePath = writeEnvCapsule({
 		command: invocation.command,
 		args: invocation.args,

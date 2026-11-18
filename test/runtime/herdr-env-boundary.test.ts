@@ -112,7 +112,10 @@ function useFakeHerdrParent(): Fixture {
 		HERDR_TAB_ID: SURFACE_ENV.HERDR_TAB_ID,
 	});
 	const probeScript = join(dir, "probe.cjs");
-	writeFileSync(probeScript, `process.argv.splice(1, 0, ${JSON.stringify(args[2])}, ${JSON.stringify(args[3])}, ${JSON.stringify(args[4])});\n${args[1]}\n`);
+	writeFileSync(
+		probeScript,
+		`process.argv.splice(1, 0, ${JSON.stringify(args[2])}, ${JSON.stringify(args[3])}, ${JSON.stringify(args[4])});\n${args[1]}\n`,
+	);
 	const env: Record<string, string> = {
 		...PARENT_ENV,
 		PATH: `${binDir}:${process.env.PATH ?? ""}`,

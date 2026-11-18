@@ -66,7 +66,13 @@ describe("run-child exact identity names (D34)", () => {
 		it(`${label}: takes identity from the surface and drops denied and surface-only markers`, () => {
 			const probe = makeProbeDir();
 			try {
-				const markers = ["T44_ALLOWED_MARKER", "T44_DENIED_MARKER", "T44_WILD_DENY_A", "T44_PANE_DENIED", privateMarker];
+				const markers = [
+					"T44_ALLOWED_MARKER",
+					"T44_DENIED_MARKER",
+					"T44_WILD_DENY_A",
+					"T44_PANE_DENIED",
+					privateMarker,
+				];
 				const capsule = launch(
 					policy,
 					{ ...PARENT_ENV, ...parentIdentity },
