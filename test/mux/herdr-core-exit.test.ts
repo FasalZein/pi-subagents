@@ -193,7 +193,10 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		finishFakeTerminal(stateDir, surface, 7, false);
 		writeFileSync(join(stateDir, "drop"), "");
 		const kinds = () => readFakeHcCalls(stateDir).map((call) => call.split(" ")[0]);
-		await eventually(() => (kinds().filter((kind) => kind === "events").length === 2 ? true : undefined), "the new subscription");
+		await eventually(
+			() => (kinds().filter((kind) => kind === "events").length === 2 ? true : undefined),
+			"the new subscription",
+		);
 		assert.deepEqual(kinds(), ["events", "connect", "events"], "no state read before the run reply");
 		rmSync(join(stateDir, "hold-run"));
 		assert.equal(await starting, surface);
