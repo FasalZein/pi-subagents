@@ -76,6 +76,11 @@ export async function runPiPrompt(options: PiSessionOptions): Promise<DeclaredTo
 		await session.bindExtensions({});
 		await session.prompt("hello");
 	} finally {
+		// Pi's AgentSessionRuntime.dispose() emits session_shutdown before it
+		// disposes the session. Without it the extension keeps module state bound
+		// to this stale ctx, which breaks later suites in the same process and
+		// leaves their timers running.
+		await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		session.dispose();
 	}
 	return declared;

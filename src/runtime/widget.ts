@@ -101,6 +101,9 @@ export class SubagentWidgetManager {
 			this.widgetInterval = null;
 		}
 		this.widgetFrame = 0;
+		// The ctx belongs to the session that ended; Pi invalidates it after
+		// session_shutdown, so a later update() must not read it.
+		this.latestCtx = null;
 	}
 
 	attachContext(ctx: ExtensionContext): void {
