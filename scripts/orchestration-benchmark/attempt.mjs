@@ -218,6 +218,7 @@ export function classifyAttempt({
 	scenario,
 	checkoutChanged,
 	workDir,
+	workspace = null,
 }) {
 	const parent = evidence.parent
 		? summarizeParent(evidence.parent.events)
@@ -310,6 +311,7 @@ export function classifyAttempt({
 		childRoles: children.roles,
 		parentTools: parentToolCalls(evidence.parent.events),
 		childOutcomes,
+		workspace,
 		scenario,
 	});
 	return {
@@ -317,6 +319,7 @@ export function classifyAttempt({
 		verdict,
 		answer: observed.answer,
 		childOutcomes,
+		workspace,
 		delivery,
 		...metrics,
 	};
@@ -440,6 +443,11 @@ export async function runAttempt({
 			checkoutChanged = true;
 		}
 		const evidence = collectEvidence(root, home.probeDir);
+		// The workspace oracle runs before cleanup removes the workspace copy.
+		const workspace =
+			observed.kind === "answered" && scenario.inspectWorkspace
+				? scenario.inspectWorkspace(home.workDir)
+				: null;
 		return sanitize({
 			...base,
 			wallTimeMs,
@@ -450,6 +458,7 @@ export async function runAttempt({
 				scenario,
 				checkoutChanged,
 				workDir: home.workDir,
+				workspace,
 			}),
 		});
 	} finally {

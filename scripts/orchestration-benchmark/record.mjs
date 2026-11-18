@@ -445,8 +445,11 @@ export function childFulfils(events, contract, workDir) {
  * gone through exactly the expected children, with the parent calling only the
  * tools the scenario allows, AND every child must have produced the result its
  * role declares (scenario.childResults) and that result must have reached the parent.
+ * A scenario with a workspace oracle (scenario.inspectWorkspace) also needs its
+ * held-out test to pass and its fixture test files unchanged; else the work is wrong.
  * @param {{answer: string | null, childRoles: string[], parentTools: string[],
  *   childOutcomes: Array<{read: boolean, returned: boolean, delivered: boolean}>,
+ *   workspace?: {heldOutPassed: boolean, changedTestFiles: string[]} | null,
  *   scenario: {expectedAnswer: string, expectedChildRoles: string[], parentToolAllowlist: string[]}}} input
  */
 export function scoreAttempt({
@@ -454,9 +457,15 @@ export function scoreAttempt({
 	childRoles,
 	parentTools,
 	childOutcomes,
+	workspace = null,
 	scenario,
 }) {
 	if (!answerMatches(answer, scenario)) return "wrong-answer";
+	if (
+		scenario.inspectWorkspace &&
+		!(workspace?.heldOutPassed && workspace.changedTestFiles.length === 0)
+	)
+		return "wrong-answer";
 	// A batch launch has no fixed order; scenario.childOrder "any" compares the sorted roles.
 	const order = (roles) =>
 		scenario.childOrder === "any" ? [...roles].sort() : roles;
