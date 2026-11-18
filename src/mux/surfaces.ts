@@ -8,15 +8,8 @@ import {
 	renameHerdrCurrentTab,
 	renameHerdrCurrentWorkspace,
 } from "./herdr-surfaces.ts";
+import { tmuxBackend } from "./tmux.ts";
 import { createZellijSurface, type ZellijPlacementContext } from "./zellij-placement.ts";
-
-const DEFAULT_INTERACTIVE_MIN_COLUMNS = 50;
-const DEFAULT_INTERACTIVE_MIN_ROWS = 10;
-
-function positiveNumber(value: unknown): number | undefined {
-	const number = typeof value === "number" ? value : Number(value);
-	return Number.isFinite(number) && number > 0 ? number : undefined;
-}
 
 // ── Surface creation ───────────────────────────────────────────────────────
 
@@ -33,7 +26,7 @@ export async function createSurface(name: string, options?: SurfaceCreationOptio
 	}
 
 	if (backend === "tmux") {
-		return createTmuxSurface(name);
+		return tmuxBackend.createSurface(name);
 	}
 
 	if (backend === "wezterm") {
@@ -49,147 +42,6 @@ export async function createSurface(name: string, options?: SurfaceCreationOptio
 	}
 
 	return createSurfaceSplit(name, "right");
-}
-
-type TmuxPlacementGeometry = {
-	paneColumns: number;
-	paneRows: number;
-	windowColumns: number;
-	windowRows: number;
-	windowPanes: number;
-};
-
-type TmuxSplitPlan = {
-	layout: "even-horizontal" | "even-vertical" | "tiled";
-};
-
-function readTmuxPlacementGeometry(pane: string | undefined): TmuxPlacementGeometry | null {
-	if (!pane) return null;
-	try {
-		const output = execFileSync(
-			"tmux",
-			[
-				"display-message",
-				"-p",
-				"-t",
-				pane,
-				"#{pane_width} #{pane_height} #{window_width} #{window_height} #{window_panes}",
-			],
-			{ encoding: "utf8" },
-		).trim();
-		const [paneColumnsRaw, paneRowsRaw, windowColumnsRaw, windowRowsRaw, windowPanesRaw] = output.split(/\s+/, 5);
-		const paneColumns = positiveNumber(paneColumnsRaw);
-		const paneRows = positiveNumber(paneRowsRaw);
-		const windowColumns = positiveNumber(windowColumnsRaw);
-		const windowRows = positiveNumber(windowRowsRaw);
-		const windowPanes = positiveNumber(windowPanesRaw);
-		return paneColumns && paneRows && windowColumns && windowRows && windowPanes
-			? { paneColumns, paneRows, windowColumns, windowRows, windowPanes }
-			: null;
-	} catch {
-		return null;
-	}
-}
-
-function canFitTmuxTiledLayout(geometry: TmuxPlacementGeometry): boolean {
-	const nextPaneCount = geometry.windowPanes + 1;
-	for (let rows = 1; rows <= nextPaneCount; rows++) {
-		const columns = Math.ceil(nextPaneCount / rows);
-		if (
-			Math.floor(geometry.windowColumns / columns) >= DEFAULT_INTERACTIVE_MIN_COLUMNS &&
-			Math.floor(geometry.windowRows / rows) >= DEFAULT_INTERACTIVE_MIN_ROWS
-		) {
-			return true;
-		}
-	}
-	return false;
-}
-
-function isTmuxPaneUsable(geometry: TmuxPlacementGeometry | null): boolean {
-	return (
-		!!geometry &&
-		geometry.paneColumns >= DEFAULT_INTERACTIVE_MIN_COLUMNS &&
-		geometry.paneRows >= DEFAULT_INTERACTIVE_MIN_ROWS
-	);
-}
-
-function getTmuxSplitPlan(geometry: TmuxPlacementGeometry | null): TmuxSplitPlan | null {
-	if (!geometry) return null;
-	const nextPaneCount = geometry.windowPanes + 1;
-	if (nextPaneCount === 2) {
-		if (
-			Math.floor(geometry.windowColumns / 2) >= DEFAULT_INTERACTIVE_MIN_COLUMNS &&
-			geometry.windowRows >= DEFAULT_INTERACTIVE_MIN_ROWS
-		) {
-			return { layout: "even-horizontal" };
-		}
-		if (
-			geometry.windowColumns >= DEFAULT_INTERACTIVE_MIN_COLUMNS &&
-			Math.floor(geometry.windowRows / 2) >= DEFAULT_INTERACTIVE_MIN_ROWS
-		) {
-			return { layout: "even-vertical" };
-		}
-		return null;
-	}
-	return canFitTmuxTiledLayout(geometry) ? { layout: "tiled" } : null;
-}
-
-function createTmuxWindow(name: string): string {
-	const args = ["new-window", "-d", "-P", "-F", "#{pane_id}", "-n", name];
-	args.push("-c", process.cwd());
-
-	const pane = execFileSync("tmux", args, { encoding: "utf8" }).trim();
-	if (!pane.startsWith("%")) {
-		throw new Error(`Unexpected tmux new-window output: ${pane}`);
-	}
-
-	return pane;
-}
-
-function createTmuxSurface(name: string): string {
-	const parentPane = process.env.TMUX_PANE;
-	const splitPlan = getTmuxSplitPlan(readTmuxPlacementGeometry(parentPane));
-	if (splitPlan) {
-		const pane = createTmuxSplit(name, "right", parentPane);
-		rebalanceTmuxWindow(parentPane, splitPlan.layout);
-		if (!isTmuxPaneUsable(readTmuxPlacementGeometry(pane))) {
-			moveTmuxPaneToWindow(pane, name);
-		}
-		return pane;
-	}
-	return createTmuxWindow(name);
-}
-
-function rebalanceTmuxWindow(pane: string | undefined, layout: "even-horizontal" | "even-vertical" | "tiled"): void {
-	if (!pane) return;
-	try {
-		execFileSync("tmux", ["select-layout", "-t", pane, layout], {
-			encoding: "utf8",
-		});
-	} catch {}
-}
-
-function moveTmuxPaneToWindow(pane: string, name: string): void {
-	try {
-		execFileSync("tmux", ["break-pane", "-d", "-t", pane, "-n", name], {
-			encoding: "utf8",
-		});
-	} catch {}
-}
-
-function createTmuxSplit(_name: string, direction: "left" | "right" | "up" | "down", fromSurface?: string): string {
-	const args = ["split-window", "-d"];
-	args.push(direction === "left" || direction === "right" ? "-h" : "-v");
-	if (direction === "left" || direction === "up") args.push("-b");
-	if (fromSurface) args.push("-t", fromSurface);
-	args.push("-P", "-F", "#{pane_id}");
-
-	const pane = execFileSync("tmux", args, { encoding: "utf8" }).trim();
-	if (!pane.startsWith("%")) {
-		throw new Error(`Unexpected tmux split-window output: ${pane}`);
-	}
-
-	return pane;
 }
 
 function createWezTermSurface(name: string): string {
@@ -257,7 +109,7 @@ export function createSurfaceSplit(
 ): string {
 	const backend = requireMuxBackend();
 	if (backend === "cmux") return createCmuxSplit(name, direction, fromSurface);
-	if (backend === "tmux") return createTmuxSplit(name, direction, fromSurface);
+	if (backend === "tmux") return tmuxBackend.createSplit(name, direction, fromSurface);
 	if (backend === "wezterm") return createWezTermSplit(name, direction, fromSurface);
 	if (backend === "zellij") return createZellijSplit(name, direction, fromSurface);
 	return createHerdrSplit(name, direction, fromSurface);
@@ -274,15 +126,7 @@ export function renameCurrentTab(title: string): void {
 		return;
 	}
 	if (backend === "tmux") {
-		if (process.env.PI_SUBAGENT_RENAME_TMUX_WINDOW !== "1") return;
-		const paneId = process.env.TMUX_PANE;
-		if (!paneId) throw new Error("TMUX_PANE not set");
-		const windowId = execFileSync("tmux", ["display-message", "-p", "-t", paneId, "#{window_id}"], {
-			encoding: "utf8",
-		}).trim();
-		execFileSync("tmux", ["rename-window", "-t", windowId, title], {
-			encoding: "utf8",
-		});
+		tmuxBackend.renameCurrentTab(title);
 		return;
 	}
 	if (backend === "wezterm") {
@@ -313,15 +157,7 @@ export function renameWorkspace(title: string): void {
 		return;
 	}
 	if (backend === "tmux") {
-		if (process.env.PI_SUBAGENT_RENAME_TMUX_SESSION !== "1") return;
-		const paneId = process.env.TMUX_PANE;
-		if (!paneId) throw new Error("TMUX_PANE not set");
-		const sessionId = execFileSync("tmux", ["display-message", "-p", "-t", paneId, "#{session_id}"], {
-			encoding: "utf8",
-		}).trim();
-		execFileSync("tmux", ["rename-session", "-t", sessionId, title], {
-			encoding: "utf8",
-		});
+		tmuxBackend.renameWorkspace(title);
 		return;
 	}
 	if (backend === "wezterm") {
