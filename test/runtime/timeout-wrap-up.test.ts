@@ -1,6 +1,12 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { once } from "node:events";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
+import {
+	getLaunchCountUsed,
+	LAUNCH_CAP_ENV,
+	resetLaunchCountForTest,
+	tryAcquireLaunchCapSlots,
+} from "../../src/runtime/launch-cap.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
@@ -129,6 +135,32 @@ cat > "${stdinFile}"
 		assert.match(prompt, /interrupted your previous active operation/i);
 		assert.match(prompt, /Do not retry.*tool/i);
 		assert.match(prompt, /Report your result now/i);
+	});
+
+	it("does not count a time-limit wrap-up against the launch cap (D9)", async () => {
+		const savedCap = process.env[LAUNCH_CAP_ENV];
+		process.env[LAUNCH_CAP_ENV] = "1";
+		resetLaunchCountForTest();
+		try {
+			tryAcquireLaunchCapSlots(1)?.commit();
+			assert.equal(getLaunchCountUsed(), 1, "the cap is full before the wrap-up");
+			const dir = createTestDir();
+			process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(dir, "capture-pi", "#!/usr/bin/env bash\ncat > /dev/null\n");
+			const sessionFile = join(dir, "child.jsonl");
+			writeFileSync(
+				sessionFile,
+				`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+			);
+			const running = makeRunning(dir, sessionFile);
+			await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+			assert.ok(running.childProcess);
+			await once(running.childProcess!, "exit");
+			assert.equal(getLaunchCountUsed(), 1);
+		} finally {
+			if (savedCap === undefined) delete process.env[LAUNCH_CAP_ENV];
+			else process.env[LAUNCH_CAP_ENV] = savedCap;
+			resetLaunchCountForTest();
+		}
 	});
 
 	it("closes an interactive pane when restart fails after surface creation", async () => {
