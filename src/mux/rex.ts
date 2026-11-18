@@ -56,7 +56,8 @@ function listBlocks(session: string): RexBlock[] {
 /** The parent's block in its session; a stale parent fails before any create (D28). */
 function liveParent(session: string, blocks: RexBlock[] = listBlocks(session)): RexBlock {
 	const parent = blocks.find((block) => block.block_id === parentBlock());
-	if (!parent) throw new Error(`the parent's Rex block ${parentBlock()} no longer exists in ${session}; no child was opened`);
+	if (!parent)
+		throw new Error(`the parent's Rex block ${parentBlock()} no longer exists in ${session}; no child was opened`);
 	return parent;
 }
 
@@ -64,7 +65,19 @@ type ChildCreate = { kind: "split"; anchor: string; side: string } | { kind: "wi
 
 function createArgs(create: ChildCreate, session: string, label: string): string[] {
 	if (create.kind === "split") {
-		return ["split", "-s", session, "-b", create.anchor, "--split", create.side, "--focus=false", "--label", label, "--json"];
+		return [
+			"split",
+			"-s",
+			session,
+			"-b",
+			create.anchor,
+			"--split",
+			create.side,
+			"--focus=false",
+			"--label",
+			label,
+			"--json",
+		];
 	}
 	return ["window", "new", "-s", session, label, "--focus=false", "--json"];
 }
@@ -81,7 +94,9 @@ function isRequestTimeout(error: unknown): boolean {
 /** Blocks that carry the label: for a split the block's own label; for a window its label and its blocks. */
 function blocksWithLabel(create: ChildCreate, session: string, label: string): { found: number; blocks: string[] } {
 	if (create.kind === "split") {
-		const blocks = listBlocks(session).filter((block) => block.label === label).map((block) => block.block_id);
+		const blocks = listBlocks(session)
+			.filter((block) => block.label === label)
+			.map((block) => block.block_id);
 		return { found: blocks.length, blocks };
 	}
 	const inspect = JSON.parse(rexSync(["session", "inspect", session, "--json"])) as { windows?: RexWindow[] };
@@ -134,8 +149,7 @@ export const rexBackend: MuxBackendAdapter = {
 		return binary !== undefined && rexRevisionAccepted(binary);
 	},
 	setupHint: () =>
-		rexRevisionHint() ??
-		"Start pi in a Rex block (REX_SESSION and REX_BLOCK set), with rex on PATH or in REX_BIN_DIR.",
+		rexRevisionHint() ?? "Start pi in a Rex block (REX_SESSION and REX_BLOCK set), with rex on PATH or in REX_BIN_DIR.",
 	// A split right of the parent while its window holds fewer than SPLITS_PER_WINDOW children, else a new window.
 	createSurface: async () => {
 		const session = parentSession();

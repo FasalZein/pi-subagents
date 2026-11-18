@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { getMuxBackend, muxSetupHint } from "../../src/mux/core.ts";
-import { REX_CAPTURE_MAX_BYTES } from "../../src/mux/rex-cli.ts";
 import { rexBackend } from "../../src/mux/rex.ts";
+import { REX_CAPTURE_MAX_BYTES } from "../../src/mux/rex-cli.ts";
 import { writeExecutable } from "../support/index.ts";
 import {
 	armRexCreateFault,
@@ -67,7 +67,8 @@ afterEach(() => {
 
 /** The calls after the first n, as "verb" strings plus their argv. */
 const callsFrom = (n: number) => readRexCalls(stateDir).slice(n);
-const verb = (call: string[]) => (["block", "window", "session"].includes(call[0]!) ? `${call[0]} ${call[1]}` : call[0]!);
+const verb = (call: string[]) =>
+	["block", "window", "session"].includes(call[0]!) ? `${call[0]} ${call[1]}` : call[0]!;
 const isCreate = (call: string[]) => verb(call) === "split" || verb(call) === "window new";
 const flagValue = (call: string[], flag: string) => call[call.indexOf(flag) + 1];
 
@@ -154,7 +155,10 @@ describe("Rex lost create (T48, D28)", () => {
 		assert.deepEqual(calls.map(verb), ["block ls", "split", "block ls"]);
 		const label = flagValue(calls[1]!, "--label");
 		const labeled = readRexBlocks(stateDir).filter((block) => block.label === label);
-		assert.deepEqual(labeled.map((block) => block.block_id), [child]);
+		assert.deepEqual(
+			labeled.map((block) => block.block_id),
+			[child],
+		);
 	});
 
 	for (const creates of [0, 2]) {

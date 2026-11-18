@@ -1,6 +1,6 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, accessSync, fstatSync, openSync, readSync, rmSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, fstatSync, openSync, readSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execFileAsync } from "./core.ts";
