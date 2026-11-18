@@ -109,6 +109,7 @@ import "./mux/herdr-backend-contract.test.ts";
 import "./mux/herdr-core-backend-contract.test.ts";
 import "./mux/herdr-core-exit.test.ts";
 import "./mux/herdr-core-detection.test.ts";
+import "./mux/herdr-core-placement.test.ts";
 import "./mux/poll.test.ts";
 import "./mux/herdr.test.ts";
 import "./mux/herdr-placement.test.ts";

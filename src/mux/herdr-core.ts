@@ -11,6 +11,7 @@ import {
 	LabelExitWatch,
 	readFinishedTerminal,
 } from "./herdr-core-exit.ts";
+import { placeChildTerminal } from "./herdr-core-placement.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
 const START_REPLY_TIMEOUT_MS = 10_000;
@@ -133,6 +134,7 @@ async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 		if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
 		watch.attach(address);
 		exitWatches.set(address, watch);
+		await placeChildTerminal(address, callerTerminal());
 		return address;
 	} catch (error) {
 		watch.stop();
@@ -160,7 +162,7 @@ async function closeTerminal(surface: string): Promise<void> {
 	await execFileAsync(HC_COMMAND, ["rm", surface], { encoding: "utf8" });
 }
 
-/** herdr-core (the `hc` CLI inside an herdr-core terminal). Placement in the Herdr app is not part of T45. */
+/** herdr-core (the `hc` CLI inside an herdr-core terminal). A direct-program child gets a pane (D27). */
 export const herdrCoreBackend: MuxBackendAdapter = {
 	id: "herdr-core",
 	isAvailable: () =>

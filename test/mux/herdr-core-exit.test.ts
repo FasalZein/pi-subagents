@@ -16,6 +16,7 @@ import {
 	readFakeHcRequests,
 	seedFakeHcCaller,
 } from "./fake-hc.ts";
+import { FAKE_HERDR_APP, seedFakeHerdrApp } from "./fake-herdr-app.ts";
 import { readTypedText } from "./fake-terminal-state.ts";
 
 const LAUNCH: ProgramLaunch = {
@@ -57,7 +58,10 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		mkdirSync(stateDir);
 		mkdirSync(binDir);
 		writeExecutable(binDir, "hc", FAKE_HC);
+		// The child gets its split in the app; placement itself is covered in herdr-core-placement.test.ts.
+		writeExecutable(binDir, "herdr-app", FAKE_HERDR_APP);
 		seedFakeHcCaller(stateDir);
+		seedFakeHerdrApp(stateDir, FAKE_HC_CALLER);
 		setEnv("FAKE_TERMINAL_STATE", stateDir);
 		setEnv("HC_TERMINAL_ID", FAKE_HC_CALLER);
 		setEnv("HC_TERMINAL_SOCKET", join(stateDir, "hc.sock"));
@@ -201,7 +205,12 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		rmSync(join(stateDir, "hold-run"));
 		assert.equal(await starting, surface);
 		assert.equal((await eventually(() => checkExit(surface), "the exit facts")).exitCode, 7);
-		assert.deepEqual(kinds(), ["events", "connect", "events", "get"]);
+		// The child finished before its split, so placement falls back to the tab label: it reads the parent
+		// (get t1) and labels the child. Those calls are not exit-state reads.
+		const exitCalls = readFakeHcCalls(stateDir)
+			.filter((call) => call !== `get ${FAKE_HC_CALLER} --json` && !call.startsWith("label "))
+			.map((call) => call.split(" ")[0]);
+		assert.deepEqual(exitCalls, ["events", "connect", "events", "get"]);
 	});
 
 	it("closes by kill, then reads the exit facts, then removes", async () => {

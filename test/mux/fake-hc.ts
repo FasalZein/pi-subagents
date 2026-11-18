@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { FAKE_APP_SPACE, FAKE_APP_TAB } from "./fake-herdr-app.ts";
 import { FAKE_TERMINAL_STATE_JS } from "./fake-terminal-state.ts";
 
 /** The caller terminal of the parent Pi in the fake. */
@@ -195,12 +196,19 @@ switch (args[0]) {
 }
 `;
 
-/** Seeds the caller terminal of the parent Pi. */
+/** Seeds the caller terminal of the parent Pi, shown by the app in its space and tab (live check baseline). */
 export function seedFakeHcCaller(stateDir: string): void {
 	for (const kind of ["screen", "pending", "submitted"]) writeFileSync(join(stateDir, `${kind}-${FAKE_HC_CALLER}`), "");
 	writeFileSync(
 		join(stateDir, `term-${FAKE_HC_CALLER}.json`),
-		JSON.stringify({ address: FAKE_HC_CALLER, labels: {}, state: "live", exit_code: null, signal: null, reason: null }),
+		JSON.stringify({
+			address: FAKE_HC_CALLER,
+			labels: { "herdr.space": FAKE_APP_SPACE, "herdr.tab": FAKE_APP_TAB },
+			state: "live",
+			exit_code: null,
+			signal: null,
+			reason: null,
+		}),
 	);
 }
 
