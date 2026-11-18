@@ -31,7 +31,8 @@
  * - unbound: the child's name matches no single run id the parent launched.
  *
  * Outcome class of one child (AGENTS.md): duplicate when the parent read the
- * child's fixture file itself; clean_yield when the child fulfilled its contract,
+ * child's fixture file itself; clean_yield when the child fulfilled its contract
+ * (and met its phase gate, when its scenario declares one),
  * its result reached the parent by its own run id and the parent's terminal reply
  * contains it; auxiliary otherwise.
  */
@@ -47,17 +48,50 @@ function runsOf(details) {
 	return list.filter((run) => typeof run?.id === "string");
 }
 
-/** Run ids the parent launched, with their names, from successful launch tool results. */
+/**
+ * Run ids the parent launched, with their names, from successful launch tool results.
+ * launchedAt: entry index of the assistant message that made the launch call
+ * (null when no call carries the result's toolCallId).
+ */
 export function launchedRuns(events, launchTool) {
+	const callAt = new Map();
+	events.forEach((e, index) => {
+		if (e?.type !== "message" || e.message?.role !== "assistant") return;
+		for (const part of e.message.content ?? [])
+			if (part.type === "toolCall") callAt.set(part.id, index);
+	});
 	const runs = new Map();
 	for (const e of events) {
 		const m = e?.type === "message" ? e.message : null;
 		if (m?.role !== "toolResult" || m.toolName !== launchTool || m.isError)
 			continue;
 		for (const run of runsOf(m.details))
-			runs.set(run.id, { runId: run.id, name: run.name ?? null });
+			runs.set(run.id, {
+				runId: run.id,
+				name: run.name ?? null,
+				launchedAt: callAt.get(m.toolCallId) ?? null,
+			});
 	}
 	return [...runs.values()];
+}
+
+/**
+ * Serial handoff: in launch order, every run after the first was launched after
+ * the result of the run before it reached the parent. A batch launch, or a launch
+ * before the previous delivery, breaks it; so does a run without either index.
+ */
+function serialHandoff(rows) {
+	const byLaunch = [...rows].sort(
+		(a, b) => (a.launchedAt ?? -1) - (b.launchedAt ?? -1),
+	);
+	return byLaunch.every((row, i) => {
+		const before = byLaunch[i - 1];
+		return (
+			row.launchedAt !== null &&
+			(i === 0 ||
+				(before.deliveredAt !== null && before.deliveredAt < row.launchedAt))
+		);
+	});
 }
 
 /**
@@ -198,6 +232,16 @@ export function deliveryAccounting({
 	const rows = children.map((child) => {
 		const named = runs.filter((run) => run.name && run.name === child.name);
 		const runId = named.length === 1 ? named[0].runId : null;
+		// First own carrier holding the result before the scored reply.
+		const deliveredAt =
+			carried.find(
+				(c) =>
+					runId &&
+					c.runId === runId &&
+					c.index < cutoff &&
+					Boolean(child.contract) &&
+					holdsResult(c.text, child.contract),
+			)?.index ?? null;
 		const digests = carried.filter((c) =>
 			(scenario.digestOperations ?? []).some(
 				(op) => op.toolName === c.tool && op.covers.includes(child.name),
@@ -221,12 +265,18 @@ export function deliveryAccounting({
 			Boolean(child.contract) && holdsResult(finalText, child.contract);
 		const outcome = readByParent
 			? "duplicate"
-			: child.fulfils.read && child.fulfils.returned && byOwnRun && surfaced
+			: child.fulfils.read &&
+					child.fulfils.returned &&
+					child.fulfils.phase !== false &&
+					byOwnRun &&
+					surfaced
 				? "clean_yield"
 				: "auxiliary";
 		return {
 			runId,
 			role: child.role,
+			launchedAt: named.length === 1 ? named[0].launchedAt : null,
+			deliveredAt,
 			...result,
 			availableToAnswer: correct,
 			delivered: byOwnRun,
@@ -262,6 +312,8 @@ export function deliveryAccounting({
 			.filter((c) => c.runId)
 			.map(({ kind, index, runId }) => ({ kind, index, runId })),
 		answeredAt,
+		// Only for a scenario that declares serialHandoff; null otherwise.
+		handoffInOrder: scenario.serialHandoff ? serialHandoff(rows) : null,
 		cleanYieldShare: rows.length
 			? count("outcome", "clean_yield") / rows.length
 			: null,

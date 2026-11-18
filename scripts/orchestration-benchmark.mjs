@@ -18,8 +18,11 @@
  * - Nothing else touches that checkout while a sample runs.
  * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
  *
- * Scenarios: smoke (launcher check), recon (G2.1 scenario (a): 6 children, 7 keyed facts)
- * and review (G2.1 scenario (b): 8 children, 8 verdicts keyed by target).
+ * Scenarios: smoke (launcher check), recon (G2.1 scenario (a): 6 children, 7 keyed facts),
+ * review (G2.1 scenario (b): 8 children, 8 verdicts keyed by target)
+ * and review-fix (G2.1 scenario (c): build, review, fix; a held-out test decides).
+ * A scenario may declare inspectWorkspace(workDir): it runs after the parent ends and
+ * before cleanup, and its facts land in the attempt and in final.workspace.
  * The record keeps delivery accounting by run id in final.delivery (see delivery.mjs).
  *
  * Known limits (accepted for version 1):
@@ -316,6 +319,8 @@ async function main() {
 			childCost: last.children?.cost ?? null,
 			// Outcome classes, transfers, extra copies and undelivered results, by run id.
 			delivery: last.delivery ?? null,
+			// Held-out test and fixture test checksums of a scenario with a workspace oracle.
+			workspace: last.workspace ?? null,
 		},
 		allAttempts: sumAttempts(attempts),
 		checkout: { path: cli.checkout, commit: checkout.commit },

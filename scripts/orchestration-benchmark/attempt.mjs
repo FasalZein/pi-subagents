@@ -165,6 +165,7 @@ const REAL_CLOCK = { now: () => Date.now(), sleep, alive: isAlive };
  * Watch the parent from prompt submission until an outcome. Deadline is checked first.
  * @param {object} input
  * @param {{now: () => number, sleep: (ms: number) => Promise<void>, alive: (parent: object) => boolean}} [input.clock] - injected by tests
+ * @param {() => void} [input.onPoll] - runs on every poll before the outcome checks
  */
 export async function observe({
 	parent,
@@ -175,6 +176,7 @@ export async function observe({
 	deadlineMs,
 	parseAnswer,
 	clock = REAL_CLOCK,
+	onPoll = () => {},
 }) {
 	let errorSince = null;
 	while (true) {
@@ -182,6 +184,7 @@ export async function observe({
 		const now = clock.now();
 		if (now - submittedAt >= deadlineMs)
 			return { kind: "verdict", verdict: "timeout" };
+		onPoll();
 		const events = readEvents(parentFile);
 		const { answer } = terminalAnswer(events, parseAnswer);
 		const answeredAt = settledReplyIndex(events);
@@ -218,6 +221,8 @@ export function classifyAttempt({
 	scenario,
 	checkoutChanged,
 	workDir,
+	workspace = null,
+	phases = {},
 }) {
 	const parent = evidence.parent
 		? summarizeParent(evidence.parent.events)
@@ -274,14 +279,27 @@ export function classifyAttempt({
 	const childFacts = evidence.children.map((child) => {
 		const summary = summarizeChild(child.events);
 		const contract = scenario.childResults[summary?.role];
+		// Phase facts: the workspace as the first poll after the child ended saw it.
+		const gate = scenario.phaseGates?.[summary?.role];
+		const phaseFacts = phases[child.file] ?? null;
+		const phase =
+			!gate ||
+			(phaseFacts !== null &&
+				Object.entries(gate).every(
+					([key, value]) => phaseFacts[key] === value,
+				));
 		return {
 			name: summary?.name ?? null,
 			role: summary?.role ?? null,
 			contract,
 			ended: childEnded(child.events),
-			fulfils: contract
-				? childFulfils(child.events, contract, workDir)
-				: { read: false, returned: false },
+			phaseFacts,
+			fulfils: {
+				...(contract
+					? childFulfils(child.events, contract, workDir)
+					: { read: false, returned: false }),
+				phase,
+			},
 		};
 	});
 	// A result counts as delivered only when it reached the parent by the child's own run id.
@@ -295,6 +313,7 @@ export function classifyAttempt({
 	});
 	const childOutcomes = childFacts.map((child, index) => ({
 		...child.fulfils,
+		phaseFacts: child.phaseFacts,
 		delivered: delivery.runs[index].delivered,
 	}));
 	if (observed.kind === "verdict")
@@ -310,6 +329,8 @@ export function classifyAttempt({
 		childRoles: children.roles,
 		parentTools: parentToolCalls(evidence.parent.events),
 		childOutcomes,
+		workspace,
+		handoffInOrder: delivery.handoffInOrder,
 		scenario,
 	});
 	return {
@@ -317,6 +338,7 @@ export function classifyAttempt({
 		verdict,
 		answer: observed.answer,
 		childOutcomes,
+		workspace,
 		delivery,
 		...metrics,
 	};
@@ -423,6 +445,23 @@ export async function runAttempt({
 				kind: "infra",
 				infraReason: "prompt was not submitted",
 			});
+		// Phase facts per child session file, taken on the first poll that sees the
+		// child ended. Limit: they show the workspace up to one poll later; a next
+		// child that edits within that time would blur them. Serial handoff keeps
+		// the next writer behind a full review run in scenario review-fix.
+		const phases = {};
+		const onPoll = () => {
+			if (!scenario.inspectPhase) return;
+			let evidence;
+			try {
+				evidence = collectEvidence(root, home.probeDir);
+			} catch {
+				return; // a half-written line: the next poll retries
+			}
+			for (const child of evidence.children)
+				if (!(child.file in phases) && childEnded(child.events))
+					phases[child.file] = scenario.inspectPhase(home.workDir);
+		};
 		const observed = await observe({
 			parent,
 			parentFile,
@@ -431,6 +470,7 @@ export async function runAttempt({
 			submittedAt,
 			deadlineMs,
 			parseAnswer: answerParser(scenario),
+			onPoll,
 		});
 		const wallTimeMs = Date.now() - submittedAt;
 		let checkoutChanged = false;
@@ -440,6 +480,11 @@ export async function runAttempt({
 			checkoutChanged = true;
 		}
 		const evidence = collectEvidence(root, home.probeDir);
+		// The workspace oracle runs before cleanup removes the workspace copy.
+		const workspace =
+			observed.kind === "answered" && scenario.inspectWorkspace
+				? scenario.inspectWorkspace(home.workDir)
+				: null;
 		return sanitize({
 			...base,
 			wallTimeMs,
@@ -450,6 +495,8 @@ export async function runAttempt({
 				scenario,
 				checkoutChanged,
 				workDir: home.workDir,
+				workspace,
+				phases,
 			}),
 		});
 	} finally {
