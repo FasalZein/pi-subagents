@@ -504,7 +504,8 @@ export function renameHerdrWorkspace(workspaceId: string, title: string): void {
 export function isHerdrRuntimeAvailable(
 	hasCommand: (command: string) => boolean = (command) => defaultMuxRuntimeProbe.hasCommand(command),
 ): boolean {
-	if (!hasCommand("herdr")) return false;
+	// Only the pane variable of herdr counts (spec D29): other HERDR_* names linger in shells outside a pane.
+	if (!process.env.HERDR_PANE_ID?.trim() || !hasCommand("herdr")) return false;
 	try {
 		const status = getHerdrServerStatus();
 		if (!status.running || !status.compatible) return false;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { WorkReporter } from "../runtime/work-reporting.ts";
+import type { WorkReporter, WorkReporterSession } from "../runtime/work-reporting.ts";
 import { runHerdrJsonAsync } from "./herdr.ts";
 
 const TOKEN = "pi_subagents_work_v1";
@@ -7,7 +7,6 @@ const SOURCE = "pi-subagents:work-v1";
 const TTL_MS = 30_000;
 const HEARTBEAT_MS = 10_000;
 
-type SessionContext = { mode: string; sessionManager: { getSessionFile(): string | undefined } };
 type HerdrCall = (args: string[], env: NodeJS.ProcessEnv) => Promise<Record<string, unknown>>;
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -16,7 +15,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 /** Open an optional reporter only inside the owning TUI pane. No socket paths or native dependencies. */
 export async function createHerdrWorkReporter(
-	ctx: SessionContext,
+	ctx: WorkReporterSession,
 	environment: NodeJS.ProcessEnv = process.env,
 	run: HerdrCall = runHerdrJsonAsync,
 ): Promise<WorkReporter | undefined> {

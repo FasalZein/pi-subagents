@@ -1,4 +1,5 @@
 export {
+	connectMuxWorkReporter,
 	currentMuxAdapter,
 	exitStatusVar,
 	getMuxBackend,
@@ -8,7 +9,6 @@ export {
 	isMuxAvailable,
 	isTmuxAvailable,
 	isZellijAvailable,
-	muxBackendAdapter,
 	muxSetupHint,
 	shellEscape,
 } from "./mux/core.ts";

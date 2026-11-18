@@ -96,6 +96,7 @@ import "./mux/tmux-backend-contract.test.ts";
 import "./mux/cmux-backend-contract.test.ts";
 import "./mux/wezterm-backend-contract.test.ts";
 import "./mux/zellij-backend-contract.test.ts";
+import "./mux/herdr-backend-contract.test.ts";
 import "./mux/poll.test.ts";
 import "./mux/herdr.test.ts";
 import "./mux/herdr-placement.test.ts";
@@ -108,4 +109,5 @@ import "./agents/registration-gating.test.ts";
 import "./agents/malformed-agent.test.ts";
 
 import "./runtime/outstanding-work.test.ts";
+import "./runtime/work-reporting-startup.test.ts";
 import "./mux/herdr-work.test.ts";

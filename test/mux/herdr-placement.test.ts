@@ -119,6 +119,8 @@ function useFakeHerdr(): string {
 	const logFile = writeFakeHerdr(dir);
 	clearHerdrPlacementEnv();
 	process.env.PATH = dir;
+	// Detection needs herdr's own pane variable (spec D29).
+	process.env.HERDR_PANE_ID = "w1:p1";
 	process.env.FAKE_HERDR_LOG = logFile;
 	process.env.FAKE_HERDR_COUNTER = join(dir, "split-count");
 	writeFileSync(process.env.FAKE_HERDR_COUNTER, "0\n");

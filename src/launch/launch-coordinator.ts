@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { getMuxBackend, resolveHerdrPlacementPolicy, resolveZellijPlacementPolicy } from "../mux.ts";
+import { currentMuxAdapter, resolveZellijPlacementPolicy } from "../mux.ts";
 import { ChildSessionStorage } from "../session/child-session-storage.ts";
 import { getEntryCount } from "../session/session.ts";
 import {
@@ -74,10 +74,10 @@ export async function coordinateSubagentLaunch(
 	);
 	const systemPrompt = getCoordinatedSystemPrompt(prepared);
 	const agentEnv = parseEnvString(prepared.agentDefs?.env);
-	const herdrPlacementPolicy =
-		options.mode === "interactive" && getMuxBackend() === "herdr"
-			? resolveHerdrPlacementPolicy(agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT)
-			: undefined;
+	const resolveHerdrPolicy = options.mode === "interactive" ? currentMuxAdapter()?.resolveHerdrPlacementPolicy : undefined;
+	const herdrPlacementPolicy = resolveHerdrPolicy?.(
+		agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT,
+	);
 	const zellijPlacementPolicy =
 		options.mode === "interactive" && process.env.ZELLIJ_PANE_ID
 			? resolveZellijPlacementPolicy(agentEnv.PI_SUBAGENT_ZELLIJ_PLACEMENT ?? process.env.PI_SUBAGENT_ZELLIJ_PLACEMENT)
