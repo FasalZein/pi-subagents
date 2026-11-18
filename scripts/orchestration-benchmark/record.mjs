@@ -349,9 +349,15 @@ export function loadEvidence(
 		parent ? null : "parent",
 		...children.filter((c) => !c.probe).map(() => "child"),
 	].filter(Boolean);
+	// The reverse join: every probe needs its own session file of this attempt.
+	const sessionFiles = new Set([parentFile, ...childFiles]);
+	const unmatchedProbes =
+		probes.filter((probe) => !sessionFiles.has(probe.sessionFile)).length +
+		(probes.length - bySession.size);
 	return {
 		checkout,
 		missingProbes: missing.length,
+		unmatchedProbes,
 		parentLoadedCheckout: fromCheckout(parent, parentTool),
 		childrenLoadedCheckout: children.every((child) =>
 			fromCheckout(child.probe, childTool),

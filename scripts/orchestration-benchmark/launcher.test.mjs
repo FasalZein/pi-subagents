@@ -232,7 +232,6 @@ const classify = (ev, observed = { kind: "answered", answer: "w" }) =>
 
 test("[F6][F7] classification: pass needs the child; missing load proof is infra", () => {
 	assert.equal(classify(evidence(childSession(["stop"]))).verdict, "pass");
-	assert.equal(classify(evidence(null)).verdict, "wrong-delegation");
 	assert.equal(
 		classify(evidence(childSession(["stop"]), { probes: [probes[0]] }))
 			.infraReason,
@@ -241,6 +240,31 @@ test("[F6][F7] classification: pass needs the child; missing load proof is infra
 	assert.equal(
 		classify(evidence(childSession(["stop"]), { malformed: 1 })).infraReason,
 		"malformed session lines",
+	);
+});
+
+test("[F8] probes and session files match one to one: either side alone is infra, not a verdict", () => {
+	// A launched child has a probe, but its session file is absent.
+	assert.deepEqual(
+		[classify(evidence(null)).kind, classify(evidence(null)).infraReason],
+		["infra", "probe without its session file"],
+	);
+	// A probe names a session file outside the attempt root.
+	const outside = [probes[0], probes[1], { ...probes[1], sessionFile: "/x/c.jsonl" }];
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { probes: outside })).infraReason,
+		"probe without its session file",
+	);
+	// Two probes claim one session file.
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }))
+			.infraReason,
+		"probe without its session file",
+	);
+	// A child session file without its probe.
+	assert.equal(
+		classify(evidence(childSession(["stop"]), { probes: [probes[0]] })).infraReason,
+		"load probe missing",
 	);
 });
 

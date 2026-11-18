@@ -167,6 +167,7 @@ export function classifyAttempt({
 	if (parent.missingUsage + children.missingUsage > 0)
 		return infra("request without usage");
 	if (load.missingProbes > 0) return infra("load probe missing");
+	if (load.unmatchedProbes > 0) return infra("probe without its session file");
 	if (!load.parentLoadedCheckout || !load.childrenLoadedCheckout)
 		return infra("extension did not load from the checkout");
 	if (
