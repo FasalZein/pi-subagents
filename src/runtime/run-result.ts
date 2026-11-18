@@ -49,31 +49,37 @@ export interface PublishedResult {
 	summarySource: SubagentSummarySource;
 }
 
-/** How a watched child ended, as its watcher saw it; only a clean end of its own is published here. */
+/** How a watched child ended, as its watcher decided it once; only an end of its own is published here. */
 export interface WatchedEnd {
+	/** The actual exit code; the record keeps it. */
 	exitCode: number;
+	/**
+	 * An operator closed a manual pane (auto-exit: false) and its shell reported a nonzero status
+	 * without a child error: a successful end when the child answered, a failure when it did not.
+	 */
+	operatorClosed: boolean;
 	timedOut: boolean;
 	pinged: boolean;
 	errorMessage?: string;
 	/** The exit record that carries the completion call, if any. */
 	exitSignal: PollResult | null | undefined;
-	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean; errorMessage?: string };
+	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean };
 }
 
 /**
  * D13 and D14: assembles, publishes and renders the result of a headless or pane child that exited
- * on its own with code 0, also after a context-pressure wrap-up. Returns undefined for any other
- * end: time-limit, error and ping ends keep their own texts until their tickets move them here (T09),
- * and a no-session child has no session to assemble from (T08b).
+ * on its own with code 0, also after a context-pressure wrap-up, and of an operator-closed manual
+ * pane that answered. Returns undefined for any other end: time-limit, error and ping ends keep their
+ * own texts until their tickets move them here (T09), and a no-session child has no session to
+ * assemble from (T08b).
  */
 export function publishRunResult(running: RunningSubagent, end: WatchedEnd): PublishedResult | undefined {
 	const target = running.resultTarget;
 	const endedOnItsOwn =
-		end.exitCode === 0 &&
+		(end.exitCode === 0 || end.operatorClosed) &&
 		!end.timedOut &&
 		!end.pinged &&
 		!end.errorMessage &&
-		!end.contextUsage.errorMessage &&
 		!running.timeoutWrapUp;
 	if (!target || running.noSession || !endedOnItsOwn || !existsSync(running.sessionFile)) return undefined;
 	const { contextUsage } = end;
@@ -86,7 +92,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		sessionFile: running.sessionFile,
 		startedAt: running.startTime,
 		endedAt: Date.now(),
-		end: { kind: "exited", code: 0 },
+		end: { kind: "exited", code: end.exitCode },
 		entries: getEntries(running.sessionFile),
 		launchEntryCount: running.launchEntryCount ?? 0,
 		acceptedCall: end.exitSignal?.acceptedCall,
@@ -98,6 +104,10 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 			? { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON }
 			: { resumable: true },
 	});
+	const noText =
+		!assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
+	// A nonzero end without an answer is a crash, not an operator close: it keeps its failure text.
+	if (end.exitCode !== 0 && noText) return undefined;
 	const record = target.store.publish(target.reservation, assembled);
 	const text = renderResult(record, {
 		cwd: target.parentCwd,
@@ -105,7 +115,6 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		warnings: target.warnings,
 		showContextUsage: running.reportContextUsage !== false,
 	});
-	const noText = !record.typed && assembled.report === `${record.summary}\n\n${NO_REPORT_LINE}`;
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
 }
 

@@ -364,11 +364,28 @@ function watchBackgroundGeneration(
 			const exitCode = timedOut ? (code || 1) : (exitSignal?.exitCode ?? code ?? 1);
 			const errorMessage = exitSignal?.reason === "error" ? exitSignal.errorMessage : undefined;
 			const finalContextUsage = resolveFinalContextUsage(running, exitSignal);
+			// D14: a run that ended on its own gets the assembled, published and rendered result. The
+			// exit record, else the process exit code, decides it once; a headless child has no operator close.
+			const published = publishRunResult(running, {
+				exitCode,
+				operatorClosed: false,
+				timedOut: Boolean(timedOut),
+				pinged: Boolean(exitSignal?.ping),
+				errorMessage,
+				exitSignal,
+				contextUsage: finalContextUsage,
+			});
 			const stderr = running.stderrTail?.trim();
 			const stdout = running.stdoutTail?.trim();
 			let summary = `Background agent exited with code ${exitCode}`;
 			let summarySource: SubagentSummarySource = "runtime";
-			if ((!running.noSession || running.timeoutWarnThreshold !== undefined) && existsSync(running.sessionFile)) {
+			// The published record already read this run's transcript; only an unpublished end reads it here.
+			if (published) {
+				({ summary, summarySource } = published);
+			} else if (
+				(!running.noSession || running.timeoutWarnThreshold !== undefined) &&
+				existsSync(running.sessionFile)
+			) {
 				const allEntries = getNewEntries(running.sessionFile, running.launchEntryCount ?? 0);
 				const output = findLastSubagentOutputWithSource(allEntries);
 				if (output) {
@@ -387,16 +404,6 @@ function watchBackgroundGeneration(
 			} else if (exitCode !== 0 && stderr) {
 				summary = `Background agent exited with code ${exitCode}\n\n${stderr}`;
 			}
-			// D14: a run that ended on its own gets the assembled, published and rendered result.
-			const published = publishRunResult(running, {
-				exitCode,
-				timedOut: Boolean(timedOut),
-				pinged: Boolean(exitSignal?.ping),
-				errorMessage,
-				exitSignal,
-				contextUsage: finalContextUsage,
-			});
-			if (published) ({ summary, summarySource } = published);
 			if (timedOut) {
 				if (!running.noSession) {
 					writeSubagentTimeoutSidecar(running.sessionFile, {
