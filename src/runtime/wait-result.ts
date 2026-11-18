@@ -11,10 +11,12 @@ function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentRes
 		content: [
 			{
 				type: "text",
+				// D14: a published ping carries the same rendering as the message path.
 				text:
+					result.resultText ??
 					`Sub-agent "${running.name}" requested help and exited. ` +
-					`Resume it with subagent_resume using sessionFile ${result.sessionFile ?? "(missing)"}.` +
-					`\n\nMessage from the subagent:\n${result.ping?.message ?? ""}`,
+						`Resume it with subagent_resume using sessionFile ${result.sessionFile ?? "(missing)"}.` +
+						`\n\nMessage from the subagent:\n${result.ping?.message ?? ""}`,
 			},
 		],
 		details: {
@@ -28,6 +30,7 @@ function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentRes
 			outputTokens: result.outputTokens,
 			sessionFile: result.sessionFile,
 			message: result.ping?.message,
+			...(result.resultRunId ? { runId: result.resultRunId } : {}),
 		},
 	};
 }

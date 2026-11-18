@@ -147,12 +147,14 @@ function deliverSubagentPing(
 	const sessionRef = result.sessionFile
 		? `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`
 		: "";
+	// D14: a published ping is a blocked record and carries the same rendering as every other end.
+	const content =
+		result.resultText ??
+		`Sub-agent "${ping.name}" needs help (${formatElapsed(result.elapsed)}).\n\n${ping.message}${sessionRef}`;
 	outstandingWork.delivery(running.id, () => pi.sendMessage(
 		{
 			customType: "subagent_ping",
-			content:
-				`Sub-agent "${ping.name}" needs help (${formatElapsed(result.elapsed)}).\n\n` +
-				`${ping.message}${sessionRef}`,
+			content,
 			display: true,
 			details: {
 				id: running.id,
@@ -168,6 +170,8 @@ function deliverSubagentPing(
 				outputTokens: result.outputTokens,
 				sessionFile: result.sessionFile,
 				message: ping.message,
+				...(result.resultRunId ? { runId: result.resultRunId } : {}),
+				...(result.reportFile ? { reportFile: result.reportFile } : {}),
 			} as SubagentPingMessageDetails,
 		},
 		{ triggerTurn: true, deliverAs: "steer" },

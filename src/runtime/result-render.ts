@@ -100,6 +100,8 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 	if (!record.resume.resumable) {
 		lines.push({ fact: "not resumable", detail: { text: record.resume.reason, max: FACT_MAX_CHARS, priority: 0 } });
 	}
+	const timeLimit = timeLimitLine(record);
+	if (timeLimit) lines.push(timeLimit);
 	const verifier = options.verifierFooter;
 	if (verifier) {
 		const fact = `verifier: winner ${verifier.winner}`;
@@ -110,6 +112,30 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 		lines.push({ fact: window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens` });
 	}
 	return lines;
+}
+
+/** D7: a time-limit kill's one line of guidance. */
+export const TIME_LIMIT_GUIDANCE =
+	"a resume gets the same limit and can stop at the same point; finish the work yourself or start a new sub-agent with a smaller task";
+/** D7: the same guidance when the agent forbids a resume after a time limit. */
+export const TIME_LIMIT_NO_RESUME_GUIDANCE = "start a new sub-agent with a smaller task";
+/** D7: a report-only wrap-up's notice. */
+export const WRAP_UP_NOTICE =
+	"the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains";
+
+/**
+ * D7: the time limit of a timed-out run, with the guidance of a kill or the notice of a report-only
+ * wrap-up. The limit stays; the guidance or notice gets the room the resume reason leaves.
+ */
+function timeLimitLine(record: ResultRecord): RequiredLine | undefined {
+	const limit = record.timeLimit;
+	if (record.outcome !== "timed_out" || !limit) return undefined;
+	const budget = limit.kind === "idle-timeout" ? `${limit.seconds}s without output` : `${limit.seconds}s for the whole run`;
+	const text = limit.wrapUp ? WRAP_UP_NOTICE : record.resume.resumable ? TIME_LIMIT_GUIDANCE : TIME_LIMIT_NO_RESUME_GUIDANCE;
+	return {
+		fact: `${limit.wrapUp ? "wrap-up" : "time limit"}: ${budget}`,
+		detail: { text, max: FACT_MAX_CHARS, priority: 1 },
+	};
 }
 
 /** Fits the details of the required lines into the room left within FRAME_MAX_CHARS. */

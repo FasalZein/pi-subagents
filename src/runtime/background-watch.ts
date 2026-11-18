@@ -6,7 +6,14 @@ import { findLastSubagentOutputWithSource, getEntries, getEntryCount, getNewEntr
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
-import { publishedResultFields, publishRunResult } from "./run-result.ts";
+import {
+	CANCELLED_SUMMARY,
+	isStopRequested,
+	publishedResultFields,
+	publishRunResult,
+	STOPPED_REASON,
+	withRuntimeEnd,
+} from "./run-result.ts";
 import {
 	TIMEOUT_KILL_ESCALATION_MS,
 	checkSubagentTimeout,
@@ -105,7 +112,8 @@ function buildBackgroundRestartTimeoutResult(
 			...(running.timeoutBudget ? { budget: running.timeoutBudget } : {}),
 		});
 	}
-	return {
+	const timedOut = { kind: "timed_out", budget: expiry.kind, seconds: expiry.seconds, wrapUp: false } as const;
+	return withRuntimeEnd(running, {
 		name: running.name,
 		task: running.task,
 		summary,
@@ -118,7 +126,7 @@ function buildBackgroundRestartTimeoutResult(
 		...(running.timeoutBlocksResume === true ? { timeoutBlocksResume: true } : {}),
 		...(running.timeoutKillFailed === true ? { timeoutKillFailed: true } : {}),
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	};
+	}, timedOut);
 }
 
 /**
@@ -166,7 +174,7 @@ async function watchBackgroundSubagentUntilFinal(
 				running.timeoutWrapUpMode = true;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				return {
+				return withRuntimeEnd(running, {
 					name: running.name,
 					task: running.task,
 					summary: `The system interrupted this sub-agent for its time-limit wrap-up, but the wrap-up continuation failed to start: ${message}`,
@@ -176,7 +184,7 @@ async function watchBackgroundSubagentUntilFinal(
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
 					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				};
+				}, { kind: "failed", error: message });
 			}
 		}
 	} finally {
@@ -356,6 +364,10 @@ function watchBackgroundGeneration(
 				return;
 			}
 			const elapsed = Math.floor((Date.now() - running.startTime) / 1000);
+			// D7: a stop decides the outcome, whatever the dying child wrote (a done record, a ping or
+			// nothing at all after a signal exit).
+			const stopped = isStopRequested(running, signal);
+			const ping = stopped ? undefined : exitSignal?.ping;
 			// A ping is child-initiated and asks the parent for help, so it still
 			// outranks the kill. A `done` at this point does not: see above.
 			const timedOut = running.timeoutExpiry && exitSignal?.reason !== "ping" ? running.timeoutExpiry : undefined;
@@ -364,13 +376,14 @@ function watchBackgroundGeneration(
 			const exitCode = timedOut ? (code || 1) : (exitSignal?.exitCode ?? code ?? 1);
 			const errorMessage = exitSignal?.reason === "error" ? exitSignal.errorMessage : undefined;
 			const finalContextUsage = resolveFinalContextUsage(running, exitSignal);
-			// D14: a run that ended on its own gets the assembled, published and rendered result. The
-			// exit record, else the process exit code, decides it once; a headless child has no operator close.
+			// D14: every watched end gets the assembled, published and rendered result. The exit
+			// record, else the process exit code, decides it once; a headless child has no operator close.
 			const published = publishRunResult(running, {
 				exitCode,
 				operatorClosed: false,
-				timedOut: Boolean(timedOut),
-				pinged: Boolean(exitSignal?.ping),
+				stopped,
+				timedOut,
+				ping,
 				errorMessage,
 				exitSignal,
 				contextUsage: finalContextUsage,
@@ -382,6 +395,8 @@ function watchBackgroundGeneration(
 			// The published record already read this run's transcript; only an unpublished end reads it here.
 			if (published) {
 				({ summary, summarySource } = published);
+			} else if (stopped) {
+				summary = CANCELLED_SUMMARY;
 			} else if (
 				existsSync(running.sessionFile)
 			) {
@@ -432,8 +447,9 @@ function watchBackgroundGeneration(
 						}
 					: {}),
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				ping: exitSignal?.ping,
+				ping,
 				errorMessage,
+				...(stopped ? { error: "cancelled" } : {}),
 				...publishedResultFields(published),
 				},
 			});
@@ -465,7 +481,7 @@ function watchBackgroundGeneration(
 			}
 			finish({
 				kind: "result",
-				result: {
+				result: withRuntimeEnd(running, {
 				name: running.name,
 				task: running.task,
 				summary: `Background agent failed to start: ${error.message}`,
@@ -475,7 +491,7 @@ function watchBackgroundGeneration(
 				elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 				error: error.message,
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				},
+				}, { kind: "failed", error: error.message }),
 			});
 		};
 
@@ -487,15 +503,15 @@ function watchBackgroundGeneration(
 }
 
 function buildBackgroundCancellationResult(running: RunningSubagent): SubagentResult {
-	return {
+	return withRuntimeEnd(running, {
 		name: running.name,
 		task: running.task,
-		summary: "Subagent cancelled.",
+		summary: CANCELLED_SUMMARY,
 		summarySource: "runtime",
 		sessionFile: running.noSession ? undefined : running.sessionFile,
 		exitCode: 1,
 		elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 		error: "cancelled",
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	};
+	}, { kind: "cancelled", reason: STOPPED_REASON });
 }

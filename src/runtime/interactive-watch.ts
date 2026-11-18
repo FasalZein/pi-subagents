@@ -10,7 +10,14 @@ import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
-import { publishedResultFields, publishRunResult } from "./run-result.ts";
+import {
+	CANCELLED_SUMMARY,
+	isStopRequested,
+	publishedResultFields,
+	publishRunResult,
+	STOPPED_REASON,
+	withRuntimeEnd,
+} from "./run-result.ts";
 import {
 	checkSubagentTimeout,
 	checkSubagentTimeoutWrapUp,
@@ -77,7 +84,8 @@ function buildInteractiveRestartTimeoutResult(
 ): SubagentResult {
 	const { summary, summarySource } = getSummary(running, { reason: "error", exitCode: 1 });
 	const timeoutFields = recordTimeoutOutcome(running);
-	return {
+	const timedOut = { kind: "timed_out", budget: expiry.kind, seconds: expiry.seconds, wrapUp: false } as const;
+	return withRuntimeEnd(running, {
 		name: running.name,
 		task: running.task,
 		summary,
@@ -94,7 +102,7 @@ function buildInteractiveRestartTimeoutResult(
 					timedOutAfter: expiry.seconds,
 				}),
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	};
+	}, timedOut);
 }
 
 /**
@@ -170,7 +178,7 @@ export async function watchSubagent(
 				running.timeoutWrapUpMode = true;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				return {
+				return withRuntimeEnd(running, {
 					name: running.name,
 					task: running.task,
 					summary: `The system interrupted this sub-agent for its time-limit wrap-up, but the wrap-up continuation failed to start: ${message}`,
@@ -180,7 +188,7 @@ export async function watchSubagent(
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
 					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				};
+				}, { kind: "failed", error: message });
 			}
 		}
 	} finally {
@@ -307,21 +315,27 @@ async function watchInteractiveGeneration(
 		const elapsed = Math.floor((Date.now() - startTime) / 1000);
 		const errorMessage = end.reason === "error" ? end.errorMessage : undefined;
 		const finalContextUsage = resolveFinalContextUsage(running, pickFinalUsageSource(end, exitSignal));
+		// D7: a stop decides the outcome, whatever the dying child wrote.
+		const stopped = isStopRequested(running, signal);
 		const timeoutFields = recordTimeoutOutcome(running, end);
-		// D14: a pane child that ended on its own gets the same assembled, published and rendered
-		// result as a headless child. The end is the exit record when the watcher consumed one.
-		const ping = end.ping ?? exitSignal?.ping;
+		// D14: every watched pane end gets the same assembled, published and rendered result as a
+		// headless child. The end is the exit record when the watcher consumed one.
+		const ping = stopped ? undefined : (end.ping ?? exitSignal?.ping);
 		const published = publishRunResult(running, {
 			exitCode: end.exitCode,
 			operatorClosed: running.autoExit === false && end.reason === "sentinel",
-			timedOut: Boolean(timeoutFields.timedOut),
-			pinged: end.reason === "ping" || Boolean(ping),
+			stopped,
+			timedOut: timeoutFields.timedOut
+				? { kind: timeoutFields.timedOut, seconds: timeoutFields.timedOutAfter ?? 0 }
+				: undefined,
+			ping: ping ?? (!stopped && end.reason === "ping" ? { message: "" } : undefined),
 			errorMessage,
 			exitSignal: end.acceptedCall ? end : exitSignal,
 			contextUsage: finalContextUsage,
 		});
 		// The published record already read this run's transcript; only an unpublished end reads it here.
-		const { summary, summarySource } = published ?? getSummary(running, end);
+		const { summary, summarySource } =
+			published ?? (stopped ? { summary: CANCELLED_SUMMARY, summarySource: "runtime" as const } : getSummary(running, end));
 		cleanupDoneSentinel(running);
 		try {
 			await runtime.closeRunningSurface(running);
@@ -344,6 +358,7 @@ async function watchInteractiveGeneration(
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
 				ping,
 				errorMessage,
+				...(stopped ? { error: "cancelled" } : {}),
 				...publishedResultFields(published),
 			},
 		};
@@ -370,9 +385,10 @@ async function watchInteractiveGeneration(
 		const timeoutFields = recordTimeoutOutcome(running);
 		if (timeoutFields.timedOut) {
 			const { summary, summarySource } = getSummary(running, { reason: "error", exitCode: 1 });
+			const expiry = running.timeoutExpiry!;
 			return {
 				kind: "result",
-				result: {
+				result: withRuntimeEnd(running, {
 					name,
 					task,
 					summary,
@@ -383,7 +399,7 @@ async function watchInteractiveGeneration(
 					outputTokens: 0,
 					...timeoutFields,
 					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				},
+				}, { kind: "timed_out", budget: expiry.kind, seconds: expiry.seconds, wrapUp: false }),
 			};
 		}
 
@@ -392,7 +408,7 @@ async function watchInteractiveGeneration(
 		}
 		return {
 			kind: "result",
-			result: {
+			result: withRuntimeEnd(running, {
 				name,
 				task,
 				summary: `Subagent error: ${errorMessage}`,
@@ -402,7 +418,7 @@ async function watchInteractiveGeneration(
 				outputTokens: 0,
 				error: errorMessage,
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-			},
+			}, { kind: "failed", error: errorMessage }),
 		};
 	} finally {
 		if (deadlineTimer) clearTimeout(deadlineTimer);
@@ -410,10 +426,10 @@ async function watchInteractiveGeneration(
 }
 
 function buildInteractiveCancellationResult(running: RunningSubagent): SubagentResult {
-	return {
+	return withRuntimeEnd(running, {
 		name: running.name,
 		task: running.task,
-		summary: "Subagent cancelled.",
+		summary: CANCELLED_SUMMARY,
 		summarySource: "runtime",
 		sessionFile: running.noSession ? undefined : running.sessionFile,
 		exitCode: 1,
@@ -421,7 +437,7 @@ function buildInteractiveCancellationResult(running: RunningSubagent): SubagentR
 		outputTokens: 0,
 		error: "cancelled",
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	};
+	}, { kind: "cancelled", reason: STOPPED_REASON });
 }
 
 function getSummary(

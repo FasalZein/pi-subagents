@@ -283,6 +283,9 @@ export interface SubagentPingMessageDetails {
 	sessionFile?: string;
 	outputTokens?: number;
 	message?: string;
+	/** Set when the ping was published as a blocked record (D14). */
+	runId?: string;
+	reportFile?: string;
 }
 
 export interface WidgetThemeLike {
