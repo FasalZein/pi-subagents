@@ -77,7 +77,7 @@ export function sealRecord(record) {
 	return { ...body, checksum: sha256(canonicalJson(body)) };
 }
 
-function hasValidChecksum(record) {
+export function hasValidChecksum(record) {
 	if (
 		!record ||
 		typeof record !== "object" ||

@@ -3,11 +3,12 @@
  * Orchestration benchmark launcher: runs one sample and writes one JSON record.
  *
  *   PI_SUBAGENT_LIVE_MODEL=<provider/model:thinking> node scripts/orchestration-benchmark.mjs \\
- *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>]
+ *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>]
  *
  * The thinking level is required: as a suffix of the model ref or with --thinking.
  * The model comes only from the environment, so no model ref lands in the repository.
- * Records always go to ~/.pi/artifacts/pi-subagents/benchmark, outside any repository.
+ * Records always go to ~/.pi/artifacts/pi-subagents/benchmark, outside any repository;
+ * --set <plain name> puts them in one subfolder of it (baseline, candidate).
  * A sample file with a valid checksum and a verdict is final; a rerun does nothing.
  * Only a sample that ended without a verdict for an infrastructure reason runs again.
  *
@@ -122,6 +123,7 @@ function parseCli() {
 			scenario: { type: "string" },
 			rep: { type: "string" },
 			thinking: { type: "string" },
+			set: { type: "string" },
 		},
 	});
 	const live = process.env.PI_SUBAGENT_LIVE_MODEL?.trim();
@@ -145,10 +147,14 @@ function parseCli() {
 	}
 	if (!/^[\w.-]+$/.test(values.scenario))
 		throw new BenchError("--scenario must be a plain name");
+	// No dot or separator, so the folder cannot leave the fixed output root.
+	if (values.set !== undefined && !/^[a-z0-9-]+$/.test(values.set))
+		throw new BenchError("--set must be a plain lower-case name");
 	const checkout = realpathSync(resolve(values.checkout));
 	if (checkout === realpathSync(REPO_ROOT))
 		throw new BenchError("--checkout must not be the harness repository");
-	return { checkout, scenario: values.scenario, rep, model, thinking };
+	const outDir = values.set ? join(OUT_DIR, values.set) : OUT_DIR;
+	return { checkout, scenario: values.scenario, rep, model, thinking, outDir };
 }
 
 async function loadScenario(name) {
@@ -261,8 +267,8 @@ async function main() {
 		scenario: scenario.name,
 		rep: cli.rep,
 	});
-	mkdirSync(OUT_DIR, { recursive: true, mode: 0o700 });
-	const samplePath = join(OUT_DIR, sampleFileName(key));
+	mkdirSync(cli.outDir, { recursive: true, mode: 0o700 });
+	const samplePath = join(cli.outDir, sampleFileName(key));
 	const markerPath = `${samplePath}.claim`;
 	const readSample = () =>
 		existsSync(samplePath) ? readFileSync(samplePath, "utf8") : null;
