@@ -42,28 +42,35 @@ let binDir = "";
 let stateDir = "";
 let saved = new Map<string, string | undefined>();
 
-beforeEach(() => {
-	saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
-	for (const key of ENV_KEYS) if (key !== "PATH") delete process.env[key];
-	root = mkdtempSync(join(tmpdir(), "rex-backend-"));
-	binDir = join(root, "bin");
-	stateDir = join(root, "state");
-	mkdirSync(binDir);
-	mkdirSync(stateDir);
-	writeExecutable(binDir, "rex", FAKE_REX);
-	process.env.PATH = `${binDir}:${saved.get("PATH") ?? ""}`;
-	process.env.FAKE_TERMINAL_STATE = stateDir;
-	process.env.REX_SESSION = FAKE_REX_SESSION;
-	process.env.REX_BLOCK = FAKE_REX_PARENT;
-});
+/**
+ * Registers the fake rex env and state around each test of the calling describe.
+ * Not at module level: test/test.ts imports every suite into one process, so a module-level hook
+ * would wrap every test of the run and leave REX_* and a fake rex on PATH for other backends' tests.
+ */
+function useFakeRex(): void {
+	beforeEach(() => {
+		saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
+		for (const key of ENV_KEYS) if (key !== "PATH") delete process.env[key];
+		root = mkdtempSync(join(tmpdir(), "rex-backend-"));
+		binDir = join(root, "bin");
+		stateDir = join(root, "state");
+		mkdirSync(binDir);
+		mkdirSync(stateDir);
+		writeExecutable(binDir, "rex", FAKE_REX);
+		process.env.PATH = `${binDir}:${saved.get("PATH") ?? ""}`;
+		process.env.FAKE_TERMINAL_STATE = stateDir;
+		process.env.REX_SESSION = FAKE_REX_SESSION;
+		process.env.REX_BLOCK = FAKE_REX_PARENT;
+	});
 
-afterEach(() => {
-	for (const [key, value] of saved) {
-		if (value === undefined) delete process.env[key];
-		else process.env[key] = value;
-	}
-	rmSync(root, { recursive: true, force: true });
-});
+	afterEach(() => {
+		for (const [key, value] of saved) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+		rmSync(root, { recursive: true, force: true });
+	});
+}
 
 /** The calls after the first n, as "verb" strings plus their argv. */
 const callsFrom = (n: number) => readRexCalls(stateDir).slice(n);
@@ -73,6 +80,8 @@ const isCreate = (call: string[]) => verb(call) === "split" || verb(call) === "w
 const flagValue = (call: string[], flag: string) => call[call.indexOf(flag) + 1];
 
 describe("Rex detection (T48, D28, D29)", () => {
+	useFakeRex();
+
 	it("finds rex on PATH and accepts revision 16", () => {
 		assert.equal(getMuxBackend(), "rex");
 		assert.deepEqual(readRexCalls(stateDir)[0], ["whoami", "--json"]);
@@ -111,6 +120,8 @@ describe("Rex detection (T48, D28, D29)", () => {
 });
 
 describe("Rex launch (T48, D28)", () => {
+	useFakeRex();
+
 	it("splits right of the parent twice, then opens a window; every create names the parent's session", async () => {
 		const first = await rexBackend.createSurface("One");
 		const second = await rexBackend.createSurface("Two");
@@ -147,6 +158,8 @@ describe("Rex launch (T48, D28)", () => {
 });
 
 describe("Rex lost create (T48, D28)", () => {
+	useFakeRex();
+
 	it("a split with a request timeout uses the one block with its label; no second create", async () => {
 		armRexCreateFault(stateDir, { command: "split", kind: "request-timeout", creates: 1 });
 		const before = readRexCalls(stateDir).length;
@@ -216,6 +229,8 @@ describe("Rex lost create (T48, D28)", () => {
 });
 
 describe("Rex parent block (T48, D28)", () => {
+	useFakeRex();
+
 	/** No call other than a block list names the parent's block, except as the anchor of a create on a live parent. */
 	function assertParentUntouched(from: number): void {
 		for (const call of callsFrom(from)) {
@@ -248,6 +263,8 @@ describe("Rex parent block (T48, D28)", () => {
 });
 
 describe("Rex capture cap (T48, D28)", () => {
+	useFakeRex();
+
 	it("cuts a capture over 256 KB to the last lines, from a whole line, on both paths", async () => {
 		const child = await rexBackend.createSurface("Long");
 		const lines = Array.from({ length: 40_000 }, (_, index) => `line ${index} ${"x".repeat(20)}`);
