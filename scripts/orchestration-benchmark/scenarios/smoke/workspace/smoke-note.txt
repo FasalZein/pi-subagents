@@ -1,0 +1,2 @@
+Benchmark smoke fixture.
+The code word is: lantern-4127
