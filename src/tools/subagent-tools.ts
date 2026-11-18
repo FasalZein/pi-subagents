@@ -23,8 +23,8 @@ import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
 	getSpawnWidthLimit,
-	releaseSlots,
 	releaseSpawnWidthSlotOnCompletion,
+	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
@@ -213,11 +213,12 @@ async function launchSubagentByMode(
 	runtime: SubagentToolRuntime,
 	ctx: ExtensionContext,
 	usesBackgroundLaunch: boolean,
+	slots: SpawnSlotLease,
 ): Promise<RunningSubagent> {
 	const running = usesBackgroundLaunch
 		? await runtime.launchBackgroundSubagent(params, launchCtx)
 		: await runtime.launchSubagent(params, launchCtx);
-	claimSpawnWidthSlot(running);
+	claimSpawnWidthSlot(running, slots);
 	const watcherAbort = new AbortController();
 	running.abortController = watcherAbort;
 	const watch = usesBackgroundLaunch ? runtime.watchBackgroundSubagent : runtime.watchSubagent;
@@ -253,6 +254,7 @@ async function launchOneSubagent(
 	ctx: ExtensionContext,
 	runtime: SubagentToolRuntime,
 	pi: ExtensionAPI,
+	slots: SpawnSlotLease,
 ): Promise<RunningSubagent> {
 	const effectiveParams = enforceAgentFrontmatter(params, agentDefs);
 	// In print/prompt-style runs there is no durable parent turn for async steer
@@ -273,12 +275,10 @@ async function launchOneSubagent(
 		// One logical child fronts the whole fan-out: N candidates are planned
 		// here and owned by a detached supervisor; no per-candidate routes are
 		// ever registered in this parent.
-		const { running } = await launchVerifiedFanOut(effectiveParams, agentDefs, launchCtx, {
-			slotsPreReserved: true,
-		});
+		const { running } = await launchVerifiedFanOut(effectiveParams, agentDefs, launchCtx, { slots });
 		return running;
 	}
-	return launchSubagentByMode(effectiveParams, launchCtx, runtime, ctx, usesBackgroundLaunch);
+	return launchSubagentByMode(effectiveParams, launchCtx, runtime, ctx, usesBackgroundLaunch, slots);
 }
 
 export function isOneShotPromptInvocation(argv = process.argv): boolean {
@@ -446,8 +446,8 @@ export function registerSubagentCoreTools(
 						: 1,
 				);
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
-				if (!tryAcquireSlots(totalSlots, widthLimit)) return getSpawnWidthLimitError(widthLimit);
-				let unlaunchedSlots = totalSlots;
+				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
+				if (!unlaunchedSlots) return getSpawnWidthLimitError(widthLimit);
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];
 				try {
@@ -457,13 +457,20 @@ export function registerSubagentCoreTools(
 
 					for (let index = 0; index < prepared.length; index++) {
 						const entry = prepared[index];
-						const running = await launchOneSubagent(toolCallId, entry.child, entry.agentDefs, ctx, runtime, pi);
-						unlaunchedSlots -= slotCosts[index];
+						// A failed child gives back its own share; the outer catch, the rest.
+						const childSlots = unlaunchedSlots.split(slotCosts[index]);
+						let running: RunningSubagent;
+						try {
+							running = await launchOneSubagent(toolCallId, entry.child, entry.agentDefs, ctx, runtime, pi, childSlots);
+						} catch (error) {
+							childSlots.release();
+							throw error;
+						}
 						launched.push(running);
 						runtime.wireSubagentSteerBack(pi, running, running.completionPromise!);
 					}
 				} catch (error) {
-					releaseSlots(unlaunchedSlots);
+					unlaunchedSlots.release();
 					throw error;
 				}
 				runtime.startWidgetRefresh();

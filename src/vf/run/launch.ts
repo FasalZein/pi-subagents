@@ -9,8 +9,8 @@ import { runningSubagents } from "../../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
 	getSpawnWidthLimit,
-	releaseSlots,
 	releaseSpawnWidthSlotOnCompletion,
+	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../../runtime/spawn-width.ts";
 import { SPAWNING_TOOL_NAMES } from "../../tools/tool-names.ts";
@@ -123,7 +123,7 @@ export async function launchVerifiedFanOut(
 	params: SubagentParamsInput,
 	agentDefs: AgentDefaults,
 	ctx: SubagentLaunchContext,
-	options: { signal?: AbortSignal; awaited?: boolean; slotsPreReserved?: boolean } = {},
+	options: { signal?: AbortSignal; awaited?: boolean; slots?: SpawnSlotLease } = {},
 ): Promise<VerifiedFanOutLaunch> {
 	let fanout: ReturnType<typeof resolveVerifiedFanOutLaunch>;
 	let verifier: ReturnType<typeof resolveVerifierModel>;
@@ -167,21 +167,18 @@ export async function launchVerifiedFanOut(
 	// Slot accounting: the fan-out's N candidates consume N spawn slots,
 	// reserved before any worktree creation or verifier spend. The subagent
 	// tool pre-reserves the full N for verified children (one atomic batch
-	// reservation); direct callers get the same reservation here.
+	// reservation) and hands that lease over; direct callers reserve here.
+	// The logical child owns one slot; the outcome watcher owns the rest.
 	const limit = getSpawnWidthLimit();
-	if (!options.slotsPreReserved && !tryAcquireSlots(fanout.candidates, limit)) {
+	const slots = options.slots ?? tryAcquireSlots(fanout.candidates, limit);
+	if (!slots) {
 		throw new VerifiedLaunchError(
 			`llm-as-a-verifier needs ${fanout.candidates} subagent slots (limit ${limit}); running subagents hold them.`,
 			"spawn_width",
 		);
 	}
-	let reservedExtra = fanout.candidates - 1;
-	const releaseReserved = () => {
-		if (reservedExtra > 0) {
-			releaseSlots(reservedExtra);
-			reservedExtra = 0;
-		}
-	};
+	const ownerSlot = slots.split(1);
+	let launchOwnsExtraSlots = true;
 
 	try {
 		// SPEC normalization profile: candidates are background, auto-exit,
@@ -286,7 +283,7 @@ export async function launchVerifiedFanOut(
 			runId,
 			request,
 		});
-		reservedExtra = 0; // ownership transferred to the completion promise
+		launchOwnsExtraSlots = false; // ownership transferred to the completion promise
 
 		const startTime = Date.now();
 		const running: RunningSubagent = {
@@ -316,18 +313,19 @@ export async function launchVerifiedFanOut(
 			running,
 			waitForVerifiedOutcome(started.runDir, runId, params, startTime, {
 				signal: options.signal ?? watcherAbort.signal,
-				reservedSlots: fanout.candidates - 1,
+				extraSlots: slots,
 				origin: {
 					sessionId: parentSessionId,
 					sessionFile: ctx.sessionManager.getSessionFile?.() ?? null,
 				},
 			}),
 		);
-		claimSpawnWidthSlot(running);
+		claimSpawnWidthSlot(running, ownerSlot);
 		runningSubagents.set(running.id, running);
 		return { running, runId, runDir: started.runDir };
 	} catch (error) {
-		releaseReserved();
+		ownerSlot.release();
+		if (launchOwnsExtraSlots) slots.release();
 		throw error;
 	}
 }
@@ -340,7 +338,7 @@ async function waitForVerifiedOutcome(
 	startTime: number,
 	options: {
 		signal: AbortSignal;
-		reservedSlots: number;
+		extraSlots: SpawnSlotLease;
 		origin: { sessionId: string | null; sessionFile: string | null | undefined };
 	},
 ): Promise<SubagentResult> {
@@ -356,7 +354,7 @@ async function waitForVerifiedOutcome(
 		}
 		throw error;
 	} finally {
-		if (options.reservedSlots > 0) releaseSlots(options.reservedSlots);
+		options.extraSlots.release();
 	}
 }
 
