@@ -24,7 +24,7 @@ async function launchModel(
 	model: string | undefined,
 	agentDefs: AgentDefaults | null,
 	known: string[],
-	extra: { thinking?: string; parentModelRef?: string } = {},
+	extra: { thinking?: string; parentModelRef?: string; parentThinking?: string } = {},
 ) {
 	const cwd = createTestDir();
 	const plan = await buildChildLaunchPlan({
@@ -40,6 +40,7 @@ async function launchModel(
 		parentCwd: cwd,
 		parentSessionDir: join(cwd, "parent-sessions"),
 		parentModelRef: extra.parentModelRef,
+		parentThinking: extra.parentThinking,
 		modelRegistry: registry(known),
 	});
 	return plan.effectiveModelRef;
@@ -322,6 +323,19 @@ describe("short model names: review round 1 (D22)", () => {
 			resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known))?.modelRef,
 			"synthetic-a/base",
 		);
+	});
+
+	it("grants the agent default only at its effective level, not at every level", async () => {
+		const known = ["synthetic-a/base", "synthetic-b/other"];
+		const parent = { parentThinking: "low" };
+		const agent = { model: "synthetic-a/base", allowedModels: "synthetic-b/other" };
+		assert.equal(await launchModel("synthetic-a/base", agent, known, parent), "synthetic-a/base:low");
+		await assert.rejects(() => launchModel("synthetic-a/base:high", agent, known, parent), /is not allowed/);
+		await assert.rejects(() => launchModel(undefined, agent, known, { ...parent, thinking: "high" }), /is not allowed/);
+		const withThinking = { ...agent, thinking: "high" };
+		assert.equal(await launchModel("synthetic-a/base", withThinking, known, parent), "synthetic-a/base:high");
+		await assert.rejects(() => launchModel("synthetic-a/base:low", withThinking, known, parent), /is not allowed/);
+		await assert.rejects(() => launchModel(undefined, withThinking, known, { thinking: "low" }), /is not allowed/);
 	});
 
 	it("keeps an exact registry id with a non-level colon whole", async () => {

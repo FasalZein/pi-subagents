@@ -8,8 +8,8 @@ import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
-	resolveAgentDefaultRef,
 	resolveCallModelRef,
+	resolveImplicitModelGrant,
 	splitModelRefThinking,
 } from "../launch/child-launch-plan.ts";
 import { getPiInvocation, getSubagentChildProcessEnv } from "../launch/child-command.ts";
@@ -165,7 +165,7 @@ export function resolveResumeLaunchMetadataForInvocation(
 				fallbackThinking,
 				modelRegistry,
 			})
-		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, modelRegistry);
+		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, fallbackThinking, modelRegistry);
 	return {
 		...launchMetadata,
 		timestamp: new Date().toISOString(),
@@ -183,13 +183,14 @@ function resolveThinkingOnlyResume(
 	requestedThinking: string | undefined,
 	config: AgentModelConfig,
 	inheritedModelRef: string | undefined,
+	fallbackThinking: string | undefined,
 	modelRegistry: ResumeServiceRuntime["modelRegistry"],
 ): ReturnType<typeof normalizeModelRef> {
 	const requested = splitModelRefThinking(baseModel, requestedThinking);
 	const explicitThinking = requested.explicitThinking || requestedThinking != null;
 	const resolved = resolveAvailableModelRef(requested.model, requested.thinking, explicitThinking, modelRegistry);
 	const normalized = normalizeModelRef(resolved.model, resolved.thinking);
-	const implicitRef = resolveAgentDefaultRef(config, modelRegistry) ?? inheritedModelRef;
+	const implicitRef = resolveImplicitModelGrant(config, modelRegistry, inheritedModelRef, fallbackThinking);
 	assertModelAllowed(normalized.effectiveModelRef, config.allowedModels, config.agentName, implicitRef ? [implicitRef] : []);
 	return normalized;
 }

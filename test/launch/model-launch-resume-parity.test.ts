@@ -199,6 +199,12 @@ const CASES: Array<{ title: string; frontmatter: string; first?: string; model: 
 		expected: "synthetic-a/target:high",
 	},
 	{
+		title: "the agent default is accepted at its effective level only",
+		frontmatter: "model: synthetic-a/base\nallowed-models: synthetic-b/mini",
+		model: "synthetic-a/base:high",
+		expected: "refused",
+	},
+	{
 		title: "a registry id with a colon stays whole",
 		frontmatter: "model: synthetic-a/base",
 		model: "advanced",

@@ -189,6 +189,22 @@ export function resolveAgentDefaultRef(
 	return buildModelRef(resolved, thinking ?? config.definitionThinking);
 }
 
+/**
+ * The one ref the agent's own default adds to its accepted list: the default
+ * model at its effective level (its own level, else `effectiveThinking`), or
+ * the inherited ref when the agent has no default. A model-wide grant would
+ * accept the default model at every level.
+ */
+export function resolveImplicitModelGrant(
+	config: AgentModelConfig,
+	modelRegistry: ModelRegistryLike | undefined,
+	inheritedModelRef: string | undefined,
+	effectiveThinking: string | undefined,
+): string | undefined {
+	const defaultRef = resolveAgentDefaultRef(config, modelRegistry);
+	return defaultRef ? buildModelRef(defaultRef, effectiveThinking) : inheritedModelRef;
+}
+
 export interface CallModelRequest {
 	/** The model of the launch or resume call. */
 	model: string;
@@ -205,10 +221,20 @@ export interface CallModelRequest {
 /**
  * Resolve the model of a launch or resume call (D22). Launch and resume both
  * call this, so the same agent and the same call give the same child ref.
+ *
+ * Recorded limits:
+ * - A bare default (`model: base`) that two registry providers carry stays unqualified, so an exact call for one of them can be refused.
+ * - An unrestricted resume without a thinking parameter takes the configured thinking level, not the previous run's level.
+ * - A literal registry id that ends in a known thinking level (`base:high`) is read as a model plus a level.
  */
 export function resolveCallModelRef(request: CallModelRequest): ReturnType<typeof normalizeModelRef> {
 	const defaultRef = resolveAgentDefaultRef(request.config, request.modelRegistry);
-	const implicitRef = defaultRef ?? request.inheritedModelRef;
+	const implicitRef = resolveImplicitModelGrant(
+		request.config,
+		request.modelRegistry,
+		request.inheritedModelRef,
+		request.fallbackThinking,
+	);
 	const accepted = parseAllowedModels(request.config.allowedModels);
 	const choice = resolveModelChoice({
 		requested: request.model,
@@ -276,7 +302,12 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			resolveAlways: false,
 			explicitThinking: params.thinking != null,
 		});
-		const implicitRef = resolveAgentDefaultRef(modelConfig, options.modelRegistry) ?? inheritedModelRef;
+		const implicitRef = resolveImplicitModelGrant(
+			modelConfig,
+			options.modelRegistry,
+			inheritedModelRef,
+			fallbackThinking,
+		);
 		if (hasAllowedModels) {
 			assertModelAllowed(ref.effectiveModelRef, agentDefs?.allowedModels, params.agent, implicitRef ? [implicitRef] : []);
 		}
