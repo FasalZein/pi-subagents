@@ -49,6 +49,13 @@ export function launchWarningLines(warning: string): string[] {
 		.filter(Boolean);
 }
 
+/** Adds a warning that arose after launch (for example a pane placement failure) to the run's result. */
+export function addResultWarning(running: RunningSubagent, warning: string): void {
+	if (running.resultTarget) {
+		running.resultTarget = { ...running.resultTarget, warnings: [...running.resultTarget.warnings, warning] };
+	}
+}
+
 export interface PublishedResult {
 	record: ResultRecord;
 	/** The parent's text (D14); the message path and the wait path both show it. */

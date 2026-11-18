@@ -4,13 +4,16 @@ import { herdrCoreBackend, stopExitWatchesForTest } from "../../src/mux/herdr-co
 import { writeExecutable } from "../support/index.ts";
 import { runMuxBackendContract } from "./backend-contract.ts";
 import { FAKE_HC, FAKE_HC_CALLER, seedFakeHcCaller } from "./fake-hc.ts";
+import { FAKE_HERDR_APP, seedFakeHerdrApp } from "./fake-herdr-app.ts";
 import { readRecordedTitles, readSubmittedCommands, readTypedText } from "./fake-terminal-state.ts";
 
 runMuxBackendContract({
 	adapter: herdrCoreBackend,
 	installFake(binDir, stateDir) {
 		writeExecutable(binDir, "hc", FAKE_HC);
+		writeExecutable(binDir, "herdr-app", FAKE_HERDR_APP);
 		seedFakeHcCaller(stateDir);
+		seedFakeHerdrApp(stateDir, FAKE_HC_CALLER);
 		return {
 			FAKE_TERMINAL_STATE: stateDir,
 			HC_TERMINAL_ID: FAKE_HC_CALLER,
