@@ -2,8 +2,8 @@
  * Child environment policy shared by background and interactive launches.
  *
  * Layers, in precedence order (later wins):
- *   1. pane identity   — mux/terminal context of the pane the child runs in
- *   2. parent snapshot — the launching pi process env, minus denied names
+ *   1. parent snapshot — the launching pi process env, minus denied names
+ *   2. pane identity   — mux/terminal context of the pane the child runs in
  *   3. overrides       — frontmatter `env:` plus PI_* control variables
  *
  * `deny-env` (agent frontmatter) and PI_SUBAGENT_ENV_DENY (parent env) filter
@@ -22,6 +22,58 @@ export const PANE_IDENTITY_ENV_PATTERNS = [
 	"WEZTERM*",
 	"ZELLIJ*",
 ] as const;
+
+/**
+ * How the launcher takes identity names from the child's surface (spec D34).
+ * - "prefix": the v2.9.2 patterns of PANE_IDENTITY_ENV_PATTERNS. Known limit: a
+ *   denied name with such a prefix that only the pane has still reaches the child.
+ * - "exact": only the listed names. They are removed from the parent snapshot,
+ *   each required name must be set in the surface, and an override must not name one.
+ */
+export type PaneIdentityPolicy =
+	| { readonly kind: "prefix" }
+	| { readonly kind: "exact"; readonly required: readonly string[]; readonly optional: readonly string[] };
+
+export const PREFIX_PANE_IDENTITY: PaneIdentityPolicy = { kind: "prefix" };
+
+/** Old herdr (the herdr CLI). Names read in src/mux/herdr*.ts and test/mux/herdr-work.test.ts. */
+export const HERDR_PANE_IDENTITY: PaneIdentityPolicy = {
+	kind: "exact",
+	required: ["HERDR_ENV", "HERDR_PANE_ID"],
+	optional: ["HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_BIN_PATH", "HERDR_SOCKET_PATH", "HERDR_CONFIG_PATH"],
+};
+
+/** herdr-core terminal identity (D34). Its backend lands in T45. */
+export const HERDR_CORE_PANE_IDENTITY: PaneIdentityPolicy = {
+	kind: "exact",
+	required: ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"],
+	optional: [],
+};
+
+/** Rex block identity (D34). Its backend lands in T48. */
+export const REX_PANE_IDENTITY: PaneIdentityPolicy = { kind: "exact", required: ["REX_SESSION", "REX_BLOCK"], optional: [] };
+
+/** Terminal names that every backend takes from the surface. */
+const TERMINAL_IDENTITY_ENV_KEYS = ["COLORTERM", "TERM"] as const;
+
+/** Capsule fields for a policy: names or patterns copied from the surface, and the required names. */
+export function paneIdentityCapsuleFields(policy: PaneIdentityPolicy): {
+	paneIdentityKeys: string[];
+	requiredPaneIdentityKeys?: string[];
+} {
+	if (policy.kind === "prefix") return { paneIdentityKeys: [...PANE_IDENTITY_ENV_PATTERNS] };
+	return {
+		paneIdentityKeys: [...TERMINAL_IDENTITY_ENV_KEYS, ...policy.required, ...policy.optional],
+		requiredPaneIdentityKeys: [...policy.required],
+	};
+}
+
+/** Remove the exact identity names of a policy, so a child never carries the parent's identity. */
+export function withoutExactIdentityEnv(env: Record<string, string>, policy: PaneIdentityPolicy): Record<string, string> {
+	if (policy.kind === "prefix") return env;
+	const names = new Set([...policy.required, ...policy.optional]);
+	return Object.fromEntries(Object.entries(env).filter(([key]) => !names.has(key)));
+}
 
 /** Shell-relative bookkeeping that is meaningless outside the shell that set it. */
 const VOLATILE_SHELL_ENV_KEYS = ["OLDPWD", "PWD", "SHLVL", "_"] as const;
