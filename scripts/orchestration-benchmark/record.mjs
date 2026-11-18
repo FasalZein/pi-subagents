@@ -363,9 +363,13 @@ export function childEnded(events) {
 const withoutPrivate = (path) =>
 	path.replace(/^\/private(?=\/(var|tmp)\/)/, "");
 
-/** A read path resolved against the child's working folder. */
+/**
+ * A read path resolved against the child's working folder. Like Pi's read tool
+ * (path-utils.js, stripAtPrefix), a leading @ is dropped first.
+ */
 export function resolveReadPath(path, cwd) {
-	return withoutPrivate(posix.resolve(withoutPrivate(cwd), String(path ?? "")));
+	const requested = String(path ?? "").replace(/^@/, "");
+	return withoutPrivate(posix.resolve(withoutPrivate(cwd), requested));
 }
 
 /** The result tokens a contract declares: one string or a list. */

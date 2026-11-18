@@ -345,6 +345,9 @@ test("[review] a read counts only for the fixture path, not for a file of the sa
 	assert.equal(verdict("../note.txt"), "wrong-delegation");
 	assert.equal(verdict(`${WORK}/note.txt`), "pass");
 	assert.equal(verdict("./note.txt"), "pass");
+	// Pi strips a leading @ from a read path; the decoy stays rejected.
+	assert.equal(verdict("@note.txt"), "pass");
+	assert.equal(verdict("@archive/note.txt"), "wrong-delegation");
 });
 
 test("[review] a delivered result counts only when it carries the child's own run id", () => {
