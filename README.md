@@ -2,7 +2,7 @@
 
 `pi-subagents` is a highly curated multi-agent framework for [Pi agent harness](https://github.com/earendil-works/pi).
 
-It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, orchestrator mode, and much more!
+It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, and much more!
 
 Use it when one agent should hand work to another agent instead of trying to do everything in one transcript. Interactive children open in Herdr, cmux, tmux, zellij, or WezTerm; background children run headlessly.
 
@@ -54,77 +54,13 @@ The backend command must exist, and Pi must be able to see the current pane or s
 
 Normal launches use a backend-specific surface. Herdr keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. Other backends may use windows, splits, or stacked panes.
 
-### Orchestrator mode
+### Orchestrator mode is removed
 
-You can turn the parent session into an orchestrator — an agent that can only
-delegate. It spawns sub-agents, waits for results, and synthesizes answers.
-It cannot read files, run commands, edit code, or search the codebase itself.
+Earlier versions had an orchestrator mode for the parent session. It removed every parent tool except `subagent`, `subagent_resume`, `subagent_kill`, and `set_tab_title`, and it replaced Pi's system prompt with a delegation-only prompt.
 
-#### Why orchestrator mode exists
+This version removes that mode with its `/subagents` tab, its saved default for new conversations, and the `PI_ORCHESTRATOR_MODE` variable. The parent keeps all of its tools and Pi's own system prompt. Pi ignores `PI_ORCHESTRATOR_MODE` and the orchestrator entries that older conversations saved, so you can delete the variable from your shell configuration.
 
-Models default to doing work themselves. Given the chance, they read the file,
-write the fix, run the test. That works for single-agent tasks. For
-multi-agent workflows it defeats the purpose — you pay for two agents to race
-each other, and the parent floods its context with execution details instead
-of staying focused on coordination.
-
-Every production multi-agent framework hits this same limit. Anthropic's
-Claude Code has `COORDINATOR_MODE` with the same mechanism: restricted tool
-set, replacement system prompt, worker isolation. OpenAI Codex users file
-issues asking for a mode where the main agent "cannot execute, only
-delegate." The ADCS delegation chain spec encodes it as a scope-intersection
-invariant: each hop narrows permissions, never widens.
-
-The research calls it brain/hands separation. The orchestrator holds the
-plan. Workers hold the execution context. You keep them apart because mixing
-them makes both worse — the orchestrator loses sight of the plan when it
-starts reading files, and workers get confused about their role when they see
-orchestrator-level strategy in their context.
-
-#### When to use it
-
-Orchestrator mode shines on tasks that decompose into parallel work:
-independent research questions, multiple implementation targets, verify-after-
-write cycles. The orchestrator defines the structure, dispatches each piece
-to the right agent, reads results, and writes the next round of instructions.
-
-Simple requests do not benefit. A single sub-agent handles those faster.
-
-#### How to use it
-
-Open `/subagents` or press `Alt+S`, then select Orchestrator. You can turn
-the mode on or off in the current conversation, or start a fresh conversation.
-Switching in place keeps your conversation. Starting fresh leaves the old
-conversation available through `/resume`.
-
-If Pi or any sub-agents are working, wait for them to finish or stop them
-before switching. Pi remembers the mode when you reopen the conversation.
-
-You can also choose whether new conversations start in orchestrator mode.
-Changing this default does not change existing conversations. The environment
-variable below overrides this default, but not a conversation's saved choice.
-
-```bash
-PI_ORCHESTRATOR_MODE=1 pi
-```
-
-To use it by default for new conversations, add this to your shell configuration:
-
-```bash
-export PI_ORCHESTRATOR_MODE=1
-```
-
-Enable that and two things change:
-
-1. **Tool restriction.** Removes read, bash, edit, write,
-   grep, find, and every other tool except subagent,
-   subagent_kill, subagent_resume. The LLMs cannot call what they cannot see.
-2. **System prompt replacement.** Pi's "expert coding assistant" prompt gets
-   replaced with one that defines the orchestrator role: decompose, delegate,
-   synthesize. The replacement preserves Pi's `APPEND_SYSTEM.md` content.
-
-Children do not inherit the parent agent's role or system prompt. Each child
-runs as a separate Pi process with its own agent definition and prompt chain.
+Children are not affected. With `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`, a successful async launch still does not end the parent turn.
 
 ## Agent definitions
 
@@ -215,7 +151,7 @@ Children inherit every environment variable from the parent Pi process, in every
 
 `trust-project` controls Pi's project-local trust boundary for resources such as settings, extensions, skills, prompts, themes, `SYSTEM.md`, and `APPEND_SYSTEM.md`. The default `false` passes `--no-approve`, even when the parent project was previously approved. Project context files are separate: Pi still loads applicable `AGENTS.override.md`, `AGENTS.md`, or `CLAUDE.md` files unless `no-context-files: true` passes `--no-context-files`. Background children always generate `--no-approve`; `flags` is the explicit advanced escape hatch if you need to override that safety default.
 
-`task-expansion: shell` prepares task context before launch for small models that should not have to plan tool calls. It is opt-in because the parent task text becomes shell input and runs in the parent Pi process before the child starts. Commands execute in source order from the child's effective `cwd`; each placeholder gets 30 seconds before Pi inserts a timeout diagnostic. Use `$PI_WORKSPACE` or `${PI_WORKSPACE}` inside the shell command to read the workspace path from the environment. This explicit opt-in works in every parent mode, including orchestrator mode. Use explicit shell placeholders:
+`task-expansion: shell` prepares task context before launch for small models that should not have to plan tool calls. It is opt-in because the parent task text becomes shell input and runs in the parent Pi process before the child starts. Commands execute in source order from the child's effective `cwd`; each placeholder gets 30 seconds before Pi inserts a timeout diagnostic. Use `$PI_WORKSPACE` or `${PI_WORKSPACE}` inside the shell command to read the workspace path from the environment. Use explicit shell placeholders:
 
 ````md
 Summarize the files changed.
@@ -832,254 +768,5 @@ The `tools` field narrows the child to a Pi tool allowlist. Use built-in names s
 
 Pi silently ignores `--tools` names that are not registered by a built-in or a loaded extension. That means a typo (for example `tools: read,edti`) leaves the child silently without `edit`. pi-subagents surfaces a non-blocking warning in the subagent result when a name is within one edit of a built-in (`edti`→`edit`, `raed`→`read`); the launch still proceeds, because a near-miss name can be a legitimate custom tool (for example `hash` is one edit from `bash`). pi-subagents cannot validate arbitrary extension/custom tool names before the child loads its extensions, so ensure every custom/extension name in `tools:` is registered by an extension listed in `extensions:`.
 
-> **Pi-core skill advertisement needs `read` or `bash`.** Since Pi 0.85.0, pi core renders the `<available_skills>` block in the child's system prompt when the active tool set includes `read` or `bash` (older pi required `read`). It prefers `read`; with only `bash`, the block's instruction line reads "Use bash to load a skill's file..." instead of naming `read`. If you narrow `tools:` to swap Pi's native file tools for an extension's replacements and drop both, a child relying on Pi's own block loses every allowlisted (non-injected) skill from its prompt even though the files exist on disk. Keep the built-in `read` (or `bash`) in `tools:` for such a child. Visibility annotations (`=auto`/`=manual`) work in every case — the runtime corrects the structured skill list, swaps the rendered block with the child's own file-read tool wording, and extensions that render their own skills section from it inherit the correction. `inject-skills` is unaffected — injected skills are pasted into the task text directly.
 
-`deny-tools` is a final named tool denylist. It can remove built-in Pi tools, extension/custom tools, or pi-subagents protocol tools after they have otherwise been selected.
-
-```md
----
-name: reviewer
-tools: read,grep,mcp
-extensions: npm:pi-mcp-adapter
-deny-tools: bash,edit,write,ask_user
----
-```
-
-By default a child cannot launch subagents: `spawning` is `false`, which removes its `subagent`, `subagent_resume`, and `subagent_kill` tools. Set `spawning` only on agents that coordinate others. The four fields above define what such a child may do; this section adds the rules the table cannot show.
-
-`tools:` narrows the child's work tools; it does not revoke a spawn grant. When `spawning` is enabled, `subagent`, `subagent_resume`, and `subagent_kill` stay available alongside a narrowed `tools:` list, exactly like `caller_ping` and `subagent_done`. Use `deny-tools` (or leave `spawning` off) to take them away.
-
-`spawn-depth` is what stops two agents that launch each other from looping forever: the allowance drops by one at each level and never rises. `spawn-depth` and `spawn-width` bound a single burst of launches; they do not cap total token use over a long conversation. These fields are guardrails, not a security sandbox — a child that has `bash` or arbitrary extensions can still run `pi` itself.
-
-Two environment variables set global ceilings when you start Pi: `PI_SUBAGENT_SPAWN_DEPTH` and `PI_SUBAGENT_SPAWN_WIDTH`. An agent file can tighten these for its own subtree but never raise them.
-
-A child's launch allowances are saved in its launch metadata and narrowed again on resume — resuming never restores a larger allowance, and the first metadata entry is authoritative, so a child cannot grant itself more by writing to its own session file.
-## Parent shutdown policy
-
-Set `parent-close-policy` in the agent frontmatter:
-
-```yaml
----
-name: scout
-parent-close-policy: continue
----
-```
-
-| Value | Effect |
-| --- | --- |
-| `terminate` | Stop the child when the parent session exits |
-| `continue` | Leave the child running and stop delivering its result to the closed parent |
-
-The default is `terminate`.
-
-## UI
-
-The parent session gets a live widget above the editor. It shows running children, elapsed time, activity, and context usage.
-
-Every `subagent` call requires both a strict `name` and a short `title`.
-
-- `name` is the machine handle used in launch/result text and kill/wait targeting. Use lower-kebab `<scope>-<role>`, 2-4 words, max 32 characters: `auth-scout`, `diff-reviewer`, `session-tester`.
-- `title` is the human label shown in the widget/session UI. Use sentence-case prose, 3-8 words: `Auth implementation map`, `Local diff bug review`.
-
-Child sessions can also get session titles like:
-
-```text
-[scout] Auth flow reconnaissance
-```
-
-Disable child session titles with `PI_SUBAGENT_DISABLE_SESSION_TITLES=1`.
-
-## Launching children through a wrapper
-
-By default, the extension launches children with the same Pi entrypoint it can infer from the parent. If your real Pi command goes through a wrapper, set it:
-
-```bash
-PI_SUBAGENT_PI_COMMAND="my-wrapper pi" my-wrapper pi
-```
-
-The wrapper applies to new children and resumed children. Quoted paths work:
-
-```bash
-PI_SUBAGENT_PI_COMMAND="'/path with spaces/my-wrapper' pi" pi
-```
-
-## Environment variables
-
-User-facing knobs:
-
-| Variable | Use |
-| --- | --- |
-| `PI_ORCHESTRATOR_MODE` | Set `1` to turn the parent into an orchestrator (delegation-only tools, replacement system prompt) |
-| `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
-| `PI_SUBAGENT_MUX` | Force `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
-| `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
-| `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
-| `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |
-| `PI_SUBAGENT_DISABLE_SESSION_TITLES` | Disable automatic child session names |
-| `PI_ARTIFACT_PROJECT_ROOT` | Override internal artifact storage root |
-| `PI_SUBAGENT_SHELL_READY_DELAY_MS` | Change the fixed pane startup delay before Pi sends the child command (default: 500ms) |
-| `PI_SUBAGENT_ENABLE_SET_TAB_TITLE` | Register the optional `set_tab_title` tool |
-| `PI_SUBAGENT_RENAME_TMUX_WINDOW` | Let `set_tab_title` rename the tmux window |
-| `PI_SUBAGENT_RENAME_TMUX_SESSION` | Let `set_tab_title` rename the tmux session |
-| `PI_SUBAGENT_HERDR_PLACEMENT` | Herdr policy: `auto`, `right-stack`, `down-stack`, `right`, `down`, or `tab` |
-| `PI_SUBAGENT_HERDR_MIN_COLUMNS` | Minimum columns preserved by Herdr `auto` placement (default: `50`) |
-| `PI_SUBAGENT_HERDR_MIN_ROWS` | Minimum rows preserved by Herdr `auto` placement (default: `12`) |
-| `PI_SUBAGENT_ZELLIJ_PLACEMENT` | Zellij policy: `auto`, `right-stack`, `down-stack`, `floating`, or `tab-stack` |
-| `PI_SUBAGENT_ZELLIJ_MIN_COLUMNS` | Minimum usable columns for each side of a Zellij split (default: `50`) |
-| `PI_SUBAGENT_ZELLIJ_MIN_ROWS` | Minimum usable rows for each side of a Zellij split (default: `10`) |
-| `PI_SUBAGENT_LLM_VERIFIER_CANDIDATES` | Default candidate count for `llm-as-a-verifier` agents that do not set `llm-as-a-verifier-candidates` |
-
-Runtime internals you may see while debugging:
-
-- `PI_DENY_TOOLS`
-- `PI_SUBAGENT_EXTENSIONS`
-- `PI_SUBAGENT_NAME`
-- `PI_SUBAGENT_AGENT`
-- `PI_SUBAGENT_PARENT_SESSION`
-- `PI_SUBAGENT_SESSION`
-- `PI_SUBAGENT_SURFACE`
-- `PI_SUBAGENT_AUTO_EXIT`
-- `PI_SUBAGENT_SKILL_VISIBILITY` (serialized `name=auto|manual` annotations for the child prompt rewrite)
-- `PI_SUBAGENT_LLM_VERIFIER_VENV` (llm-as-a-verifier: pre-provisioned `llm-verifier` venv root)
-- `PI_SUBAGENT_SUPERVISOR_RUNTIME` (llm-as-a-verifier: command that runs the detached supervisor `.ts` entry)
-
-Live test knobs:
-
-- `PI_SUBAGENT_ALLOW_LIVE_WINDOWS`
-- `PI_SUBAGENT_LIVE_MODEL`
-- `PI_SUBAGENT_KEEP_E2E_TMP`
-- `PI_SUBAGENT_LIVE_LOCK_PATH`
-- `PI_SUBAGENT_ALLOW_VERIFIED_E2E` (llm-as-a-verifier live e2e; also needs `DEEPSEEK_API_KEY`)
-- `PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS` — override the provider-error recovery backoff windows (comma-separated ms, e.g. `10000,11000,12000`) so a live Pi process can exercise the wait → nudge → kill path without waiting the full 30/60/90s. Values below 10000ms are clamped so recovery does not race Pi's own default auto-retry backoff. Defaults to the production `30000,60000,90000`.
-
-## Herdr placement
-
-Herdr uses `auto` placement by default. The first child shares the parent tab when both panes remain usable. Later children split the largest pane owned by that parent. Herdr chooses right or down from the pane geometry and opens a dedicated child tab when no safe split remains.
-
-Set `PI_SUBAGENT_HERDR_PLACEMENT` to change the policy:
-
-- `auto`: balance owned panes while preserving the configured minimum size, then use dedicated tabs for overflow.
-- `right-stack`: open the first child to the right and split later siblings downward.
-- `down-stack`: open the first child below and split later siblings to the right.
-- `right` or `down`: split the parent in that direction for every launch. These explicit policies can create small panes.
-- `tab`: always open a dedicated child tab.
-
-`auto` preserves at least `PI_SUBAGENT_HERDR_MIN_COLUMNS` columns and `PI_SUBAGENT_HERDR_MIN_ROWS` rows in both halves of a proposed split. The defaults are `50` columns and `12` rows. The check happens before Herdr creates the pane, so a small window goes straight to a tab instead of producing an unreadable terminal.
-
-Every pane-backed Herdr child receives its session title as the pane label. When a child uses the optional `set_tab_title` tool, Herdr updates that child pane without renaming the shared parent tab or workspace. Dedicated overflow tabs keep the original child session title.
-
-Placement ownership stays inside the parent Pi process. Separate Pi parents cannot overwrite each other's placement state, even when they share one Herdr socket. A failed split or pane rename must leave at most one child surface before tab fallback begins.
-
-The parent environment sets the default for all interactive subagents. An agent can override the placement policy for its own launches through the existing [`env`](#agent-definitions) frontmatter:
-
-```yaml
-env: PI_SUBAGENT_HERDR_PLACEMENT=tab
-```
-
-The parent reads this value before it creates the child surface. The agent value overrides the parent default. `PI_SUBAGENT_HERDR_MIN_COLUMNS` and `PI_SUBAGENT_HERDR_MIN_ROWS` remain parent-wide settings. On resume, a persisted per-agent `env` value wins; without one, the current parent default wins, then the originally persisted policy is the fallback.
-
-## Zellij placement
-
-Zellij groups children by their immediate parent session. The first child splits that parent; later siblings stack on the same pane. Set `PI_SUBAGENT_ZELLIJ_PLACEMENT`:
-
-- `auto` (default): split the parent pane when there is room, otherwise open a dedicated tab. Later siblings stack on the first pane owned by that parent.
-- `right-stack`: first child goes right, siblings stack there.
-- `down-stack`: first child goes below, siblings stack there.
-- `floating`: each child opens as a pinned floating pane.
-- `tab-stack`: first child opens a dedicated tab, siblings stack in that tab.
-
-`right-stack`, `down-stack`, and `auto` fall back to a dedicated tab when a split would fall below `PI_SUBAGENT_ZELLIJ_MIN_COLUMNS` or `PI_SUBAGENT_ZELLIJ_MIN_ROWS`.
-
-The parent environment sets the default for all interactive subagents. An agent can override it for its own launches through the existing [`env`](#agent-definitions) frontmatter:
-
-```yaml
-env: PI_SUBAGENT_ZELLIJ_PLACEMENT=down-stack
-```
-
-This is a parent-read exception to the usual child-environment contract because placement must be resolved before the child pane exists. The agent value overrides the parent default. Placement groups are scoped by immediate parent and resolved policy, so agents with different policies do not overwrite each other's stack anchors. On resume, a persisted per-agent `env` value still wins; without one, the current parent default wins, then the originally persisted policy is the fallback.
-
-Zellij 0.44.x needs a short focus transaction for directional and stacked placement, and stacked insertion changes client focus. Those policies require exactly one attached Zellij client. With more clients, use `floating` or detach the extras.
-
-## Testing
-
-Unit tests:
-
-```bash
-bunx tsc --noEmit
-npm test
-```
-
-Herdr-focused fake tests:
-
-```bash
-node --test test/mux/herdr.test.ts
-node --test test/mux/herdr-placement.test.ts
-node --test test/launch/herdr-interactive-launch.test.ts
-```
-
-The mux tests cover Herdr detection, adapter errors, geometry-aware placement, small-window tab fallback, owned-pane isolation, pane titles, explicit policies, split limitations, I/O, and cleanup. The launch test covers Herdr parity for cwd, env, flags, trust-project approval, session settings, model and thinking resolution, tool narrowing, skills, lifecycle policy, and explicit `PI_SUBAGENT_MUX=herdr` selection.
-
-Live tests:
-
-```bash
-PI_SUBAGENT_ALLOW_VERIFIED_E2E=1 DEEPSEEK_API_KEY=... npm run test:e2e-live-verified-fanout
-PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:e2e-live-blocking
-PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:e2e-live-mix-blocking
-npm run test:e2e-live-deny-tools
-npm run test:e2e-live-tools
-npm run test:e2e-live-extensions
-npm run test:e2e-live-stop-after-turn
-```
-
-The live window tests require an explicit opt-in because they open real terminal windows.
-
-Herdr live smoke tests are guarded and bounded:
-
-```bash
-npm run test:live-herdr-mux
-npm run test:live-herdr-pi
-npm run test:live-herdr-timeout-wrap-up
-```
-
-Without opt-in variables, each Herdr smoke prints a `SKIP` line and exits before creating Herdr surfaces. Use the skip output as guard evidence only. It is not a real live smoke run.
-
-Run the real Herdr mux smoke only when you are ready to create temporary Herdr surfaces:
-
-```bash
-PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 npm run test:live-herdr-mux
-```
-
-Run the real Pi Herdr smoke with both live opt-ins and a model. This script starts an interactive parent Pi session inside a Herdr-managed pane. It does not use `pi -p` as proof of interactive child behavior.
-
-```bash
-PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 \
-PI_SUBAGENT_LIVE_MODEL=provider/model[:thinking] \
-npm run test:live-herdr-pi
-```
-
-Run the enforced timeout wrap-up smoke with the same opt-ins. It blocks an interactive child inside a synchronous custom tool, verifies that Herdr closes that pane at the threshold, observes a replacement report-only pane on the same session, and requires the replacement to finish before the original hard deadline.
-
-```bash
-PI_SUBAGENT_ALLOW_LIVE_WINDOWS=1 \
-PI_SUBAGENT_LIVE_MODEL=provider/model[:thinking] \
-npm run test:live-herdr-timeout-wrap-up
-```
-
-All Herdr smoke scripts check the `herdr` command, server running status, and protocol compatibility before mutating panes. They label created tabs and panes with a unique marker, then close marked surfaces during cleanup.
-
-Herdr validation record for this release:
-
-- `node --test test/mux/herdr.test.ts` passes the fake Herdr mux contract suite.
-- `node --test test/launch/herdr-interactive-launch.test.ts` passes the fake Herdr launch parity suite.
-- `bunx tsc --noEmit` passes type checking.
-- `npm test` runs the registered Herdr mux and launch suites through the repository test entrypoint.
-- `npm run test:live-herdr-mux` and `npm run test:live-herdr-pi` pass their skip guards when `PI_SUBAGENT_ALLOW_LIVE_WINDOWS` and `PI_SUBAGENT_LIVE_MODEL` are unset. A real live run requires the opt-in variables above.
-
-## Credits
-
-- upstream foundation: [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents)
-- this fork: [edxeth/pi-subagents](https://github.com/edxeth/pi-subagents)
-
-## License
-
-MIT
+[Showing lines 1-834 of 1086 (50.0KB limit). Use offset=835 to continue.]
