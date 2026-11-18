@@ -253,3 +253,80 @@ describe("short model names (D22)", () => {
 		);
 	});
 });
+
+describe("short model names: review round 1 (D22)", () => {
+	const resumeMetadata: PersistedSubagentLaunchMetadata = {
+		version: 1,
+		timestamp: "2026-11-18T00:00:00.000Z",
+		name: "model-pick",
+		agent: "picker",
+		mode: "background",
+		sessionMode: "lineage-only",
+		parentClosePolicy: "terminate",
+		async: true,
+		allowModelOverride: true,
+		denyTools: [],
+		noContextFiles: false,
+		noSession: false,
+		agentConfigDir: "/tmp",
+		cwd: "/tmp",
+		boundarySystemPrompt: true,
+	};
+
+	it("refuses an unqualified id that matches two models of one provider, even when one id equals it", async () => {
+		await assert.rejects(
+			() =>
+				launchModel(
+					"mini",
+					{ model: "synthetic-a/base", allowedModels: "synthetic-a/mini,synthetic-a/mini-v2" },
+					["synthetic-a/base", "synthetic-a/mini", "synthetic-a/mini-v2"],
+				),
+			/several models of one provider\. Candidates: synthetic-a: mini, mini-v2\./,
+		);
+	});
+
+	it("never takes the provider of the previous resume's model for a fragment", () => {
+		const metadata = {
+			...resumeMetadata,
+			model: "synthetic-b/beta",
+			modelRef: "synthetic-b/beta",
+			modelSource: "resume-override" as const,
+		};
+		assert.throws(
+			() =>
+				resolveResumeLaunchMetadataForInvocation(
+					metadata,
+					"mini",
+					undefined,
+					registry(["synthetic-a/mini-v2", "synthetic-b/beta", "synthetic-b/mini-v3"]),
+				),
+			/several providers and the default provider 'none' is not among them/,
+		);
+	});
+
+	it("accepts the unqualified agent default on resume as on launch", async () => {
+		const known = ["synthetic-a/base", "synthetic-b/other"];
+		assert.equal(
+			await launchModel("synthetic-a/base", { model: "base", allowedModels: "synthetic-b/other" }, known),
+			"synthetic-a/base",
+		);
+		const metadata = {
+			...resumeMetadata,
+			model: "synthetic-a/base",
+			modelRef: "synthetic-a/base",
+			definitionModel: "base",
+			allowedModels: "synthetic-b/other",
+			modelSource: "agent" as const,
+		};
+		assert.equal(
+			resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known))?.modelRef,
+			"synthetic-a/base",
+		);
+	});
+
+	it("keeps an exact registry id with a non-level colon whole", async () => {
+		const known = ["synthetic-c/advanced:rev1", "synthetic-c/basic"];
+		assert.equal(await launchModel("synthetic-c/advanced:rev1", null, known), "synthetic-c/advanced:rev1");
+		assert.equal(await launchModel("synthetic-c/advanced:rev1:high", null, known), "synthetic-c/advanced:rev1:high");
+	});
+});

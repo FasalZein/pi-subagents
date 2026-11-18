@@ -3,15 +3,15 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
-import {
-	assertModelAllowed,
-	buildModelRef,
-	parseAllowedModels,
-	resolveModelChoice,
-	splitModelRef,
-} from "../agents/model-refs.ts";
+import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
+import {
+	type AgentModelConfig,
+	resolveAgentDefaultRef,
+	resolveCallModelRef,
+	splitModelRefThinking,
+} from "../launch/child-launch-plan.ts";
 import { getPiInvocation, getSubagentChildProcessEnv } from "../launch/child-command.ts";
 import { resolveDenyEnvPatterns } from "../launch/child-env.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
@@ -107,16 +107,6 @@ export interface ResumeSessionInput {
 	thinking?: string;
 }
 
-function splitResumeModelRef(
-	model: string,
-	fallbackThinking: string | undefined,
-): { model: string; thinking: string | undefined; explicitThinking: boolean } {
-	const split = splitModelRef(model);
-	return split.thinking === undefined
-		? { model, thinking: fallbackThinking, explicitThinking: false }
-		: { model: split.model, thinking: split.thinking, explicitThinking: true };
-}
-
 export function resolveResumeHerdrPlacementPolicy(
 	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
 	parentPolicy: string | undefined,
@@ -155,38 +145,27 @@ export function resolveResumeLaunchMetadataForInvocation(
 	if (!baseModel) {
 		throw new Error("Cannot apply thinking override without a persisted model.");
 	}
-	const implicitDefaultRef = buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking);
-	const implicitAllowed = implicitDefaultRef
-		? [implicitDefaultRef]
-		: launchMetadata.modelSource === "parent" && launchMetadata.modelRef
-			? [launchMetadata.modelRef]
-			: [];
-	// D22: a resume with a model follows the launch rules. A thinking-only
-	// resume keeps the persisted model as an exact ref.
-	const accepted = parseAllowedModels(launchMetadata.allowedModels);
-	const defaultRef = implicitDefaultRef ?? launchMetadata.modelRef;
-	const requested = requestedModel
-		? resolveModelChoice({
-				requested: requestedModel,
-				requestedThinking,
-				accepted: accepted.length > 0 ? [...implicitAllowed, ...accepted] : [],
-				known: (modelRegistry?.getAvailable() ?? []).map((model) => `${model.provider}/${model.id}`),
-				defaultRef,
-				defaultThinking: defaultRef ? splitModelRef(defaultRef).thinking : undefined,
-				fallbackThinking: launchMetadata.thinking,
-				agentName: launchMetadata.agent,
+	const config: AgentModelConfig = {
+		definitionModel: launchMetadata.definitionModel,
+		definitionThinking: launchMetadata.definitionThinking,
+		allowedModels: launchMetadata.allowedModels,
+		agentName: launchMetadata.agent,
+	};
+	const inheritedModelRef =
+		!launchMetadata.definitionModel && launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined;
+	const fallbackThinking = launchMetadata.definitionThinking ?? launchMetadata.thinking;
+	// D22: a resume with a model takes the launch path. A thinking-only resume
+	// keeps the persisted model as an exact ref.
+	const { effectiveModel, effectiveThinking, effectiveModelRef } = requestedModel
+		? resolveCallModelRef({
+				model: requestedModel,
+				thinking: requestedThinking,
+				config,
+				inheritedModelRef,
+				fallbackThinking,
+				modelRegistry,
 			})
-		: splitResumeModelRef(baseModel, requestedThinking ?? launchMetadata.thinking);
-	const explicitThinking = requested.explicitThinking || requestedThinking != null;
-	const resolved = resolveAvailableModelRef(
-		requested.model,
-		requested.thinking,
-		explicitThinking,
-		modelRegistry,
-		launchMetadata.modelRef,
-	);
-	const { effectiveModel, effectiveThinking, effectiveModelRef } = normalizeModelRef(resolved.model, resolved.thinking);
-	assertModelAllowed(effectiveModelRef, launchMetadata.allowedModels, launchMetadata.name, implicitAllowed);
+		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, modelRegistry);
 	return {
 		...launchMetadata,
 		timestamp: new Date().toISOString(),
@@ -197,6 +176,22 @@ export function resolveResumeLaunchMetadataForInvocation(
 		...(requestedModel ? { requestedModelOverride: requestedModel } : {}),
 		...(requestedThinking ? { requestedThinkingOverride: requestedThinking } : {}),
 	};
+}
+
+function resolveThinkingOnlyResume(
+	baseModel: string,
+	requestedThinking: string | undefined,
+	config: AgentModelConfig,
+	inheritedModelRef: string | undefined,
+	modelRegistry: ResumeServiceRuntime["modelRegistry"],
+): ReturnType<typeof normalizeModelRef> {
+	const requested = splitModelRefThinking(baseModel, requestedThinking);
+	const explicitThinking = requested.explicitThinking || requestedThinking != null;
+	const resolved = resolveAvailableModelRef(requested.model, requested.thinking, explicitThinking, modelRegistry);
+	const normalized = normalizeModelRef(resolved.model, resolved.thinking);
+	const implicitRef = resolveAgentDefaultRef(config, modelRegistry) ?? inheritedModelRef;
+	assertModelAllowed(normalized.effectiveModelRef, config.allowedModels, config.agentName, implicitRef ? [implicitRef] : []);
+	return normalized;
 }
 
 function mergeResumeInvocationMetadata(

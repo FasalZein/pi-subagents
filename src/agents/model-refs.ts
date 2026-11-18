@@ -1,3 +1,5 @@
+import { MODEL_THINKING_LEVELS } from "@earendil-works/pi-ai/providers/model-schema";
+
 export function parseAllowedModels(raw: string | undefined): string[] {
 	if (!raw?.trim()) return [];
 	return raw
@@ -6,13 +8,18 @@ export function parseAllowedModels(raw: string | undefined): string[] {
 		.filter(Boolean);
 }
 
-/** Split Pi's provider/model[:thinking] syntax without duplicating Pi's level list. */
+const PI_THINKING_LEVELS: readonly string[] = MODEL_THINKING_LEVELS;
+
+/**
+ * Split Pi's provider/model[:thinking] syntax. Only a known Pi thinking level
+ * counts as a suffix: registry ids such as `name:free` or `name:0` stay whole.
+ */
 export function splitModelRef(ref: string): {
 	model: string;
 	thinking?: string;
 } {
 	const idx = ref.lastIndexOf(":");
-	if (idx === -1) return { model: ref };
+	if (idx === -1 || !PI_THINKING_LEVELS.includes(ref.slice(idx + 1))) return { model: ref };
 	return { model: ref.slice(0, idx), thinking: ref.slice(idx + 1) };
 }
 
@@ -65,9 +72,12 @@ export interface ModelChoiceRequest {
 	requestedThinking?: string;
 	/** The agent's accepted refs, its default ref included. Empty means the agent has no accepted list. */
 	accepted: readonly string[];
-	/** Pi's known `provider/id` refs, searched only when `accepted` is empty. */
-	known: readonly string[];
-	/** The agent's default ref; its provider settles a fragment that matches under several providers. */
+	/** Pi's known models, searched only when `accepted` is empty. Ids stay whole, colons included. */
+	known: ReadonlyArray<{ provider: string; id: string }>;
+	/**
+	 * The agent's own default ref; its provider settles a fragment that matches
+	 * under several providers. A model inherited from the parent is not a default.
+	 */
 	defaultRef?: string;
 	/** The agent's default thinking level, picked when the accepted list names it for the chosen model. */
 	defaultThinking?: string;
@@ -135,10 +145,12 @@ function refuseModel(request: ModelChoiceRequest, reason: string, candidates: re
  * models when the agent has no accepted list. Every refusal throws.
  */
 export function resolveModelChoice(request: ModelChoiceRequest): ModelChoice {
-	const { model: name, thinking: suffixThinking } = splitModelRef(request.requested);
-	const askedThinking = suffixThinking ?? request.requestedThinking;
 	const restricted = request.accepted.length > 0;
-	const pool = groupRefsByModel(restricted ? request.accepted : request.known);
+	const pool = restricted
+		? groupRefsByModel(request.accepted)
+		: new Map(request.known.map((model): [string, Array<string | undefined>] => [`${model.provider}/${model.id}`, [undefined]]));
+	const { model: name, thinking: suffixThinking } = splitRequestedRef(request.requested, pool);
+	const askedThinking = suffixThinking ?? request.requestedThinking;
 	// No accepted list and no known models: leave the name to Pi, as before.
 	if (pool.size === 0) {
 		return { model: name, thinking: askedThinking ?? request.fallbackThinking, explicitThinking: !!askedThinking };
@@ -169,6 +181,18 @@ export function resolveModelChoice(request: ModelChoiceRequest): ModelChoice {
 	return { model: chosen, thinking: defaultLevel, explicitThinking: true };
 }
 
+/**
+ * Split the call's ref against the pool: a whole pool key stays whole, colons
+ * included. A suffix after a known model is its level even when Pi does not
+ * know it, so the refusal names the unsupported level.
+ */
+function splitRequestedRef(ref: string, pool: Map<string, unknown>): { model: string; thinking?: string } {
+	if (pool.has(ref)) return { model: ref };
+	const idx = ref.lastIndexOf(":");
+	if (idx !== -1 && pool.has(ref.slice(0, idx))) return { model: ref.slice(0, idx), thinking: ref.slice(idx + 1) };
+	return splitModelRef(ref);
+}
+
 function matchFragment(
 	request: ModelChoiceRequest,
 	name: string,
@@ -178,13 +202,11 @@ function matchFragment(
 	const provider = providerOf(name);
 	const fragment = provider === undefined ? name : name.slice(provider.length + 1);
 	const keys = [...pool.keys()];
+	// Only an exact full ref is a fast path (resolveModelChoice); an unqualified id is a fragment like any other.
 	let matches = keys.filter(
 		(key) =>
 			(provider === undefined || providerOf(key) === provider) && key.slice(key.indexOf("/") + 1).includes(fragment),
 	);
-	// A model part equal to the fragment beats a longer id that only contains it.
-	const exactIds = matches.filter((key) => key.slice(key.indexOf("/") + 1) === fragment);
-	if (exactIds.length > 0) matches = exactIds;
 	if (matches.length === 0) {
 		refuseModel(request, `no ${restricted ? "accepted" : "known"} model matches`, restricted ? keys : []);
 	}
