@@ -1,10 +1,5 @@
-import {
-	type AgentListEntry,
-	type AgentListRenderOptions,
-	getAgentListEntries,
-	getAgentListSignature,
-	renderAgentListReminder,
-} from "../agents/agent-list.ts";
+import { type AgentListEntry, getAgentListEntries } from "../agents/agent-list.ts";
+import { renderAgentDetail } from "../agents/launchable-agents.ts";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { getEffectiveAgentDefinitions } from "../agents/definitions.ts";
 import {
@@ -106,12 +101,9 @@ export function getAgentListEntriesForTest(baseCwd = process.cwd()) {
 	);
 }
 
-export function renderAgentListReminderForTest(entries: AgentListEntry[], options?: AgentListRenderOptions) {
-	return renderAgentListReminder(entries, options);
-}
-
-export function getAgentListSignatureForTest(entries: AgentListEntry[]) {
-	return getAgentListSignature(entries);
+/** The full definition view of each entry, one block per agent. */
+export function renderAgentDetailsForTest(entries: AgentListEntry[]) {
+	return entries.map(renderAgentDetail).join("\n\n");
 }
 
 export function buildChildContextBoundaryForTest(options: ChildContextBoundaryOptions) {

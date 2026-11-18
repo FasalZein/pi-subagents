@@ -74,6 +74,8 @@ import {
 	stopAfterCurrentSubagentBatch,
 } from "./runtime/state.ts";
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
+import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
+import { registerSubagentAgentsTool } from "./tools/agents-tool.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
 	markInitialPromptLaunchComplete,
@@ -357,6 +359,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		modelRegistry: {
 			getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
 		},
+	});
+
+	registerSubagentAgentsTool(pi, shouldRegister, {
+		listLaunchableAgents: (cwd) =>
+			selectLaunchableAgents(getAgentListEntries(cwd), loadAgentCatalog(cwd), parseSpawnEnv(process.env)),
 	});
 
 	registerSubagentMessageRenderers(pi, formatElapsed);

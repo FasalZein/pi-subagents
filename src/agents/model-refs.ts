@@ -111,19 +111,22 @@ function groupRefsByModel(refs: readonly string[]): Map<string, Array<string | u
 	return groups;
 }
 
-function formatCandidates(refs: readonly string[]): string {
-	if (refs.length === 0) return "";
-	const shown = refs.slice(0, MAX_REFUSAL_CANDIDATES);
+/** Refs grouped by provider in list order, as `provider: a, b; other: c`; a ref without a provider stands alone. */
+export function formatRefsByProvider(refs: readonly string[]): string {
 	const byProvider = new Map<string, string[]>();
-	for (const ref of shown) {
+	for (const ref of refs) {
 		const provider = providerOf(ref) ?? "";
 		const names = byProvider.get(provider) ?? [];
 		names.push(provider ? ref.slice(provider.length + 1) : ref);
 		byProvider.set(provider, names);
 	}
-	const groups = [...byProvider].map(([provider, names]) => (provider ? `${provider}: ` : "") + names.join(", "));
-	const hidden = refs.length - shown.length;
-	return ` Candidates: ${groups.join("; ")}${hidden > 0 ? ` (+${hidden} more)` : ""}.`;
+	return [...byProvider].map(([provider, names]) => (provider ? `${provider}: ` : "") + names.join(", ")).join("; ");
+}
+
+function formatCandidates(refs: readonly string[]): string {
+	if (refs.length === 0) return "";
+	const hidden = refs.length - MAX_REFUSAL_CANDIDATES;
+	return ` Candidates: ${formatRefsByProvider(refs.slice(0, MAX_REFUSAL_CANDIDATES))}${hidden > 0 ? ` (+${hidden} more)` : ""}.`;
 }
 
 function refuseModel(request: ModelChoiceRequest, reason: string, candidates: readonly string[]): never {

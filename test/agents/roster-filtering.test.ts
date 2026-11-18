@@ -1,5 +1,6 @@
-import { getAgentListEntries, getAgentListSignature, renderAgentListReminder } from "../../src/agents/agent-list.ts";
+import { getAgentListEntries } from "../../src/agents/agent-list.ts";
 import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
+import { renderAgentDetail } from "../../src/agents/launchable-agents.ts";
 import {
 	afterEach,
 	assert,
@@ -60,26 +61,16 @@ describe("roster filtering", () => {
 			child.map((entry) => entry.name),
 			["other-only", "public"].sort(),
 		);
-		const reminder = renderAgentListReminder(child);
-		assert.match(reminder, /`other-only`: Caller worker/);
-		assert.doesNotMatch(reminder, /root-only/);
+		const details = child.map(renderAgentDetail).join("\n\n");
+		assert.match(details, /^other-only \(global\): Caller worker$/m);
+		assert.doesNotMatch(details, /root-only/);
 	});
 
-	it("renders spawning grants and includes visibility changes in the signature", () => {
+	it("renders spawning grants", () => {
 		const dir = createTestDir();
-		const agentsDir = writeAgents(dir);
+		writeAgents(dir);
 		const options = { callerAgent: "caller-agent", callerSpawnable: true as const };
-		const before = getAgentListEntries(dir, resolveSessionMode, options);
-		const reminder = renderAgentListReminder(before);
-		assert.match(reminder, /spawning: scout, reviewer/);
-		assert.match(reminder, /spawn-depth: 2/);
-		assert.match(reminder, /spawn-width: 3/);
-
-		const signature = getAgentListSignature(before);
-		writeFileSync(
-			join(agentsDir, "other-only.md"),
-			`---\nname: other-only\ndescription: Caller worker\nvisible-to: all\nspawning: scout, reviewer\nspawn-depth: 2\nspawn-width: 3\n---\n\nCaller body.`,
-		);
-		assert.notEqual(signature, getAgentListSignature(getAgentListEntries(dir, resolveSessionMode, options)));
+		const details = getAgentListEntries(dir, resolveSessionMode, options).map(renderAgentDetail).join("\n\n");
+		assert.match(details, /^may launch: scout, reviewer \(depth 2, width 3\)$/m);
 	});
 });
