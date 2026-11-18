@@ -296,7 +296,19 @@ describe("orchestrator runtime persistence", () => {
 		controller.handleSessionStart(runtime.ctx);
 
 		const result = controller.beforeAgentStart({
-			systemPromptOptions: { cwd: "/tmp", appendSystemPrompt: "keep this" },
+			// Pi 1.5 passes the normalized, collection-complete prompt options.
+			systemPromptOptions: {
+				cwd: "/tmp",
+				appendSystemPrompt: "keep this",
+				selectedTools: [],
+				hiddenTools: [],
+				toolSnippets: {},
+				toolGuidelines: {},
+				promptGuidelines: [],
+				sections: {},
+				contextFiles: [],
+				skills: [],
+			},
 		});
 		assert.ok(result);
 		assert.match(result.systemPrompt, /keep this$/);
