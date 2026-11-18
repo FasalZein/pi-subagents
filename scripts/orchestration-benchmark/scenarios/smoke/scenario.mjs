@@ -10,5 +10,6 @@ export default {
 	parentToolAllowlist: ["subagent"],
 	// Tools whose source file proves that the extension loaded from the checkout.
 	parentLoadTool: "subagent",
-	childLoadTool: "subagent_done",
+	// The child has auto-exit: pi-subagents then registers caller_ping, not subagent_done.
+	childLoadTool: "caller_ping",
 };
