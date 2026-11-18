@@ -192,6 +192,8 @@ export interface RunningSubagent {
 	allowSteerDelivery?: boolean;
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
+	/** The pane launcher's process id, read before the watcher removes its marker; it exits after Pi. */
+	paneLauncherPid?: number;
 	/** Verified fan-out (ticket 07): run dir of the supervised fan-out this entry fronts. */
 	verifiedRunDir?: string;
 	/** Verified fan-out: durable run id (manifest name). */

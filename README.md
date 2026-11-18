@@ -285,7 +285,7 @@ unfinished.
 
 For `idle-timeout`, the hard deadline that triggered the wrap-up is pinned. Output from the report-only continuation does not buy a fresh full idle interval.
 
-`no-session: true` remains ephemeral. When this policy is enabled, Pi temporarily persists that child to its private session path so it can restart after the interrupt, then deletes the file after the final result. The parent still does not expose a resumable session.
+`no-session: true` remains ephemeral. The child always writes its private temporary session file, so the wrap-up restart reads the interrupted transcript from it. The parent deletes the file after the final result and does not expose a resumable session.
 
 If the wrap-up completes, the parent receives a result such as:
 
@@ -560,7 +560,7 @@ PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY=1
 
 ### `no-session: true`
 
-`no-session: true` gives the child a temporary session file and deletes it after completion.
+`no-session: true` gives the child a private temporary session file instead of Pi's in-memory mode, under both `parent-close-policy` values. The watching parent reads the report from that file, publishes the result, then deletes the file. An orderly detach (the parent session closes while a `continue` child still runs) deletes the file too, and that child gets no result. A parent crash can leave the file. The result record says the run cannot be resumed.
 
 For `fork`, Pi seeds that temporary file with the parent session content. For `lineage-only`, Pi also gives the child inherited context because there is no persistent child file where it can store lineage metadata.
 
@@ -857,6 +857,7 @@ User-facing knobs:
 | --- | --- |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
 | `PI_SUBAGENT_MUX` | Force `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
+| `PI_SUBAGENT_LAUNCH_CAP` | Change the number of runs a parent may start between two session starts (default: 64). Each child counts once, a verified fan-out counts each candidate, a resume counts, a time-limit wrap-up does not. A reload keeps the count; a new, resumed or forked session starts at 0 |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
 | `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
 | `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |

@@ -23,6 +23,7 @@ import {
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
+import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
@@ -367,8 +368,19 @@ export function registerSubagentCoreTools(
 						: 1,
 				);
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
+				// D9: the launch cap counts the same units, taken before any side effect.
+				const unlaunchedCapSlots = tryAcquireLaunchCapSlots(totalSlots);
+				if (!unlaunchedCapSlots) {
+					return asSubagentToolResult({
+						content: [{ type: "text", text: getLaunchCapError(totalSlots) }],
+						details: { error: "launch_cap" },
+					});
+				}
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
-				if (!unlaunchedSlots) return getSpawnWidthLimitError(widthLimit);
+				if (!unlaunchedSlots) {
+					unlaunchedCapSlots.release();
+					return getSpawnWidthLimitError(widthLimit);
+				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];
 				try {
@@ -380,19 +392,23 @@ export function registerSubagentCoreTools(
 						const entry = prepared[index];
 						// A failed child gives back its own share; the outer catch, the rest.
 						const childSlots = unlaunchedSlots.split(slotCosts[index]);
+						const childCapSlots = unlaunchedCapSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
 							const { child, agentDefs, warning } = entry;
 							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();
+							childCapSlots.release();
 							throw error;
 						}
+						childCapSlots.commit();
 						launched.push(running);
 						runtime.wireSubagentSteerBack(pi, running, running.completionPromise!);
 					}
 				} catch (error) {
 					unlaunchedSlots.release();
+					unlaunchedCapSlots.release();
 					throw error;
 				}
 				runtime.startWidgetRefresh();
