@@ -159,7 +159,8 @@ async function startInteractiveSubagent(
 	}
 
 	const startTime = Date.now();
-	const programSession = surfacePreCreated ? undefined : await currentMuxAdapter()?.openProgramSession?.();
+	const adapter = currentMuxAdapter();
+	const programSession = surfacePreCreated ? undefined : await adapter?.openProgramSession?.();
 	const ordinarySurface = programSession
 		? undefined
 		: (options?.surface ??
@@ -198,6 +199,7 @@ async function startInteractiveSubagent(
 		piArgs,
 		envOverrides: envVars,
 		denyEnv: prepared.agentDefs?.denyEnv,
+		paneIdentity: adapter?.paneIdentity,
 		doneSentinelFile,
 		...(programSession ? { deriveZellijPaneSurface: true } : {}),
 	});

@@ -32,13 +32,18 @@ describe("subagent_resume env filtering", () => {
 	it("applies persisted deny-env and persists model overrides on background resumes", async () => {
 		const dir = createTestDir();
 		const stdinLog = join(dir, "stdin.log");
-		const envLog = join(dir, "env.log");
+		const flagsLog = join(dir, "flags.log");
+		// Records only presence or equality flags of named markers, never an environment (T44).
 		const bin = writeExecutable(
 			dir,
 			"capture-pi",
 			`#!/usr/bin/env bash
 cat > '${stdinLog}'
-printenv | sort > '${envLog}'
+{
+  for n in RESUME_TEST_AGENT_DENY RESUME_TEST_GLOBAL_DENY; do [ -n "\${!n+x}" ] && echo "\$n=yes" || echo "\$n=no"; done
+  [ "\$RESUME_TEST_KEEP" = kept ] && echo "equal:RESUME_TEST_KEEP=yes" || echo "equal:RESUME_TEST_KEEP=no"
+  [ "\$PI_SUBAGENT_NAME" = resume-child ] && echo "equal:PI_SUBAGENT_NAME=yes" || echo "equal:PI_SUBAGENT_NAME=no"
+} > '${flagsLog}.tmp' && mv '${flagsLog}.tmp' '${flagsLog}'
 `,
 		);
 		const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
@@ -113,12 +118,12 @@ printenv | sort > '${envLog}'
 				},
 			);
 
-			await readNonEmptyFileEventually(envLog);
-			const env = readFileSync(envLog, "utf8");
-			assert.doesNotMatch(env, /RESUME_TEST_AGENT_DENY=/, "persisted agent deny-env must filter the child env");
-			assert.doesNotMatch(env, /RESUME_TEST_GLOBAL_DENY=/, "global deny must filter the child env");
-			assert.match(env, /RESUME_TEST_KEEP=kept/, "non-denied env must still flow");
-			assert.match(env, /PI_SUBAGENT_NAME=resume-child/, "controlled overrides must still flow");
+			await readNonEmptyFileEventually(flagsLog);
+			const flags = readFileSync(flagsLog, "utf8");
+			assert.match(flags, /^RESUME_TEST_AGENT_DENY=no$/m, "persisted agent deny-env must filter the child env");
+			assert.match(flags, /^RESUME_TEST_GLOBAL_DENY=no$/m, "global deny must filter the child env");
+			assert.match(flags, /^equal:RESUME_TEST_KEEP=yes$/m, "non-denied env must still flow");
+			assert.match(flags, /^equal:PI_SUBAGENT_NAME=yes$/m, "controlled overrides must still flow");
 			const entries = readSubagentLaunchMetadataEntries(sessionFile);
 			assert.equal(entries.length, 2, "a resume model override must append launch metadata");
 			assert.equal(entries.at(-1)?.modelRef, "provider/override:high");
@@ -132,6 +137,7 @@ printenv | sort > '${envLog}'
 			else process.env.RESUME_TEST_AGENT_DENY = originalAgentDeny;
 			if (originalKeep === undefined) delete process.env.RESUME_TEST_KEEP;
 			else process.env.RESUME_TEST_KEEP = originalKeep;
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -298,7 +304,7 @@ esac
 			if (originalCapsuleDir === undefined) delete process.env.PI_SUBAGENT_ENV_CAPSULE_DIR;
 			else process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = originalCapsuleDir;
 			delete process.env.FAKE_TMUX_LOG;
-			rmSync(capsuleRoot, { recursive: true, force: true });
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 

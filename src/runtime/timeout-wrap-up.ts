@@ -186,7 +186,8 @@ export async function restartSubagentForTimeoutWrapUp(
 	}
 
 	const metadata = running.launchMetadata!;
-	const programSession = await currentMuxAdapter()?.openProgramSession?.();
+	const adapter = currentMuxAdapter();
+	const programSession = await adapter?.openProgramSession?.();
 	const zellijTarget = programSession?.target;
 	throwIfAborted(signal);
 	const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
@@ -226,6 +227,7 @@ export async function restartSubagentForTimeoutWrapUp(
 			piArgs,
 			envOverrides: launch.env,
 			denyEnv: metadata.denyEnv,
+			paneIdentity: adapter?.paneIdentity,
 			doneSentinelFile,
 			...(zellijTarget ? { deriveZellijPaneSurface: true } : {}),
 		});

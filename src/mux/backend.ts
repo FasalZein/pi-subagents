@@ -1,4 +1,5 @@
 import type { MuxBackend } from "./core.ts";
+import type { PaneIdentityPolicy } from "../launch/child-env.ts";
 import type { WorkReporter, WorkReporterSession } from "../runtime/work-reporting.ts";
 import type { HerdrPlacementContext, HerdrPlacementPolicy } from "./herdr-surfaces.ts";
 import type { PollResult } from "./poll.ts";
@@ -60,6 +61,8 @@ export interface MuxBackendAdapter {
 	 * because the backend cannot take a long or multi-line command as typed input.
 	 */
 	readonly stagesShellCommands?: true;
+	/** Identity names that the child launcher takes from the surface (D34); absent means the v2.9.2 prefixes. */
+	readonly paneIdentity?: PaneIdentityPolicy;
 	/** Optional ability: the backend places surfaces by a herdr placement policy, which a launch stores. */
 	resolveHerdrPlacementPolicy?(value: string | undefined): HerdrPlacementPolicy;
 	/** Optional status ability: publish the count of outstanding children for the session. */

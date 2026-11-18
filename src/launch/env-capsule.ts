@@ -23,6 +23,12 @@ export interface EnvCapsule {
 	overrides: Record<string, string>;
 	/** Env name patterns whose values must come from the child pane, not the parent. */
 	paneIdentityKeys: string[];
+	/**
+	 * Exact identity names (spec D34) that the child's surface must set. The launcher
+	 * exits with an error, and does not start the command, when one is missing from the
+	 * surface or named by an override.
+	 */
+	requiredPaneIdentityKeys?: string[];
 	processIdFile?: string;
 	/** Derive PI_SUBAGENT_SURFACE as `pane:$ZELLIJ_PANE_ID` in the child pane. */
 	deriveZellijPaneSurface?: boolean;

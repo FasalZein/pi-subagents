@@ -220,12 +220,14 @@ describe("internal launch overrides (forcedCwd/launchEnv)", () => {
 			"fake-pi",
 			[
 				"#!/bin/sh",
-				`printf 'CWD=%s\\n' "$(pwd)" > '${childLog}'`,
-				`printf 'COMPOSE_PROJECT_NAME=%s\\n' "\${COMPOSE_PROJECT_NAME-unset}" >> '${childLog}'`,
-				`printf 'PORT_OFFSET=%s\\n' "\${PORT_OFFSET-unset}" >> '${childLog}'`,
-				`printf 'FRONTMATTER_KEY=%s\\n' "\${FRONTMATTER_KEY-unset}" >> '${childLog}'`,
-				`printf 'COLLIDING=%s\\n' "\${COLLIDING-unset}" >> '${childLog}'`,
-				`printf 'ARGV=%s\\n' "$*" >> '${childLog}'`,
+				`printf 'CWD=%s\\n' "$(pwd)" > '${childLog}.tmp'`,
+				`printf 'COMPOSE_PROJECT_NAME=%s\\n' "\${COMPOSE_PROJECT_NAME-unset}" >> '${childLog}.tmp'`,
+				`printf 'PORT_OFFSET=%s\\n' "\${PORT_OFFSET-unset}" >> '${childLog}.tmp'`,
+				`printf 'FRONTMATTER_KEY=%s\\n' "\${FRONTMATTER_KEY-unset}" >> '${childLog}.tmp'`,
+				`printf 'COLLIDING=%s\\n' "\${COLLIDING-unset}" >> '${childLog}.tmp'`,
+				`printf 'ARGV=%s\\n' "$*" >> '${childLog}.tmp'`,
+				// One rename publishes the whole log: readEventually returns on its first non-empty read.
+				`mv '${childLog}.tmp' '${childLog}'`,
 			].join("\n"),
 		);
 		process.env.PI_SUBAGENT_PI_COMMAND = fakeBin;

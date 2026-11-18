@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { assert, createTestDir, describe, it, readFileSync, rmSync } from "../support/index.ts";
 import { PANE_IDENTITY_ENV_PATTERNS } from "../../src/launch/child-env.ts";
 import { writeEnvCapsule } from "../../src/launch/env-capsule.ts";
+import { presenceProbeCommand } from "../support/env-presence.ts";
 
 const LAUNCHER_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "launch", "run-child.mjs");
 
@@ -20,19 +21,17 @@ function runLauncher(capsule: Parameters<typeof writeEnvCapsule>[0], paneEnv: Re
 	return { result, capsulePath, root };
 }
 
-function envDumpCommand(outFile: string): { command: string; args: string[] } {
-	return {
-		command: process.execPath,
-		args: ["-e", "require('node:fs').writeFileSync(process.argv[1], JSON.stringify(process.env))", outFile],
-	};
-}
-
 describe("run-child launcher", () => {
 	it("merges parent snapshot, pane identity, and overrides in precedence order", () => {
-		const outFile = join(createTestDir(), "env.json");
+		const outDir = createTestDir();
+		const outFile = join(outDir, "flags.json");
 		const { result, capsulePath, root } = runLauncher(
 			{
-				...envDumpCommand(outFile),
+				...presenceProbeCommand(outFile, ["OPENCODE_API_KEY", "DAEMON_VAR", "PI_SUBAGENT_NAME"], {
+					PARENT_VAR: "overridden",
+					ZELLIJ_PANE_ID: "9",
+					TERM: "screen-256color",
+				}),
 				parentEnv: { PARENT_VAR: "parent", OPENCODE_API_KEY: "sk-parent" },
 				overrides: { PARENT_VAR: "overridden", PI_SUBAGENT_NAME: "child" },
 				paneIdentityKeys: [...PANE_IDENTITY_ENV_PATTERNS],
@@ -47,14 +46,15 @@ describe("run-child launcher", () => {
 
 		assert.equal(result.error, undefined, result.stderr);
 		assert.equal(result.status, 0, result.stderr);
-		const childEnv = JSON.parse(readFileSync(outFile, "utf8"));
-		assert.equal(childEnv.PARENT_VAR, "overridden", "overrides must beat the parent snapshot");
-		assert.equal(childEnv.OPENCODE_API_KEY, "sk-parent", "ambient parent env must reach the child");
-		assert.equal(childEnv.ZELLIJ_PANE_ID, "9", "pane identity must come from the pane shell env");
-		assert.equal(childEnv.TERM, "screen-256color");
-		assert.equal(childEnv.DAEMON_VAR, undefined, "non-identity pane env must not leak into the child");
-		assert.equal(childEnv.PI_SUBAGENT_NAME, "child");
+		const flags = JSON.parse(readFileSync(outFile, "utf8"));
+		assert.equal(flags["equal:PARENT_VAR"], "yes", "overrides must beat the parent snapshot");
+		assert.equal(flags.OPENCODE_API_KEY, "yes", "ambient parent env must reach the child");
+		assert.equal(flags["equal:ZELLIJ_PANE_ID"], "yes", "pane identity must come from the pane shell env");
+		assert.equal(flags["equal:TERM"], "yes");
+		assert.equal(flags.DAEMON_VAR, "no", "non-identity pane env must not leak into the child");
+		assert.equal(flags.PI_SUBAGENT_NAME, "yes");
 		assert.equal(existsSync(capsulePath), false, "capsule must be unlinked after read");
+		rmSync(outDir, { recursive: true, force: true });
 		rmSync(root, { recursive: true, force: true });
 	});
 
@@ -67,7 +67,7 @@ describe("run-child launcher", () => {
 				command: process.execPath,
 				args: [
 					"-e",
-					"const fs=require('node:fs'); fs.writeFileSync(process.argv[1], JSON.stringify({ env: process.env, launcherPid: fs.readFileSync(process.argv[2], 'utf8') }))",
+					"const fs=require('node:fs'); fs.writeFileSync(process.argv[1], JSON.stringify({ surface: process.env.PI_SUBAGENT_SURFACE, launcherPid: fs.readFileSync(process.argv[2], 'utf8') }))",
 					outFile,
 					processIdFile,
 				],
@@ -82,7 +82,7 @@ describe("run-child launcher", () => {
 
 		assert.equal(result.status, 0, result.stderr);
 		const observed = JSON.parse(readFileSync(outFile, "utf8"));
-		assert.equal(observed.env.PI_SUBAGENT_SURFACE, "pane:42");
+		assert.equal(observed.surface, "pane:42");
 		assert.match(observed.launcherPid, /^\d+\n$/);
 		assert.equal(existsSync(processIdFile), false);
 		rmSync(dir, { recursive: true, force: true });
@@ -146,10 +146,11 @@ describe("run-child launcher", () => {
 	});
 
 	it("drops env keys that cannot round-trip through execve", () => {
-		const outFile = join(createTestDir(), "env.json");
+		const outDir = createTestDir();
+		const outFile = join(outDir, "flags.json");
 		const { result, root } = runLauncher(
 			{
-				...envDumpCommand(outFile),
+				...presenceProbeCommand(outFile, ["BAD=KEY"], { FINE_KEY: "ok" }),
 				parentEnv: { "BAD=KEY": "v", FINE_KEY: "ok" },
 				overrides: {},
 				paneIdentityKeys: [],
@@ -158,9 +159,10 @@ describe("run-child launcher", () => {
 		);
 
 		assert.equal(result.status, 0, result.stderr);
-		const childEnv = JSON.parse(readFileSync(outFile, "utf8"));
-		assert.equal(childEnv["BAD=KEY"], undefined);
-		assert.equal(childEnv.FINE_KEY, "ok");
+		const flags = JSON.parse(readFileSync(outFile, "utf8"));
+		assert.equal(flags["BAD=KEY"], "no");
+		assert.equal(flags["equal:FINE_KEY"], "yes");
+		rmSync(outDir, { recursive: true, force: true });
 		rmSync(root, { recursive: true, force: true });
 	});
 });
