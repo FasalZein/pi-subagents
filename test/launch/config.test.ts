@@ -571,7 +571,8 @@ describe("agent launch configuration", () => {
 		assert.equal(defs?.noSession, true);
 		assert.equal(resolveSubagentNoSessionForTest(defs), true);
 		assert.equal(resolveSubagentNoSessionForTest(null), false);
-		assert.deepEqual(getPreparedSessionLaunchArgsForTest(defs), ["--session", "child.jsonl", "--no-session"]);
+		// D13 (T08b): a no-session child persists to its temporary session file, not Pi's in-memory mode.
+		assert.deepEqual(getPreparedSessionLaunchArgsForTest(defs), ["--session", "child.jsonl"]);
 
 		writeFileSync(join(agentsDir, "tester.md"), `---\nname: tester\n---\n\nYou are the tester.`);
 
@@ -607,7 +608,7 @@ describe("agent launch configuration", () => {
 				sessionTitle: "[reviewer] Disposable review",
 				agentDefs: { noSession: true },
 			}),
-			["--session", "child.jsonl", "--no-session", "--name", "[reviewer] Disposable review"],
+			["--session", "child.jsonl", "--name", "[reviewer] Disposable review"],
 		);
 	});
 
@@ -674,21 +675,17 @@ describe("agent launch configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = "/tmp";
 	});
 
-	it("launches no-session children through an ephemeral session path", () => {
-		assert.deepEqual(
-			getPreparedSessionLaunchArgsForTest({
-				noSession: true,
-				sessionMode: "fork",
-			}),
-			["--session", "child.jsonl", "--no-session"],
-		);
-		assert.deepEqual(
-			getPreparedSessionLaunchArgsForTest({
-				noSession: true,
-				sessionMode: "lineage-only",
-			}),
-			["--session", "child.jsonl", "--no-session"],
-		);
+	it("launches no-session children on their temporary session file without --no-session, under both close policies", () => {
+		// D13 (T08b): the watcher reads the report from that file, so Pi must write it.
+		for (const parentClosePolicy of ["terminate", "continue"] as const) {
+			for (const sessionMode of ["fork", "lineage-only"] as const) {
+				assert.deepEqual(
+					getPreparedSessionLaunchArgsForTest({ noSession: true, sessionMode, parentClosePolicy }),
+					["--session", "child.jsonl"],
+					`${parentClosePolicy} / ${sessionMode}`,
+				);
+			}
+		}
 		assert.equal(getNoSessionSeedModeForTest("standalone"), null);
 		assert.equal(getNoSessionSeedModeForTest("fork"), "fork");
 		assert.equal(getNoSessionSeedModeForTest("lineage-only"), "fork");

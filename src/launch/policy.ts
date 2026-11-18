@@ -121,15 +121,6 @@ export function resolveSubagentTimeoutState(
 	};
 }
 
-/**
- * A no-session child normally uses Pi's in-memory mode. A strict wrap-up needs
- * the transcript after the parent kills the first process, so persist only to
- * the existing temporary path and delete it when the run finally completes.
- */
-export function shouldPersistNoSessionForTimeoutWrapUp(source: SubagentTimeoutSource | null | undefined): boolean {
-	return resolveSubagentTimeoutState(source).timeoutWarnThreshold !== undefined;
-}
-
 export function resolveSubagentParentClosePolicy(agentDefs: AgentDefaults | null): ParentClosePolicy {
 	return agentDefs?.parentClosePolicy ?? "terminate";
 }

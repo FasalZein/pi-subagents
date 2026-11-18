@@ -333,7 +333,8 @@ describe("Herdr interactive launch parity", () => {
 		const sessionIndex = capsule.args.indexOf("--session");
 		assert.notEqual(sessionIndex, -1);
 		assert.equal(capsule.args[sessionIndex + 1], running.sessionFile);
-		assert.ok(capsule.args.includes("--no-session"));
+		// D13 (T08b): a no-session child writes its temporary session file.
+		assert.ok(!capsule.args.includes("--no-session"));
 		assert.ok(capsule.args.includes("--approve"));
 		assert.equal(capsule.overrides.CUSTOM_ENV, "from-agent");
 		assert.equal(capsule.overrides.PI_SUBAGENT_SURFACE, "w1:p2");
