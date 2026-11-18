@@ -3,13 +3,7 @@
  * private tmux server that gets its prompt after startup, then a classified
  * result built from the session evidence. The root is removed on every exit path.
  */
-import {
-	existsSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	statSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
 	endsWithProviderError,
@@ -24,6 +18,7 @@ import { checkoutState, cleanups } from "./run-state.mjs";
 import {
 	createAttemptRoot,
 	prepareSampleHome,
+	removeAttemptRoot,
 	socketPath,
 } from "./sample-home.mjs";
 import {
@@ -226,7 +221,7 @@ export async function runAttempt({
 	const socket = socketPath(root);
 	const cleanup = () => {
 		stopServer(socket);
-		rmSync(root, { recursive: true, force: true });
+		removeAttemptRoot(root);
 	};
 	const unregister = cleanups.add(cleanup);
 	const base = { attempt, startedAt: new Date().toISOString() };

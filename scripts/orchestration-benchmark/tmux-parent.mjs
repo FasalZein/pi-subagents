@@ -5,6 +5,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
+import { BenchError } from "./run-state.mjs";
 
 const TMUX_TIMEOUT_MS = 10_000;
 // macOS limits a Unix socket path to 104 bytes.
@@ -26,7 +27,7 @@ function tmux(socket, args, env) {
 			...(env ? { env } : {}),
 		});
 	} catch (error) {
-		throw new Error(
+		throw new BenchError(
 			`tmux ${args[0]} failed (status ${error.status ?? error.code ?? "unknown"})`,
 		);
 	}

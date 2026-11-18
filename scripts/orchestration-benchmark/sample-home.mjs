@@ -164,6 +164,19 @@ export function createAttemptRoot(base = benchBase()) {
 	return root;
 }
 
+/**
+ * Remove an attempt root. Pi and its children can still write files for a moment
+ * after their tmux server stops, so a recursive remove can meet ENOTEMPTY: retry.
+ */
+export function removeAttemptRoot(root) {
+	rmSync(root, {
+		recursive: true,
+		force: true,
+		maxRetries: 10,
+		retryDelay: 200,
+	});
+}
+
 export function socketPath(root) {
 	return join(root, "tmux.sock");
 }
@@ -194,7 +207,7 @@ export function recoverAbandonedRoots(stopServer, base = benchBase()) {
 		}
 		if (owner?.tag !== OWNER_TAG || identityAlive(owner.owner)) continue;
 		stopServer(socketPath(root));
-		rmSync(root, { recursive: true, force: true });
+		removeAttemptRoot(root);
 		removed.push(name);
 	}
 	return removed;
