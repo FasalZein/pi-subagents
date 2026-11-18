@@ -5,10 +5,11 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
+	answerParser,
 	childEnded,
 	childFulfils,
-	deliveredToParent,
 	endsWithProviderError,
 	loadEvidence,
 	parentToolCalls,
@@ -46,6 +47,9 @@ const ENTER_SETTLE_MS = 10_000;
 const PROVIDER_ERROR_SETTLE_MS = 10_000;
 // A terminal reply without an answer counts as final after the sample is quiet this long.
 const QUIET_MS = 60_000;
+// A terminal reply with an answer counts as settled after the sample is quiet this long,
+// so a result message that lands just after the last child ends still gets its turn.
+const SETTLE_MS = 5_000;
 const POLL_MS = 1_000;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -132,6 +136,29 @@ function pendingChildren(parentEvents, root, probeDir) {
 	return launched - ended;
 }
 
+/**
+ * Entry index of the parent's last assistant reply when it is terminal and no
+ * carrier came after it (a result message, or a launch or wait tool result);
+ * else null. A carrier after the last reply means the parent still has a model
+ * request for it in flight, and silence alone does not prove it finished.
+ */
+export function settledReplyIndex(events) {
+	let lastReply = -1;
+	let lastCarrier = -1;
+	events.forEach((e, index) => {
+		if (e?.type === "custom_message" && e.customType === "subagent_result")
+			lastCarrier = index;
+		else if (e?.type === "message" && e.message?.role === "toolResult")
+			lastCarrier = index;
+		else if (e?.type === "message" && e.message?.role === "assistant")
+			lastReply = index;
+	});
+	return lastReply > lastCarrier &&
+		events[lastReply].message.stopReason === "stop"
+		? lastReply
+		: null;
+}
+
 const REAL_CLOCK = { now: () => Date.now(), sleep, alive: isAlive };
 
 /**
@@ -146,6 +173,7 @@ export async function observe({
 	probeDir,
 	submittedAt,
 	deadlineMs,
+	parseAnswer,
 	clock = REAL_CLOCK,
 }) {
 	let errorSince = null;
@@ -155,16 +183,19 @@ export async function observe({
 		if (now - submittedAt >= deadlineMs)
 			return { kind: "verdict", verdict: "timeout" };
 		const events = readEvents(parentFile);
-		const { terminal, answer } = terminalAnswer(events);
-		if (terminal && answer !== null) return { kind: "answered", answer };
-		// A terminal reply without an answer is final only when the parent finished
-		// and no child is pending; a parent that waits for delivery stays observed.
+		const { answer } = terminalAnswer(events, parseAnswer);
+		const answeredAt = settledReplyIndex(events);
+		// Observation ends only on a settled reply: terminal and after the last
+		// carrier the parent received, the sample quiet, and no launched child
+		// outstanding. A partial progress reply does not end it; the reply that is
+		// last at that boundary is scored (an incomplete answer there is a wrong
+		// answer). A parent that never replies after its last carrier times out.
 		if (
-			terminal &&
-			now - lastActivity(root) >= QUIET_MS &&
+			answeredAt !== null &&
+			now - lastActivity(root) >= (answer === null ? QUIET_MS : SETTLE_MS) &&
 			pendingChildren(events, root, probeDir) <= 0
 		)
-			return { kind: "answered", answer: null };
+			return { kind: "answered", answer, answeredAt };
 		if (endsWithProviderError(events)) {
 			errorSince ??= now;
 			if (now - errorSince >= PROVIDER_ERROR_SETTLE_MS)
@@ -186,6 +217,7 @@ export function classifyAttempt({
 	cli,
 	scenario,
 	checkoutChanged,
+	workDir,
 }) {
 	const parent = evidence.parent
 		? summarizeParent(evidence.parent.events)
@@ -218,6 +250,12 @@ export function classifyAttempt({
 	if (parent.missingUsage + children.missingUsage > 0)
 		return infra("request without usage");
 	if (load.missingProbes > 0) return infra("load probe missing");
+	// Children join their run ids by launch name, so names must be unique (a known limit).
+	const names = launchedRuns(evidence.parent.events, scenario.parentLoadTool)
+		.map((run) => run.name)
+		.filter(Boolean);
+	if (new Set(names).size !== names.length)
+		return infra("two launched children share a launch name");
 	if (load.unmatchedProbes > 0) return infra("probe without its session file");
 	if (!load.parentLoadedCheckout || !load.childrenLoadedCheckout)
 		return infra("extension did not load from the checkout");
@@ -232,26 +270,41 @@ export function classifyAttempt({
 	) {
 		return { kind: "provider-error", ...metrics };
 	}
+	// A child of a role without a declared result can never support a pass.
+	const childFacts = evidence.children.map((child) => {
+		const summary = summarizeChild(child.events);
+		const contract = scenario.childResults[summary?.role];
+		return {
+			name: summary?.name ?? null,
+			role: summary?.role ?? null,
+			contract,
+			ended: childEnded(child.events),
+			fulfils: contract
+				? childFulfils(child.events, contract, workDir)
+				: { read: false, returned: false },
+		};
+	});
+	// A result counts as delivered only when it reached the parent by the child's own run id.
+	const delivery = deliveryAccounting({
+		parentEvents: evidence.parent.events,
+		children: childFacts,
+		// The observer's scored reply; a timeout scored none, so nothing was available to it.
+		answeredAt: observed.kind === "answered" ? observed.answeredAt : null,
+		scenario,
+		workDir,
+	});
+	const childOutcomes = childFacts.map((child, index) => ({
+		...child.fulfils,
+		delivered: delivery.runs[index].delivered,
+	}));
 	if (observed.kind === "verdict")
 		return {
 			kind: "verdict",
 			verdict: observed.verdict,
 			answer: null,
+			delivery,
 			...metrics,
 		};
-	// A child of a role without a declared result can never support a pass.
-	const childOutcomes = evidence.children.map((child) => {
-		const contract = scenario.childResults[summarizeChild(child.events)?.role];
-		if (!contract) return { read: false, returned: false, delivered: false };
-		return {
-			...childFulfils(child.events, contract),
-			delivered: deliveredToParent(
-				evidence.parent.events,
-				contract.returns,
-				scenario.parentToolAllowlist,
-			),
-		};
-	});
 	const verdict = scoreAttempt({
 		answer: observed.answer,
 		childRoles: children.roles,
@@ -264,6 +317,7 @@ export function classifyAttempt({
 		verdict,
 		answer: observed.answer,
 		childOutcomes,
+		delivery,
 		...metrics,
 	};
 }
@@ -376,6 +430,7 @@ export async function runAttempt({
 			probeDir: home.probeDir,
 			submittedAt,
 			deadlineMs,
+			parseAnswer: answerParser(scenario),
 		});
 		const wallTimeMs = Date.now() - submittedAt;
 		let checkoutChanged = false;
@@ -394,6 +449,7 @@ export async function runAttempt({
 				cli,
 				scenario,
 				checkoutChanged,
+				workDir: home.workDir,
 			}),
 		});
 	} finally {

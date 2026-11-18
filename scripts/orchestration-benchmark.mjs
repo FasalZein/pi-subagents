@@ -18,6 +18,9 @@
  * - Nothing else touches that checkout while a sample runs.
  * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
  *
+ * Scenarios: smoke (launcher check) and recon (G2.1 scenario (a): 6 children, 7 keyed facts).
+ * The record keeps delivery accounting by run id in final.delivery (see delivery.mjs).
+ *
  * Known limits (accepted for version 1):
  * - F4: two launchers that create one claim at the same moment can both start the sample.
  * - F14: a checkout switched and restored during a run can publish other code under its commit.
@@ -26,6 +29,17 @@
  * - F12: an answer written in the last poll interval before the deadline counts as a timeout.
  * - F11: a child provider error can cause both a native recovery and a harness retry.
  * - Revisit all of these before parallel benchmark jobs run on one checkout.
+ * - Namesakes: children join their run ids by launch name. A scenario must give
+ *   its children unique launch names; an attempt where two launched children
+ *   share a name ends as an infrastructure error. Revisit when a scenario needs
+ *   repeated names (join each child session to its run id by session file).
+ * - Duplicate work is attributed by the parent's requested read paths, not by
+ *   facts observed in successful tool results (a failed read counts, a bash read
+ *   does not). It feeds the duplicate outcome class only, never the verdict.
+ * - Candidate adapters (grouped result messages, lookups, capped report
+ *   references, workflow digests of the candidate release) are left to T03.
+ * - Undelivered results have the sub-class unknown on v2.9.2: its session files
+ *   record no queue or drop evidence (see delivery.mjs).
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -142,7 +156,12 @@ async function loadScenario(name) {
 	).default;
 	for (const role of definition.expectedChildRoles) {
 		const contract = definition.childResults?.[role];
-		if (typeof contract?.returns !== "string" || !Array.isArray(contract.reads))
+		const returns = [contract?.returns].flat();
+		if (
+			!returns.length ||
+			returns.some((token) => typeof token !== "string") ||
+			!Array.isArray(contract.reads)
+		)
 			throw new BenchError(
 				`scenario ${name} declares no result for child ${role}`,
 			);
@@ -276,7 +295,7 @@ async function main() {
 					? "provider error after one retry"
 					: last.infraReason,
 		answer: {
-			expected: scenario.expectedAnswer,
+			expected: scenario.expectedFacts ?? scenario.expectedAnswer,
 			observed: last.answer ?? null,
 		},
 		attemptCount: attempts.length,
@@ -287,6 +306,8 @@ async function main() {
 			parentToolAttributed: last.parent?.toolAttributed ?? null,
 			childRoles: last.children?.roles ?? null,
 			childCost: last.children?.cost ?? null,
+			// Outcome classes, transfers, extra copies and undelivered results, by run id.
+			delivery: last.delivery ?? null,
 		},
 		allAttempts: sumAttempts(attempts),
 		checkout: { path: cli.checkout, commit: checkout.commit },

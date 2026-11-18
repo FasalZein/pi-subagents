@@ -14,6 +14,7 @@ import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { classifyAttempt, observe } from "./attempt.mjs";
 import { acquireClaim, holdsClaim, releaseClaim } from "./claim.mjs";
+import { answerParser } from "./record.mjs";
 import { assertPrivateCheckout, checkoutState } from "./run-state.mjs";
 import {
 	createAttemptRoot,
@@ -22,6 +23,7 @@ import {
 	selectProviderModels,
 	settingsFingerprint,
 } from "./sample-home.mjs";
+import recon from "./scenarios/recon/scenario.mjs";
 import { classifySessions, parseJsonlStrict } from "./session-evidence.mjs";
 
 // Every folder of this file lives below one private scratch base, removed at the end.
@@ -192,7 +194,7 @@ const readCall = (path) => ({
 		],
 	},
 });
-const toolResult = (toolName, isError = false) => ({
+const toolResult = (toolName, isError = false, details = undefined) => ({
 	type: "message",
 	message: {
 		role: "toolResult",
@@ -200,27 +202,33 @@ const toolResult = (toolName, isError = false) => ({
 		toolName,
 		isError,
 		content: [],
+		details,
 	},
 });
+// The child's working folder: the fixture copy. A read path resolves against it.
+const WORK = "/r/work";
+const RUN = "run-1";
 const childSession = (
 	stopReasons,
 	{ text = `CODE WORD: ${CODE}`, read = "note.txt" } = {},
 ) => ({
 	file: "/r/c.jsonl",
 	events: [
+		{ type: "session", cwd: WORK },
 		{
 			type: "custom",
 			customType: "pi-subagents_launch_metadata",
-			data: { agent: "reader" },
+			data: { agent: "reader", name: "reader-1" },
 		},
 		...(read ? [readCall(read), toolResult("read")] : []),
 		...stopReasons.map((s) => reply(s, text)),
 	],
 });
-const delivery = (text) => ({
+const delivery = (text, runId = RUN) => ({
 	type: "custom_message",
 	customType: "subagent_result",
 	content: text,
+	details: { id: runId },
 });
 const CLI = { checkout: "/c", model: "p/m", thinking: "high" };
 const SCENARIO = {
@@ -247,10 +255,16 @@ const probes = [
 		tools: [{ name: "subagent_done", path: "/c/src/d.ts" }],
 	},
 ];
-const parentEvents = (delivered = `CODE WORD: ${CODE}`) => [
+const parentEvents = (delivered = `CODE WORD: ${CODE}`, runId = RUN) => [
 	reply("toolUse", "", ["subagent"]),
-	toolResult("subagent"),
-	...(delivered ? [delivery(delivered)] : []),
+	toolResult("subagent", false, {
+		status: "started",
+		children: [
+			{ id: RUN, name: "reader-1" },
+			{ id: "run-2", name: "reader-2" },
+		],
+	}),
+	...(delivered ? [delivery(delivered, runId)] : []),
 	reply("stop", `ANSWER: ${CODE}`),
 ];
 const evidence = (child, extra = {}) => ({
@@ -263,13 +277,23 @@ const evidence = (child, extra = {}) => ({
 	malformed: 0,
 	...extra,
 });
+// An answered observation scores the parent's last reply unless a test names another.
 const classify = (ev, observed = { kind: "answered", answer: CODE }) =>
 	classifyAttempt({
-		observed,
+		observed:
+			observed.kind === "answered"
+				? {
+						answeredAt: (ev.parent?.events ?? []).findLastIndex(
+							(e) => e.message?.role === "assistant",
+						),
+						...observed,
+					}
+				: observed,
 		evidence: ev,
 		cli: CLI,
 		scenario: SCENARIO,
 		checkoutChanged: false,
+		workDir: WORK,
 	});
 
 test("[F6][F7] classification: pass needs the child; missing load proof is infra", () => {
@@ -320,6 +344,34 @@ test("[F6] a pass needs the child's own result, from its read of the fixture, de
 		"wrong-delegation",
 	);
 	assert.equal(verdict(childSession(["stop"])), "pass");
+});
+
+test("[review] a read counts only for the fixture path, not for a file of the same name elsewhere", () => {
+	const verdict = (read) =>
+		classify(evidence(childSession(["stop"], { read }))).verdict;
+	assert.equal(verdict("/etc/note.txt"), "wrong-delegation");
+	assert.equal(verdict("archive/note.txt"), "wrong-delegation");
+	assert.equal(verdict("../note.txt"), "wrong-delegation");
+	assert.equal(verdict(`${WORK}/note.txt`), "pass");
+	assert.equal(verdict("./note.txt"), "pass");
+	// Pi strips a leading @ from a read path; the decoy stays rejected.
+	assert.equal(verdict("@note.txt"), "pass");
+	assert.equal(verdict("@archive/note.txt"), "wrong-delegation");
+});
+
+test("[review] a delivered result counts only when it carries the child's own run id", () => {
+	const verdict = (events) =>
+		classify(
+			evidence(childSession(["stop"]), {
+				parent: { file: "/r/p.jsonl", events },
+			}),
+		).verdict;
+	// The right text arrives, but bound to another run: not this child's handover.
+	assert.equal(
+		verdict(parentEvents(`CODE WORD: ${CODE}`, "run-2")),
+		"wrong-delegation",
+	);
+	assert.equal(verdict(parentEvents(`CODE WORD: ${CODE}`, undefined)), "pass");
 });
 
 test("[F6] the expected result matches as a whole token, not as a substring", () => {
@@ -390,6 +442,44 @@ test("[F8] every session file enters the join: an empty or header-only file with
 	}
 });
 
+test("[guard] two launched children with one launch name end the attempt as infra", () => {
+	const events = parentEvents();
+	events[1] = toolResult("subagent", false, {
+		status: "started",
+		children: [
+			{ id: RUN, name: "reader-1" },
+			{ id: "run-2", name: "reader-1" },
+		],
+	});
+	const result = classify(
+		evidence(childSession(["stop"]), {
+			parent: { file: "/r/p.jsonl", events },
+		}),
+	);
+	assert.deepEqual(
+		[result.kind, result.infraReason],
+		["infra", "two launched children share a launch name"],
+	);
+});
+
+test("[T02b-3] on a timeout no carrier is available to a scored answer; transport stays", () => {
+	// A correct carrier, then a progress reply; observation ended with a timeout.
+	const result = classify(evidence(childSession(["stop"])), {
+		kind: "verdict",
+		verdict: "timeout",
+	});
+	assert.deepEqual(
+		[
+			result.verdict,
+			result.delivery.answeredAt,
+			result.delivery.runs[0].availableToAnswer,
+			result.delivery.transfers,
+			result.delivery.carrierEvents.length,
+		],
+		["timeout", null, false, 1, 1],
+	);
+});
+
 test("[F11] a child provider error makes the attempt a counted provider error", () => {
 	assert.equal(
 		classify(evidence(childSession(["error", "stop"]))).kind,
@@ -432,14 +522,23 @@ test("[F12] the deadline counts from submission and wins over a late answer", as
 		deadlineMs,
 	});
 	assert.deepEqual(late, { kind: "verdict", verdict: "timeout" });
+	// The settle window passes on an injected clock; the pane counts as alive.
+	let now = Date.now();
 	const inTime = await observe({
 		parent,
 		parentFile,
 		root,
-		submittedAt: Date.now(),
+		submittedAt: now,
 		deadlineMs,
+		clock: {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+			alive: () => true,
+		},
 	});
-	assert.deepEqual(inTime, { kind: "answered", answer: "w" });
+	assert.deepEqual(inTime, { kind: "answered", answer: "w", answeredAt: 0 });
 });
 
 test("[premature] a waiting parent stays under observation while a launched child has not ended", async () => {
@@ -492,7 +591,101 @@ test("[premature] a waiting parent stays under observation while a launched chil
 	});
 	// Once the child has ended, the quiet rule applies again.
 	writeFileSync(childFile, jsonl(childSession(["stop"]).events));
-	assert.deepEqual(await run(fakeClock()), { kind: "answered", answer: null });
+	assert.deepEqual(await run(fakeClock()), {
+		kind: "answered",
+		answer: null,
+		answeredAt: 2,
+	});
+});
+
+const observeRecon = async ({ full, deadlineMs = 600_000 }) => {
+	const root = scratch();
+	const probeDir = join(root, "probes");
+	mkdirSync(probeDir);
+	const parentFile = join(root, "p.jsonl");
+	const jsonl = (events) =>
+		`${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+	const facts = recon.expectedFacts;
+	const line = (key) => `${key}: ${facts[key]}`;
+	const launched = [
+		reply("toolUse", "", ["subagent"]),
+		toolResult("subagent", false, { status: "started", children: [] }),
+	];
+	const writeChildren = (ended) => {
+		for (let i = 1; i <= 6; i++) {
+			const file = join(root, `c${i}.jsonl`);
+			writeFileSync(
+				join(probeDir, `c${i}.json`),
+				JSON.stringify({ sessionFile: file, agent: `bench-recon-${i}` }),
+			);
+			writeFileSync(
+				file,
+				jsonl(childSession(i <= ended ? ["stop"] : []).events),
+			);
+		}
+	};
+	// The first child delivered; the waiting parent printed one keyed fact and stopped its turn.
+	writeChildren(1);
+	const partial = [...launched, reply("stop", line("FACT-1"))];
+	const carriers = [2, 3, 4, 5, 6].map((i) => ({
+		type: "custom_message",
+		customType: "subagent_result",
+		content: line(`FACT-${i}`),
+		details: { id: `run-${i}` },
+	}));
+	writeFileSync(parentFile, jsonl(partial));
+	let now = Date.now();
+	let sleeps = 0;
+	const clock = {
+		now: () => now,
+		sleep: async (ms) => {
+			now += ms;
+			sleeps += 1;
+			// The remaining five children end and their carriers arrive; the parent's
+			// model request for them stays silent longer than the quiet window.
+			if (sleeps === 20) {
+				writeChildren(6);
+				writeFileSync(parentFile, jsonl([...partial, ...carriers]));
+			}
+			// Then the parent replies with all seven keys.
+			if (sleeps === 40 && full)
+				writeFileSync(
+					parentFile,
+					jsonl([
+						...partial,
+						...carriers,
+						reply("stop", Object.keys(facts).map(line).join("\n")),
+					]),
+				);
+		},
+		alive: () => true,
+	};
+	return observe({
+		parent: {},
+		parentFile,
+		root,
+		probeDir,
+		submittedAt: now,
+		deadlineMs,
+		parseAnswer: answerParser(recon),
+		clock,
+	});
+};
+
+test("[T02b-1] a partial progress reply does not end observation; the final settled reply is scored", async () => {
+	// Entries: launch call, launch result, partial reply, 5 carriers, full reply at index 8.
+	assert.deepEqual(await observeRecon({ full: true }), {
+		kind: "answered",
+		answer: recon.expectedFacts,
+		answeredAt: 8,
+	});
+});
+
+test("[T02b-1] a parent that never replies after its last carrier runs to the deadline", async () => {
+	assert.deepEqual(await observeRecon({ full: false, deadlineMs: 120_000 }), {
+		kind: "verdict",
+		verdict: "timeout",
+	});
 });
 
 test("[F14] a checkout with an untracked file is refused", () => {
