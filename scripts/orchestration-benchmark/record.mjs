@@ -299,21 +299,105 @@ export function terminalAnswer(events) {
 	return { terminal: true, answer: match ? match[1] : null };
 }
 
+function textOf(content) {
+	if (typeof content === "string") return content;
+	return (content ?? [])
+		.map((part) => (part?.type === "text" ? part.text : ""))
+		.join("\n");
+}
+
+const baseName = (path) =>
+	String(path ?? "")
+		.split("/")
+		.at(-1);
+
+/**
+ * Whether a child met the contract its scenario declares for its role: it read
+ * every named fixture file with a successful read call, and its final reply
+ * contains the result it must return. Only entries after its own launch marker count.
+ * @param {object[]} events - the child's session
+ * @param {{returns: string, reads: string[]}} contract
+ * @returns {{read: boolean, returned: boolean}}
+ */
+export function childFulfils(events, contract) {
+	const own = events.slice(Math.max(0, launchBoundary(events)));
+	const okResults = new Set(
+		own
+			.filter(
+				(e) =>
+					e?.type === "message" &&
+					e.message?.role === "toolResult" &&
+					!e.message.isError,
+			)
+			.map((e) => e.message.toolCallId),
+	);
+	const readFiles = assistantMessages(own).flatMap((message) =>
+		(message.content ?? [])
+			.filter(
+				(part) =>
+					part.type === "toolCall" &&
+					part.name === "read" &&
+					okResults.has(part.id),
+			)
+			.map((part) => baseName(part.arguments?.path)),
+	);
+	const last = assistantMessages(own).at(-1);
+	return {
+		read: contract.reads.every((file) => readFiles.includes(file)),
+		returned:
+			last?.stopReason === "stop" &&
+			textOf(last.content).includes(contract.returns),
+	};
+}
+
+/**
+ * Whether a text reached the parent before its terminal reply, through a
+ * delivery entry (a custom message) or a result of a tool the parent may call.
+ */
+export function deliveredToParent(events, text, parentToolAllowlist) {
+	let lastAssistant = -1;
+	events.forEach((e, index) => {
+		if (e?.type === "message" && e.message?.role === "assistant")
+			lastAssistant = index;
+	});
+	return events.slice(0, Math.max(0, lastAssistant)).some((e) => {
+		if (e?.type === "custom_message") return textOf(e.content).includes(text);
+		if (e?.type !== "message") return false;
+		const { role, toolName, content } = e.message ?? {};
+		const viaTool =
+			role === "toolResult" && parentToolAllowlist.includes(toolName);
+		return (role === "custom" || viaTool) && textOf(content).includes(text);
+	});
+}
+
 /**
  * Verdict of a finished attempt. The answer must be right AND the work must have
  * gone through exactly the expected children, with the parent calling only the
- * tools the scenario allows.
+ * tools the scenario allows, AND every child must have produced the result its
+ * role declares (scenario.childResults) and that result must have reached the parent.
  * @param {{answer: string | null, childRoles: string[], parentTools: string[],
+ *   childOutcomes: Array<{read: boolean, returned: boolean, delivered: boolean}>,
  *   scenario: {expectedAnswer: string, expectedChildRoles: string[], parentToolAllowlist: string[]}}} input
  */
-export function scoreAttempt({ answer, childRoles, parentTools, scenario }) {
+export function scoreAttempt({
+	answer,
+	childRoles,
+	parentTools,
+	childOutcomes,
+	scenario,
+}) {
 	if (answer !== scenario.expectedAnswer) return "wrong-answer";
 	const sameChildren =
 		canonicalJson(childRoles) === canonicalJson(scenario.expectedChildRoles);
 	const allowed = parentTools.every((name) =>
 		scenario.parentToolAllowlist.includes(name),
 	);
-	return sameChildren && allowed ? "pass" : "wrong-delegation";
+	const childrenDelivered = childOutcomes.every(
+		(child) => child.read && child.returned && child.delivered,
+	);
+	return sameChildren && allowed && childrenDelivered
+		? "pass"
+		: "wrong-delegation";
 }
 
 /** True when the last parent request ended with a provider error. */

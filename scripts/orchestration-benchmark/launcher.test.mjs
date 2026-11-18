@@ -174,7 +174,32 @@ const reply = (stopReason, text, toolCalls = []) => ({
 		],
 	},
 });
-const childSession = (stopReasons) => ({
+const CODE = "lantern-9";
+const readCall = (path) => ({
+	type: "message",
+	message: {
+		role: "assistant",
+		stopReason: "toolUse",
+		usage: u(10, 0.01),
+		content: [
+			{ type: "toolCall", id: "t1", name: "read", arguments: { path } },
+		],
+	},
+});
+const toolResult = (toolName, isError = false) => ({
+	type: "message",
+	message: {
+		role: "toolResult",
+		toolCallId: "t1",
+		toolName,
+		isError,
+		content: [],
+	},
+});
+const childSession = (
+	stopReasons,
+	{ text = `CODE WORD: ${CODE}`, read = "note.txt" } = {},
+) => ({
 	file: "/r/c.jsonl",
 	events: [
 		{
@@ -182,13 +207,20 @@ const childSession = (stopReasons) => ({
 			customType: "pi-subagents_launch_metadata",
 			data: { agent: "reader" },
 		},
-		...stopReasons.map((s) => reply(s, "x")),
+		...(read ? [readCall(read), toolResult("read")] : []),
+		...stopReasons.map((s) => reply(s, text)),
 	],
+});
+const delivery = (text) => ({
+	type: "custom_message",
+	customType: "subagent_result",
+	content: text,
 });
 const CLI = { checkout: "/c", model: "p/m", thinking: "high" };
 const SCENARIO = {
-	expectedAnswer: "w",
+	expectedAnswer: CODE,
 	expectedChildRoles: ["reader"],
+	childResults: { reader: { returns: CODE, reads: ["note.txt"] } },
 	parentToolAllowlist: ["subagent"],
 	parentLoadTool: "subagent",
 	childLoadTool: "subagent_done",
@@ -209,11 +241,14 @@ const probes = [
 		tools: [{ name: "subagent_done", path: "/c/src/d.ts" }],
 	},
 ];
+const parentEvents = (delivered = `CODE WORD: ${CODE}`) => [
+	reply("toolUse", "", ["subagent"]),
+	toolResult("subagent"),
+	...(delivered ? [delivery(delivered)] : []),
+	reply("stop", `ANSWER: ${CODE}`),
+];
 const evidence = (child, extra = {}) => ({
-	parent: {
-		file: "/r/p.jsonl",
-		events: [reply("toolUse", "", ["subagent"]), reply("stop", "ANSWER: w")],
-	},
+	parent: { file: "/r/p.jsonl", events: parentEvents() },
 	children: child ? [child] : [],
 	unattributed: [],
 	parentProbes: 1,
@@ -221,7 +256,7 @@ const evidence = (child, extra = {}) => ({
 	malformed: 0,
 	...extra,
 });
-const classify = (ev, observed = { kind: "answered", answer: "w" }) =>
+const classify = (ev, observed = { kind: "answered", answer: CODE }) =>
 	classifyAttempt({
 		observed,
 		evidence: ev,
@@ -243,6 +278,43 @@ test("[F6][F7] classification: pass needs the child; missing load proof is infra
 	);
 });
 
+test("[F6] a pass needs the child's own result, from its read of the fixture, delivered to the parent", () => {
+	const verdict = (child, events = parentEvents()) =>
+		classify(evidence(child, { parent: { file: "/r/p.jsonl", events } }))
+			.verdict;
+	// The child returns a wrong answer; the parent still answers right.
+	assert.equal(
+		verdict(
+			childSession(["stop"], { text: "CODE WORD: x" }),
+			parentEvents("CODE WORD: x"),
+		),
+		"wrong-delegation",
+	);
+	// The child never read the fixture, or read another file.
+	assert.equal(
+		verdict(childSession(["stop"], { read: null })),
+		"wrong-delegation",
+	);
+	assert.equal(
+		verdict(childSession(["stop"], { read: "other.txt" })),
+		"wrong-delegation",
+	);
+	// The child's right result never reached the parent.
+	assert.equal(
+		verdict(childSession(["stop"]), parentEvents(null)),
+		"wrong-delegation",
+	);
+	// It reached the parent only after the parent's answer.
+	assert.equal(
+		verdict(childSession(["stop"]), [
+			...parentEvents(null),
+			delivery(`CODE WORD: ${CODE}`),
+		]),
+		"wrong-delegation",
+	);
+	assert.equal(verdict(childSession(["stop"])), "pass");
+});
+
 test("[F8] probes and session files match one to one: either side alone is infra, not a verdict", () => {
 	// A launched child has a probe, but its session file is absent.
 	assert.deepEqual(
@@ -250,20 +322,26 @@ test("[F8] probes and session files match one to one: either side alone is infra
 		["infra", "probe without its session file"],
 	);
 	// A probe names a session file outside the attempt root.
-	const outside = [probes[0], probes[1], { ...probes[1], sessionFile: "/x/c.jsonl" }];
+	const outside = [
+		probes[0],
+		probes[1],
+		{ ...probes[1], sessionFile: "/x/c.jsonl" },
+	];
 	assert.equal(
 		classify(evidence(childSession(["stop"]), { probes: outside })).infraReason,
 		"probe without its session file",
 	);
 	// Two probes claim one session file.
 	assert.equal(
-		classify(evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }))
-			.infraReason,
+		classify(
+			evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }),
+		).infraReason,
 		"probe without its session file",
 	);
 	// A child session file without its probe.
 	assert.equal(
-		classify(evidence(childSession(["stop"]), { probes: [probes[0]] })).infraReason,
+		classify(evidence(childSession(["stop"]), { probes: [probes[0]] }))
+			.infraReason,
 		"load probe missing",
 	);
 });
@@ -286,7 +364,8 @@ test("[F13] a model or thinking level other than the request is infra, not a mea
 test("[F10] attempt metrics keep requests and child cost of the attempt", () => {
 	const result = classify(evidence(childSession(["error", "stop"])));
 	assert.equal(result.parent.all.requests, 2);
-	assert.equal(result.children.cost, 0.02);
+	// Three child requests: the read call, the error and the final reply.
+	assert.equal(result.children.cost, 0.03);
 	assert.equal(result.children.errorRequests, 1);
 });
 

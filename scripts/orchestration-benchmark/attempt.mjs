@@ -6,10 +6,13 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+	childFulfils,
+	deliveredToParent,
 	endsWithProviderError,
 	loadEvidence,
 	parentToolCalls,
 	scoreAttempt,
+	summarizeChild,
 	summarizeChildren,
 	summarizeParent,
 	terminalAnswer,
@@ -188,13 +191,33 @@ export function classifyAttempt({
 			answer: null,
 			...metrics,
 		};
+	// A child of a role without a declared result can never support a pass.
+	const childOutcomes = evidence.children.map((child) => {
+		const contract = scenario.childResults[summarizeChild(child.events)?.role];
+		if (!contract) return { read: false, returned: false, delivered: false };
+		return {
+			...childFulfils(child.events, contract),
+			delivered: deliveredToParent(
+				evidence.parent.events,
+				contract.returns,
+				scenario.parentToolAllowlist,
+			),
+		};
+	});
 	const verdict = scoreAttempt({
 		answer: observed.answer,
 		childRoles: children.roles,
 		parentTools: parentToolCalls(evidence.parent.events),
+		childOutcomes,
 		scenario,
 	});
-	return { kind: "verdict", verdict, answer: observed.answer, ...metrics };
+	return {
+		kind: "verdict",
+		verdict,
+		answer: observed.answer,
+		childOutcomes,
+		...metrics,
+	};
 }
 
 function sanitize(result) {

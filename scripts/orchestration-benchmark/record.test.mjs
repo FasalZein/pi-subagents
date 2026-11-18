@@ -247,9 +247,21 @@ const SCENARIO = {
 };
 
 test("[F6] a right answer passes only through exactly the expected children and allowed parent tools", () => {
-	const score = (childRoles, parentTools, answer = "w") =>
-		scoreAttempt({ answer, childRoles, parentTools, scenario: SCENARIO });
+	const delivered = { read: true, returned: true, delivered: true };
+	const score = (childRoles, parentTools, answer = "w", outcome = delivered) =>
+		scoreAttempt({
+			answer,
+			childRoles,
+			parentTools,
+			childOutcomes: childRoles.map(() => outcome),
+			scenario: SCENARIO,
+		});
 	assert.equal(score(["reader"], ["subagent"]), "pass");
+	for (const missing of ["read", "returned", "delivered"])
+		assert.equal(
+			score(["reader"], ["subagent"], "w", { ...delivered, [missing]: false }),
+			"wrong-delegation",
+		);
 	assert.equal(score([], ["read"]), "wrong-delegation");
 	assert.equal(score(["reader"], ["subagent", "read"]), "wrong-delegation");
 	assert.equal(score(["reader", "reader"], ["subagent"]), "wrong-delegation");

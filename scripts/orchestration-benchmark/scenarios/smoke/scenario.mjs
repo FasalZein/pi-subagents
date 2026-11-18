@@ -6,6 +6,14 @@ export default {
 	expectedAnswer: "lantern-4127",
 	// The answer must come through exactly these children, in this order.
 	expectedChildRoles: ["bench-smoke-reader"],
+	// What each child role must do: read these fixture files and return this result,
+	// which must reach the parent before its answer.
+	childResults: {
+		"bench-smoke-reader": {
+			returns: "lantern-4127",
+			reads: ["smoke-note.txt"],
+		},
+	},
 	// The parent may call only these tools; a direct read is wrong delegation.
 	parentToolAllowlist: ["subagent"],
 	// Tools whose source file proves that the extension loaded from the checkout.

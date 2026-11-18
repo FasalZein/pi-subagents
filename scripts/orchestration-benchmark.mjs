@@ -132,6 +132,13 @@ async function loadScenario(name) {
 	const definition = (
 		await import(pathToFileURL(join(dir, "scenario.mjs")).href)
 	).default;
+	for (const role of definition.expectedChildRoles) {
+		const contract = definition.childResults?.[role];
+		if (typeof contract?.returns !== "string" || !Array.isArray(contract.reads))
+			throw new BenchError(
+				`scenario ${name} declares no result for child ${role}`,
+			);
+	}
 	return {
 		...definition,
 		dir,
