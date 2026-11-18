@@ -32,6 +32,33 @@ function git(dir, args) {
  * The checkout must be clean, untracked files included (ignored files such as
  * node_modules aside): then its commit names all source it can import.
  */
+/**
+ * The measured checkout must be private: a linked git worktree with a detached
+ * HEAD, so no branch work happens in it. Checked once at start; checkoutState
+ * still guards cleanliness and the commit around each attempt.
+ */
+export function assertPrivateCheckout(dir) {
+	const gitDir = git(dir, ["rev-parse", "--absolute-git-dir"]);
+	const commonDir = git(dir, [
+		"rev-parse",
+		"--path-format=absolute",
+		"--git-common-dir",
+	]);
+	if (gitDir === commonDir)
+		throw new BenchError(
+			"--checkout must be a linked worktree (git worktree add --detach), not a main checkout",
+		);
+	let onBranch = true;
+	try {
+		git(dir, ["symbolic-ref", "-q", "HEAD"]);
+	} catch {
+		onBranch = false;
+	}
+	if (onBranch)
+		throw new BenchError("--checkout must have a detached HEAD, not a branch");
+	return checkoutState(dir);
+}
+
 export function checkoutState(dir) {
 	const commit = git(dir, ["rev-parse", "HEAD"]);
 	const status = git(dir, ["status", "--porcelain", "--untracked-files=all"]);

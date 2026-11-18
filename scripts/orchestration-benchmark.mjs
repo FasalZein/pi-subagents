@@ -3,13 +3,29 @@
  * Orchestration benchmark launcher: runs one sample and writes one JSON record.
  *
  *   PI_SUBAGENT_LIVE_MODEL=<provider/model:thinking> node scripts/orchestration-benchmark.mjs \\
- *     --checkout <clean git checkout> --scenario <name> --rep <n> [--thinking <level>] [--out <dir>]
+ *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>]
  *
  * The thinking level is required: as a suffix of the model ref or with --thinking.
  * The model comes only from the environment, so no model ref lands in the repository.
+ * Records always go to ~/.pi/artifacts/pi-subagents/benchmark, outside any repository.
  * A sample file with a valid checksum and a verdict is final; a rerun does nothing.
  * Only a sample that ended without a verdict for an infrastructure reason runs again.
- * One job at a time owns a sample key (exclusive claim).
+ *
+ * Preconditions (the launcher checks the first; the operator owns the others):
+ * - The measured checkout is a private linked worktree with a detached HEAD and no
+ *   changes (git worktree add --detach <dir> <rev>). An archive copy is refused:
+ *   the sample key needs a git commit.
+ * - Nothing else touches that checkout while a sample runs.
+ * - One launcher at a time per sample key (the exclusive claim covers normal contention only).
+ *
+ * Known limits (accepted for version 1):
+ * - F4: two launchers that create one claim at the same moment can both start the sample.
+ * - F14: a checkout switched and restored during a run can publish other code under its commit.
+ * - F13: provider settings edited between the fingerprint read and the launch read mix inputs.
+ * - F2: a hard kill during root removal can leave credentials in a root without its owner tag.
+ * - F12: an answer written in the last poll interval before the deadline counts as a timeout.
+ * - F11: a child provider error can cause both a native recovery and a harness retry.
+ * - Revisit all of these before parallel benchmark jobs run on one checkout.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -44,8 +60,8 @@ import {
 	totals,
 } from "./orchestration-benchmark/record.mjs";
 import {
+	assertPrivateCheckout,
 	BenchError,
-	checkoutState,
 	cleanups,
 } from "./orchestration-benchmark/run-state.mjs";
 import {
@@ -60,7 +76,7 @@ import { stopServer } from "./orchestration-benchmark/tmux-parent.mjs";
 const SCRIPTS_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPTS_DIR, "..");
 const BENCH_DIR = join(SCRIPTS_DIR, "orchestration-benchmark");
-const DEFAULT_OUT = join(
+const OUT_DIR = join(
 	homedir(),
 	".pi",
 	"artifacts",
@@ -88,7 +104,6 @@ function parseCli() {
 			scenario: { type: "string" },
 			rep: { type: "string" },
 			thinking: { type: "string" },
-			out: { type: "string", default: DEFAULT_OUT },
 		},
 	});
 	const live = process.env.PI_SUBAGENT_LIVE_MODEL?.trim();
@@ -112,17 +127,10 @@ function parseCli() {
 	}
 	if (!/^[\w.-]+$/.test(values.scenario))
 		throw new BenchError("--scenario must be a plain name");
-	const out = resolve(values.out);
-	if (`${out}/`.startsWith(`${REPO_ROOT}/`))
-		throw new BenchError("--out must be outside the repository");
-	return {
-		checkout: realpathSync(resolve(values.checkout)),
-		scenario: values.scenario,
-		rep,
-		model,
-		thinking,
-		out,
-	};
+	const checkout = realpathSync(resolve(values.checkout));
+	if (checkout === realpathSync(REPO_ROOT))
+		throw new BenchError("--checkout must not be the harness repository");
+	return { checkout, scenario: values.scenario, rep, model, thinking };
 }
 
 async function loadScenario(name) {
@@ -198,7 +206,7 @@ async function main() {
 	const recovered = recoverAbandonedRoots(stopServer);
 	if (recovered.length)
 		console.log(`removed ${recovered.length} abandoned attempt folder(s)`);
-	const checkout = checkoutState(cli.checkout);
+	const checkout = assertPrivateCheckout(cli.checkout);
 	const provider = cli.model.split("/")[0];
 	const piVersion = execFileSync("pi", ["--version"], {
 		encoding: "utf8",
@@ -223,8 +231,8 @@ async function main() {
 		scenario: scenario.name,
 		rep: cli.rep,
 	});
-	mkdirSync(cli.out, { recursive: true, mode: 0o700 });
-	const samplePath = join(cli.out, sampleFileName(key));
+	mkdirSync(OUT_DIR, { recursive: true, mode: 0o700 });
+	const samplePath = join(OUT_DIR, sampleFileName(key));
 	const markerPath = `${samplePath}.claim`;
 	const readSample = () =>
 		existsSync(samplePath) ? readFileSync(samplePath, "utf8") : null;

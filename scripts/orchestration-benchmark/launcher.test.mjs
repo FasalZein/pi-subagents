@@ -14,7 +14,7 @@ import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { classifyAttempt, observe } from "./attempt.mjs";
 import { acquireClaim, holdsClaim, releaseClaim } from "./claim.mjs";
-import { checkoutState } from "./run-state.mjs";
+import { assertPrivateCheckout, checkoutState } from "./run-state.mjs";
 import {
 	createAttemptRoot,
 	recoverAbandonedRoots,
@@ -468,4 +468,23 @@ test("[F14] a checkout with an untracked file is refused", () => {
 	assert.ok(checkoutState(repo).commit);
 	writeFileSync(join(repo, "new-module.ts"), "y");
 	assert.throws(() => checkoutState(repo), /untracked/);
+});
+
+test("[guard] only a clean linked worktree with a detached HEAD is measured", () => {
+	const repo = scratch();
+	const git = (...args) =>
+		execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+	git("init", "-q");
+	writeFileSync(join(repo, "a.ts"), "x");
+	git("add", ".");
+	git("-c", "user.email=b@b", "-c", "user.name=b", "commit", "-qm", "a");
+	assert.throws(() => assertPrivateCheckout(repo), /linked worktree/);
+	const branchTree = join(scratch(), "b");
+	git("worktree", "add", "-q", "-b", "side", branchTree);
+	assert.throws(() => assertPrivateCheckout(branchTree), /detached HEAD/);
+	const detached = join(scratch(), "d");
+	git("worktree", "add", "-q", "--detach", detached);
+	assert.ok(assertPrivateCheckout(detached).commit);
+	writeFileSync(join(detached, "new.ts"), "y");
+	assert.throws(() => assertPrivateCheckout(detached), /untracked/);
 });
