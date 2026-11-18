@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
+import { reserveRunId } from "./result-files.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -36,8 +37,7 @@ import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import {
 	createSurface,
-	getMuxBackend,
-	muxBackendAdapter,
+	currentMuxAdapter,
 	muxSetupHint,
 	resolveHerdrPlacementPolicy,
 	resolveZellijPlacementPolicy,
@@ -99,6 +99,8 @@ export interface ResumeServiceRuntime {
 
 export interface ResumeSessionInput {
 	sessionFile: string;
+	/** The parent session's results folder; the resume reserves its run id there (D13). */
+	resultsDir: string;
 	task?: string;
 	name?: string;
 	agent?: string;
@@ -450,7 +452,7 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_PACKAGE_DIR = "";
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
-	const id = Math.random().toString(16).slice(2, 10);
+	const id = reserveRunId(input.resultsDir).runId;
 	const running: RunningSubagent = {
 		id,
 		name,
@@ -508,13 +510,10 @@ async function resumeSubagentSessionWithoutWidth(
 		});
 	} else {
 		const surfaceName = invocationMetadata?.sessionTitle ?? displayName;
-		const backend = getMuxBackend();
-		const herdrContext =
-			backend === "herdr"
-				? {
-						policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT),
-					}
-				: undefined;
+		const adapter = currentMuxAdapter();
+		const herdrContext = adapter?.resolveHerdrPlacementPolicy
+			? { policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT) }
+			: undefined;
 		const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
 		const configuredZellijPolicy = resolveResumeZellijPlacementPolicy(
 			invocationMetadata,
@@ -528,7 +527,7 @@ async function resumeSubagentSessionWithoutWidth(
 						policy: configuredZellijPolicy,
 					}
 				: undefined;
-		const programSession = backend ? await muxBackendAdapter(backend)?.openProgramSession?.() : undefined;
+		const programSession = await adapter?.openProgramSession?.();
 		const ordinarySurface = programSession
 			? undefined
 			: await createSurface(surfaceName, {

@@ -34,6 +34,8 @@ Test layout:
 - Mirror source ownership in tests. Each domain suite must be imported by `test/test.ts`, or `npm test` will not run it.
 - `test/support/` is split by ownership; do not recreate a fat `test/support.ts`. Check the current files with `ls` rather than assuming.
 - Never name split files `part-*`, `chunk-*`, or similar. File names must describe the behavior/domain they test.
+- A test that drives real tmux sets `PI_SUBAGENT_MUX=tmux`: backend detection prefers herdr and cmux, so inside herdr an unpinned test drives herdr.
+- Temp-path assertions compare `realpathSync` paths: on macOS `tmpdir()` is `/var/...` while git and `pwd` report `/private/var/...`.
 
 ## File size and split rules
 
@@ -63,7 +65,7 @@ bunx @biomejs/biome check .
 bunx knip
 ```
 
-`bunx biome` resolves an unrelated npm package named `biome` and exits 0 without checking anything; always use the scoped `@biomejs/biome`. The repo has no `biome.json`, so real Biome reports default-formatting findings across untouched files; compare the touched files against a stash of the baseline rather than expecting a clean run.
+`bunx biome` resolves an unrelated npm package named `biome` and exits 0 without checking anything; always use the scoped `@biomejs/biome`. The repo has no `biome.json`, so default Biome reformats untouched lines; check touched files with `bunx @biomejs/biome check --line-width 120 --indent-style tab <files>`.
 
 Before handoff after structural work, verify file sizes:
 

@@ -327,6 +327,8 @@ exit 1
 		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
 		process.env.PI_SUBAGENT_MUX = "herdr";
 		process.env.PI_SUBAGENT_HERDR_PLACEMENT = "auto";
+		// Forced herdr still needs its pane variable (spec D29).
+		process.env.HERDR_PANE_ID = "w1:p1";
 		try {
 			const launch = await coordinateSubagentLaunch(
 				{
@@ -352,6 +354,7 @@ exit 1
 			else process.env.PATH = originalPath;
 			delete process.env.PI_SUBAGENT_MUX;
 			delete process.env.PI_SUBAGENT_HERDR_PLACEMENT;
+			delete process.env.HERDR_PANE_ID;
 		}
 	});
 

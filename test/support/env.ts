@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, afterEach, before, beforeEach } from "node:test";
 
 export const TRACKED_ENV_KEYS = [
@@ -16,6 +19,7 @@ export const TRACKED_ENV_KEYS = [
 	"FAKE_ZELLIJ_LOG",
 	"FAKE_ZELLIJ_PANE_ID",
 	"FAKE_ZELLIJ_SCREEN",
+	"HERDR_ENV",
 	"HERDR_PANE_ID",
 	"HERDR_TAB_ID",
 	"HERDR_WORKSPACE_ID",
@@ -63,6 +67,13 @@ export const TRACKED_ENV_KEYS = [
 for (const key of Object.keys(process.env)) {
 	if ((key.startsWith("PI_SUBAGENT_") && !key.startsWith("PI_SUBAGENT_LIVE_")) || key === "PI_DENY_TOOLS") delete process.env[key];
 }
+
+// Launch and resume reserve run folders under the artifact storage root, which defaults to the home
+// folder (~/.pi/history), and a Pi child exports that default to its tests. Point it at one temporary
+// folder before the snapshot, so restoreTrackedEnv() returns to it and no test writes under ~/.pi.
+const testArtifactRoot = mkdtempSync(join(tmpdir(), "pi-test-artifacts-"));
+process.env.PI_ARTIFACT_PROJECT_ROOT = testArtifactRoot;
+process.once("exit", () => rmSync(testArtifactRoot, { recursive: true, force: true }));
 
 export const ORIGINAL_ENV = Object.fromEntries(TRACKED_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<
 	(typeof TRACKED_ENV_KEYS)[number],

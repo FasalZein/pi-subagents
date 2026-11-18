@@ -129,6 +129,8 @@ function useFakeHerdr(): { dir: string; logFile: string } {
 	const logFile = writeFakeHerdr(dir);
 	clearMuxRuntimeEnv();
 	process.env.PATH = dir;
+	// Detection needs herdr's own pane variable (spec D29).
+	process.env.HERDR_PANE_ID = "w1:p1";
 	return { dir, logFile };
 }
 

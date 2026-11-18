@@ -13,6 +13,8 @@ export interface PollResult {
 	completionReason?: "context-pressure" | "context-pressure-failure";
 	ping?: { name: string; message: string };
 	errorMessage?: string;
+	/** The completion call as the child's completion tool accepted it (RunFacts.acceptedCall, D12). */
+	acceptedCall?: { toolCallId: string; args: Record<string, unknown> };
 }
 
 /**
@@ -38,6 +40,15 @@ function withDefinedContextUsage(
 	return obj;
 }
 
+function withDefinedAcceptedCall(obj: PollResult, call: unknown): PollResult {
+	if (typeof call !== "object" || call === null) return obj;
+	const { toolCallId, args } = call as { toolCallId?: unknown; args?: unknown };
+	if (typeof toolCallId === "string" && typeof args === "object" && args !== null && !Array.isArray(args)) {
+		obj.acceptedCall = { toolCallId, args: args as Record<string, unknown> };
+	}
+	return obj;
+}
+
 function withDefinedCompletionReason(obj: PollResult, reason: unknown): PollResult {
 	if (reason === "context-pressure") {
 		obj.completionReason = "context-pressure";
@@ -57,9 +68,12 @@ function interpretExitSidecar(data: any): PollResult {
 	const contextTokens = typeof data?.contextTokens === "number" ? data.contextTokens : undefined;
 	const contextWindow = typeof data?.contextWindow === "number" ? data.contextWindow : undefined;
 	const withUsage = (result: PollResult) =>
-		withDefinedCompletionReason(
-			withDefinedContextUsage(withDefinedTokens(result, tokens), contextTokens, contextWindow),
-			data?.completionReason,
+		withDefinedAcceptedCall(
+			withDefinedCompletionReason(
+				withDefinedContextUsage(withDefinedTokens(result, tokens), contextTokens, contextWindow),
+				data?.completionReason,
+			),
+			data?.acceptedCall,
 		);
 	if (data?.type === "ping") {
 		return withUsage({

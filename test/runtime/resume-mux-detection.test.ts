@@ -1,3 +1,4 @@
+import { testResultsDir } from "../support/result-fixtures.ts";
 import { mkdirSync } from "node:fs";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import {
@@ -80,7 +81,7 @@ describe("subagent_resume mux detection", () => {
 				boundarySystemPrompt: false,
 			});
 			const running = await resumeSubagentSession(
-				{ sessionFile, task: "Detection probe." },
+				{ resultsDir: testResultsDir(), sessionFile, task: "Detection probe." },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,

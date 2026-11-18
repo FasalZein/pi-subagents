@@ -1,3 +1,4 @@
+import { testResultsDir } from "../support/result-fixtures.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -173,7 +174,7 @@ describe("verified fan-out apply gate (live processes)", () => {
 		process.env.PI_SUBAGENT_VF_RUN_DIR = runDir;
 		try {
 			await assert.rejects(
-				resumeSubagentSession({ sessionFile, task: "continue" }, {} as never),
+				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, task: "continue" }, {} as never),
 				(error: Error) => {
 					assert.match(error.message, /cannot be resumed/);
 					assert.match(error.message, /worktree was removed after selection/);

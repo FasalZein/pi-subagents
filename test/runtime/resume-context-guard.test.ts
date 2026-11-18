@@ -1,3 +1,4 @@
+import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -118,7 +119,7 @@ describe("context-exhausted resume guard", () => {
 
 			// The overlay controller calls the service directly; the guard is agent-facing only.
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ sessionFile, mode: "background" }, createResumeRuntime() as any),
+				resumeSubagentSession({ resultsDir: testResultsDir(), sessionFile, mode: "background" }, createResumeRuntime() as any),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
@@ -133,7 +134,9 @@ describe("context-exhausted resume guard", () => {
 		const dir = createTestDir();
 		const bin = writeExecutable(dir, "plain-pi", `#!/usr/bin/env bash\nexit 0\n`);
 		const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
+		const originalRoot = process.env.PI_ARTIFACT_PROJECT_ROOT;
 		process.env.PI_SUBAGENT_PI_COMMAND = bin;
+		process.env.PI_ARTIFACT_PROJECT_ROOT = dir;
 		try {
 			const sessionFile = join(dir, "plain-child.jsonl");
 			writeFileSync(
@@ -151,13 +154,15 @@ describe("context-exhausted resume guard", () => {
 			// Without an explicit mode this session has no launch metadata, so the
 			// resume falls back to interactive and would open a real mux pane.
 			const result = await withoutAmbientSpawnGrant(() =>
-				tool.execute("call-2", { sessionFile, mode: "background" }, undefined, undefined, { hasUI: true }),
+				tool.execute("call-2", { sessionFile, mode: "background" }, undefined, undefined, parentToolCtx(dir, { hasUI: true })),
 			);
 
 			assert.equal(result.details.status, "started");
 		} finally {
 			if (originalCommand == null) delete process.env.PI_SUBAGENT_PI_COMMAND;
 			else process.env.PI_SUBAGENT_PI_COMMAND = originalCommand;
+			if (originalRoot == null) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
+			else process.env.PI_ARTIFACT_PROJECT_ROOT = originalRoot;
 		}
 	});
 });

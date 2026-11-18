@@ -222,6 +222,8 @@ function useFakeHerdr(mode = "available"): {
 	writeFileSync(screenFile, "herdr line 1\nherdr line 2\n");
 	clearMuxRuntimeEnv();
 	process.env.PATH = dir;
+	// Detection needs herdr's own pane variable (spec D29).
+	process.env.HERDR_PANE_ID = "w1:p1";
 	process.env.FAKE_HERDR_LOG = logFile;
 	process.env.FAKE_HERDR_MODE = mode;
 	process.env.FAKE_HERDR_SCREEN = screenFile;
@@ -271,6 +273,19 @@ describe("Herdr mux backend", async () => {
 			process.env.TMUX_PANE = "%1";
 
 			assert.equal(getMuxBackend(), "herdr");
+		});
+
+		it("does not detect Herdr from lingering Herdr variables without its pane variable", async () => {
+			useFakeHerdr();
+			delete process.env.HERDR_PANE_ID;
+			process.env.HERDR_ENV = "1";
+			process.env.HERDR_TAB_ID = "w1:t1";
+			process.env.HERDR_WORKSPACE_ID = "w1";
+
+			assert.equal(isHerdrAvailable(), false);
+			assert.equal(getMuxBackend(), null);
+			process.env.PI_SUBAGENT_MUX = "herdr";
+			assert.equal(getMuxBackend(), null);
 		});
 
 		it("uses forced Herdr only when Herdr is actually available", async () => {
