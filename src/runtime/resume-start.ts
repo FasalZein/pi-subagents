@@ -13,6 +13,7 @@ import { getDoneSentinelFile, type PersistedSubagentLaunchMetadata } from "../se
 import { getSubagentTimeoutSidecarPath } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent } from "../types.ts";
 import { resolveResumeHerdrPlacementPolicy, resolveResumeZellijPlacementPolicy } from "./resume-placement.ts";
+import { addResultWarning } from "./run-result.ts";
 
 /**
  * D6: the previous run's exit and timeout verdicts move aside until the resumed child has
@@ -141,7 +142,12 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 	});
 	// Nothing consumes the capsule until the pane receives the command.
 	undo.add(dispose);
-	const surface = ordinarySurface ?? (await programSession!.start(surfaceName, programLaunch, { zellij: zellijContext }));
+	const surface =
+		ordinarySurface ??
+		(await programSession!.start(surfaceName, programLaunch, {
+			zellij: zellijContext,
+			onPlacementWarning: (warning) => addResultWarning(running, warning),
+		}));
 	if (!programSession) {
 		await new Promise<void>((resolve) => setTimeout(resolve, start.shellReadyDelayMs));
 		sendShellCommand(surface, command);
