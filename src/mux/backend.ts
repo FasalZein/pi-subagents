@@ -5,8 +5,8 @@ export type SurfaceSplitDirection = "left" | "right" | "up" | "down";
 /**
  * One terminal multiplexer behind the shared functions of src/mux/ (spec decision D26).
  * Holds only the operations that the shared functions call today.
- * Expand phase (T39): tmux implements it; the other backends keep their
- * branches in core.ts, io.ts and surfaces.ts until T42 moves them here.
+ * Expand phase (T39, T40): tmux, cmux and wezterm implement it; zellij and herdr
+ * keep their branches in core.ts, io.ts and surfaces.ts until a later ticket moves them here.
  */
 export interface MuxBackendAdapter {
 	readonly id: MuxBackend;
