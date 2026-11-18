@@ -22,6 +22,16 @@ const TITLE_LABEL_KEY = "pi-subagents.title";
 /** Exit watches of the direct-program terminals of this process, by terminal address. */
 const exitWatches = new Map<string, LabelExitWatch>();
 
+/**
+ * Stops and forgets every exit watch of this process. Test seam: a watch whose terminal never finished
+ * keeps its `hc events` stream; when a test removes the fake's state the stream drops, and the watch
+ * subscribes again with the env of whatever test runs then (test/test.ts runs every suite in one process).
+ */
+export function stopExitWatchesForTest(): void {
+	for (const watch of exitWatches.values()) watch.stop();
+	exitWatches.clear();
+}
+
 function callerTerminal(): string {
 	const caller = process.env.HC_TERMINAL_ID;
 	if (!caller) throw new Error("HC_TERMINAL_ID not set");

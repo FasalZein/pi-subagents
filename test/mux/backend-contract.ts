@@ -50,6 +50,11 @@ export interface MuxBackendContractFixture {
 	 * Typed text without Enter must not appear. A bare Enter appears as "".
 	 */
 	submittedCommands(stateDir: string, surface: string): string[];
+	/**
+	 * Stops process-wide state that the adapter keeps for the test's surfaces (herdr-core exit watches).
+	 * Runs after each test, before the fake state is removed.
+	 */
+	stopSurfaceWatches?(): void;
 }
 
 /** Fixture of a backend that starts a program as the surface's own process (openProgramSession). */
@@ -105,6 +110,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		});
 
 		afterEach(() => {
+			fixture.stopSurfaceWatches?.();
 			for (const [key, value] of savedEnv) {
 				if (value === undefined) delete process.env[key];
 				else process.env[key] = value;

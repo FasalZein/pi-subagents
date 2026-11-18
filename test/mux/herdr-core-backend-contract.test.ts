@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { herdrCoreBackend } from "../../src/mux/herdr-core.ts";
+import { herdrCoreBackend, stopExitWatchesForTest } from "../../src/mux/herdr-core.ts";
 import { writeExecutable } from "../support/index.ts";
 import { runMuxBackendContract } from "./backend-contract.ts";
 import { FAKE_HC, FAKE_HC_CALLER, seedFakeHcCaller } from "./fake-hc.ts";
@@ -23,6 +23,7 @@ runMuxBackendContract({
 	renamesWorkspace: false,
 	recordedTitles: readRecordedTitles,
 	submittedCommands: readSubmittedCommands,
+	stopSurfaceWatches: stopExitWatchesForTest,
 	directProgram: {
 		checkExit: true,
 		// No shell: the launcher argv is the terminal's program as it is.

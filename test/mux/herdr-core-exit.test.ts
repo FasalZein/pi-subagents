@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { MuxSessionTarget, ProgramLaunch } from "../../src/mux/backend.ts";
-import { herdrCoreBackend } from "../../src/mux/herdr-core.ts";
+import { herdrCoreBackend, stopExitWatchesForTest } from "../../src/mux/herdr-core.ts";
 import { HERDR_CORE_LAUNCH_LABEL_KEY } from "../../src/mux/herdr-core-exit.ts";
 import { writeExecutable } from "../support/index.ts";
 import {
@@ -65,6 +65,8 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 	});
 
 	afterEach(() => {
+		// Before the state goes: a live watch would subscribe again into the next test's fake state.
+		stopExitWatchesForTest();
 		for (const [key, value] of saved) {
 			if (value === undefined) delete process.env[key];
 			else process.env[key] = value;

@@ -1,6 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { writeEnvCapsule } from "../../src/launch/env-capsule.ts";
 import { launchInteractiveSubagent } from "../../src/launch/interactive.ts";
+import { stopExitWatchesForTest } from "../../src/mux/herdr-core.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -298,6 +299,8 @@ function useFakeParent(backend: BackendFake): Fixture {
 		logFile,
 		outFile: probe.outFile,
 		restore: () => {
+			// An herdr-core launch leaves an exit watch; stopped before hc-state goes, it cannot subscribe again into a later test.
+			stopExitWatchesForTest();
 			for (const [key, value] of saved) {
 				if (value === undefined) delete process.env[key];
 				else process.env[key] = value;
