@@ -133,7 +133,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** The closest launchable names to a name that matched none (D23). */
-export function closestAgentNames(name: string, names: readonly string[], count = SUGGESTION_COUNT): string[] {
+function closestAgentNames(name: string, names: readonly string[], count = SUGGESTION_COUNT): string[] {
 	const wanted = name.toLowerCase();
 	return names
 		.map((candidate) => ({ candidate, distance: editDistance(wanted, candidate.toLowerCase()) }))

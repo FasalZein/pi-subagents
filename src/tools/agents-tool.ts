@@ -10,7 +10,7 @@ import { asSubagentToolResult } from "../runtime/state.ts";
 import { SUBAGENT_AGENTS_TOOL_NAME } from "./tool-names.ts";
 
 /** Parse the tool parameters into one request; name and query together are refused. */
-export function parseAgentsRequest(params: { name?: string; query?: string; limit?: number }): AgentsRequest | string {
+function parseAgentsRequest(params: { name?: string; query?: string; limit?: number }): AgentsRequest | string {
 	const name = params.name?.trim();
 	const query = params.query?.trim();
 	if (name && query) return "Pass name or query, not both.";
@@ -19,7 +19,7 @@ export function parseAgentsRequest(params: { name?: string; query?: string; limi
 	return { kind: "count" };
 }
 
-export interface AgentsToolRuntime {
+interface AgentsToolRuntime {
 	/** The agents this session may launch, read from the current files. */
 	listLaunchableAgents(cwd: string): LaunchableAgent[];
 }
