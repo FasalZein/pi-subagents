@@ -30,8 +30,8 @@ import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import {
 	createSurface,
-	currentMuxAdapter,
 	getMuxBackend,
+	muxBackendAdapter,
 	muxSetupHint,
 	resolveHerdrPlacementPolicy,
 	resolveZellijPlacementPolicy,
@@ -511,7 +511,7 @@ async function resumeSubagentSessionWithoutWidth(
 						policy: configuredZellijPolicy,
 					}
 				: undefined;
-		const programSession = await currentMuxAdapter()?.openProgramSession?.();
+		const programSession = backend ? await muxBackendAdapter(backend)?.openProgramSession?.() : undefined;
 		const ordinarySurface = programSession
 			? undefined
 			: await createSurface(surfaceName, {

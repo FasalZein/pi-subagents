@@ -73,6 +73,7 @@ import "./runtime/wait.test.ts";
 import "./runtime/shutdown-policy.test.ts";
 import "./runtime/resume-tool.test.ts";
 import "./runtime/resume-env-deny.test.ts";
+import "./runtime/resume-mux-detection.test.ts";
 import "./runtime/skill-visibility-env.test.ts";
 import "./runtime/resume-placement.test.ts";
 import "./runtime/resume-context-guard.test.ts";

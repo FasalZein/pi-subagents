@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,10 +33,11 @@ export interface MuxBackendContractFixture {
 	/** Titles that the fake recorded from renameCurrentTab and renameWorkspace, in call order. */
 	recordedTitles(stateDir: string): string[];
 	/**
-	 * Required when the adapter has the direct-program ability: the argv that the fake started
-	 * as the surface's own process, or undefined when the surface has none.
+	 * The direct-program abilities that the backend must have. The fixture, not the adapter,
+	 * decides which checks run: a declared ability that the adapter lacks fails the suite,
+	 * and an adapter ability that the fixture does not declare fails it too.
 	 */
-	startedProgram?(stateDir: string, surface: string): string[] | undefined;
+	directProgram?: DirectProgramFixture;
 	/**
 	 * Commands that the fake saw SUBMITTED (typed, then Enter) on one surface, in order.
 	 * Typed text without Enter must not appear. A bare Enter appears as "".
@@ -43,7 +45,20 @@ export interface MuxBackendContractFixture {
 	submittedCommands(stateDir: string, surface: string): string[];
 }
 
+/** Fixture of a backend that starts a program as the surface's own process (openProgramSession). */
+export interface DirectProgramFixture {
+	/** True when the backend must also have checkExit for its direct-program surfaces. */
+	checkExit: boolean;
+	/** The exact argv that the adapter must start for the shell command line. */
+	expectedProgram(command: string): string[];
+	/** The argv that the fake started as the surface's own process, or undefined when the surface has none. */
+	startedProgram(stateDir: string, surface: string): string[] | undefined;
+	/** All text that the fake saw typed into the surface, submitted or not. */
+	typedText(stateDir: string, surface: string): string;
+}
+
 const SCREEN_LINES = 50;
+const PROGRAM_RUN_TIMEOUT_MS = 10_000;
 
 export function runMuxBackendContract(fixture: MuxBackendContractFixture): void {
 	const { adapter } = fixture;
@@ -188,25 +203,39 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			assert.deepEqual(fixture.recordedTitles(stateDir), expected);
 		});
 
-		const openProgramSession = adapter.openProgramSession?.bind(adapter);
-		const checkExit = adapter.checkExit?.bind(adapter);
+		const { directProgram } = fixture;
 
-		if (openProgramSession) {
-			it("starts a program as the surface's own process, with no typed input", async () => {
-				assert.ok(fixture.startedProgram, "a direct-program backend needs startedProgram in its fixture");
-				const session = await openProgramSession();
-				const surface = await session.start("Contract Program", "echo direct-start");
-				const program = fixture.startedProgram(stateDir, surface);
+		it("has exactly the direct-program abilities that its fixture declares", () => {
+			assert.equal(typeof adapter.openProgramSession === "function", directProgram !== undefined, "openProgramSession");
+			assert.equal(typeof adapter.checkExit === "function", directProgram?.checkExit === true, "checkExit");
+		});
+
+		function requireOpenProgramSession(): NonNullable<MuxBackendAdapter["openProgramSession"]> {
+			assert.ok(adapter.openProgramSession, "the fixture declares openProgramSession; the adapter lacks it");
+			return adapter.openProgramSession.bind(adapter);
+		}
+
+		if (directProgram) {
+			it("starts the requested command as the surface's own process, with no typed input", async () => {
+				const command = "echo direct-start";
+				const session = await requireOpenProgramSession()();
+				const surface = await session.start("Contract Program", command);
+				const program = directProgram.startedProgram(stateDir, surface);
 				assert.ok(program, "the surface has no program of its own");
-				assert.ok(program.includes("echo direct-start"), `program does not run the command: ${program}`);
-				assert.deepEqual(fixture.submittedCommands(stateDir, surface), []);
+				assert.deepEqual(program, directProgram.expectedProgram(command));
+				const [file, ...args] = program;
+				const run = spawnSync(file!, args, { encoding: "utf8", timeout: PROGRAM_RUN_TIMEOUT_MS });
+				assert.equal(run.status, 0, run.stderr);
+				assert.equal(run.stdout, "direct-start\n");
+				assert.equal(directProgram.typedText(stateDir, surface), "");
 			});
 		}
 
-		if (checkExit) {
+		if (directProgram?.checkExit) {
 			it("reports no exit while the surface runs and an exit after the awaited close", async () => {
-				assert.ok(openProgramSession, "the exit check needs the session target of a direct-program start");
-				const session = await openProgramSession();
+				assert.ok(adapter.checkExit, "the fixture declares checkExit; the adapter lacks it");
+				const checkExit = adapter.checkExit.bind(adapter);
+				const session = await requireOpenProgramSession()();
 				const surface = await session.start("Contract Exit", "echo exit-check");
 				assert.equal(await checkExit(surface, session.target), null);
 				await adapter.closeSurface(surface, session.target);

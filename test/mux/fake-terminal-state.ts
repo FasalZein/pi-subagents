@@ -64,6 +64,14 @@ export function readRecordedTitles(stateDir: string): string[] {
 	return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
 }
 
+/** All text typed into surface id: the submitted lines, then the pending text. */
+export function readTypedText(stateDir: string, id: string): string {
+	return ["submitted", "pending"]
+		.map((kind) => join(stateDir, `${kind}-${id}`))
+		.map((file) => (existsSync(file) ? readFileSync(file, "utf8") : ""))
+		.join("");
+}
+
 export function readSubmittedCommands(stateDir: string, id: string): string[] {
 	const file = join(stateDir, `submitted-${id}`);
 	if (!existsSync(file)) return [];

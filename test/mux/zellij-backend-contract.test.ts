@@ -1,12 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { zellijBackend } from "../../src/mux/zellij.ts";
+import { getZellijShellCommand } from "../../src/mux/zellij-runtime.ts";
 import { writeExecutable } from "../support/index.ts";
 import { runMuxBackendContract } from "./backend-contract.ts";
 import {
 	FAKE_TERMINAL_STATE_JS,
 	readRecordedTitles,
 	readSubmittedCommands,
+	readTypedText,
 	seedCallerSurface,
 } from "./fake-terminal-state.ts";
 
@@ -110,8 +112,15 @@ runMuxBackendContract({
 	renamesWorkspace: false,
 	recordedTitles: readRecordedTitles,
 	submittedCommands: (stateDir, surface) => readSubmittedCommands(stateDir, stateId(surface)),
-	startedProgram(stateDir, surface) {
-		const path = join(stateDir, `program-${stateId(surface)}`);
-		return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as string[]) : undefined;
+	directProgram: {
+		checkExit: true,
+		// node runs the private launcher script, which starts SHELL (/bin/sh here) with -c and the command.
+		// Only the launcher script comes from the wrapper; the run in the contract proves that it runs the command.
+		expectedProgram: (command) => [process.execPath, "-e", getZellijShellCommand("")[2]!, "/bin/sh", "-c", command],
+		startedProgram(stateDir, surface) {
+			const path = join(stateDir, `program-${stateId(surface)}`);
+			return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as string[]) : undefined;
+		},
+		typedText: (stateDir, surface) => readTypedText(stateDir, stateId(surface)),
 	},
 });
