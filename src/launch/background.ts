@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle } from "../agents/titles.ts";
+import { getSessionResultsDir } from "../artifact-storage.ts";
+import { reserveRunId } from "../runtime/result-files.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -133,7 +135,7 @@ export async function launchBackgroundSubagent(
 	ctx: SubagentLaunchContext,
 	runtime: BackgroundLaunchRuntime,
 ): Promise<RunningSubagent> {
-	const id = Math.random().toString(16).slice(2, 10);
+	const id = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId())).runId;
 	const plan = await buildBackgroundLaunchPlan(params, ctx);
 	const { launch, invocation, denyPatterns } = plan;
 	const { prepared, noSession } = launch;

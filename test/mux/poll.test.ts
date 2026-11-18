@@ -232,6 +232,13 @@ describe("interpretExitSidecar", () => {
 		assert.equal(interpretExitSidecar({ type: "done", completionReason: "bogus" }).completionReason, undefined);
 	});
 
+	it("carries the accepted completion call, so an oversize nested call keeps its payload (D12)", () => {
+		const acceptedCall = { toolCallId: "nested-1", args: { message: "x".repeat(9_000) } };
+		assert.deepEqual(interpretExitSidecar({ type: "ping", name: "W", message: "m", acceptedCall }).acceptedCall, acceptedCall);
+		assert.deepEqual(interpretExitSidecar({ type: "done", acceptedCall }).acceptedCall, acceptedCall);
+		assert.equal("acceptedCall" in interpretExitSidecar({ type: "done", acceptedCall: { toolCallId: 1, args: {} } }), false);
+	});
+
 	it("decodes ping payloads", () => {
 		assert.deepEqual(
 			interpretExitSidecar({

@@ -20,6 +20,7 @@ import {
 	resolveArtifactProjectRoot,
 	resolveSessionArtifactPath,
 	rmSync,
+	tmpdir,
 	writeFileSync,
 } from "../support/index.ts";
 
@@ -171,5 +172,13 @@ describe("child context boundary", () => {
 			buildChildContextBoundarySystemPromptForTest(),
 			"If this session contains a <subagent-boundary> message, treat it as the handoff point from inherited parent context to your active child-subagent task. Follow that boundary message when interpreting prior context and the next user task.",
 		);
+	});
+});
+
+describe("test artifact storage", () => {
+	it("keeps test artifacts in a temporary folder, not under the home folder", () => {
+		const root = getArtifactStorageRoot();
+		assert.ok(root.startsWith(tmpdir()), `test support points artifact storage at a temporary folder: ${root}`);
+		assert.ok(!root.startsWith(join(homedir(), ".pi")), `no test writes under ~/.pi: ${root}`);
 	});
 });

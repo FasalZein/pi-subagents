@@ -89,7 +89,7 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 			"Ask the launching chat for help, send your message there, then close this helper session. " +
 			"The launching chat can later send follow-up instructions to continue this helper. Call it once.",
 		parameters: buildCallerPingParams(),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const sessionFile = process.env.PI_SUBAGENT_SESSION;
 			if (!sessionFile) {
 				throw new Error(
@@ -115,6 +115,8 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 					name: process.env.PI_SUBAGENT_NAME ?? "subagent",
 					message: params.message,
 					outputTokens: deps.getOutputTokens(),
+					// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
+					acceptedCall: { toolCallId, args: params },
 				},
 				{ supersede: true },
 			);
