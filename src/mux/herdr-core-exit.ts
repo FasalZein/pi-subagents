@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { constants } from "node:os";
 import { createInterface } from "node:readline";
 import { execFileAsync } from "./core.ts";
 import type { PollResult } from "./poll.ts";
@@ -10,20 +9,22 @@ export const HC_COMMAND = "hc";
 export const HERDR_CORE_LAUNCH_LABEL_KEY = "pi-subagents.launch";
 const SUBSCRIBE_READY_TIMEOUT_MS = 10_000;
 
-/** Exit facts of a finished terminal: the finished event data and the same fields of `hc get --json`. */
+/**
+ * Exit facts of a finished terminal: the finished event data and the same fields of `hc get --json`.
+ * hc's Terminal schema declares exit_code and signal as int32 or null.
+ */
 export interface TerminalExitFacts {
 	exit_code: number | null;
-	signal: string | null;
+	signal: number | null;
 	reason: string | null;
 }
 
 /** The launcher passes Pi's exit code and signal on (D27), so the facts map like a sentinel exit code. */
 export function exitFactsResult(facts: TerminalExitFacts): PollResult {
 	if (typeof facts.exit_code === "number") return { reason: "sentinel", exitCode: facts.exit_code };
-	const signalNumber = facts.signal ? constants.signals[facts.signal as NodeJS.Signals] : undefined;
 	return {
 		reason: "error",
-		exitCode: signalNumber ? 128 + signalNumber : 1,
+		exitCode: typeof facts.signal === "number" ? 128 + facts.signal : 1,
 		errorMessage: `herdr-core terminal ended without an exit code (reason ${facts.reason ?? "unknown"}, signal ${facts.signal ?? "none"}).`,
 	};
 }
@@ -31,14 +32,23 @@ export function exitFactsResult(facts: TerminalExitFacts): PollResult {
 /** Reads one terminal; returns its exit facts when it has finished, else undefined. */
 export async function readFinishedTerminal(address: string): Promise<TerminalExitFacts | undefined> {
 	const { stdout } = await execFileAsync(HC_COMMAND, ["get", address, "--json"], { encoding: "utf8" });
-	const terminal = JSON.parse(stdout) as { state?: string } & Partial<TerminalExitFacts>;
+	const terminal = JSON.parse(stdout) as Record<string, unknown>;
 	if (terminal.state !== "finished") return undefined;
-	return { exit_code: terminal.exit_code ?? null, signal: terminal.signal ?? null, reason: terminal.reason ?? null };
+	return exitFacts(terminal);
+}
+
+/** Takes the exit facts as hc's schema types them; a field of another type counts as absent. */
+function exitFacts(data: Record<string, unknown>): TerminalExitFacts {
+	return {
+		exit_code: typeof data.exit_code === "number" ? data.exit_code : null,
+		signal: typeof data.signal === "number" ? data.signal : null,
+		reason: typeof data.reason === "string" ? data.reason : null,
+	};
 }
 
 interface EventLine {
 	method?: string;
-	params?: { type?: string; terminal?: string; data?: Partial<TerminalExitFacts> };
+	params?: { type?: string; terminal?: string; data?: Record<string, unknown> };
 }
 
 /**
@@ -111,8 +121,7 @@ export class LabelExitWatch {
 		}
 		if (event.method !== "event" || event.params?.type !== "finished") return;
 		if (this.address && event.params.terminal !== this.address) return;
-		const data = event.params.data ?? {};
-		this.finish({ exit_code: data.exit_code ?? null, signal: data.signal ?? null, reason: data.reason ?? null });
+		this.finish(exitFacts(event.params.data ?? {}));
 	}
 
 	private finish(facts: TerminalExitFacts): void {
