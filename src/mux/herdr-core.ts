@@ -109,7 +109,7 @@ async function startLauncherTerminal(launch: ProgramLaunch): Promise<string> {
 		});
 		const address = reply.result?.address;
 		if (!address) throw new Error(`hc terminal.run failed for label ${label}: ${reply.error?.message ?? "no address"}`);
-		watch.address = address;
+		watch.attach(address);
 		exitWatches.set(address, watch);
 		return address;
 	} catch (error) {
@@ -171,7 +171,8 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 	checkExit: async (surface) => {
 		const watch = exitWatches.get(surface);
 		if (!watch) return readExit(surface);
-		if (!watch.exit && !watch.streamOpen) await watch.readOnce();
+		// The watch owns recovery after a dropped stream; checkExit reads only when it could not subscribe again.
+		if (!watch.exit && watch.lost) await watch.readOnce();
 		return watch.exit ?? null;
 	},
 };

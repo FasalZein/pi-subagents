@@ -154,6 +154,9 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		assert.equal(terminalState(surface).state, "live");
 		const shell = await herdrCoreBackend.createSurface("[reviewer] Review changes");
 		assert.equal(terminalState(shell).parent, FAKE_HC_CALLER);
+		// A live watch outlives the test's state folder and would subscribe again into the next test's fake.
+		await herdrCoreBackend.closeSurface(surface, target);
+		await herdrCoreBackend.closeSurface(shell, target);
 	});
 
 	// Review P1: without a cwd hc runs the program in the core's working directory, not the parent's.
@@ -161,6 +164,7 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 		assert.notEqual(process.cwd(), FAKE_HC_DAEMON_CWD);
 		const surface = await start("Exit Child", { shellCommand: LAUNCH.shellCommand, launcherArgv: LAUNCH.launcherArgv });
 		assert.equal(terminalState(surface).cwd, process.cwd());
+		await herdrCoreBackend.closeSurface(surface, target);
 	});
 
 	// Review P1: hc's Terminal schema has an integer signal; SIGTERM (15) with no exit code is 128 + 15.
@@ -184,8 +188,9 @@ describe("herdr-core launch and exit (T45, D27)", () => {
 			() => (existsSync(join(stateDir, "term-t2.json")) ? "t2" : undefined),
 			"the started terminal",
 		);
-		// The launcher exits and the stream drops before any replacement subscription exists.
-		finishFakeTerminal(stateDir, surface, 7);
+		// The launcher exits and the stream drops before any replacement subscription exists: no stream sees
+		// the finished event (emitted, the old stream could read it between the two writes).
+		finishFakeTerminal(stateDir, surface, 7, false);
 		writeFileSync(join(stateDir, "drop"), "");
 		const kinds = () => readFakeHcCalls(stateDir).map((call) => call.split(" ")[0]);
 		await eventually(() => (kinds().filter((kind) => kind === "events").length === 2 ? true : undefined), "the new subscription");

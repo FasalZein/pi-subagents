@@ -59,9 +59,11 @@ interface EventLine {
 export class LabelExitWatch {
 	exit: PollResult | undefined;
 	address: string | undefined;
-	/** True while a subscription has answered and its stream is open. */
-	streamOpen = false;
+	/** True after a dropped stream could not subscribe again: no event can end the watch, so checkExit reads. */
+	lost = false;
 	private stopped = false;
+	/** A recovery waits for the address: the stream dropped before the start reply named the terminal. */
+	private readOnAttach = false;
 	private stopStream: (() => void) | undefined;
 
 	readonly label: string;
@@ -89,7 +91,6 @@ export class LabelExitWatch {
 			createInterface({ input: child.stdout }).on("line", (line) => {
 				if (!ready) {
 					ready = true;
-					this.streamOpen = true;
 					clearTimeout(timer);
 					resolve();
 					return;
@@ -102,7 +103,6 @@ export class LabelExitWatch {
 			});
 			child.on("close", () => {
 				clearTimeout(timer);
-				if (ready) this.streamOpen = false;
 				if (!ready) {
 					reject(new Error(`hc events for label ${this.label} ended before its snapshot`));
 					return;
@@ -130,12 +130,27 @@ export class LabelExitWatch {
 		this.stop();
 	}
 
-	/** Subscribe again first, then read the state once. A failed step leaves the exit to checkExit's read. */
+	/** The start reply named the terminal; a recovery that waited for it reads the state now. */
+	attach(address: string): void {
+		this.address = address;
+		if (this.readOnAttach) {
+			this.readOnAttach = false;
+			void this.readOnce();
+		}
+	}
+
+	/**
+	 * The one owner of recovery: subscribe again first, then read the state once, or, before the start
+	 * reply, once the reply names the terminal. A failed subscription leaves the exit to checkExit's reads.
+	 */
 	private async recover(): Promise<void> {
 		try {
 			await this.subscribe();
-		} catch {}
-		await this.readOnce();
+		} catch {
+			this.lost = true;
+		}
+		if (this.address) await this.readOnce();
+		else this.readOnAttach = true;
 	}
 
 	/** Reads the terminal state once and takes its exit facts when it has finished. */
