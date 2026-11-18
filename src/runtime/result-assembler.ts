@@ -121,7 +121,7 @@ export function cutText(text: string, max: number): string {
 }
 
 /** D14: the start of the report cut at a line end within the limit; one long line is cut inside. */
-export function cutAtLineEnd(text: string, max: number): string {
+function cutAtLineEnd(text: string, max: number): string {
 	if (text.length <= max) return text;
 	const room = max - CUT_MARK.length;
 	const lineEnd = text.lastIndexOf("\n", room);
