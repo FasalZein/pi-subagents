@@ -27,10 +27,10 @@ function createHarness(options: { idle?: boolean } = {}) {
 	const controller = new ProviderErrorRecoveryController(
 		{
 			sendUserMessage: (message) => sentMessages.push(message),
-			requestShutdown: () => {
+			endWithError: (_ctx, payload) => {
+				exitSignals.push(payload);
 				shutdowns++;
 			},
-			writeExitSignal: (payload) => exitSignals.push(payload),
 			getOutputTokens: () => 42,
 			showRecoveryCountdown: (c, message) => c.ui.setStatus("pi-subagent-recovery", message),
 			clearRecoveryCountdown: (c) => c.ui.setStatus("pi-subagent-recovery", undefined),
@@ -104,8 +104,7 @@ describe("constructor guard", () => {
 				new ProviderErrorRecoveryController(
 					{
 						sendUserMessage: () => {},
-						requestShutdown: () => {},
-						writeExitSignal: () => {},
+						endWithError: () => {},
 						getOutputTokens: () => 0,
 						showRecoveryCountdown: () => {},
 						clearRecoveryCountdown: () => {},

@@ -13,7 +13,11 @@ import { createExitSignalWriter } from "./exit-signal.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
 import { isMissingOptionalDependency, optionalRequire } from "./optional-dependency.ts";
-import { ProviderErrorRecoveryController, resolveProviderRecoveryDelaysMs } from "./provider-error-recovery.ts";
+import {
+	type ErrorExitPayload,
+	ProviderErrorRecoveryController,
+	resolveProviderRecoveryDelaysMs,
+} from "./provider-error-recovery.ts";
 import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-tab-title.ts";
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
 import { SUBAGENT_DONE_TOOL_NAME, SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
@@ -128,6 +132,28 @@ export default function (pi: ExtensionAPI) {
 		hasDeliveredFinalWarning: () => contextReminders.hasDeliveredFinalWarning(),
 	});
 
+	// D11: set when a person types or presses Escape in the pane after the run
+	// started; only /auto-exit clears it. While set, the person owns the pane:
+	// nothing here requests shutdown or writes an exit record before it closes.
+	let operatorTookOver = false;
+
+	function endRunWithError(ctx: Parameters<typeof requestShutdown>[0], payload: ErrorExitPayload) {
+		if (operatorTookOver) {
+			showEndedRunInPane(ctx, payload.errorMessage);
+			return;
+		}
+		writeExitSignal(payload);
+		requestShutdown(ctx);
+	}
+
+	function showEndedRunInPane(ctx: unknown, message: string) {
+		try {
+			(ctx as { ui: { notify(message: string, tone?: string): void } }).ui.notify(message, "error");
+		} catch {
+			// Context may already be stale after session shutdown/reload.
+		}
+	}
+
 	const subagentName = process.env.PI_SUBAGENT_NAME ?? "";
 	const subagentAgent = process.env.PI_SUBAGENT_AGENT ?? "";
 	const recoveryStatusKey = "pi-subagent-recovery";
@@ -136,8 +162,7 @@ export default function (pi: ExtensionAPI) {
 	const providerErrorRecovery = new ProviderErrorRecoveryController(
 		{
 			sendUserMessage: (message) => pi.sendUserMessage(message),
-			requestShutdown,
-			writeExitSignal,
+			endWithError: endRunWithError,
 			getOutputTokens: () => outputTokens,
 			// Only interactive panes have a status bar worth updating; background
 			// `pi -p` children have no operator watching and no TUI footer.
@@ -180,13 +205,12 @@ export default function (pi: ExtensionAPI) {
 		const pending = pendingPiRecovery;
 		if (!pending || pending.token !== token) return;
 		pendingPiRecovery = null;
-		writeExitSignal({
+		endRunWithError(pending.ctx, {
 			type: "error",
 			errorMessage: pending.errorMessage,
 			stopReason: pending.stopReason,
 			outputTokens,
 		});
-		requestShutdown(pending.ctx);
 	}
 
 	function armPiRecoveryFailureTimer(delayMs: number) {
@@ -314,7 +338,6 @@ export default function (pi: ExtensionAPI) {
 	const AUTO_EXIT_STATUS_KEY = "pi-subagent-auto-exit";
 	if (autoExit) {
 		let operatorInputHoldCount = 0;
-		let autoExitDisabledByOperator = false;
 		let autoExitReArmed = false;
 		let agentStarted = false;
 		let consecutiveToolBoundaryEnds = 0;
@@ -332,8 +355,8 @@ export default function (pi: ExtensionAPI) {
 		const disableAutoExitByOperator = (
 			ctx: { ui: { setStatus(key: string, message?: string): void; notify(message: string, tone?: string): void } },
 		) => {
-			const alreadyDisabled = autoExitDisabledByOperator;
-			autoExitDisabledByOperator = true;
+			const alreadyDisabled = operatorTookOver;
+			operatorTookOver = true;
 			suppressCallerPingExit(callerPingState);
 			if (alreadyDisabled) return;
 			if (!isInteractive) return;
@@ -382,7 +405,7 @@ export default function (pi: ExtensionAPI) {
 					// A fresh interactive prompt consumes the re-arm.
 					autoExitReArmed = false;
 				}
-			} else if (!autoExitDisabledByOperator) {
+			} else if (!operatorTookOver) {
 				operatorInputHoldCount += 1;
 				disableAutoExitByOperator(ctx);
 			}
@@ -436,7 +459,7 @@ export default function (pi: ExtensionAPI) {
 					});
 					return;
 				}
-				writeExitSignal({
+				endRunWithError(ctx, {
 					type: "error",
 					errorMessage:
 						`Subagent recovery exhausted after ${consecutiveToolBoundaryEnds} consecutive ` +
@@ -444,7 +467,6 @@ export default function (pi: ExtensionAPI) {
 					stopReason: "toolUse",
 					outputTokens,
 				});
-				requestShutdown(ctx);
 				return;
 			}
 
@@ -473,8 +495,9 @@ export default function (pi: ExtensionAPI) {
 					cancelPendingPiRecovery();
 					// Defer stamping the failure while Pi's in-flight retry may still
 					// recover. If the child really dies, session_shutdown reports it
-					// from pendingProviderError.
-					requestShutdown(ctx);
+					// from pendingProviderError, also when the person closes a taken-over pane.
+					if (operatorTookOver) showEndedRunInPane(ctx, errorInfo.errorMessage);
+					else requestShutdown(ctx);
 					return;
 				}
 				cancelPendingPiRecovery();
@@ -488,7 +511,7 @@ export default function (pi: ExtensionAPI) {
 			consecutiveToolBoundaryEnds = 0;
 			providerErrorRecovery.cancelPendingRecovery(true);
 			cancelPendingPiRecovery();
-			if (autoExitDisabledByOperator) return;
+			if (operatorTookOver) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});
@@ -497,16 +520,27 @@ export default function (pi: ExtensionAPI) {
 		pi.registerCommand?.("auto-exit", {
 			description: "Re-enable auto-exit after operator interaction",
 			handler: async (_args, ctx) => {
-				if (!autoExitDisabledByOperator) {
+				if (!operatorTookOver) {
 					ctx.ui.notify("Auto-exit is already enabled.", "info");
 					return;
 				}
-				autoExitDisabledByOperator = false;
+				operatorTookOver = false;
 				autoExitReArmed = true;
 				rearmCallerPingExitAfterReenable(callerPingState);
 				ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, undefined);
 				ctx.ui.notify("Auto-exit re-enabled — will close after next response.", "info");
 			},
+		});
+	} else {
+		// A child without auto-exit has no /auto-exit re-arm: a takeover holds
+		// until the pane closes. Same input rules as the auto-exit branch.
+		let agentStarted = false;
+		pi.on("agent_start", () => {
+			agentStarted = true;
+		});
+		pi.on("input", (event) => {
+			if (!isOperatorInput((event as { source?: unknown }).source)) return;
+			if (shouldMarkUserTookOver(agentStarted, event.streamingBehavior)) operatorTookOver = true;
 		});
 	}
 
@@ -528,6 +562,19 @@ export default function (pi: ExtensionAPI) {
 				"Your LAST assistant message before calling this becomes the summary returned to the caller.",
 			parameters: doneParams,
 			async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+				if (operatorTookOver) {
+					// D11/D12: the result stays in this session; the pane closes only
+					// when the person closes it.
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Result recorded in this session. A person took over this pane, so it stays open until they close it.",
+							},
+						],
+						details: {},
+					};
+				}
 				writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 				requestShutdown(ctx);
 				return {

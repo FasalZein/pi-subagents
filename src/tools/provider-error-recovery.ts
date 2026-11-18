@@ -28,10 +28,12 @@ export function resolveProviderRecoveryDelaysMs(
 
 type Timer = ReturnType<typeof setTimeout>;
 
+export type ErrorExitPayload = { type: "error"; errorMessage: string; stopReason: string; outputTokens: number };
+
 export interface ProviderErrorRecoveryRuntime {
 	sendUserMessage(message: string): void;
-	requestShutdown(ctx: ExtensionContext): void;
-	writeExitSignal(payload: object): void;
+	/** End the run as failed; the owner decides whether the child exits (D11). */
+	endWithError(ctx: ExtensionContext, payload: ErrorExitPayload): void;
 	getOutputTokens(): number;
 	/**
 	 * Render the recovery countdown (interactive panes only). Called ~once per
@@ -110,13 +112,12 @@ export class ProviderErrorRecoveryController {
 		this.whenIdle(ctx, token, () => {
 			this.stopCountdown();
 			if (shouldShutdown) {
-				this.runtime.writeExitSignal({
+				this.runtime.endWithError(ctx, {
 					type: "error",
 					errorMessage: formatRecoveryExhaustedMessage(failureNumber, errorInfo.errorMessage),
 					stopReason: errorInfo.stopReason,
 					outputTokens: this.runtime.getOutputTokens(),
 				});
-				this.runtime.requestShutdown(ctx);
 				return;
 			}
 			this.runtime.sendUserMessage(this.nudgeMessage);
