@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { launchBackgroundSubagent } from "../../src/launch/background.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
+import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import {
 	getLaunchEnvCollisions,
 	resolveForcedChildCwd,
@@ -26,7 +27,8 @@ import {
 
 async function readEventually(path: string): Promise<string> {
 	let lastText = "";
-	for (let attempt = 0; attempt < 50; attempt++) {
+	// Up to 5 s, as in headless-env-boundary: a spawned child can take over 0.5 s to write under host load.
+	for (let attempt = 0; attempt < 500; attempt++) {
 		if (existsSync(path)) {
 			lastText = readFileSync(path, "utf8");
 			if (lastText.trim()) return lastText;
@@ -147,7 +149,7 @@ describe("internal launch overrides (forcedCwd/launchEnv)", () => {
 					getLeafId: () => null,
 				},
 			},
-			{ mode: "background" },
+			{ mode: "background", undo: new LaunchUndo() },
 		);
 
 		assert.equal(launch.forcedCwd, worktree);

@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
-import { isRenderedResult, launchWarningLines } from "../runtime/headless-result.ts";
+import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";

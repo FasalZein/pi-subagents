@@ -9,6 +9,7 @@ import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
+import { publishedResultFields, publishRunResult } from "./run-result.ts";
 import {
 	checkSubagentTimeout,
 	checkSubagentTimeoutWrapUp,
@@ -269,13 +270,17 @@ async function watchInteractiveGeneration(
 			sessionFile,
 			pollResult,
 		});
-		const exitSignal = pollResult.outputTokens === undefined ? consumeSubagentExitSignal(sessionFile) : undefined;
+		const lateExitSignal = pollResult.outputTokens === undefined ? consumeSubagentExitSignal(sessionFile) : undefined;
+		// One outcome for storage and both carriers: the child's own exit record outranks the shell's
+		// exit status, so a late error record never becomes a success because the shell reported 0.
+		const end = lateExitSignal && pollResult.reason === "sentinel" ? lateExitSignal : pollResult;
+		const exitSignal = end === lateExitSignal ? undefined : lateExitSignal;
 		if (
 			running.timeoutWrapUp &&
 			!running.timeoutWrapUpMode &&
 			!running.timeoutExpiry &&
 			!signal.aborted &&
-			pollResult.reason !== "ping" &&
+			end.reason !== "ping" &&
 			exitSignal?.reason !== "ping"
 		) {
 			cleanupDoneSentinel(running);
@@ -285,10 +290,23 @@ async function watchInteractiveGeneration(
 			return { kind: "restart" };
 		}
 		const elapsed = Math.floor((Date.now() - startTime) / 1000);
-		const { summary, summarySource } = getSummary(running, pollResult);
-		const errorMessage = pollResult.reason === "error" ? pollResult.errorMessage : undefined;
-		const finalContextUsage = resolveFinalContextUsage(running, pickFinalUsageSource(pollResult, exitSignal));
-		const timeoutFields = recordTimeoutOutcome(running, pollResult);
+		const errorMessage = end.reason === "error" ? end.errorMessage : undefined;
+		const finalContextUsage = resolveFinalContextUsage(running, pickFinalUsageSource(end, exitSignal));
+		const timeoutFields = recordTimeoutOutcome(running, end);
+		// D14: a pane child that ended on its own gets the same assembled, published and rendered
+		// result as a headless child. The end is the exit record when the watcher consumed one.
+		const ping = end.ping ?? exitSignal?.ping;
+		const published = publishRunResult(running, {
+			exitCode: end.exitCode,
+			operatorClosed: running.autoExit === false && end.reason === "sentinel",
+			timedOut: Boolean(timeoutFields.timedOut),
+			pinged: end.reason === "ping" || Boolean(ping),
+			errorMessage,
+			exitSignal: end.acceptedCall ? end : exitSignal,
+			contextUsage: finalContextUsage,
+		});
+		// The published record already read this run's transcript; only an unpublished end reads it here.
+		const { summary, summarySource } = published ?? getSummary(running, end);
 		cleanupDoneSentinel(running);
 		try {
 			await runtime.closeRunningSurface(running);
@@ -303,14 +321,15 @@ async function watchInteractiveGeneration(
 				sessionFile: running.noSession ? undefined : sessionFile,
 				// A pane closed by the runtime still reports a clean exit; a killed
 				// runaway must never be filed as a success.
-				exitCode: timeoutFields.timedOut ? pollResult.exitCode || 1 : pollResult.exitCode,
+				exitCode: timeoutFields.timedOut ? end.exitCode || 1 : end.exitCode,
 				elapsed,
-				outputTokens: pollResult.outputTokens ?? exitSignal?.outputTokens,
+				outputTokens: end.outputTokens ?? exitSignal?.outputTokens,
 				...finalContextUsage,
 				...timeoutFields,
 				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				ping: pollResult.ping ?? exitSignal?.ping,
+				ping,
 				errorMessage,
+				...publishedResultFields(published),
 			},
 		};
 	} catch (err: unknown) {
@@ -415,20 +434,29 @@ async function pollForProgramSurfaceExit(
 	onTick: () => void,
 ): Promise<PollResult> {
 	while (!signal.aborted) {
-		const exit = consumeSubagentExitSignal(running.sessionFile);
-		if (exit) return exit;
-		if (running.doneSentinelFile && existsSync(running.doneSentinelFile)) {
-			const match = readFileSync(running.doneSentinelFile, "utf8").match(/__SUBAGENT_DONE_(\d+)__/);
-			if (match) return { reason: "sentinel", exitCode: Number(match[1]) };
-		}
+		const completion = readProgramCompletion(running);
+		if (completion) return completion;
 		if (running.zellijTarget && running.surface) {
 			const exited = await adapter.checkExit?.(running.surface, running.zellijTarget);
-			if (exited) return exited;
+			// The child can write its completion and exit while the liveness query runs: a pane found
+			// gone is a watcher error only when no completion record or shell status exists by then.
+			if (exited) return readProgramCompletion(running) ?? exited;
 		}
 		onTick();
 		await waitForPoll(1000, signal);
 	}
 	throw new Error("Aborted while waiting for subagent to finish");
+}
+
+/** The child's exit record, else the shell's exit status from the done sentinel, else null. */
+function readProgramCompletion(running: RunningSubagent): PollResult | null {
+	const exit = consumeSubagentExitSignal(running.sessionFile);
+	if (exit) return exit;
+	if (running.doneSentinelFile && existsSync(running.doneSentinelFile)) {
+		const match = readFileSync(running.doneSentinelFile, "utf8").match(/__SUBAGENT_DONE_(\d+)__/);
+		if (match) return { reason: "sentinel", exitCode: Number(match[1]) };
+	}
+	return null;
 }
 
 function waitForPoll(interval: number, signal: AbortSignal): Promise<void> {
