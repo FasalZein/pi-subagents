@@ -820,6 +820,8 @@ parent-close-policy: continue
 
 The default is `terminate`.
 
+In a terminal of the Herdr app (herdr-core), Pi stops a `terminate` child when its session closes in order. If Pi dies abruptly, its children keep running until the program of the parent terminal ends.
+
 ## UI
 
 The parent session gets a live widget above the editor. It shows running children, elapsed time, activity, and context usage.
