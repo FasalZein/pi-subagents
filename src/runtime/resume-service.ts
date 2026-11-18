@@ -6,6 +6,7 @@ import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { discardReservation, sessionResultStore } from "./result-files.ts";
 import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
+import { getLaunchCapError, tryAcquireLaunchCapSlots } from "./launch-cap.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
 import {
 	type AgentModelConfig,
@@ -203,9 +204,13 @@ export async function resumeSubagentSession(
 				"Start a new launch of the agent for follow-up work.",
 		);
 	}
+	// D9: a resume, from the tool or the overlay, takes one launch cap slot before any side effect.
+	const capSlot = tryAcquireLaunchCapSlots(1);
+	if (!capSlot) throw new Error(getLaunchCapError(1));
 	const widthLimit = getSpawnWidthLimit();
 	const slot = tryAcquireSlots(1, widthLimit);
 	if (!slot) {
+		capSlot.release();
 		throw new Error(
 			`Spawn width limit reached (${getLiveSlotCount()}/${widthLimit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
 		);
@@ -213,7 +218,12 @@ export async function resumeSubagentSession(
 
 	let claimedRunning: RunningSubagent | undefined;
 	try {
-		const running = await withLaunchUndo((undo) => resumeSubagentSessionWithoutWidth(input, runtime, undo));
+		const running = await withLaunchUndo((undo) => {
+			// The child never started: the undo gives the cap slot back.
+			undo.add(() => capSlot.release());
+			return resumeSubagentSessionWithoutWidth(input, runtime, undo);
+		});
+		capSlot.commit();
 		claimSpawnWidthSlot(running, slot);
 		claimedRunning = running;
 		if (running.completionPromise) {
@@ -223,6 +233,8 @@ export async function resumeSubagentSession(
 	} catch (error) {
 		if (claimedRunning) releaseSpawnWidthSlot(claimedRunning);
 		slot.release();
+		// No-op after a commit or the undo; covers a throw before the undo registered.
+		capSlot.release();
 		throw error;
 	}
 }
