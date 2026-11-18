@@ -345,6 +345,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const mayLaunch = () => shouldRegister(SUBAGENT_TOOL_NAME) && isToolCallable(pi, SUBAGENT_TOOL_NAME);
 
 	registerSubagentCoreTools(pi, shouldRegister, {
+		listLaunchableAgents: (cwd) =>
+			selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, parseSpawnEnv(process.env)),
 		loadAgentDefaults: (agentName, cwd) => (agentName ? loadAgentDefaults(agentName, undefined, cwd) : null),
 		resolveEffectiveSessionMode,
 		resolveTaskSessionMode,

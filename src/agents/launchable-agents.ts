@@ -19,7 +19,7 @@ export const DEFAULT_QUERY_LIMIT = 5;
 // Same routing length as an index line (D19).
 const DESCRIPTION_CHARS = 100;
 
-function nameOf(agent: LaunchableAgent): string {
+export function nameOf(agent: LaunchableAgent): string {
 	return agent.kind === "agent" ? agent.entry.name : agent.file.name;
 }
 
@@ -86,7 +86,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** The three closest launchable names to a name that matched none (D23). */
-function closestAgentNames(name: string, names: readonly string[]): string[] {
+export function closestAgentNames(name: string, names: readonly string[]): string[] {
 	const wanted = name.toLowerCase();
 	return names
 		.map((candidate) => ({ candidate, distance: editDistance(wanted, candidate.toLowerCase()) }))

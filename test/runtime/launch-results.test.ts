@@ -385,6 +385,7 @@ describe("subagent launch result delivery", () => {
 			getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
 			stopRunningSubagent: async () => {},
 			muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
+			listLaunchableAgents: () => [],
 		};
 		registerSubagentCoreTools(
 			{

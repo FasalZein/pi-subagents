@@ -62,6 +62,7 @@ function registerToolWithRuntime(runtimeOverrides: Partial<SubagentToolRuntime> 
 		getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "started" }], details: {} }),
 		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
+		listLaunchableAgents: () => [],
 		...runtimeOverrides,
 	};
 	registerSubagentCoreTools(
