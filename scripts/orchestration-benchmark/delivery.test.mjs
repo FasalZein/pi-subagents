@@ -273,12 +273,45 @@ test("a missing handover is parked when the parent ended its turn, lost when it 
 	);
 });
 
-test("a result that arrives after the terminal reply does not count as delivered", () => {
+test("a result that arrives after the terminal reply is a transfer, but not available to the scored answer", () => {
 	const record = account(
 		[LAUNCH, assistant("stop", "Done."), result("r1", "x-1")],
 		[child("a", "x-1")],
 	);
-	assert.equal(record.runs[0].handover, "parked");
+	assert.deepEqual(
+		[
+			record.runs[0].handover,
+			record.transfers,
+			record.runs[0].availableToAnswer,
+			record.runs[0].delivered,
+		],
+		["delivered", 1, false, false],
+	);
+});
+
+test("[T02b-3] transport counts to the sample boundary, not to the last assistant stop", () => {
+	const wait = {
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent",
+			content: [{ type: "text", text: "x-1" }],
+			details: { id: "r1", name: "a", status: "completed" },
+		},
+	};
+	// A wait copy before the stop and a message copy after it are two transfers.
+	const record = account(
+		[LAUNCH, wait, assistant("stop", "x-1"), result("r1", "x-1")],
+		[child("a", "x-1")],
+	);
+	assert.deepEqual(
+		[record.runs[0].handover, record.transfers, record.duplicated],
+		["duplicate-carrier", 2, 1],
+	);
+	assert.deepEqual(
+		[record.runs[0].availableToAnswer, record.runs[0].delivered],
+		[true, true],
+	);
 });
 
 test("a child whose name matches no single launched run is unbound, never delivered", () => {

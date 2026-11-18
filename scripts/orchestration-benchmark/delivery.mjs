@@ -7,9 +7,12 @@
  * Text that a later request repeats is no transfer, so only carrier entries count.
  *
  * Handover of one child run, by run id:
- * - delivered: exactly one own carrier handed the run over before the terminal reply.
+ * - delivered: exactly one own carrier handed the run over inside the sample.
  * - duplicate-carrier: more than one own carrier did (duplicates are reported, not gated).
- * The row field delivered is stricter: an own carrier holds the expected result.
+ * Transport counts to the sample boundary (the parent session as read when
+ * observation ended), not to the last assistant stop. availableToAnswer is
+ * separate: an own carrier holding the expected result came before the scored
+ * reply. The row field delivered, which the verdict uses, is availableToAnswer.
  * - digest: no own carrier, but another carrier or allowed tool result holds the
  *   result (a deliberate digest, for example a workflow script). It is not lost.
  * - parked: no carrier, the child ended with its result, and the parent ended its
@@ -104,14 +107,22 @@ function terminalIndex(events) {
 
 /**
  * Handover class of one run (see the module header).
- * @param {{runId: string | null, tokens: string[], ended: boolean, carried: object[], parentIdle: boolean}} input
+ * @param {{runId: string | null, tokens: string[], ended: boolean, carried: object[],
+ *   parentIdle: boolean, answeredAt: number}} input - answeredAt: entry index of the scored reply
  */
-export function handover({ runId, tokens, ended, carried, parentIdle }) {
+export function handover({
+	runId,
+	tokens,
+	ended,
+	carried,
+	parentIdle,
+	answeredAt,
+}) {
 	const holds = (c) =>
 		tokens.length > 0 && tokens.every((token) => containsToken(c.text, token));
 	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
 	const own = carried.filter((c) => c.runId === runId);
-	const correct = own.some(holds);
+	const correct = own.some((c) => c.index < answeredAt && holds(c));
 	if (own.length > 1)
 		return { handover: "duplicate-carrier", transfers: own.length, correct };
 	if (own.length === 1) return { handover: "delivered", transfers: 1, correct };
@@ -126,8 +137,8 @@ export function handover({ runId, tokens, ended, carried, parentIdle }) {
 }
 
 /**
- * Delivery accounting of one attempt. Carriers count up to the parent's terminal
- * reply when it has one, else over the whole session (a timeout).
+ * Delivery accounting of one attempt. Carriers count over the whole parent
+ * session; availability to the answer counts up to the scored terminal reply.
  * @param {object} input
  * @param {object[]} input.parentEvents
  * @param {Array<{name: string | null, role: string | null, contract: object | undefined,
@@ -144,12 +155,8 @@ export function deliveryAccounting({
 	workDir,
 }) {
 	const runs = launchedRuns(parentEvents, scenario.parentLoadTool);
-	const end = parentReply.terminal
-		? terminalIndex(parentEvents)
-		: parentEvents.length;
-	const carried = carriers(parentEvents, scenario.parentToolAllowlist).filter(
-		(c) => c.index < end,
-	);
+	const answeredAt = parentReply.terminal ? terminalIndex(parentEvents) : -1;
+	const carried = carriers(parentEvents, scenario.parentToolAllowlist);
 	const finalText = parentReply.terminal
 		? textOf(parentEvents[terminalIndex(parentEvents)].message.content)
 		: "";
@@ -170,11 +177,12 @@ export function deliveryAccounting({
 			ended: child.ended,
 			carried,
 			parentIdle: parentReply.terminal,
+			answeredAt,
 		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
 			parentReads.includes(resolveReadPath(file, workDir)),
 		);
-		// Delivered for the verdict: an own carrier holds the expected result.
+		// Delivered for the verdict: an own carrier held the expected result before the scored reply.
 		const byOwnRun = correct;
 		const surfaced =
 			tokens.length > 0 &&
@@ -184,7 +192,14 @@ export function deliveryAccounting({
 			: child.fulfils.read && child.fulfils.returned && byOwnRun && surfaced
 				? "clean_yield"
 				: "auxiliary";
-		return { runId, role: child.role, ...result, delivered: byOwnRun, outcome };
+		return {
+			runId,
+			role: child.role,
+			...result,
+			availableToAnswer: correct,
+			delivered: byOwnRun,
+			outcome,
+		};
 	});
 	const count = (key, value) => rows.filter((row) => row[key] === value).length;
 	return {
