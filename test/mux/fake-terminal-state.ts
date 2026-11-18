@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Surface state for the node fakes of the cmux and wezterm contract tests.
+ * Surface state for the node fakes of the cmux, wezterm and zellij contract tests.
  * Per surface id N in $FAKE_TERMINAL_STATE: screen-N holds the screen, pending-N the
  * typed text that is not submitted yet, submitted-N one line per submitted command
  * (a newline in the typed text moves pending-N there). titles holds the recorded renames.

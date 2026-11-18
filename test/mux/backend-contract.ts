@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
-import { closeSurface, createSurface, getMuxBackend, readScreen, sendCommand } from "../../src/mux.ts";
+import { closeSurfaceAsync } from "../../src/mux/io.ts";
+import { createSurface, getMuxBackend, readScreen, sendCommand } from "../../src/mux.ts";
 
 /**
  * One backend plus its fake CLI. The contract suite knows nothing about the
@@ -19,10 +20,22 @@ export interface MuxBackendContractFixture {
 	 * and points the fake at stateDir.
 	 */
 	installFake(binDir: string, stateDir: string): Record<string, string>;
-	/** Env keys of the runtime check: without any one of them the backend is unavailable. */
+	/** Env keys of the runtime check. */
 	runtimeEnvKeys: readonly string[];
+	/**
+	 * "each-required" (default): without any one key the backend is unavailable.
+	 * "any-suffices": one key alone makes it available; without all of them it is unavailable.
+	 */
+	runtimeEnvKeysRule?: "each-required" | "any-suffices";
+	/** False when the backend has no workspace to rename, so renameWorkspace records nothing. Default true. */
+	renamesWorkspace?: boolean;
 	/** Titles that the fake recorded from renameCurrentTab and renameWorkspace, in call order. */
 	recordedTitles(stateDir: string): string[];
+	/**
+	 * Required when the adapter has the direct-program ability: the argv that the fake started
+	 * as the surface's own process, or undefined when the surface has none.
+	 */
+	startedProgram?(stateDir: string, surface: string): string[] | undefined;
 	/**
 	 * Commands that the fake saw SUBMITTED (typed, then Enter) on one surface, in order.
 	 * Typed text without Enter must not appear. A bare Enter appears as "".
@@ -72,16 +85,31 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			assert.equal(getMuxBackend(), adapter.id);
 		});
 
-		it("is unavailable without any one of its runtime env keys", () => {
-			assert.ok(fixture.runtimeEnvKeys.length > 0);
-			for (const key of fixture.runtimeEnvKeys) {
-				const value = process.env[key];
-				setEnv(key, undefined);
-				assert.equal(adapter.isAvailable(), false, `available without ${key}`);
+		if (fixture.runtimeEnvKeysRule === "any-suffices") {
+			it("is available with any one of its runtime env keys and unavailable without all of them", () => {
+				assert.ok(fixture.runtimeEnvKeys.length > 0);
+				const values = new Map(fixture.runtimeEnvKeys.map((key) => [key, process.env[key]]));
+				for (const key of fixture.runtimeEnvKeys) setEnv(key, undefined);
+				assert.equal(adapter.isAvailable(), false, "available without any runtime env key");
 				assert.equal(getMuxBackend(), null);
-				setEnv(key, value);
-			}
-		});
+				for (const key of fixture.runtimeEnvKeys) {
+					setEnv(key, values.get(key));
+					assert.equal(adapter.isAvailable(), true, `unavailable with only ${key}`);
+					setEnv(key, undefined);
+				}
+			});
+		} else {
+			it("is unavailable without any one of its runtime env keys", () => {
+				assert.ok(fixture.runtimeEnvKeys.length > 0);
+				for (const key of fixture.runtimeEnvKeys) {
+					const value = process.env[key];
+					setEnv(key, undefined);
+					assert.equal(adapter.isAvailable(), false, `available without ${key}`);
+					assert.equal(getMuxBackend(), null);
+					setEnv(key, value);
+				}
+			});
+		}
 
 		it("is unavailable when its CLI is not on PATH", () => {
 			const emptyDir = join(root, "empty-path");
@@ -148,7 +176,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 
 		it("closes a surface, so that a later read fails", async () => {
 			const surface = await adapter.createSurface("Contract Close");
-			adapter.closeSurface(surface);
+			await adapter.closeSurface(surface);
 			assert.throws(() => adapter.readScreen(surface, SCREEN_LINES));
 			await assert.rejects(adapter.readScreenAsync(surface, SCREEN_LINES));
 		});
@@ -156,8 +184,38 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 		it("renames the current tab and the workspace", () => {
 			adapter.renameCurrentTab("Contract Tab");
 			adapter.renameWorkspace("Contract Workspace");
-			assert.deepEqual(fixture.recordedTitles(stateDir), ["Contract Tab", "Contract Workspace"]);
+			const expected = fixture.renamesWorkspace === false ? ["Contract Tab"] : ["Contract Tab", "Contract Workspace"];
+			assert.deepEqual(fixture.recordedTitles(stateDir), expected);
 		});
+
+		const openProgramSession = adapter.openProgramSession?.bind(adapter);
+		const checkExit = adapter.checkExit?.bind(adapter);
+
+		if (openProgramSession) {
+			it("starts a program as the surface's own process, with no typed input", async () => {
+				assert.ok(fixture.startedProgram, "a direct-program backend needs startedProgram in its fixture");
+				const session = await openProgramSession();
+				const surface = await session.start("Contract Program", "echo direct-start");
+				const program = fixture.startedProgram(stateDir, surface);
+				assert.ok(program, "the surface has no program of its own");
+				assert.ok(program.includes("echo direct-start"), `program does not run the command: ${program}`);
+				assert.deepEqual(fixture.submittedCommands(stateDir, surface), []);
+			});
+		}
+
+		if (checkExit) {
+			it("reports no exit while the surface runs and an exit after the awaited close", async () => {
+				assert.ok(openProgramSession, "the exit check needs the session target of a direct-program start");
+				const session = await openProgramSession();
+				const surface = await session.start("Contract Exit", "echo exit-check");
+				assert.equal(await checkExit(surface, session.target), null);
+				await adapter.closeSurface(surface, session.target);
+				const exit = await checkExit(surface, session.target);
+				assert.ok(exit, "no exit after close");
+				assert.ok(Number.isInteger(exit.exitCode));
+				assert.ok(exit.reason.length > 0);
+			});
+		}
 
 		it("is reached through the shared mux functions", async () => {
 			const surface = await createSurface("Contract Shared");
@@ -165,7 +223,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			assert.deepEqual(fixture.submittedCommands(stateDir, surface), ["echo via-shared"]);
 			assert.match(adapter.readScreen(surface, SCREEN_LINES), /echo via-shared/);
 			assert.match(readScreen(surface, SCREEN_LINES), /echo via-shared/);
-			closeSurface(surface);
+			await closeSurfaceAsync(surface);
 			assert.throws(() => adapter.readScreen(surface, SCREEN_LINES));
 		});
 	});
