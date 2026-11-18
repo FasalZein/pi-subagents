@@ -432,11 +432,14 @@ export function endsWithProviderError(events) {
  * Proof that each process loaded the extension from the checkout: a probe per
  * session lists the registered tools and the file each came from (Pi sourceInfo).
  * @param {Array<{sessionFile: string, agent: string | null, tools: Array<{name: string, path: string}>}>} probes
- * @param {{parentFile: string, childFiles: string[], checkout: string, parentTool: string, childTool: string}} input
+ * otherFiles are the remaining session files of the attempt (no parent, no
+ * launch marker): each needs a probe too, or it counts as a missing probe. Its
+ * probe is still unmatched, because the file is no parent or child session.
+ * @param {{parentFile: string, childFiles: string[], otherFiles: string[], checkout: string, parentTool: string, childTool: string}} input
  */
 export function loadEvidence(
 	probes,
-	{ parentFile, childFiles, checkout, parentTool, childTool },
+	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool },
 ) {
 	const bySession = new Map(probes.map((probe) => [probe.sessionFile, probe]));
 	const fromCheckout = (probe, tool) =>
@@ -453,6 +456,7 @@ export function loadEvidence(
 	const missing = [
 		parent ? null : "parent",
 		...children.filter((c) => !c.probe).map(() => "child"),
+		...otherFiles.filter((file) => !bySession.has(file)).map(() => "other"),
 	].filter(Boolean);
 	// The reverse join: every probe needs its own session file of this attempt.
 	const sessionFiles = new Set([parentFile, ...childFiles]);

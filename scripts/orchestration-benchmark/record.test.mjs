@@ -292,6 +292,7 @@ test("[F7] load evidence needs a registered tool from the checkout per session, 
 	];
 	const input = {
 		parentFile: "/s/p.jsonl",
+		otherFiles: [],
 		checkout: "/c",
 		parentTool: "subagent",
 		childTool: "subagent_done",

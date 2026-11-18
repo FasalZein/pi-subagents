@@ -57,7 +57,9 @@ function hasUsage(events) {
 
 /**
  * Sort session files into the parent (named by the parent's probe), children
- * (files with a launch marker) and unattributed files that hold usage.
+ * (files with a launch marker), unattributed files that hold usage, and
+ * others: every remaining file, also an empty or header-only one, so that the
+ * probe join sees every session file.
  * @param {Array<{file: string, events: object[]}>} sessions
  * @param {Array<{sessionFile: string | null, agent: string | null}>} probes
  */
@@ -80,6 +82,9 @@ export function classifySessions(sessions, probes) {
 		parent,
 		children,
 		unattributed: unattributed.map((session) => session.file),
+		others: sessions
+			.filter((session) => session !== parent && !children.includes(session))
+			.map((session) => session.file),
 		parentProbes: parentProbes.length,
 	};
 }

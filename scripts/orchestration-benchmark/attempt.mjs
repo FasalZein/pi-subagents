@@ -196,6 +196,7 @@ export function classifyAttempt({
 	const load = loadEvidence(evidence.probes, {
 		parentFile: evidence.parent?.file ?? null,
 		childFiles: evidence.children.map((child) => child.file),
+		otherFiles: evidence.others,
 		checkout: cli.checkout,
 		parentTool: scenario.parentLoadTool,
 		childTool: scenario.childLoadTool,

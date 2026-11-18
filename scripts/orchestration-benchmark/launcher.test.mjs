@@ -257,6 +257,7 @@ const evidence = (child, extra = {}) => ({
 	parent: { file: "/r/p.jsonl", events: parentEvents() },
 	children: child ? [child] : [],
 	unattributed: [],
+	others: [],
 	parentProbes: 1,
 	probes,
 	malformed: 0,
@@ -370,6 +371,23 @@ test("[F8] probes and session files match one to one: either side alone is infra
 			.infraReason,
 		"load probe missing",
 	);
+});
+
+test("[F8] every session file enters the join: an empty or header-only file without a probe is infra", () => {
+	const parentSession = { file: "/r/p.jsonl", events: parentEvents() };
+	for (const events of [[{ type: "session", id: "s" }], []]) {
+		const sessions = [
+			parentSession,
+			childSession(["stop"]),
+			{ file: "/r/extra.jsonl", events },
+		];
+		const classified = classifySessions(sessions, probes);
+		const result = classify({ ...evidence(null), ...classified, probes });
+		assert.deepEqual(
+			[result.kind, result.infraReason, result.load.missingProbes],
+			["infra", "load probe missing", 1],
+		);
+	}
 });
 
 test("[F11] a child provider error makes the attempt a counted provider error", () => {
