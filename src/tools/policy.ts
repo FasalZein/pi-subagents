@@ -1,3 +1,4 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { markSubagentBatchBlocking } from "../runtime/state.ts";
@@ -8,6 +9,21 @@ import {
 	SPAWNING_TOOL_NAMES,
 	SUBAGENT_DONE_TOOL_NAME,
 } from "./tool-names.ts";
+
+/**
+ * Whether the model of this session can call the tool: Pi registered it (so no
+ * --tools or --exclude-tools filter removed it) and it is either active (a
+ * direct or model-only declaration) or exposed to codemode, which can call it
+ * without a declaration.
+ */
+export function isToolCallable(pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools">, name: string): boolean {
+	const tool = pi.getAllTools().find((candidate) => candidate.name === name);
+	if (!tool) return false;
+	const exposure = tool.exposure ?? "direct";
+	if (exposure === "codemode" || exposure === "deferred") return true;
+	if (exposure === "hidden") return false;
+	return pi.getActiveTools().includes(name);
+}
 
 const BUILTIN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 

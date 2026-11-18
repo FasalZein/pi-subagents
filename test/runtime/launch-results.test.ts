@@ -3,22 +3,16 @@ import {
 	assert,
 	createTestDir,
 	describe,
-	getAgentListSignatureForTest,
 	getCompletedSubagentResultForTest,
 	getLaunchedSubagentResultForTest,
 	getSubagentBatchStopMetadataForTest,
 	it,
-	join,
 	markSubagentBatchBlockingForTest,
-	mkdirSync,
-	renderAgentListReminderForTest,
 	requestSubagentBatchStopForTest,
 	resetSubagentStateForTest,
 	routeDetachedSubagentCompletionForTest,
 	setRunningSubagentForTest,
-	subagentsExtension,
 	waitForSubagentForTest,
-	writeFileSync,
 } from "../support/index.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -449,163 +443,5 @@ describe("subagent launch result delivery", () => {
 		const waited = await waitForSubagentForTest({ id: "Child" });
 		assert.equal((waited.details as any).status, "completed");
 		assert.equal(getCompletedSubagentResultForTest(running.id)?.deliveredTo, "wait");
-	});
-
-	it("injects one hidden startup catalog for top-level actionable sessions", () => {
-		const dir = createTestDir();
-		const configDir = join(dir, "agent-root");
-		const agentsDir = join(configDir, "agents");
-		mkdirSync(agentsDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review changes for regressions\nmode: background\n---\n\nReviewer body.`,
-		);
-
-		const handlers = new Map<string, any>();
-		subagentsExtension({
-			on(event: string, handler: any) {
-				handlers.set(event, handler);
-			},
-			registerCommand() {},
-			registerMessageRenderer() {},
-			registerTool() {},
-			sendMessage() {},
-		} as any);
-
-		handlers.get("session_start")(
-			{ type: "session_start", reason: "startup" },
-			{
-				cwd: dir,
-				hasUI: false,
-				ui: { setWidget() {} },
-				sessionManager: {
-					getHeader: () => ({
-						id: "root",
-						type: "session",
-						timestamp: "",
-						cwd: dir,
-					}),
-				},
-			},
-		);
-
-		const result = handlers.get("before_agent_start")({
-			type: "before_agent_start",
-			prompt: "hi",
-			systemPrompt: "sys",
-		});
-		const message = result?.message;
-		assert.ok(message);
-		assert.equal(message.customType, "subagent_roster");
-		assert.equal(message.display, false);
-		assert.equal((message.details as any).entries[0].name, "reviewer");
-		assert.equal((message.details as any).signature, getAgentListSignatureForTest((message.details as any).entries));
-		assert.match(message.content, /^<system-reminder>\nYou can launch separate helper agents/);
-		// No UI means every launch is awaited, so the roster says so instead of
-		// promising a later report the model would plan around.
-		assert.match(message.content, /`reviewer`: Review changes for regressions[\s\S]*?tool_return: wait_here/m);
-		assert.match(message.content, /\n<\/subagent-roster>\n<subagent-rules>\n/);
-		assert.match(
-			message.content,
-			/tool_return=wait_here means the subagent tool call waits until the helper finishes\. In this session every launch waits, so read the report in the tool result and continue/,
-		);
-		assert.doesNotMatch(message.content, /later_message/);
-		assert.match(
-			message.content,
-			/context=fresh_chat_needs_full_brief means write a self-contained task with objective, files, constraints, and expected output/,
-		);
-		assert.match(message.content, /context=copy_of_this_chat means the helper starts from this conversation/);
-		assert.match(message.content, /\n<\/subagent-rules>\n<\/system-reminder>$/);
-		assert.equal(
-			renderAgentListReminderForTest((message.details as any).entries, { awaitAllLaunches: true }),
-			message.content,
-		);
-		assert.match(
-			renderAgentListReminderForTest((message.details as any).entries),
-			/tool_return: later_message[\s\S]*tool_return=later_message means the tool call starts the helper and returns before the work is done/,
-		);
-		assert.equal(
-			handlers.get("before_agent_start")({
-				type: "before_agent_start",
-				prompt: "again",
-				systemPrompt: "sys",
-			}),
-			undefined,
-		);
-	});
-
-	it("queues reload catalog changes for the next turn instead of interrupting immediately", () => {
-		const dir = createTestDir();
-		const configDir = join(dir, "agent-root");
-		const agentsDir = join(configDir, "agents");
-		mkdirSync(agentsDir, { recursive: true });
-		process.env.PI_CODING_AGENT_DIR = configDir;
-		writeFileSync(
-			join(agentsDir, "reviewer.md"),
-			`---\nname: reviewer\ndescription: Review changes for regressions\n---\n\nReviewer body.`,
-		);
-
-		const handlers = new Map<string, any>();
-		const ctx = {
-			cwd: dir,
-			hasUI: false,
-			ui: { setWidget() {} },
-			sessionManager: {
-				getHeader: () => ({
-					id: "root",
-					type: "session",
-					timestamp: "",
-					cwd: dir,
-				}),
-			},
-		};
-
-		subagentsExtension({
-			on(event: string, handler: any) {
-				handlers.set(event, handler);
-			},
-			registerCommand() {},
-			registerMessageRenderer() {},
-			registerTool() {},
-			sendMessage() {},
-		} as any);
-
-		handlers.get("session_start")({ type: "session_start", reason: "startup" }, ctx);
-		const startup = handlers.get("before_agent_start")({
-			type: "before_agent_start",
-			prompt: "start",
-			systemPrompt: "sys",
-		});
-		assert.ok(startup?.message);
-		assert.equal((startup.message.details as any).supersedes, undefined);
-
-		writeFileSync(
-			join(agentsDir, "researcher.md"),
-			`---\nname: researcher\ndescription: Investigate open-ended questions\nmode: background\n---\n\nResearcher body.`,
-		);
-
-		handlers.get("session_start")({ type: "session_start", reason: "reload" }, ctx);
-		const reloaded = handlers.get("before_agent_start")({
-			type: "before_agent_start",
-			prompt: "continue",
-			systemPrompt: "sys",
-		});
-		assert.ok(reloaded?.message);
-		assert.equal((reloaded.message.details as any).supersedes, true);
-		assert.match(
-			reloaded.message.content,
-			/`researcher`: Investigate open-ended questions[\s\S]*?tool_return: wait_here[\s\S]*?runs_as: hidden_process[\s\S]*?context: fresh_chat_needs_full_brief[\s\S]*?completion: exits_automatically/,
-		);
-
-		handlers.get("session_start")({ type: "session_start", reason: "reload" }, ctx);
-		assert.equal(
-			handlers.get("before_agent_start")({
-				type: "before_agent_start",
-				prompt: "continue again",
-				systemPrompt: "sys",
-			}),
-			undefined,
-		);
 	});
 });

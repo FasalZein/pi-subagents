@@ -36,4 +36,5 @@ export const cmuxBackend: MuxBackendAdapter = {
 	renameWorkspace: (title) => {
 		execSync(`cmux workspace-action --action rename --title ${shellEscape(title)}`, { encoding: "utf8" });
 	},
+	stagesShellCommands: true,
 };

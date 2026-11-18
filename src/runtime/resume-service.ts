@@ -37,8 +37,7 @@ import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import {
 	createSurface,
-	getMuxBackend,
-	muxBackendAdapter,
+	currentMuxAdapter,
 	muxSetupHint,
 	resolveHerdrPlacementPolicy,
 	resolveZellijPlacementPolicy,
@@ -513,13 +512,10 @@ async function resumeSubagentSessionWithoutWidth(
 		});
 	} else {
 		const surfaceName = invocationMetadata?.sessionTitle ?? displayName;
-		const backend = getMuxBackend();
-		const herdrContext =
-			backend === "herdr"
-				? {
-						policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT),
-					}
-				: undefined;
+		const adapter = currentMuxAdapter();
+		const herdrContext = adapter?.resolveHerdrPlacementPolicy
+			? { policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT) }
+			: undefined;
 		const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
 		const configuredZellijPolicy = resolveResumeZellijPlacementPolicy(
 			invocationMetadata,
@@ -533,7 +529,7 @@ async function resumeSubagentSessionWithoutWidth(
 						policy: configuredZellijPolicy,
 					}
 				: undefined;
-		const programSession = backend ? await muxBackendAdapter(backend)?.openProgramSession?.() : undefined;
+		const programSession = await adapter?.openProgramSession?.();
 		const ordinarySurface = programSession
 			? undefined
 			: await createSurface(surfaceName, {
