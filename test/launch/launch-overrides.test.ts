@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { launchBackgroundSubagent } from "../../src/launch/background.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
 import {
@@ -190,8 +191,9 @@ describe("internal launch overrides (forcedCwd/launchEnv)", () => {
 	});
 
 	it("delivers forcedCwd, launchEnv, frontmatter env, and source-resolved task expansion to the real child process", async () => {
-		const source = createTestDir();
-		const worktree = createTestDir();
+		// Resolved paths: on macOS tmpdir() is /var/... but the child's pwd reports /private/var/...
+		const source = realpathSync(createTestDir());
+		const worktree = realpathSync(createTestDir());
 		process.env.PI_ARTIFACT_PROJECT_ROOT = join(source, "artifacts");
 		mkdirSync(join(source, ".pi", "agents"), { recursive: true });
 		writeFileSync(
