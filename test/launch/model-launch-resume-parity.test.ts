@@ -144,8 +144,11 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 	process.env.PI_SUBAGENT_PI_COMMAND = bin;
 	process.env.ARGS_FILE = argsFile;
 	try {
+		// Since T06 a resume reserves its run folder under the parent session's results folder.
 		const result = await tools.get("subagent_resume").execute("call-2", { sessionFile, model }, undefined, undefined, {
 			hasUI: false,
+			cwd: dir,
+			sessionManager: { getSessionId: () => "parent-session" },
 		});
 		if (!existsSync(argsFile) && /error|not allowed|Unknown model/i.test(result.content?.[0]?.text ?? "")) {
 			return refusalOf(result.content[0].text);
