@@ -104,19 +104,22 @@ export function selectProviderModels(models, provider) {
 	return entry ? { providers: { [provider]: entry } } : { providers: {} };
 }
 
-const SECRET_FIELD = /key|token|secret|authorization|header/i;
-
-/** Fingerprint of non-secret provider settings: secret-named fields are left out. */
-export function settingsFingerprint(value) {
-	if (Array.isArray(value)) return value.map(settingsFingerprint);
-	if (value && typeof value === "object") {
-		return Object.fromEntries(
-			Object.entries(value)
-				.filter(([name]) => !SECRET_FIELD.test(name))
-				.map(([name, inner]) => [name, settingsFingerprint(inner)]),
-		);
-	}
-	return value;
+/**
+ * Fingerprint of the effective provider settings: safe identifiers plus one
+ * digest of the whole selected models.json entry. No configuration value (baseUrl,
+ * header, key) enters the record; any change of one changes the digest.
+ * Limitation: the digest lets a holder of the record confirm a guessed setting.
+ * @param {object} models - output of selectProviderModels
+ * @param {{model: string, thinking: string}} cli
+ */
+export function settingsFingerprint(models, { model, thinking }) {
+	const slash = model.indexOf("/");
+	return {
+		provider: model.slice(0, slash),
+		modelId: model.slice(slash + 1),
+		thinking,
+		digest: sha256(canonicalJson(models)),
+	};
 }
 
 /** The selected provider's models.json entry, as the sample will see it. */

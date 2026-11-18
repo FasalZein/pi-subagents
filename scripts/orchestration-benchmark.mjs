@@ -200,7 +200,7 @@ async function main() {
 	const settings = {
 		pi: SAMPLE_SETTINGS,
 		piVersion,
-		providerSettings: settingsFingerprint(readProviderModels(provider)),
+		providerSettings: settingsFingerprint(readProviderModels(provider), cli),
 		mux: "tmux",
 		parentMode: "interactive",
 		deadlineMs: SCENARIO_DEADLINE_MS,

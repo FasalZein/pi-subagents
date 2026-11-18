@@ -79,22 +79,40 @@ test("[F1] only the requested provider enters a sample; an OAuth refresh token i
 	);
 });
 
-test("[F13] the settings fingerprint keeps non-secret provider settings and drops secrets", () => {
-	const fingerprint = settingsFingerprint({
+test("[disclosure] the settings fingerprint is a digest plus safe identifiers; no configuration value appears", () => {
+	const entry = (baseUrl, header) => ({
 		providers: {
 			p: {
-				baseUrl: "u",
-				apiKey: "k",
-				headers: { x: 1 },
-				models: [{ id: "m", cost: { input: 3 } }],
+				baseUrl,
+				apiKey: "k-secret",
+				headers: { "x-route": header },
+				models: [{ id: "m", maxTokens: 7 }],
 			},
 		},
 	});
-	assert.deepEqual(fingerprint, {
-		providers: {
-			p: { baseUrl: "u", models: [{ id: "m", cost: { input: 3 } }] },
-		},
-	});
+	const cli = { model: "p/m", thinking: "high" };
+	const fingerprint = settingsFingerprint(
+		entry("https://h/path?token=SECRET", "r1"),
+		cli,
+	);
+	assert.deepEqual(Object.keys(fingerprint).sort(), [
+		"digest",
+		"modelId",
+		"provider",
+		"thinking",
+	]);
+	assert.deepEqual(
+		{ ...fingerprint, digest: undefined },
+		{ provider: "p", modelId: "m", thinking: "high", digest: undefined },
+	);
+	assert.match(fingerprint.digest, /^[0-9a-f]{64}$/);
+	for (const value of ["SECRET", "https://h", "k-secret", "r1", "maxTokens"])
+		assert.equal(JSON.stringify(fingerprint).includes(value), false);
+	// Any change of the effective settings, a routing header included, changes the digest.
+	assert.notEqual(
+		settingsFingerprint(entry("https://h/path?token=SECRET", "r2"), cli).digest,
+		fingerprint.digest,
+	);
 });
 
 test("[F2][F3] recovery removes only tagged roots of dead owners inside the private base", () => {
