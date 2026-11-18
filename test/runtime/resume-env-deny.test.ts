@@ -1,3 +1,4 @@
+import { testResultsDir } from "../support/result-fixtures.ts";
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { readSubagentLaunchMetadataEntries } from "../../src/session/session-files.ts";
@@ -84,7 +85,7 @@ printenv | sort > '${envLog}'
 
 
 			await resumeSubagentSession(
-				{ sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
+				{ resultsDir: testResultsDir(), sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -175,7 +176,7 @@ printenv | sort > '${envLog}'
 
 			const quietResult = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
 			const running = await resumeSubagentSession(
-				{ sessionFile },
+				{ resultsDir: testResultsDir(), sessionFile },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -259,7 +260,7 @@ esac
 			});
 
 			const running = await resumeSubagentSession(
-				{ sessionFile, task: "Interactive deny-env probe." },
+				{ resultsDir: testResultsDir(), sessionFile, task: "Interactive deny-env probe." },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -358,7 +359,7 @@ esac
 
 			await assert.rejects(
 				resumeSubagentSession(
-					{ sessionFile, task: "Failure probe." },
+					{ resultsDir: testResultsDir(), sessionFile, task: "Failure probe." },
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,

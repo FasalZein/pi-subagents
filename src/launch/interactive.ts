@@ -1,6 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle, isSetTabTitleToolEnabled } from "../agents/titles.ts";
+import { getSessionResultsDir } from "../artifact-storage.ts";
+import { reserveRunId } from "../runtime/result-files.ts";
 import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
@@ -46,7 +48,7 @@ export async function launchInteractiveSubagent(
 	runtime: InteractiveLaunchRuntime,
 	options?: { surface?: string },
 ): Promise<RunningSubagent> {
-	const id = Math.random().toString(16).slice(2, 10);
+	const id = reserveRunId(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId())).runId;
 	const launch = await coordinateSubagentLaunch(params, ctx, {
 		mode: "interactive",
 	});

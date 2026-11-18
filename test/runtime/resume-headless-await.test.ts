@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import { writeSubagentLaunchMetadataEntry } from "../../src/session/session-files.ts";
@@ -13,6 +13,7 @@ import {
 	writeFileSync,
 } from "../support/index.ts";
 import "../support/ambient-spawn-grant.ts";
+import { parentToolCtx } from "../support/result-fixtures.ts";
 
 function writeAsyncChildSession(dir: string): string {
 	const sessionFile = join(dir, "async-child.jsonl");
@@ -79,10 +80,14 @@ function registerResumeTool() {
 
 function withFakePi<T>(bin: string, run: () => Promise<T>): Promise<T> {
 	const original = process.env.PI_SUBAGENT_PI_COMMAND;
+	const originalRoot = process.env.PI_ARTIFACT_PROJECT_ROOT;
 	process.env.PI_SUBAGENT_PI_COMMAND = bin;
+	process.env.PI_ARTIFACT_PROJECT_ROOT = dirname(bin);
 	return run().finally(() => {
 		if (original == null) delete process.env.PI_SUBAGENT_PI_COMMAND;
 		else process.env.PI_SUBAGENT_PI_COMMAND = original;
+		if (originalRoot == null) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
+		else process.env.PI_ARTIFACT_PROJECT_ROOT = originalRoot;
 	});
 }
 
@@ -96,7 +101,7 @@ describe("subagent_resume from a headless parent", () => {
 			const sessionFile = writeAsyncChildSession(dir);
 			const { tool, awaited } = registerResumeTool();
 
-			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, { hasUI: false })) as {
+			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
 				details: { status?: string };
 				terminate?: true;
 			};
@@ -117,7 +122,7 @@ describe("subagent_resume from a headless parent", () => {
 			const sessionFile = writeAsyncChildSession(dir);
 			const { tool, awaited } = registerResumeTool();
 
-			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, { hasUI: true })) as {
+			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: true }))) as {
 				details: { status?: string };
 				terminate?: true;
 			};

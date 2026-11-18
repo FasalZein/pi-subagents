@@ -1,6 +1,7 @@
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { getSessionResultsDir } from "../artifact-storage.ts";
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
@@ -159,6 +160,7 @@ export function registerSubagentResumeTool(
 			const running = await resumeSubagentSession(
 				{
 					sessionFile,
+					resultsDir: getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()),
 					task: params.task,
 					name: params.name,
 					agent: params.agent,

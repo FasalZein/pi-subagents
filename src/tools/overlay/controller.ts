@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, Editor, type EditorTheme, Key, matchesKey } from "@earendil-works/pi-tui";
+import { getSessionResultsDir } from "../../artifact-storage.ts";
 import type { OrchestratorController } from "../../runtime/orchestrator-controller.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../../runtime/resume-service.ts";
 import { completedSubagentResults } from "../../runtime/state.ts";
@@ -529,6 +530,7 @@ export class SubagentsOverlayController implements Component {
 			const running = await resumeSubagentSession(
 				{
 					sessionFile: item.sessionFile!,
+					resultsDir: getSessionResultsDir(this.ctx.cwd, this.ctx.sessionManager.getSessionId()),
 					task: message,
 					name: item.name,
 					agent: item.agent,
