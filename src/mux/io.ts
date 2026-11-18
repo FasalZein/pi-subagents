@@ -18,6 +18,7 @@ import {
 	runHerdrPaneCommand,
 	sendHerdrPaneEnter,
 } from "./herdr.ts";
+import { tmuxBackend } from "./tmux.ts";
 import { closeZellijSurface } from "./zellij-runtime.ts";
 
 export function sendCommand(surface: string, command: string): void {
@@ -27,21 +28,7 @@ export function sendCommand(surface: string, command: string): void {
 		return;
 	}
 	if (backend === "tmux") {
-		if (command.length > 0) {
-			execFileSync("tmux", ["send-keys", "-t", surface, "-l", command], {
-				encoding: "utf8",
-			});
-			execFileSync("tmux", ["send-keys", "-t", surface, "Enter"], {
-				encoding: "utf8",
-			});
-			return;
-		}
-		execFileSync("tmux", ["send-keys", "-t", surface, "C-m"], {
-			encoding: "utf8",
-		});
-		execFileSync("tmux", ["send-keys", "-t", surface, "Enter"], {
-			encoding: "utf8",
-		});
+		tmuxBackend.sendCommand(surface, command);
 		return;
 	}
 	if (backend === "wezterm") {
@@ -98,11 +85,7 @@ export function readScreen(surface: string, lines = 50): string {
 	if (backend === "cmux") {
 		return execSync(`cmux read-screen --surface ${shellEscape(surface)} --lines ${lines}`, { encoding: "utf8" });
 	}
-	if (backend === "tmux") {
-		return execFileSync("tmux", ["capture-pane", "-p", "-t", surface, "-S", `-${Math.max(1, lines)}`], {
-			encoding: "utf8",
-		});
-	}
+	if (backend === "tmux") return tmuxBackend.readScreen(surface, lines);
 	if (backend === "wezterm") {
 		const raw = execFileSync("wezterm", ["cli", "get-text", "--pane-id", surface], {
 			encoding: "utf8",
@@ -127,14 +110,7 @@ export async function readScreenAsync(surface: string, lines = 50): Promise<stri
 		});
 		return stdout;
 	}
-	if (backend === "tmux") {
-		const { stdout } = await execFileAsync(
-			"tmux",
-			["capture-pane", "-p", "-t", surface, "-S", `-${Math.max(1, lines)}`],
-			{ encoding: "utf8" },
-		);
-		return stdout;
-	}
+	if (backend === "tmux") return tmuxBackend.readScreenAsync(surface, lines);
 	if (backend === "wezterm") {
 		const { stdout } = await execFileAsync("wezterm", ["cli", "get-text", "--pane-id", surface], { encoding: "utf8" });
 		return tailLines(stdout, lines);
@@ -169,7 +145,7 @@ export function closeSurface(surface: string): void {
 		return;
 	}
 	if (backend === "tmux") {
-		execFileSync("tmux", ["kill-pane", "-t", surface], { encoding: "utf8" });
+		tmuxBackend.closeSurface(surface);
 		return;
 	}
 	if (backend === "wezterm") {
