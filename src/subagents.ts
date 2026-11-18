@@ -82,6 +82,8 @@ import {
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
 import { registerSubagentAgentsTool } from "./tools/agents-tool.ts";
+import { registerSubagentKillTool } from "./tools/kill-tool.ts";
+import { selectManagementToolExposure } from "./tools/tool-exposure.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
 	markInitialPromptLaunchComplete,
@@ -191,6 +193,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
 	pi.on("session_start", (_event, ctx) => {
+		registerManagementTools();
 		initializeSpawnWidthForSession();
 		void workReporting.start(ctx);
 		latestContext = ctx;
@@ -362,33 +365,50 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		wireSubagentSteerBack,
 		startWidgetRefresh,
 		getLaunchedSubagentResult,
-		stopRunningSubagent,
 		muxUnavailableResult: () => muxUnavailableResult("tab-title"),
 	});
 
-	registerSubagentResumeTool(pi, shouldRegister, {
-		getShellReadyDelayMs,
-		isMuxAvailable,
-		watchBackgroundSubagent,
-		watchSubagent,
-		getWatcherSignal,
-		wireSubagentSteerBack,
-		startWidgetRefresh,
-		getLaunchedSubagentResult,
-		runningSubagents,
-		getContextWindow: (modelRef) => widgetManager.resolveModelContextWindow(modelRef),
-		modelRegistry: {
-			getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
-		},
-	});
+	// D21: the management tools are registered at session start, where Pi has
+	// bound the active tool list; it throws while the extension loads.
+	let managementToolsRegistered = false;
+	function registerManagementTools() {
+		if (managementToolsRegistered) return;
+		managementToolsRegistered = true;
+		const grant = { exposure: selectManagementToolExposure(pi.getActiveTools()), mayLaunch };
+		registerSubagentKillTool(pi, shouldRegister, stopRunningSubagent, grant);
+		registerSubagentResumeTool(
+			pi,
+			shouldRegister,
+			{
+				getShellReadyDelayMs,
+				isMuxAvailable,
+				watchBackgroundSubagent,
+				watchSubagent,
+				getWatcherSignal,
+				wireSubagentSteerBack,
+				startWidgetRefresh,
+				getLaunchedSubagentResult,
+				runningSubagents,
+				getContextWindow: (modelRef) => widgetManager.resolveModelContextWindow(modelRef),
+				modelRegistry: {
+					getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
+				},
+			},
+			grant,
+		);
 
-	registerSubagentAgentsTool(pi, shouldRegister, {
-		mayLaunch,
-		spawnEnv: () => parseSpawnEnv(process.env),
-		listLaunchableAgents: (cwd, spawnEnv) =>
-			selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, spawnEnv),
-		launchPolicy: getSoloLaunchPolicy,
-	});
+		registerSubagentAgentsTool(
+			pi,
+			shouldRegister,
+			{
+				spawnEnv: () => parseSpawnEnv(process.env),
+				listLaunchableAgents: (cwd, spawnEnv) =>
+					selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, spawnEnv),
+				launchPolicy: getSoloLaunchPolicy,
+			},
+			grant,
+		);
+	}
 
 	registerSubagentMessageRenderers(pi, formatElapsed);
 

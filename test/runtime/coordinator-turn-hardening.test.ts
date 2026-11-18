@@ -89,7 +89,6 @@ function makeLaunchRuntime(
 		wireSubagentSteerBack: () => {},
 		startWidgetRefresh: () => {},
 		getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
-		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux unavailable" }], details: {} }),
 		listLaunchableAgents: () => [],
 	};

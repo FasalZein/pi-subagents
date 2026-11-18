@@ -14,6 +14,7 @@ import { formatTaskPreview, renderSubagentCompletionText } from "./message-rende
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
+import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 
 export interface ResumeToolRuntime extends ResumeServiceRuntime {
 	wireSubagentSteerBack(pi: ExtensionAPI, running: RunningSubagent, promise: Promise<SubagentResult>): void;
@@ -58,12 +59,14 @@ export function registerSubagentResumeTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
 	runtime: ResumeToolRuntime,
+	grant: ManagementToolGrant,
 ): void {
 	if (!shouldRegister(SUBAGENT_RESUME_TOOL_NAME)) return;
 	pi.registerTool({
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
 		description: "Continue an earlier child session from its session file, optionally with a follow-up task.",
+		exposure: grant.exposure,
 		parameters: Type.Object({
 			sessionFile: Type.String({
 				description: "Path to the session .jsonl file to resume",
@@ -143,6 +146,7 @@ export function registerSubagentResumeTool(
 			return component;
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_RESUME_TOOL_NAME));
 			const sessionFile = params.sessionFile;
 			if (!sessionFile) throw new Error("Session file is required.");
 			assertResumeAllowed(sessionFile);
