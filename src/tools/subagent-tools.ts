@@ -15,11 +15,7 @@ import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/headless-result.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
-import {
-	asSubagentToolResult,
-	getSubagentBatchStopMetadata,
-	markSubagentBatchBlocking,
-} from "../runtime/state.ts";
+import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -44,12 +40,13 @@ export const SubagentChildParams = Type.Object({
 	name: Type.String({
 		description: "Lower-kebab handle of 2 to 4 words and at most 32 characters, such as auth-scout or diff-reviewer.",
 	}),
-	title: Type.String({ description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map." }),
+	title: Type.String({
+		description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map.",
+	}),
 	task: Type.String({ description: "The work for this child, in Markdown for anything beyond one line." }),
 	model: Type.Optional(
 		Type.String({
-			description:
-				"Leave unset unless the user named a concrete model for this launch; the format is provider/model.",
+			description: "Leave unset unless the user named a concrete model for this launch; the format is provider/model.",
 		}),
 	),
 	thinking: Type.Optional(Type.String({ description: "Thinking level for this child, such as high." })),

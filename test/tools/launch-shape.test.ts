@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../../src/agents/definitions.ts";
-import { markInitialPromptLaunchComplete, registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
+import {
+	markInitialPromptLaunchComplete,
+	registerSubagentCoreTools,
+	type SubagentToolRuntime,
+} from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../../src/types.ts";
 import {
 	afterEach,
@@ -32,7 +36,11 @@ const SRC = join(import.meta.dirname, "../../src");
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-		entry.isDirectory() ? sourceFiles(join(dir, entry.name)) : entry.name.endsWith(".ts") ? [join(dir, entry.name)] : [],
+		entry.isDirectory()
+			? sourceFiles(join(dir, entry.name))
+			: entry.name.endsWith(".ts")
+				? [join(dir, entry.name)]
+				: [],
 	);
 }
 
@@ -101,7 +109,12 @@ function fakeLaunchTool(modes: Record<string, "interactive" | "background">) {
 	};
 }
 
-const ENV_KEYS = ["PI_CODING_AGENT_DIR", "PI_SUBAGENT_AGENT", "PI_SUBAGENT_SPAWNABLE", "PI_SUBAGENT_SPAWN_BUDGET"] as const;
+const ENV_KEYS = [
+	"PI_CODING_AGENT_DIR",
+	"PI_SUBAGENT_AGENT",
+	"PI_SUBAGENT_SPAWNABLE",
+	"PI_SUBAGENT_SPAWN_BUDGET",
+] as const;
 
 /** The real extension over a config root holding the named agent files; returns a launch caller. */
 function realLaunchTool(agents: Record<string, string>) {
@@ -109,7 +122,10 @@ function realLaunchTool(agents: Record<string, string>) {
 	const configDir = join(cwd, "agent-root");
 	mkdirSync(join(configDir, "agents"), { recursive: true });
 	for (const [name, extra] of Object.entries(agents)) {
-		writeFileSync(join(configDir, "agents", `${name}.md`), `---\nname: ${name}\ndescription: Does ${name} work\n${extra}---\n\nBody.`);
+		writeFileSync(
+			join(configDir, "agents", `${name}.md`),
+			`---\nname: ${name}\ndescription: Does ${name} work\n${extra}---\n\nBody.`,
+		);
 	}
 	process.env.PI_CODING_AGENT_DIR = configDir;
 	const tools = new Map<string, LaunchTool & { name: string }>();
@@ -134,7 +150,8 @@ function realLaunchTool(agents: Record<string, string>) {
 	const tool = tools.get("subagent");
 	assert.ok(tool);
 	const ctx = { cwd, hasUI: true, sessionManager: { getSessionFile: () => null, getSessionId: () => "parent" } };
-	return (agent: string) => tool.execute("call-1", { children: [child(agent, "typo-check")] }, undefined, undefined, ctx);
+	return (agent: string) =>
+		tool.execute("call-1", { children: [child(agent, "typo-check")] }, undefined, undefined, ctx);
 }
 
 describe("launch shape, launch reply and closest names (T18)", () => {
