@@ -353,13 +353,10 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		mode: options.mode ?? "background",
 	});
 	// No list keeps the inherited set; a list keeps only the entries that resolve (D10).
-	const entryCheck =
-		configuredExtensions === undefined
-			? { kept: undefined, dropped: [] }
-			: dropMissingExtensionEntries(configuredExtensions, {
-					cwd: extensionCwd,
-					agentDir: runtimePaths.effectiveAgentConfigDir,
-				});
+	const entryCheck = dropMissingExtensionEntries(configuredExtensions, {
+		cwd: extensionCwd,
+		agentDir: runtimePaths.effectiveAgentConfigDir,
+	});
 	const extensions = entryCheck.kept;
 	const denySet = addToolModeDeniedNames(resolveDenyTools(agentDefs), tools);
 	const skillLaunchPlan = await buildSkillLaunchPlan(

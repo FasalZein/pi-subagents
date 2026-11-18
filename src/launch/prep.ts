@@ -27,6 +27,7 @@ import { parseCommandWords } from "./child-command.ts";
 import { buildChildLaunchPlan, type ModelRegistryLike } from "./child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
+import { isSubagentsExtensionEntry } from "./extension-entries.ts";
 import { getLaunchEnvCollisions } from "./launch-overrides.ts";
 import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import {
@@ -225,7 +226,7 @@ export function getSubagentsExtensionPath(): string {
  * force-loading it again would register its tools twice.
  */
 function includesSubagentsExtension(extensionSpecs: string[]): boolean {
-	return extensionSpecs.some((spec) => /(^|[/@:])pi-subagents(\b|[/@])/.test(spec.trim()));
+	return extensionSpecs.some((spec) => isSubagentsExtensionEntry(spec));
 }
 
 export function getExtensionLaunchArgs(
