@@ -1,18 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, Editor, type EditorTheme, Key, matchesKey } from "@earendil-works/pi-tui";
-import type { OrchestratorController } from "../../runtime/orchestrator-controller.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../../runtime/resume-service.ts";
 import { completedSubagentResults } from "../../runtime/state.ts";
 import type { RunningSubagent, SubagentResult } from "../../types.ts";
 import { buildAgentItems } from "./agent-items.ts";
 import { buildCompletedItems, buildRunningItems } from "./data.ts";
-import {
-	getOrchestratorActions,
-	getOrchestratorGuardMessage,
-	keepOrchestratorSelectionVisible,
-	renderOrchestrator,
-	renderOrchestratorConfirmation,
-} from "./orchestrator-view.ts";
 import { getMaxScroll, renderDetail } from "./render-detail.ts";
 import { getFooterHints, renderFooter, renderHeader } from "./render-frame.ts";
 import { fitLine } from "./render-helpers.ts";
@@ -23,20 +15,14 @@ import { TABS } from "./render-types.ts";
 export interface OverlayRuntime extends ResumeServiceRuntime {
 	pi: ExtensionAPI;
 	wireSubagentSteerBack: (pi: ExtensionAPI, r: RunningSubagent, p: Promise<SubagentResult>) => void;
-	orchestrator?: OrchestratorController;
 }
-
-export type SubagentsOverlayResult = {
-	kind: "fresh-session";
-	targetMode: boolean;
-} | null;
 
 const FALLBACK_BODY_HEIGHT = 24;
 
 export class SubagentsOverlayController implements Component {
 	private completedLoadId = 0;
 	private ctx: ExtensionContext;
-	private done: (result: SubagentsOverlayResult) => void;
+	private done: () => void;
 	private editor: Editor;
 	private refreshTimer: ReturnType<typeof setInterval> | null = null;
 	private runtime: OverlayRuntime;
@@ -48,13 +34,12 @@ export class SubagentsOverlayController implements Component {
 		selectedIndex: 0,
 		view: { kind: "list" },
 		items: [],
-		listScroll: { running: 0, completed: 0, agents: 0, orchestrator: 0 },
+		listScroll: { running: 0, completed: 0, agents: 0 },
 		loading: false,
-		orchestrator: { selectedIndex: 0, scroll: 0 },
 	};
 
 	constructor(
-		done: (result: SubagentsOverlayResult) => void,
+		done: () => void,
 		ctx: ExtensionContext,
 		theme: Theme,
 		runtime: OverlayRuntime,
@@ -79,18 +64,14 @@ export class SubagentsOverlayController implements Component {
 		this.stopRefreshTimer();
 		if (this.finished) return;
 		this.finished = true;
-		this.done(null);
+		this.done();
 	}
 
 	close(): void {
-		this.finish(null);
-	}
-
-	private finish(result: SubagentsOverlayResult): void {
 		if (this.finished) return;
 		this.finished = true;
 		this.stopRefreshTimer();
-		this.done(result);
+		this.done();
 	}
 
 	handleInput(data: string): void {
@@ -102,51 +83,19 @@ export class SubagentsOverlayController implements Component {
 
 		if (this.state.view.kind === "detail") this.handleDetailInput(data);
 		else if (this.state.view.kind === "confirm") this.handleConfirmInput(data);
-		else if (this.state.view.kind === "orchestrator-confirm") this.handleOrchestratorConfirmInput(data);
 		else if (this.state.view.kind === "editor") this.handleEditorInput(data);
-		else if (this.state.activeTab === "orchestrator") this.handleOrchestratorInput(data);
 		else this.handleListInput(data);
 
 		this.requestRender();
 	}
 
 	render(width: number): string[] {
-		const lines = renderHeader(this.state, this.visibleTabs(), this.theme, width);
+		const lines = renderHeader(this.state, TABS, this.theme, width);
 		const bodyHeight = this.bodyHeight(width);
-		if (this.state.activeTab === "orchestrator") {
-			const snapshot = this.getOrchestratorSnapshot();
-			const orchestratorHeight = this.orchestratorBodyHeight(width);
-			if (snapshot && this.state.view.kind === "orchestrator-confirm") {
-				lines.push(
-					...renderOrchestratorConfirmation(this.state.view.targetMode, this.state.view.confirmed, this.theme, width, orchestratorHeight),
-				);
-			} else if (snapshot) {
-				this.state.orchestrator.scroll = keepOrchestratorSelectionVisible(
-					snapshot,
-					this.state.orchestrator.selectedIndex,
-					this.state.orchestrator.scroll,
-					width,
-					orchestratorHeight,
-					this.state.orchestrator.error,
-				);
-				lines.push(
-					...renderOrchestrator(
-						snapshot,
-						this.state.orchestrator.selectedIndex,
-						this.state.orchestrator.scroll,
-						this.theme,
-						width,
-						orchestratorHeight,
-						this.state.orchestrator.error,
-					),
-				);
-			}
-		} else if (this.state.view.kind === "detail") {
+		if (this.state.view.kind === "detail") {
 			lines.push(...renderDetail(this.state.view.item, this.state.view.scroll, this.theme, width, bodyHeight));
 		} else if (this.state.view.kind === "confirm") {
 			lines.push(...this.renderConfirmView(this.state.view.item, this.state.view.confirmed, width));
-		} else if (this.state.view.kind === "orchestrator-confirm") {
-			lines.push(...renderOrchestratorConfirmation(this.state.view.targetMode, this.state.view.confirmed, this.theme, width, bodyHeight));
 		} else if (this.state.view.kind === "editor") {
 			const item = this.state.items[this.state.view.itemIndex];
 			if (item) lines.push(...this.renderEditorView(item, width));
@@ -211,65 +160,6 @@ export class SubagentsOverlayController implements Component {
 		}
 	}
 
-	private handleOrchestratorInput(data: string): void {
-		if (matchesKey(data, Key.escape)) {
-			this.close();
-			return;
-		}
-		if (matchesKey(data, Key.left)) {
-			this.switchTab(-1);
-			return;
-		}
-		if (matchesKey(data, Key.right)) {
-			this.switchTab(1);
-			return;
-		}
-		if (matchesKey(data, Key.up)) {
-			this.moveOrchestratorSelection(-1);
-			return;
-		}
-		if (matchesKey(data, Key.down)) {
-			this.moveOrchestratorSelection(1);
-			return;
-		}
-		if (matchesKey(data, Key.enter)) this.activateOrchestratorAction();
-	}
-
-	private handleOrchestratorConfirmInput(data: string): void {
-		if (this.state.view.kind !== "orchestrator-confirm") return;
-		if (matchesKey(data, Key.escape) || matchesKey(data, "n")) {
-			this.state.view = { kind: "list" };
-			return;
-		}
-		if (matchesKey(data, Key.left) || matchesKey(data, Key.up)) {
-			this.state.view = { ...this.state.view, confirmed: false };
-			return;
-		}
-		if (matchesKey(data, Key.right) || matchesKey(data, Key.down) || matchesKey(data, "y")) {
-			this.state.view = { ...this.state.view, confirmed: true };
-			return;
-		}
-		if (!matchesKey(data, Key.enter) || !this.state.view.confirmed) {
-			if (matchesKey(data, Key.enter)) this.state.view = { kind: "list" };
-			return;
-		}
-
-		const snapshot = this.getOrchestratorSnapshot();
-		if (!snapshot) {
-			this.state.view = { kind: "list" };
-			this.state.orchestrator.error = "Orchestrator controls are unavailable in this session.";
-			return;
-		}
-		if (snapshot.blockedReason) {
-			this.state.view = { kind: "list" };
-			this.state.orchestrator.error = getOrchestratorGuardMessage(snapshot);
-			return;
-		}
-
-		const targetMode = this.state.view.targetMode;
-		this.finish({ kind: "fresh-session", targetMode });
-	}
-
 	private handleDetailInput(data: string): void {
 		if (this.state.view.kind !== "detail") return;
 		if (matchesKey(data, Key.escape)) {
@@ -326,58 +216,6 @@ export class SubagentsOverlayController implements Component {
 		this.editor.handleInput(data);
 	}
 
-	private moveOrchestratorSelection(direction: -1 | 1): void {
-		const snapshot = this.getOrchestratorSnapshot();
-		if (!snapshot) return;
-		const maxIndex = Math.max(0, getOrchestratorActions(snapshot).length - 1);
-		this.state.orchestrator.selectedIndex = Math.max(0, Math.min(maxIndex, this.state.orchestrator.selectedIndex + direction));
-		this.state.orchestrator.scroll = keepOrchestratorSelectionVisible(
-			snapshot,
-			this.state.orchestrator.selectedIndex,
-			this.state.orchestrator.scroll,
-			this.tui.terminal?.columns ?? 80,
-			this.orchestratorBodyHeight(this.tui.terminal?.columns ?? 80),
-			this.state.orchestrator.error,
-		);
-	}
-
-	private activateOrchestratorAction(): void {
-		const controller = this.runtime.orchestrator;
-		const snapshot = this.getOrchestratorSnapshot();
-		if (!controller || !snapshot) return;
-		const action = getOrchestratorActions(snapshot)[this.state.orchestrator.selectedIndex];
-		if (!action || action.disabled) return;
-
-		if (action.id === "session-fresh") {
-			this.state.view = {
-				kind: "orchestrator-confirm",
-				targetMode: action.targetMode === true,
-				confirmed: false,
-			};
-			return;
-		}
-
-		const result =
-			action.id === "session-toggle"
-				? controller.setMode(action.targetMode === true, this.ctx)
-				: controller.saveGlobalDefault(!snapshot.savedGlobalDefault, this.ctx);
-		this.state.orchestrator.error = result.ok
-			? undefined
-			: (result.error ?? getOrchestratorGuardMessage(result.snapshot) ?? "The orchestrator setting was not changed.");
-		this.state.orchestrator.scroll = keepOrchestratorSelectionVisible(
-			result.snapshot,
-			this.state.orchestrator.selectedIndex,
-			this.state.orchestrator.scroll,
-			this.tui.terminal?.columns ?? 80,
-			this.orchestratorBodyHeight(this.tui.terminal?.columns ?? 80),
-			this.state.orchestrator.error,
-		);
-	}
-
-	private getOrchestratorSnapshot() {
-		return this.runtime.orchestrator?.getSnapshot(this.ctx);
-	}
-
 	private renderConfirmView(item: OverlayItem, confirmed: boolean, width: number): string[] {
 		const selected = (text: string, active: boolean) => (active ? this.theme.bg("selectedBg", ` ${text} `) : ` ${text} `);
 		return [
@@ -407,7 +245,7 @@ export class SubagentsOverlayController implements Component {
 	}
 
 	private switchTab(direction: -1 | 1): void {
-		const tabs = this.visibleTabs();
+		const tabs = TABS;
 		const currentIndex = tabs.findIndex((tab) => tab.id === this.state.activeTab);
 		const nextIndex = currentIndex + direction;
 		if (currentIndex < 0 || nextIndex < 0 || nextIndex >= tabs.length) return;
@@ -417,28 +255,12 @@ export class SubagentsOverlayController implements Component {
 		this.refreshItems();
 	}
 
-	private visibleTabs() {
-		const snapshot = this.getOrchestratorSnapshot();
-		const tabs = TABS.filter((tab) => tab.id !== "orchestrator" || Boolean(snapshot && !snapshot.isChildSession));
-		if (!snapshot || snapshot.isChildSession) return tabs;
-		return tabs.map((tab) =>
-			tab.id === "orchestrator"
-				? { ...tab, label: `Orchestrator: ${snapshot.currentMode ? "On" : "Off"}` }
-				: tab,
-		);
-	}
-
 	private moveSelection(direction: -1 | 1): void {
 		this.state.selectedIndex = Math.max(0, Math.min(this.state.items.length - 1, this.state.selectedIndex + direction));
 		this.keepSelectionVisible();
 	}
 
 	private refreshItems(): void {
-		if (this.state.activeTab === "orchestrator") {
-			this.state.items = [];
-			this.state.loading = false;
-			return;
-		}
 		const overlayCtx: OverlayContext = {
 			ui: this.ctx.ui,
 			cwd: this.ctx.cwd,
@@ -496,13 +318,6 @@ export class SubagentsOverlayController implements Component {
 	}
 
 	private bodyHeight(width = this.tui.terminal?.columns ?? 80): number {
-		const rows = this.tui.terminal?.rows;
-		if (!rows) return FALLBACK_BODY_HEIGHT;
-		const footerHeight = renderFooter(getFooterHints(this.state), this.theme, width).length;
-		return Math.max(1, Math.min(FALLBACK_BODY_HEIGHT, rows - 5 - footerHeight));
-	}
-
-	private orchestratorBodyHeight(width = this.tui.terminal?.columns ?? 80): number {
 		const rows = this.tui.terminal?.rows;
 		if (!rows) return FALLBACK_BODY_HEIGHT;
 		const footerHeight = renderFooter(getFooterHints(this.state), this.theme, width).length;

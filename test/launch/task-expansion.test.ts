@@ -211,23 +211,6 @@ describe("subagent task expansion", () => {
 		assert.doesNotMatch(taskArtifact, /task shell failed/);
 	});
 
-	it("expands task-expansion placeholders in orchestrator mode when explicitly opted in", async () => {
-		const originalOrchestratorMode = process.env.PI_ORCHESTRATOR_MODE;
-		process.env.PI_ORCHESTRATOR_MODE = "1";
-		try {
-			const { cwd, taskArtifact } = await launchAndReadTaskArtifact({
-				agentFrontmatter: ["task-expansion: shell"],
-				task: "Inline: !`touch orchestrator-ran && printf orchestrator-marker`",
-			});
-
-			assert.match(taskArtifact, /Inline: orchestrator-marker/);
-			assert.equal(existsSync(join(cwd, "orchestrator-ran")), true);
-		} finally {
-			if (originalOrchestratorMode === undefined) delete process.env.PI_ORCHESTRATOR_MODE;
-			else process.env.PI_ORCHESTRATOR_MODE = originalOrchestratorMode;
-		}
-	});
-
 	it("expands repeated placeholders without reprocessing command output", async () => {
 		const { taskArtifact } = await launchAndReadTaskArtifact({
 			agentFrontmatter: ["task-expansion: shell"],

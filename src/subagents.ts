@@ -87,7 +87,6 @@ import {
 import { registerSubagentsView } from "./tools/subagents-view.ts";
 import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
-import { createOrchestratorController } from "./runtime/orchestrator-controller.ts";
 
 export { classifyAssistantMessageForMixedBatch as classifyAssistantMessageForMixedBatchForTest } from "./runtime/batch-classifier.ts";
 export { shouldAwaitSubagentLaunch as shouldAwaitSubagentLaunchForTest } from "./runtime/running-registry.ts";
@@ -185,10 +184,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		header.parentSession = parentSession;
 	}
 
-	const orchestrator = createOrchestratorController(pi, {
-		environment: process.env,
-		getRunningSubagentCount: () => runningSubagents.size,
-	});
 	let latestContext: ExtensionContext | undefined;
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
@@ -199,7 +194,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		resetSubagentBatchStopRequest();
 		applySubagentLineage(ctx);
 		attachWidgetContext(ctx);
-		orchestrator.handleSessionStart(ctx);
 		// One notice per session (D24). In print mode the notice is not shown:
 		// Pi has no print-mode notice channel and its fallback notify is a no-op.
 		// The launch refusal still names the file and its error. Revisit if Pi
@@ -291,7 +285,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		};
 	});
 
-	pi.on("before_agent_start", (event) => {
+	pi.on("before_agent_start", () => {
 		const rosterResult = pendingAmbientRoster
 			? {
 					message: {
@@ -311,12 +305,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			pendingAmbientRoster = null;
 		}
 
-		const orchestratorResult = orchestrator.beforeAgentStart(event);
-		if (!rosterResult && !orchestratorResult) return undefined;
-		return {
-			...(rosterResult ?? {}),
-			...(orchestratorResult ?? {}),
-		};
+		return rosterResult;
 	});
 
 	pi.on("input", () => {
@@ -341,8 +330,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", (event) => {
-		const orchestratorResult = orchestrator.handleToolCall(event);
-		if (orchestratorResult) return orchestratorResult;
 		if (event.toolName !== SUBAGENT_TOOL_NAME) return {};
 		const input = event.input as Partial<SubagentParamsInput>;
 		const agentDefs =
@@ -359,10 +346,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			}
 		}
 		return {};
-	});
-
-	pi.on("session_tree", (_event, ctx) => {
-		orchestrator.handleSessionTree(ctx);
 	});
 
 	pi.on("turn_start", () => {
@@ -388,7 +371,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			return;
 		}
 		await workReporting.stop();
-		orchestrator.handleSessionShutdown(ctx);
 
 		moduleAbortController.abort();
 		widgetManager.reset();
@@ -456,7 +438,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			runningSubagents,
 			pi,
 			wireSubagentSteerBack,
-			orchestrator,
 		},
 	);
 }
