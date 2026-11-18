@@ -82,7 +82,6 @@ function fakeLaunchTool(
 			content: [{ type: "text", text: "started" }],
 			details: { status: "started" },
 		}),
-		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 		listLaunchableAgents: () => [],
 	};
