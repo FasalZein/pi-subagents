@@ -463,7 +463,7 @@ describe("agent definitions and catalog", () => {
 		assert.deepEqual([...resolveDenyToolsForTest(coordinator ?? null)], []);
 	});
 
-	it("registers conservative delegation guidance on the subagent tool", () => {
+	it("declares the launch tool with one children-only shape and one-sentence descriptions (D21)", () => {
 		const tools = new Map<string, any>();
 
 		subagentsExtension({
@@ -479,85 +479,12 @@ describe("agent definitions and catalog", () => {
 
 		const tool = tools.get("subagent");
 		assert.ok(tool);
-		assert.match(tool.description, /named helper agents from the subagent roster/);
-		assert.match(tool.promptSnippet, /separate helper processes you can launch to do work outside this chat turn/);
-		assert.match(
-			tool.promptSnippet,
-			/Use exact agent names and behavior fields from the subagent roster when present; field meanings are defined in <subagent-rules>/,
-		);
-		assert.match(tool.promptSnippet, /make one subagent call with children/);
-		assert.match(tool.promptSnippet, /include each named agent exactly once/);
-		assert.match(tool.promptSnippet, /Do not substitute one agent for another/);
-		assert.match(tool.promptSnippet, /Translate the user.s request into each helper.s task/);
-		assert.match(tool.promptSnippet, /do not change the work just because of the agent name/);
-		assert.match(
-			tool.promptSnippet,
-			/write readable Markdown with objective, scope, relevant files\/facts, constraints, and requested output/,
-		);
-		assert.match(
-			tool.promptSnippet,
-			/Do small direct work yourself: quick answers, simple file reads, and tiny one-shot edits/,
-		);
-		assert.match(tool.promptSnippet, /Do not redo delegated work/);
-		assert.match(tool.promptSnippet, /do not claim the helper's findings before its later message appears/);
-		assert.match(
-			tool.promptSnippet,
-			/For helpers with tool_return=later_message, the runtime may stop after this tool batch/,
-		);
-		assert.match(tool.promptSnippet, /Do not redo delegated work or claim results before the later report appears/);
-		assert.doesNotMatch(tool.promptSnippet, /PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN/);
-	});
-
-	it("registers opt-out delegation guidance when coordinator-only turn stop is disabled", () => {
-		process.env.PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN = "1";
-		const tools = new Map<string, any>();
-
-		subagentsExtension({
-			on() {},
-			registerCommand() {},
-			registerMessageRenderer() {},
-			sendMessage() {},
-			registerTool(definition: any) {
-				tools.set(definition.name, definition);
-				return definition;
-			},
-		} as any);
-
-		const tool = tools.get("subagent");
-		assert.ok(tool);
-		assert.match(
-			tool.promptSnippet,
-			/You may continue with non-overlapping work after launching a tool_return=later_message helper/,
-		);
-		assert.match(tool.promptSnippet, /Do not redo delegated work/);
-		assert.doesNotMatch(tool.promptSnippet, /For helpers with tool_return=later_message, the runtime may stop/);
-	});
-
-	it("tells a one-shot pi -p parent that every launch waits and returns the report inline", () => {
-		const originalArgv = process.argv;
-		process.argv = ["node", "pi", "-p", "@task.md"];
-		const tools = new Map<string, any>();
-		try {
-			subagentsExtension({
-				on() {},
-				registerCommand() {},
-				registerMessageRenderer() {},
-				sendMessage() {},
-				registerTool(definition: any) {
-					tools.set(definition.name, definition);
-					return definition;
-				},
-			} as any);
-		} finally {
-			process.argv = originalArgv;
+		assert.deepEqual(Object.keys(tool.parameters.properties), ["children"]);
+		assert.deepEqual(tool.parameters.required, ["children"]);
+		for (const registered of tools.values()) {
+			assert.equal(registered.promptSnippet, undefined, `${registered.name} has no prompt snippet`);
+			const sentences = registered.description.split(/[.!?](?:\s|$)/).filter((part: string) => part.trim());
+			assert.equal(sentences.length, 1, `${registered.name} description is one sentence: ${registered.description}`);
 		}
-
-		const tool = tools.get("subagent");
-		assert.ok(tool);
-		assert.match(
-			tool.promptSnippet,
-			/every launch waits for the helper and returns its report as the tool result\. Read the report and continue; do not redo delegated work/,
-		);
-		assert.doesNotMatch(tool.promptSnippet, /later_message|later report|steer message/);
 	});
 });

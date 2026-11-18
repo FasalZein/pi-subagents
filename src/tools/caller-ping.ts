@@ -86,8 +86,7 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 		name: CALLER_PING_TOOL_NAME,
 		label: "Caller Ping",
 		description:
-			"Ask the launching chat for help, send your message there, then close this helper session. " +
-			"The launching chat can later send follow-up instructions to continue this helper. Call it once.",
+			"Ask the launching chat for help once with your message and close this session, which that chat can continue later with instructions.",
 		parameters: buildCallerPingParams(),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const sessionFile = process.env.PI_SUBAGENT_SESSION;

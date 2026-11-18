@@ -91,6 +91,7 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 		getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "completed" }], details: {} }),
 		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
+		listLaunchableAgents: () => [],
 	};
 	registerSubagentCoreTools(
 		{ registerTool: (definition: any) => tools.set(definition.name, definition), getThinkingLevel: () => "low" } as any,
@@ -100,7 +101,7 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 	try {
 		const result = await tools.get("subagent").execute(
 			"call-1",
-			{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) },
+			{ children: [{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) }] },
 			undefined,
 			undefined,
 			{

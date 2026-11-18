@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
+import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agents/launchable-agents.ts";
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
@@ -14,12 +15,7 @@ import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
-import {
-	asSubagentToolResult,
-	getCoordinatorOnlyTurnPrompt,
-	getSubagentBatchStopMetadata,
-	markSubagentBatchBlocking,
-} from "../runtime/state.ts";
+import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -32,65 +28,38 @@ import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import { renderLaunchReply } from "./launch-reply.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_KILL_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
 
 let initialPromptLaunchActive = isInitialPromptInvocation();
 
-const SUBAGENT_NAME_DESCRIPTION =
-	"Required machine handle for this launch. Use lower-kebab <scope>-<role>, 2-4 words, max 32 chars, matching ^[a-z][a-z0-9]*(?:-[a-z0-9]+){1,3}$; examples: auth-scout, diff-reviewer, session-tester. Do not use Title Case, spaces, underscores, generic names, or prose.";
-
-const SUBAGENT_TITLE_DESCRIPTION =
-	"Required human title for this child session/widget. Use sentence case, 3-8 words, outcome/objective focused, and not a prompt or instruction; examples: Auth implementation map, Local diff bug review.";
-
-const SUBAGENT_MODEL_DESCRIPTION =
-	"Model routing/cost control only. Omit unless the user named a concrete model for this launch. " +
-	"Do not infer a model from quality, depth, urgency, safety, or cost language. " +
-	"Never invent or upgrade models. Format: provider/model; put provider/model:thinking suffix in `thinking`.";
-
-const SUBAGENT_THINKING_DESCRIPTION =
-	"Child runtime thinking level only. Omit unless the user named a concrete thinking level for this launch. " +
-	"Do not infer thinking from quality, depth, urgency, safety, or cost language. " +
-	"Use a thinking level supported by the selected model and the installed Pi version.";
-
 export const SubagentChildParams = Type.Object({
-	name: Type.String({ description: SUBAGENT_NAME_DESCRIPTION }),
-	task: Type.String({
-		description:
-			"Task/prompt for the sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work.",
+	agent: Type.String({ description: "Name of the agent definition to launch." }),
+	name: Type.String({
+		description: "Lower-kebab handle of 2 to 4 words and at most 32 characters, such as auth-scout or diff-reviewer.",
 	}),
-	title: Type.String({ description: SUBAGENT_TITLE_DESCRIPTION }),
-	agent: Type.String({
-		description:
-			"Required agent definition name. Reads .pi/agents/<name>.md or ~/.pi/agent/agents/<name>.md and refuses ad-hoc unnamed subagents.",
+	title: Type.String({
+		description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map.",
 	}),
-	model: Type.Optional(Type.String({ description: SUBAGENT_MODEL_DESCRIPTION })),
-	thinking: Type.Optional(Type.String({ description: SUBAGENT_THINKING_DESCRIPTION })),
+	task: Type.String({ description: "The work for this child, in Markdown for anything beyond one line." }),
+	model: Type.Optional(
+		Type.String({
+			description:
+				"Leave unset unless the user named a concrete model or thinking level for this launch; give provider/model, a model fragment, or a model name without a provider.",
+		}),
+	),
+	thinking: Type.Optional(
+		Type.String({ description: "Thinking level for this child, such as high; the rule for model applies." }),
+	),
 });
 
 export const SubagentParams = Type.Object({
-	name: Type.Optional(Type.String({ description: SUBAGENT_NAME_DESCRIPTION })),
-	task: Type.Optional(
-		Type.String({
-			description:
-				"Task/prompt for a single sub-agent. For non-trivial work, write readable Markdown: short paragraphs, bullets, or headings as appropriate. Use a one-line task only for trivial work.",
-		}),
-	),
-	title: Type.Optional(Type.String({ description: SUBAGENT_TITLE_DESCRIPTION })),
-	agent: Type.Optional(
-		Type.String({
-			description: "Required agent definition name for a single subagent launch.",
-		}),
-	),
-	model: Type.Optional(Type.String({ description: SUBAGENT_MODEL_DESCRIPTION })),
-	thinking: Type.Optional(Type.String({ description: SUBAGENT_THINKING_DESCRIPTION })),
-	children: Type.Optional(
-		Type.Array(SubagentChildParams, {
-			description:
-				"Spawn multiple children in one deterministic launch. Use this instead of multiple separate subagent tool calls when a user asks for more than one agent.",
-		}),
-	),
+	children: Type.Array(SubagentChildParams, {
+		minItems: 1,
+		description: "The children to start in this one call, up to the spawn width.",
+	}),
 });
 const SubagentKillParams = Type.Object({
 	id: Type.String({
@@ -114,17 +83,13 @@ export interface SubagentToolRuntime {
 	getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal): Promise<ToolResult>;
 	stopRunningSubagent(running: RunningSubagent): Promise<void>;
 	muxUnavailableResult(action: string): unknown;
+	/** The agents this session may launch, read from the current files. */
+	listLaunchableAgents(cwd: string): LaunchableAgent[];
 }
 
-type SubagentToolParams = Partial<SubagentParamsInput> & {
-	children?: SubagentParamsInput[];
-};
-
-function getRequestedChildren(params: SubagentToolParams): SubagentParamsInput[] {
-	if (Array.isArray(params.children) && params.children.length > 0) {
-		return params.children.map((child) => stripInternalLaunchOverrides(child));
-	}
-	return [stripInternalLaunchOverrides(params as SubagentParamsInput)];
+/** D23: an unknown agent is refused with the three closest names the caller may launch. */
+function getUnknownAgentError(agent: string, launchable: () => LaunchableAgent[]): string {
+	return `Error: ${renderUnknownAgentRefusal(agent, launchable().map(nameOf))}`;
 }
 
 function getSpawnWidthError(text: string): ToolResult {
@@ -166,10 +131,7 @@ export function getSubagentNameError(name: string | undefined): string | null {
 export function withToolWarning(result: ToolResult, warningPrefix: string): ToolResult {
 	// D14: a published rendering holds the warnings inside its frame, the same text the message path shows.
 	if (!warningPrefix || isRenderedResult(result)) return result;
-	const existingText = result.content
-		.filter((block): block is { type: "text"; text: string } => block.type === "text")
-		.map((block) => block.text)
-		.join("\n\n");
+	const existingText = resultText(result);
 	// Spread the original result so batch/turn-control fields like `terminate`
 	// survive; only the text content is prepended with the warning.
 	return asSubagentToolResult({
@@ -182,11 +144,13 @@ function getLaunchError(
 	params: SubagentParamsInput,
 	agentDefs: AgentDefaults | null,
 	currentAgent: string | undefined,
+	launchable: () => LaunchableAgent[],
 ): string | null {
 	const nameError = getSubagentNameError(params.name);
 	if (nameError) return nameError;
 	if (!params.title?.trim())
 		return "Error: title is required for subagent launches. Provide a short sentence-case title for the child session/widget.";
+	if (params.agent && !agentDefs) return getUnknownAgentError(params.agent, launchable);
 	const agentError = getSubagentAgentRequirementError(params, agentDefs);
 	if (agentError) return agentError.content[0]?.text ?? "Agent requirement error";
 	if (params.agent && currentAgent && params.agent === currentAgent) {
@@ -362,26 +326,11 @@ export function shouldForceSynchronousLaunch(hasUI: boolean, argv = process.argv
 	return isHeadlessLaunchSession(hasUI, argv) || startupPromptActive;
 }
 
-function getAfterLaunchPrompt(): string {
-	// The tool is registered before any extension context exists, so only the
-	// argv-based one-shot check is available here. Background children are
-	// `pi -p` processes, which is the case that matters.
-	if (isOneShotPromptInvocation()) {
-		return (
-			"After launch:\n" +
-			"- In this session every launch waits for the helper and returns its report as the tool result. Read the report and continue; do not redo delegated work.\n" +
-			"- Ask the user only when there is a plausible next step but ownership is ambiguous.\n"
-		);
-	}
-	return (
-		"After launch:\n" +
-		"- If a helper returns later, continue only with clearly independent work. Do not redo delegated work and do not claim the helper's findings before its later message appears.\n" +
-		"- If no safe independent work is clear, stop your response and wait for the later helper message.\n" +
-		"- Ask the user only when there is a plausible next step but ownership is ambiguous.\n" +
-		"Results arrive automatically as a steer message that starts a new turn. " +
-		"Do not poll, sleep-read, or check session files — the harness handles delivery.\n" +
-		getCoordinatorOnlyTurnPrompt()
-	);
+function resultText(result: ToolResult): string {
+	return result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
 }
 
 function getToolWaitSignal(running: RunningSubagent, signal: AbortSignal | undefined): AbortSignal | undefined {
@@ -397,41 +346,17 @@ export function registerSubagentCoreTools(
 		pi.registerTool({
 			name: SUBAGENT_TOOL_NAME,
 			label: "Subagent",
-			description:
-				"Launch one or more named helper agents from the subagent roster. " +
-				"Agent definitions own model, tools, context, UI mode, wait behavior, and completion lifecycle; " +
-				"this call chooses the agent name(s), task(s), and titles. " +
-				"Model/thinking are routing controls, not quality knobs; set them only when the user named concrete values.",
-			promptSnippet:
-				"Subagents are separate helper processes you can launch to do work outside this chat turn.\n" +
-				"\n" +
-				"Use this tool when a listed agent is a clear fit for specialist, complex, or parallel work. Do small direct work yourself: quick answers, simple file reads, and tiny one-shot edits.\n" +
-				"\n" +
-				"Use exact agent names and behavior fields from the subagent roster when present; field meanings are defined in <subagent-rules>.\n" +
-				"\n" +
-				"How to call:\n" +
-				"- Use exact roster names in agent fields.\n" +
-				"- Always provide name and title. name is a machine handle: lower-kebab <scope>-<role>, 2-4 words, max 32 chars, e.g. auth-scout, diff-reviewer, session-tester. title is human prose: sentence case, 3-8 words, e.g. Auth implementation map.\n" +
-				"- If launching one helper, pass agent/name/title/task normally.\n" +
-				"- If launching multiple helpers for one user request, make one subagent call with children:[...] so all helpers start before any waiting happens.\n" +
-				"- If the user names multiple agents, include each named agent exactly once. Do not substitute one agent for another.\n" +
-				"- Leave model/thinking unset unless the user named concrete values. Do not infer them from quality, depth, urgency, safety, or cost language.\n" +
-				"\n" +
-				"Writing tasks:\n" +
-				"- Translate the user's request into each helper's task; do not change the work just because of the agent name.\n" +
-				"- For non-trivial work, write readable Markdown with objective, scope, relevant files/facts, constraints, and requested output.\n" +
-				"- For parallel helpers, make each task non-overlapping.\n" +
-				"\n" +
-				getAfterLaunchPrompt(),
+			description: "Start one or more child agents, each named with its task in the children list.",
 			parameters: SubagentParams,
 			execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
-				const children = getRequestedChildren(params as SubagentToolParams);
+				const children = params.children.map((child) => stripInternalLaunchOverrides(child as SubagentParamsInput));
 				const widthLimit = getSpawnWidthLimit();
 				if (children.length > widthLimit) return getBatchWidthValidationError(children.length, widthLimit);
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
+				const launchable = () => runtime.listLaunchableAgents(ctx.cwd);
 				const prepared = children.map((child) => {
 					const agentDefs = runtime.loadAgentDefaults(child.agent, ctx.cwd);
-					const error = getLaunchError(child, agentDefs, currentAgent);
+					const error = getLaunchError(child, agentDefs, currentAgent, launchable);
 					if (error) throw new Error(error);
 					return {
 						child,
@@ -478,24 +403,27 @@ export function registerSubagentCoreTools(
 					throw error;
 				}
 				runtime.startWidgetRefresh();
-				if (launched.length === 1) {
-					const result = await runtime.getLaunchedSubagentResult(launched[0], getToolWaitSignal(launched[0], signal));
-					return withToolWarning(result, prepared[0].warning);
-				}
-
 				const results = await Promise.all(
 					launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))),
 				);
-				// Each child's warnings stay with its own text; a published rendering already holds them.
-				const texts = results
-					.flatMap((result, index) => withToolWarning(result, prepared[index].warning).content)
-					.filter((block) => block.type === "text")
-					.map((block) => block.text);
-				const joined = texts.join("\n\n");
+				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
+				// with its own warnings (a published rendering already holds them).
+				const delivered = results.map((result) => (result.details as { status?: string })?.status !== "started");
+				const text = renderLaunchReply(
+					launched,
+					results.map((result, index) =>
+						delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
+					),
+					prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+				);
+				if (launched.length === 1) {
+					return asSubagentToolResult({ ...results[0], content: [{ type: "text", text }] });
+				}
 				return asSubagentToolResult({
-					content: [{ type: "text", text: joined }],
+					content: [{ type: "text", text }],
 					details: {
-						status: hasBlockingChild ? "batch" : "started",
+						// "batch" when this reply holds reports, so the TUI shows them.
+						status: delivered.some(Boolean) ? "batch" : "started",
 						children: results.map((result, index) => ({
 							...(result.details as Record<string, unknown>),
 							task: prepared[index]?.child.task,
@@ -509,31 +437,19 @@ export function registerSubagentCoreTools(
 			},
 			renderCall(args, theme, context) {
 				const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-				const children = Array.isArray(args.children) ? args.children : undefined;
-				if (children?.length) {
-					const lines = [
-						`▸ ${theme.fg("toolTitle", theme.bold("Spawn"))} ${theme.fg("toolTitle", theme.bold(`${children.length} agents`))}`,
-						"",
-					];
-					children.forEach((child, index) => {
-						if (index > 0) lines.push("");
-						const agent = child.agent ? theme.fg("dim", ` (${child.agent})`) : "";
-						lines.push(`${theme.fg("accent", theme.bold(child.name ?? "subagent"))}${agent}`);
-						const taskPreview = formatTaskPreview(child.task, context, theme).replace(/^\n/, "");
-						if (taskPreview) lines.push(taskPreview);
-					});
-					text.setText(lines.join("\n"));
-					return text;
-				}
-				const agent = args.agent ? theme.fg("dim", ` (${args.agent})`) : "";
-				text.setText(
-					"▸ " +
-						theme.fg("toolTitle", theme.bold("Spawn")) +
-						" " +
-						theme.fg("accent", theme.bold(args.name ?? "subagent")) +
-						agent +
-						formatTaskPreview(args.task, context, theme),
-				);
+				const children = Array.isArray(args.children) ? args.children : [];
+				const lines = [
+					`▸ ${theme.fg("toolTitle", theme.bold("Spawn"))} ${theme.fg("toolTitle", theme.bold(`${children.length} agents`))}`,
+					"",
+				];
+				children.forEach((child, index) => {
+					if (index > 0) lines.push("");
+					const agent = child.agent ? theme.fg("dim", ` (${child.agent})`) : "";
+					lines.push(`${theme.fg("accent", theme.bold(child.name ?? "subagent"))}${agent}`);
+					const taskPreview = formatTaskPreview(child.task, context, theme).replace(/^\n/, "");
+					if (taskPreview) lines.push(taskPreview);
+				});
+				text.setText(lines.join("\n"));
 				return text;
 			},
 			renderResult(result, options, theme, context) {
@@ -560,9 +476,7 @@ export function registerSubagentCoreTools(
 	pi.registerTool({
 		name: SUBAGENT_KILL_TOOL_NAME,
 		label: "Kill Subagent",
-		description: "Stop a running subagent by id or display name. Works for both background and interactive subagents.",
-		promptSnippet:
-			"Stop a running subagent by id or display name. Works for both background and interactive subagents.",
+		description: "Stop a running subagent, pane or headless, by its run id or name.",
 		parameters: SubagentKillParams,
 		execute: async (_toolCallId, params) => {
 			const match = findRunningSubagent(params.id);

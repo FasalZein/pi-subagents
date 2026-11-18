@@ -28,6 +28,7 @@ import "./tools/provider-error-recovery.test.ts";
 import "./tools/subagents-view.test.ts";
 import "./tools/agents-tab-toggle.test.ts";
 import "./tools/agents-tool.test.ts";
+import "./tools/launch-shape.test.ts";
 import "./tools/message-renderers.test.ts";
 import "./artifacts/storage.test.ts";
 import "./launch/append-system-inheritance.test.ts";

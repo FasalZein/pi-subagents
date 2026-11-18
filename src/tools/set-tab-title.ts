@@ -6,7 +6,7 @@ import { asSubagentToolResult } from "../runtime/state.ts";
 import { SET_TAB_TITLE_TOOL_NAME } from "./tool-names.ts";
 
 const SET_TAB_TITLE_DESCRIPTION =
-	"Update the current tab/window and workspace/session title. Use to show progress during multi-phase workflows (e.g. setup, executing todos, reviewing). Keep titles short and informative.";
+	"Set a short title on the current tab and workspace to show the phase of a multi-phase workflow.";
 
 /**
  * Whether the optional set_tab_title tool should be registered for the given
@@ -31,7 +31,6 @@ export function registerSetTabTitleTool(pi: ExtensionAPI): void {
 		name: SET_TAB_TITLE_TOOL_NAME,
 		label: "Set Tab Title",
 		description: SET_TAB_TITLE_DESCRIPTION,
-		promptSnippet: SET_TAB_TITLE_DESCRIPTION,
 		parameters: Type.Object({
 			title: Type.String({
 				description: "New tab title (also applied to workspace/session when supported)",

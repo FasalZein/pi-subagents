@@ -91,6 +91,7 @@ function makeLaunchRuntime(
 		getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
 		stopRunningSubagent: async () => {},
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux unavailable" }], details: {} }),
+		listLaunchableAgents: () => [],
 	};
 }
 
@@ -198,7 +199,7 @@ describe("coordinator-turn launch hardening", () => {
 		await withFakeTmux(true, async () => {
 			const result = (await tool.execute(
 				"interactive-call",
-				{ agent: "ui-child", name: "ui-child", title: "UI child", task: "Use the pane" },
+				{ children: [{ agent: "ui-child", name: "ui-child", title: "UI child", task: "Use the pane" }] },
 				undefined,
 				undefined,
 				context,
@@ -219,7 +220,7 @@ describe("coordinator-turn launch hardening", () => {
 		await withFakeTmux(false, async () => {
 			const result = (await unavailableTool.execute(
 				"fallback-call",
-				{ agent: "ui-child", name: "ui-child", title: "Fallback child", task: "Use the background fallback" },
+				{ children: [{ agent: "ui-child", name: "ui-child", title: "Fallback child", task: "Use the background fallback" }] },
 				undefined,
 				undefined,
 				context,
@@ -235,7 +236,7 @@ describe("coordinator-turn launch hardening", () => {
 		const headlessTool = registerCoreTool(makeLaunchRuntime({ ...defs, autoExit: true }, headlessRecords, headlessWatchKinds));
 		const result = (await headlessTool.execute(
 			"headless-call",
-			{ agent: "ui-child", name: "ui-child", title: "Headless child", task: "Return the report" },
+			{ children: [{ agent: "ui-child", name: "ui-child", title: "Headless child", task: "Return the report" }] },
 			undefined,
 			undefined,
 			{ ...context, hasUI: false },
@@ -256,7 +257,7 @@ describe("coordinator-turn launch hardening", () => {
 		const forcedAutoExitTool = registerCoreTool(makeLaunchRuntime({ ...defs, autoExit: false }, forcedAutoExitRecords));
 		await forcedAutoExitTool.execute(
 			"headless-manual-call",
-			{ agent: "ui-child", name: "ui-child", title: "Headless manual child", task: "Return the report" },
+			{ children: [{ agent: "ui-child", name: "ui-child", title: "Headless manual child", task: "Return the report" }] },
 			undefined,
 			undefined,
 			{ ...context, hasUI: false },
@@ -275,7 +276,7 @@ describe("coordinator-turn launch hardening", () => {
 
 		const result = (await tool.execute(
 			"background-call",
-			{ agent: "background-worker", name: "background-worker", title: "Background worker", task: "Return the report" },
+			{ children: [{ agent: "background-worker", name: "background-worker", title: "Background worker", task: "Return the report" }] },
 			undefined,
 			undefined,
 			{
@@ -312,7 +313,7 @@ describe("coordinator-turn launch hardening", () => {
 			() =>
 				tool.execute(
 					"verified-call",
-					{ agent: "verified-child", name: "verified-child", title: "Verified child", task: "Verify this" },
+					{ children: [{ agent: "verified-child", name: "verified-child", title: "Verified child", task: "Verify this" }] },
 					undefined,
 					undefined,
 					{ hasUI: false, cwd: process.cwd(), sessionManager: { getSessionId: () => "parent" } },
@@ -368,7 +369,7 @@ describe("coordinator-turn launch hardening", () => {
 			);
 			const result = (await tool.execute(
 				"verified-call",
-				{ agent: "verified-child", name: "verified-child", title: "Verified child", task: "Verify this" },
+				{ children: [{ agent: "verified-child", name: "verified-child", title: "Verified child", task: "Verify this" }] },
 				undefined,
 				undefined,
 				{
