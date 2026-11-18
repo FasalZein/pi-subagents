@@ -136,6 +136,29 @@ function pendingChildren(parentEvents, root, probeDir) {
 	return launched - ended;
 }
 
+/**
+ * Entry index of the parent's last assistant reply when it is terminal and no
+ * carrier came after it (a result message, or a launch or wait tool result);
+ * else null. A carrier after the last reply means the parent still has a model
+ * request for it in flight, and silence alone does not prove it finished.
+ */
+export function settledReplyIndex(events) {
+	let lastReply = -1;
+	let lastCarrier = -1;
+	events.forEach((e, index) => {
+		if (e?.type === "custom_message" && e.customType === "subagent_result")
+			lastCarrier = index;
+		else if (e?.type === "message" && e.message?.role === "toolResult")
+			lastCarrier = index;
+		else if (e?.type === "message" && e.message?.role === "assistant")
+			lastReply = index;
+	});
+	return lastReply > lastCarrier &&
+		events[lastReply].message.stopReason === "stop"
+		? lastReply
+		: null;
+}
+
 const REAL_CLOCK = { now: () => Date.now(), sleep, alive: isAlive };
 
 /**
@@ -160,17 +183,19 @@ export async function observe({
 		if (now - submittedAt >= deadlineMs)
 			return { kind: "verdict", verdict: "timeout" };
 		const events = readEvents(parentFile);
-		const { terminal, answer } = terminalAnswer(events, parseAnswer);
-		// Observation ends only on a settled reply: terminal, the sample quiet, and no
-		// launched child outstanding. A partial progress reply while children run
-		// does not end it; the reply that is last at that boundary is scored, and an
-		// incomplete answer there is a wrong answer.
+		const { answer } = terminalAnswer(events, parseAnswer);
+		const answeredAt = settledReplyIndex(events);
+		// Observation ends only on a settled reply: terminal and after the last
+		// carrier the parent received, the sample quiet, and no launched child
+		// outstanding. A partial progress reply does not end it; the reply that is
+		// last at that boundary is scored (an incomplete answer there is a wrong
+		// answer). A parent that never replies after its last carrier times out.
 		if (
-			terminal &&
+			answeredAt !== null &&
 			now - lastActivity(root) >= (answer === null ? QUIET_MS : SETTLE_MS) &&
 			pendingChildren(events, root, probeDir) <= 0
 		)
-			return { kind: "answered", answer };
+			return { kind: "answered", answer, answeredAt };
 		if (endsWithProviderError(events)) {
 			errorSince ??= now;
 			if (now - errorSince >= PROVIDER_ERROR_SETTLE_MS)

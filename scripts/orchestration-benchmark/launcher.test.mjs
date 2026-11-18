@@ -511,7 +511,7 @@ test("[F12] the deadline counts from submission and wins over a late answer", as
 			alive: () => true,
 		},
 	});
-	assert.deepEqual(inTime, { kind: "answered", answer: "w" });
+	assert.deepEqual(inTime, { kind: "answered", answer: "w", answeredAt: 0 });
 });
 
 test("[premature] a waiting parent stays under observation while a launched child has not ended", async () => {
@@ -564,10 +564,14 @@ test("[premature] a waiting parent stays under observation while a launched chil
 	});
 	// Once the child has ended, the quiet rule applies again.
 	writeFileSync(childFile, jsonl(childSession(["stop"]).events));
-	assert.deepEqual(await run(fakeClock()), { kind: "answered", answer: null });
+	assert.deepEqual(await run(fakeClock()), {
+		kind: "answered",
+		answer: null,
+		answeredAt: 2,
+	});
 });
 
-test("[T02b-1] a partial progress reply does not end observation; the final settled reply is scored", async () => {
+const observeRecon = async ({ full, deadlineMs = 600_000 }) => {
 	const root = scratch();
 	const probeDir = join(root, "probes");
 	mkdirSync(probeDir);
@@ -595,10 +599,14 @@ test("[T02b-1] a partial progress reply does not end observation; the final sett
 	};
 	// The first child delivered; the waiting parent printed one keyed fact and stopped its turn.
 	writeChildren(1);
-	writeFileSync(
-		parentFile,
-		jsonl([...launched, reply("stop", line("FACT-1"))]),
-	);
+	const partial = [...launched, reply("stop", line("FACT-1"))];
+	const carriers = [2, 3, 4, 5, 6].map((i) => ({
+		type: "custom_message",
+		customType: "subagent_result",
+		content: line(`FACT-${i}`),
+		details: { id: `run-${i}` },
+	}));
+	writeFileSync(parentFile, jsonl(partial));
 	let now = Date.now();
 	let sleeps = 0;
 	const clock = {
@@ -606,32 +614,51 @@ test("[T02b-1] a partial progress reply does not end observation; the final sett
 		sleep: async (ms) => {
 			now += ms;
 			sleeps += 1;
-			// The remaining five children end, then the parent replies with all seven keys.
+			// The remaining five children end and their carriers arrive; the parent's
+			// model request for them stays silent longer than the quiet window.
 			if (sleeps === 20) {
 				writeChildren(6);
+				writeFileSync(parentFile, jsonl([...partial, ...carriers]));
+			}
+			// Then the parent replies with all seven keys.
+			if (sleeps === 40 && full)
 				writeFileSync(
 					parentFile,
 					jsonl([
-						...launched,
-						reply("stop", line("FACT-1")),
+						...partial,
+						...carriers,
 						reply("stop", Object.keys(facts).map(line).join("\n")),
 					]),
 				);
-			}
 		},
 		alive: () => true,
 	};
-	const observed = await observe({
+	return observe({
 		parent: {},
 		parentFile,
 		root,
 		probeDir,
 		submittedAt: now,
-		deadlineMs: 600_000,
+		deadlineMs,
 		parseAnswer: answerParser(recon),
 		clock,
 	});
-	assert.deepEqual(observed, { kind: "answered", answer: facts });
+};
+
+test("[T02b-1] a partial progress reply does not end observation; the final settled reply is scored", async () => {
+	// Entries: launch call, launch result, partial reply, 5 carriers, full reply at index 8.
+	assert.deepEqual(await observeRecon({ full: true }), {
+		kind: "answered",
+		answer: recon.expectedFacts,
+		answeredAt: 8,
+	});
+});
+
+test("[T02b-1] a parent that never replies after its last carrier runs to the deadline", async () => {
+	assert.deepEqual(await observeRecon({ full: false, deadlineMs: 120_000 }), {
+		kind: "verdict",
+		verdict: "timeout",
+	});
 });
 
 test("[F14] a checkout with an untracked file is refused", () => {
