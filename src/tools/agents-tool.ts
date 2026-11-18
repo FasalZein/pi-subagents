@@ -9,8 +9,8 @@ import {
 } from "../agents/launchable-agents.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
 import type { ParsedSpawnEnv } from "../spawn/policy.ts";
-import { SUBAGENT_AGENTS_TOOL_NAME } from "./tool-names.ts";
 import type { ManagementToolGrant } from "./tool-exposure.ts";
+import { SUBAGENT_AGENTS_TOOL_NAME } from "./tool-names.ts";
 
 /** Parse the tool parameters into one request; name and query together are refused. */
 function parseAgentsRequest(params: { name?: string; query?: string; limit?: number }): AgentsRequest | string {

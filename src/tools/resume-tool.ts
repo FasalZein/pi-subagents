@@ -13,8 +13,8 @@ import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
-import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
+import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 
 export interface ResumeToolRuntime extends ResumeServiceRuntime {
 	wireSubagentSteerBack(pi: ExtensionAPI, running: RunningSubagent, promise: Promise<SubagentResult>): void;

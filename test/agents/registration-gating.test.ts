@@ -270,17 +270,19 @@ describe("extension registration gating", () => {
 			declared().filter((name) => name.startsWith("subagent")),
 			[],
 		);
+		const tool = (name: string): RegisteredTool => {
+			const found = registered.get(name);
+			assert.ok(found, `${name} is registered`);
+			return found;
+		};
 		const ctx = { cwd: dir, hasUI: false, sessionManager: { getSessionId: () => "gating" } };
 		const refusal = /This session may not launch agents/;
 		await assert.rejects(
-			() =>
-				registered
-					.get("subagent_resume")!
-					.execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx),
+			() => tool("subagent_resume").execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx),
 			refusal,
 		);
-		await assert.rejects(() => registered.get("subagent_kill")!.execute("call-2", { id: "worker" }), refusal);
-		const agents = await registered.get("subagent_agents")!.execute("call-3", {}, undefined, undefined, ctx);
+		await assert.rejects(() => tool("subagent_kill").execute("call-2", { id: "worker" }), refusal);
+		const agents = await tool("subagent_agents").execute("call-3", {}, undefined, undefined, ctx);
 		assert.match(agents.content[0].text, refusal);
 	});
 });

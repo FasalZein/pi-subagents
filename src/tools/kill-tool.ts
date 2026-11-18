@@ -3,8 +3,8 @@ import { Type } from "typebox";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
 import type { RunningSubagent } from "../types.ts";
-import { SUBAGENT_KILL_TOOL_NAME } from "./tool-names.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
+import { SUBAGENT_KILL_TOOL_NAME } from "./tool-names.ts";
 
 const SubagentKillParams = Type.Object({
 	id: Type.String({
