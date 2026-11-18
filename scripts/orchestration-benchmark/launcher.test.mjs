@@ -14,6 +14,7 @@ import { basename, join } from "node:path";
 import { after, test } from "node:test";
 import { classifyAttempt, observe } from "./attempt.mjs";
 import { acquireClaim, holdsClaim, releaseClaim } from "./claim.mjs";
+import { answerParser } from "./record.mjs";
 import { assertPrivateCheckout, checkoutState } from "./run-state.mjs";
 import {
 	createAttemptRoot,
@@ -22,6 +23,7 @@ import {
 	selectProviderModels,
 	settingsFingerprint,
 } from "./sample-home.mjs";
+import recon from "./scenarios/recon/scenario.mjs";
 import { classifySessions, parseJsonlStrict } from "./session-evidence.mjs";
 
 // Every folder of this file lives below one private scratch base, removed at the end.
@@ -470,12 +472,21 @@ test("[F12] the deadline counts from submission and wins over a late answer", as
 		deadlineMs,
 	});
 	assert.deepEqual(late, { kind: "verdict", verdict: "timeout" });
+	// The settle window passes on an injected clock; the pane counts as alive.
+	let now = Date.now();
 	const inTime = await observe({
 		parent,
 		parentFile,
 		root,
-		submittedAt: Date.now(),
+		submittedAt: now,
 		deadlineMs,
+		clock: {
+			now: () => now,
+			sleep: async (ms) => {
+				now += ms;
+			},
+			alive: () => true,
+		},
 	});
 	assert.deepEqual(inTime, { kind: "answered", answer: "w" });
 });
@@ -531,6 +542,73 @@ test("[premature] a waiting parent stays under observation while a launched chil
 	// Once the child has ended, the quiet rule applies again.
 	writeFileSync(childFile, jsonl(childSession(["stop"]).events));
 	assert.deepEqual(await run(fakeClock()), { kind: "answered", answer: null });
+});
+
+test("[T02b-1] a partial progress reply does not end observation; the final settled reply is scored", async () => {
+	const root = scratch();
+	const probeDir = join(root, "probes");
+	mkdirSync(probeDir);
+	const parentFile = join(root, "p.jsonl");
+	const jsonl = (events) =>
+		`${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+	const facts = recon.expectedFacts;
+	const line = (key) => `${key}: ${facts[key]}`;
+	const launched = [
+		reply("toolUse", "", ["subagent"]),
+		toolResult("subagent", false, { status: "started", children: [] }),
+	];
+	const writeChildren = (ended) => {
+		for (let i = 1; i <= 6; i++) {
+			const file = join(root, `c${i}.jsonl`);
+			writeFileSync(
+				join(probeDir, `c${i}.json`),
+				JSON.stringify({ sessionFile: file, agent: `bench-recon-${i}` }),
+			);
+			writeFileSync(
+				file,
+				jsonl(childSession(i <= ended ? ["stop"] : []).events),
+			);
+		}
+	};
+	// The first child delivered; the waiting parent printed one keyed fact and stopped its turn.
+	writeChildren(1);
+	writeFileSync(
+		parentFile,
+		jsonl([...launched, reply("stop", line("FACT-1"))]),
+	);
+	let now = Date.now();
+	let sleeps = 0;
+	const clock = {
+		now: () => now,
+		sleep: async (ms) => {
+			now += ms;
+			sleeps += 1;
+			// The remaining five children end, then the parent replies with all seven keys.
+			if (sleeps === 20) {
+				writeChildren(6);
+				writeFileSync(
+					parentFile,
+					jsonl([
+						...launched,
+						reply("stop", line("FACT-1")),
+						reply("stop", Object.keys(facts).map(line).join("\n")),
+					]),
+				);
+			}
+		},
+		alive: () => true,
+	};
+	const observed = await observe({
+		parent: {},
+		parentFile,
+		root,
+		probeDir,
+		submittedAt: now,
+		deadlineMs: 600_000,
+		parseAnswer: answerParser(recon),
+		clock,
+	});
+	assert.deepEqual(observed, { kind: "answered", answer: facts });
 });
 
 test("[F14] a checkout with an untracked file is refused", () => {

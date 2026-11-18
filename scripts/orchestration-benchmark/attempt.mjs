@@ -47,6 +47,9 @@ const ENTER_SETTLE_MS = 10_000;
 const PROVIDER_ERROR_SETTLE_MS = 10_000;
 // A terminal reply without an answer counts as final after the sample is quiet this long.
 const QUIET_MS = 60_000;
+// A terminal reply with an answer counts as settled after the sample is quiet this long,
+// so a result message that lands just after the last child ends still gets its turn.
+const SETTLE_MS = 5_000;
 const POLL_MS = 1_000;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -158,15 +161,16 @@ export async function observe({
 			return { kind: "verdict", verdict: "timeout" };
 		const events = readEvents(parentFile);
 		const { terminal, answer } = terminalAnswer(events, parseAnswer);
-		if (terminal && answer !== null) return { kind: "answered", answer };
-		// A terminal reply without an answer is final only when the parent finished
-		// and no child is pending; a parent that waits for delivery stays observed.
+		// Observation ends only on a settled reply: terminal, the sample quiet, and no
+		// launched child outstanding. A partial progress reply while children run
+		// does not end it; the reply that is last at that boundary is scored, and an
+		// incomplete answer there is a wrong answer.
 		if (
 			terminal &&
-			now - lastActivity(root) >= QUIET_MS &&
+			now - lastActivity(root) >= (answer === null ? QUIET_MS : SETTLE_MS) &&
 			pendingChildren(events, root, probeDir) <= 0
 		)
-			return { kind: "answered", answer: null };
+			return { kind: "answered", answer };
 		if (endsWithProviderError(events)) {
 			errorSince ??= now;
 			if (now - errorSince >= PROVIDER_ERROR_SETTLE_MS)
