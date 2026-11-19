@@ -10,6 +10,9 @@ Read `README.md` before doing anything. It documents the model, frontmatter, pla
 - `bun.lock` is the only tracked lockfile; `package-lock.json` is gitignored.
 - Do not use `git stash` in a linked worktree: the stash list is shared with the main checkout, so a pop can apply another session's entry.
 - A new linked worktree can start without `node_modules`; `bunx tsc --noEmit` then fails with TS2688 and tests with `ERR_MODULE_NOT_FOUND`. Run `bun install --frozen-lockfile` there first.
+- The owner's Pi loads the main checkout of this repo as its pi-subagents package (switch of 2026-11-19; undo: `~/.pi/artifacts/pi-subagents/switch/fork-switch.sh restore`). A merge into `feat/context-rework` changes what every new Pi session on this Mac loads.
+- When editing README.md: `test/tools/workflow-recipe.test.ts` parses it (the only suite that does), so run that test.
+- When working under `scripts/orchestration-benchmark/`: the baseline commit cf6dbf4 has no copy of it; `--keep-sessions` keeps sessions and run folders but no load-probe files; the launcher refuses an OAuth login that expires within 30 minutes, and one `pi -p` request with that provider refreshes it.
 - When a test spawns `node --test`, pass it a clean `env`: an inherited test-runner context can make the child exit 0 on failing tests (see `visibleTestPasses` in `scripts/orchestration-benchmark/scenarios/review-fix/oracle.mjs`).
 
 ## Project structure contract
@@ -98,7 +101,9 @@ Model and provider refs are part of each user's own Pi config. Another contribut
 
 ### Live-test agents
 
-This repo does not commit fixed smoke agents (`.pi/` is gitignored). For each live repro, create a temporary agent file shaped for the behavior under test, either under `.pi/agents/` or under a temp root pointed at by `PI_CODING_AGENT_DIR`, then delete it after. Remove it (or set `enabled: false`) once the repro is done.
+This repo does not commit fixed smoke agents (`.pi/` is gitignored). For each live repro, create a temporary agent file shaped for the behavior under test, either under `.pi/agents/` or under a temp root pointed at by `PI_CODING_AGENT_DIR`, then delete it after. Remove it (or set `enabled: false`) once the repro is done. Give it `extensions: <worktree>/src/index.ts`; without it the child also loads the installed pi-subagents package.
+
+- A live repro in tmux: `tmux new-session` on a running server does not pass the caller's environment (pass `-e NAME=value`), and a server started under `env -i` lacks `/opt/homebrew/bin` on the pane PATH, so Pi runs pane children headless.
 
 ### Standard live-test procedure
 
