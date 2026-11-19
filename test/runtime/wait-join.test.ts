@@ -226,6 +226,40 @@ function watchVerifiedRun(id: string, recipient: boolean): void {
 	} as RunningSubagent);
 }
 
+describe("T24 fix round 1 (P2): an aborted wait lists canonical ids that still run", () => {
+	it("no alias, and no run that another wait already returned", async () => {
+		resetSubagentStateForTest();
+		const sent: Sent[] = [];
+		startRun("one", sent);
+		const finishTwo = startRun("two", sent);
+		const abort = new AbortController();
+		const waitA = joinRuns({ ids: ["one", "id-two"] }, abort.signal);
+		const waitB = joinRuns({ ids: ["id-two"] });
+		await tick();
+		finishTwo("TWO-REPORT");
+		assert.equal((await waitB).results[0]?.id, "id-two");
+		abort.abort();
+		const outcome = await waitA;
+		assert.equal(outcome.status, "interrupted");
+		assert.deepEqual(outcome.pending, ["id-one"]);
+		assert.deepEqual(sent, [], "wait b delivered child two; the aborted wait sends nothing");
+		resetSubagentStateForTest();
+	});
+
+	it("an ended run is found by id only; its old name gets no result record", async () => {
+		resetSubagentStateForTest();
+		const sent: Sent[] = [];
+		const finish = startRun("one", sent);
+		finish("ONE-REPORT");
+		await tick();
+		const byName = await joinRuns({ ids: ["one"] });
+		assert.deepEqual(byName.missing, [{ id: "one", error: 'No result record for "one".' }]);
+		const byId = await joinRuns({ ids: ["id-one"] });
+		assert.match(byId.results[0]?.text ?? "", /ONE-REPORT/);
+		resetSubagentStateForTest();
+	});
+});
+
 describe("T24 fix round 1 (P1): a wait sees only runs this parent may receive", () => {
 	it("a no-ids wait skips a verified-run observer that is not a recipient", async () => {
 		resetSubagentStateForTest();

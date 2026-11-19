@@ -403,6 +403,57 @@ describe("T24: subagent_wait in a real Pi session", () => {
 		}
 	});
 
+	it("check 2 (fix round 1): a no-ids wait takes an end queued before it started and skips an observed verified run", async () => {
+		const script = [
+			"await tools.gate({});",
+			"const r = await tools.subagent_wait({});",
+			'return `IDS ${r.results.map((x) => x.id).sort().join(",")} PENDING ${r.pending.join(",")} STATUS ${r.status}`;',
+		].join("\n");
+		const parent = await startParent(
+			{ delegate: LAUNCH, join: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
+			{ codemode: true },
+		);
+		try {
+			await launchBoth(parent);
+			// Another session's verified run that this session only observes (D18): never its to receive.
+			setRunningSubagentForTest({
+				id: "foreign",
+				name: "foreign",
+				task: "t",
+				agent: "worker-a",
+				mode: "background",
+				executionState: "running",
+				deliveryState: "detached",
+				parentClosePolicy: "continue",
+				async: true,
+				startTime: Date.now(),
+				sessionFile: "",
+				verifiedRunId: "run-foreign",
+				verifiedRunCancelDenied: true,
+				completionPromise: new Promise<SubagentResult>(() => {}),
+			} as RunningSubagent);
+			const run = parent.session.prompt("join");
+			await until(() => parent.session.isStreaming, "the script runs");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			parent.finish("child-one", "CHILD-ONE-REPORT");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.equal(pendingRunEndCount(), 1, "child 1's end is queued while the script runs");
+			parent.releaseGate();
+			await until(() => isRunEndHeld("id-child-two"), "the no-ids wait holds child 2");
+			parent.finish("child-two", "CHILD-TWO-REPORT");
+			await run;
+			await parent.session.waitForIdle();
+			const [scriptText] = parent.session.messages.flatMap((message) =>
+				message.role === "toolResult" && message.toolName === "codemode" ? [textOf(message.content)] : [],
+			);
+			assert.match(scriptText ?? "", /IDS id-child-one,id-child-two PENDING {2}STATUS complete/);
+			assert.equal(parent.resultMessages(), 0, "the wait delivered child 1's queued end; no message");
+			assert.equal(pendingRunEndCount(), 0);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
 	it("check 4: two overlapping waits on one run both return its result, no message", async () => {
 		const parent = await startParent({
 			delegate: LAUNCH,

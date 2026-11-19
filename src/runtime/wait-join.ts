@@ -97,12 +97,8 @@ function resolveTarget(query: string, sessionStore: ResultStore | undefined): Ta
 	if (named && others.length === 0) return { kind: "active", running: named };
 	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
 	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
-	// An ended run this process still knows, by id or by name: a lookup returns its rendering.
-	const [endedId, ...otherEnded] = completedSubagentResults.get(query)
-		? [query]
-		: [...completedSubagentResults.values()].filter((cached) => cached.name === query).map((cached) => cached.id);
-	if (endedId && otherEnded.length === 0) return { kind: "ended", result: snapshotEnd(endedId, { sessionStore }) };
-	if (endedId) return { id: query, error: `Multiple ended subagents match "${query}". Use the id instead.` };
+	// An ended run this process still knows, by id only (D16): a lookup returns its rendering.
+	if (completedSubagentResults.has(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
 	return { id: query, error: `No result record for "${query}".` };
 }
 
@@ -191,7 +187,8 @@ export async function joinRuns(
 			[],
 			signal,
 		);
-		return { status, results: [], pending: ids.filter((id) => !missing.some((m) => m.id === id)), missing };
+		// Only runs that still run report later; an end another wait holds is delivered by that wait.
+		return { status, results: [], pending, missing };
 	}
 	settleWaitReply(
 		reply.map((result) => result.id),
