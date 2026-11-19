@@ -7,6 +7,9 @@ import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts
 export type ResultParent = Pick<ResultTarget, "parentCwd" | "warnings">;
 
 export type DeliveryState = "detached" | "awaited";
+
+/** D5: starting, running, soft limit reached, wrapping up, stopping, ended. */
+export type RunPhase = "starting" | "running" | "soft-limit" | "wrapping-up" | "stopping" | "ended";
 export type ParentClosePolicy = "terminate" | "continue";
 type CompletedDelivery = "steer" | "wait";
 export type SubagentCompletionStatus = "completed" | "failed" | "cancelled";
@@ -140,8 +143,8 @@ export interface RunningSubagent {
 	title?: string;
 	agent?: string;
 	mode: "interactive" | "background";
-	executionState: "starting" | "running";
-	deliveryState: DeliveryState;
+	/** D5: the one phase of this run; the outcome comes at "ended". */
+	phase: RunPhase;
 	parentClosePolicy: ParentClosePolicy;
 	blocking?: boolean;
 	async?: boolean;
@@ -156,8 +159,6 @@ export interface RunningSubagent {
 	timeoutWarnThreshold?: number;
 	/** Set once the watcher has interrupted this run for its report-only continuation. */
 	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
-	/** True after the interrupted generation has been replaced by the continuation. */
-	timeoutWrapUpMode?: boolean;
 	/** Session entries before the current child process: a time-limit wrap-up restart sets it (D12 nudge boundary). */
 	processEntryCount?: number;
 	/** Fixed hard deadline for the budget that triggered the wrap-up. */
@@ -170,7 +171,6 @@ export interface RunningSubagent {
 	timeoutKillTimer?: ReturnType<typeof setTimeout>;
 	/** Set when closing a pane child's surface failed, so the kill may not have taken. */
 	timeoutKillFailed?: boolean;
-	resultOwner?: { kind: CompletedDelivery; ownerId: string };
 	/** Extension entries this start dropped because they do not resolve; the reply names them (D10). */
 	droppedExtensions?: readonly string[];
 	completionPromise?: Promise<SubagentResult>;
@@ -203,7 +203,6 @@ export interface RunningSubagent {
 	lastSessionSize?: number;
 	pendingToolCount?: number;
 	abortController?: AbortController;
-	allowSteerDelivery?: boolean;
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
 	/** The pane launcher's process id, read before the watcher removes its marker; it exits after Pi. */

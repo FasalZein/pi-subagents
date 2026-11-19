@@ -16,8 +16,7 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		name: "budget-child",
 		task: "work",
 		mode: "background",
-		executionState: "running",
-		deliveryState: "detached",
+		phase: "running",
 		parentClosePolicy: "terminate",
 		startTime: 1_000_000,
 		sessionFile: "/tmp/does-not-exist.jsonl",
@@ -72,7 +71,6 @@ describe("timeout budget math", () => {
 			timeoutWarnThreshold: 80,
 			lastProgressAt: 1_000_000,
 			timeoutWrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 },
-			timeoutWrapUpMode: true,
 			timeoutWrapUpDeadlineAt: 1_010_000,
 		});
 		observeSubagentProgress(running, 100, 1_000_000);

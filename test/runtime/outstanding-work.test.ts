@@ -10,14 +10,15 @@ import {
 	resetRuntimeStateForTest,
 } from "../../src/runtime/state.ts";
 import { getLaunchedSubagentResult, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
-import { settleWaitReply } from "../../src/runtime/delivery-queue.ts";
+import { closeParentDelivery, settleWaitReply } from "../../src/runtime/delivery-queue.ts";
+import { claimRunEnd } from "../../src/runtime/wait-holds.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { groupRunEnds, type RunEndMessage, runEndIds } from "../../src/runtime/run-end-message.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 
 function child(id: string): RunningSubagent {
-	return { id, name: id, task: "test", mode: "background", executionState: "running",
-		deliveryState: "detached", parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
+	return { id, name: id, task: "test", mode: "background", phase: "running",
+		parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
 }
 
 test("async launch publishes before yielding and keeps last result outstanding until the parent commits its message", async () => {
@@ -159,7 +160,8 @@ test("a committed grouped message releases each run it carries; a running run wh
 test("awaited children and manual-close children count, foreign adopted observations do not", async () => {
 	const h = await harness();
 	try {
-		const sync = { ...child("sync"), blocking: true, async: false, deliveryState: "awaited" as const, allowSteerDelivery: false };
+		const sync = { ...child("sync"), blocking: true, async: false };
+		claimRunEnd(sync);
 		const manual = { ...child("manual"), mode: "interactive" as const, autoExit: false };
 		runningSubagents.set(sync.id, sync);
 		runningSubagents.set(manual.id, manual);
@@ -169,8 +171,13 @@ test("awaited children and manual-close children count, foreign adopted observat
 		wireSubagentSteerBack(h.pi, sync, Promise.resolve({ name: sync.name, task: sync.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await h.emit("agent_settled");
-		assert.equal(h.counts.at(-1), 1);
 		assert.equal(h.messages.length, 0, "synchronous ownership must not gain a steer");
+		// The end is held for the claiming wait and counts until the wait's reply takes it (D15).
+		assert.equal(h.counts.at(-1), 2);
+		settleWaitReply([sync.id], [sync.id]);
+		await h.emit("tool_result");
+		assert.equal(h.counts.at(-1), 1);
+		assert.equal(h.messages.length, 0);
 		runningSubagents.clear();
 		await h.emit("tool_result");
 		assert.equal(h.counts.at(-1), 0);
@@ -205,7 +212,7 @@ test("session stop detaches reporting before registry cleanup or late watcher ou
 	await h.emit("tool_result");
 	await h.stop();
 	const count = h.counts.length;
-	running.allowSteerDelivery = false;
+	closeParentDelivery(running);
 	wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	await h.emit("agent_settled");

@@ -47,8 +47,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
-		deliveryState: "detached",
+		phase: "running",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -235,7 +234,7 @@ describe("end outcomes (T09)", () => {
 	it("keeps the notice of a report-only wrap-up", () => {
 		const { running } = setup(DONE_CALL, {
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			timeoutWrapUpMode: true,
+			phase: "wrapping-up",
 		});
 		const published = publishRunResult(running, watchedEnd());
 		assert.equal(published?.record.outcome, "timed_out");

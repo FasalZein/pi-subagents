@@ -97,6 +97,8 @@ import "./runtime/coordinator-turn-hardening.test.ts";
 import "./runtime/index-prompt-hooks.test.ts";
 import "./runtime/background-watch.test.ts";
 import "./runtime/background-watch-timeout.test.ts";
+import "./runtime/run-phase.test.ts";
+import "./runtime/completion-before-deadline.test.ts";
 import "./runtime/timeout-budget.test.ts";
 import "./runtime/timeout-wrap-up.test.ts";
 import "./runtime/timeout-result-delivery.test.ts";

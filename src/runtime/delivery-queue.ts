@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { RunningSubagent } from "../types.ts";
 import { outstandingWork } from "./outstanding-work.ts";
 import { groupRunEnds, isFinishedStatus, type RunEndMessage, runEndIds } from "./run-end-message.ts";
 
@@ -309,9 +310,24 @@ export function reportedRunIds(replies: readonly { details?: unknown }[]): strin
 	});
 }
 
+/**
+ * Runs whose parent closed (session shutdown): their ends no longer go to the parent unless a wait
+ * holds them. Keyed by the run object, so a later run that reuses the id is not closed.
+ */
+let parentClosed = new WeakSet<RunningSubagent>();
+
+export function closeParentDelivery(running: RunningSubagent): void {
+	parentClosed.add(running);
+}
+
+export function isParentDeliveryClosed(running: RunningSubagent): boolean {
+	return parentClosed.has(running);
+}
+
 /** Forget the session-scoped queue (test isolation and runtime reset). */
 export function resetDeliveryQueue(): void {
 	deliveryQueue.reset();
+	parentClosed = new WeakSet();
 }
 
 /**

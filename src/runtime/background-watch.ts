@@ -8,8 +8,10 @@ import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummary
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
 import {
 	CANCELLED_SUMMARY,
+	isAcceptedCompletion,
 	isDeadlineEnforceable,
 	isStopRequested,
+	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
 	STOPPED_REASON,
@@ -172,7 +174,7 @@ async function watchBackgroundSubagentUntilFinal(
 				if (restart.kind === "timedOut") {
 					return buildBackgroundRestartTimeoutResult(running, restart.expiry);
 				}
-				running.timeoutWrapUpMode = true;
+				running.phase = "wrapping-up";
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -211,6 +213,8 @@ function watchBackgroundGeneration(
 		let terminalSeenAt = 0;
 		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 		let groupExitPoll: ReturnType<typeof setInterval> | undefined;
+		/** An exit record consumed while the process group still exits; it is no longer on disk. */
+		let consumedExit: ReturnType<typeof consumeSubagentExitSignal> = null;
 
 		const cleanup = () => {
 			clearInterval(pollInterval);
@@ -255,8 +259,9 @@ function watchBackgroundGeneration(
 			// before the signal goes out. Its Pi process writes an ordinary `done`
 			// on the way out of our own SIGTERM, so anything published after this
 			// point is a consequence of the kill, not a verdict that outranks it.
-			if (hasSubagentExitSidecar(running.sessionFile)) return false;
+			if (hasSubagentExitSidecar(running.sessionFile) || isAcceptedCompletion(consumedExit)) return false;
 			running.timeoutExpiry = expired;
+			running.phase = "stopping";
 			if (!running.timeoutKillTimer) beginKill();
 			return true;
 		};
@@ -264,9 +269,11 @@ function watchBackgroundGeneration(
 		const enforceTimeoutWrapUp = (now: number): boolean => {
 			if (!isDeadlineEnforceable(signal)) return false;
 			const due = checkSubagentTimeoutWrapUp(running, now);
-			if (!due || running.timeoutWrapUpMode) return false;
+			// Only a running generation is interrupted for its wrap-up; a stopping or wrapping-up one is not.
+			if (!due || running.phase !== "running") return false;
 			if (hasSubagentExitSidecar(running.sessionFile)) return false;
 			running.timeoutWrapUp = due;
+			running.phase = "soft-limit";
 			const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + due.seconds * 1000;
 			beginKill();
@@ -323,7 +330,8 @@ function watchBackgroundGeneration(
 				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
 				return;
 			}
-			if (running.timeoutExpiry || (running.timeoutWrapUp && !running.timeoutWrapUpMode)) return;
+			// The runtime already ends this generation; one more SIGTERM could force the child's exit.
+			if (running.phase === "soft-limit" || running.phase === "stopping") return;
 			if (!sessionReadable) return;
 			try {
 				if (!shouldReapStableTerminalSummary(running)) return;
@@ -359,11 +367,10 @@ function watchBackgroundGeneration(
 			exitSignal: ReturnType<typeof consumeSubagentExitSignal>,
 		) => {
 			if (
-				running.timeoutWrapUp &&
-				!running.timeoutWrapUpMode &&
-				!running.timeoutExpiry &&
+				running.phase === "soft-limit" &&
 				!signal.aborted &&
-				exitSignal?.reason !== "ping"
+				exitSignal?.reason !== "ping" &&
+				!keepsCompletionOverWrapUp(running, exitSignal)
 			) {
 				finish({ kind: "restart" });
 				return;
@@ -461,9 +468,10 @@ function watchBackgroundGeneration(
 		};
 		const onExit = (code: number | null) => {
 			const exitSignal = consumeSubagentExitSignal(running.sessionFile);
+			consumedExit = exitSignal;
 			const runtimeOwnsExit =
 				Boolean(running.timeoutExpiry) ||
-				Boolean(running.timeoutWrapUp && !running.timeoutWrapUpMode) ||
+				running.phase === "soft-limit" ||
 				signal.aborted;
 			if (runtimeOwnsExit && processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 				if (!groupExitPoll) {
@@ -480,7 +488,7 @@ function watchBackgroundGeneration(
 			finalizeExit(code, exitSignal);
 		};
 		const onError = (error: Error) => {
-			if (running.timeoutWrapUp && !running.timeoutWrapUpMode && !running.timeoutExpiry && !signal.aborted) {
+			if (running.phase === "soft-limit" && !signal.aborted) {
 				finish({ kind: "restart" });
 				return;
 			}

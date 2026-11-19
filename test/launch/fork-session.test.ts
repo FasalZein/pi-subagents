@@ -1,3 +1,4 @@
+import { claimRunEnd, runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import {
 	ASSISTANT_MSG,
 	afterEach,
@@ -368,8 +369,7 @@ describe("fork session launch behavior", () => {
 			name: "Detached child",
 			task: "Do the work",
 			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			startTime: Date.now(),
@@ -457,8 +457,7 @@ describe("fork session launch behavior", () => {
 			name: "Blocking child",
 			task: "Finish before returning",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: true,
 			startTime: Date.now(),
@@ -517,8 +516,7 @@ describe("fork session launch behavior", () => {
 			name: "Async A",
 			task: "Keep running",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			async: true,
@@ -531,8 +529,7 @@ describe("fork session launch behavior", () => {
 			name: "Async B",
 			task: "Keep running",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			async: true,
@@ -545,8 +542,7 @@ describe("fork session launch behavior", () => {
 			name: "Blocking gate",
 			task: "Gate the parent",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: true,
 			async: false,
@@ -606,7 +602,7 @@ describe("fork session launch behavior", () => {
 	it("renders agent badges while preserving detached and awaited styling slots", () => {
 		const base = {
 			mode: "background" as const,
-			executionState: "running" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/widget-child.jsonl",
@@ -619,16 +615,16 @@ describe("fork session launch behavior", () => {
 			name: "Detached child",
 			agent: "scout",
 			task: "Keep running",
-			deliveryState: "detached" as const,
 		});
-		setRunningSubagentForTest({
+		const awaitedChild = {
 			...base,
 			id: "child-widget-2",
 			name: "Awaited child",
 			agent: "researcher",
 			task: "Wait here",
-			deliveryState: "awaited" as const,
-		});
+		};
+		setRunningSubagentForTest(awaitedChild);
+		claimRunEnd(awaitedChild);
 		const widget = renderSubagentWidgetForTest().join("\n");
 		assert.match(widget, /Detached child \[scout\]/);
 		assert.match(widget, /Awaited child \[researcher\]/);
@@ -646,8 +642,7 @@ describe("fork session launch behavior", () => {
 			name: "Awaited child",
 			task: "Wait for me",
 			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-1.jsonl",
@@ -668,7 +663,7 @@ describe("fork session launch behavior", () => {
 		});
 
 		const waitPromise = waitForSubagentForTest({ id: running.name });
-		assert.equal(running.deliveryState, "awaited");
+		assert.equal(runDeliveryState(running), "awaited");
 
 		resolveCompletion({
 			name: running.name,
@@ -695,8 +690,7 @@ describe("fork session launch behavior", () => {
 			name: "Ping child",
 			task: "Need help",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-ping.jsonl",
@@ -727,8 +721,7 @@ describe("fork session launch behavior", () => {
 			name: "Repeated wait child",
 			task: "Wait twice",
 			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-repeat.jsonl",

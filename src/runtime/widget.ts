@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { getSubagentActivityStartIndex } from "../session/session-files.ts";
 import { readVerifiedRunDisplay, type VerifiedCandidateDisplay } from "../vf/widget.ts";
+import { runDeliveryState } from "./wait-holds.ts";
 import type {
 	RunningSubagent,
 	SessionContentBlock,
@@ -77,7 +78,7 @@ function describeActivity(toolNames: string[], responseText?: string): string {
 
 function renderAgentBadge(theme: WidgetThemeLike, agent: RunningSubagent): string {
 	const label = agent.agent ?? "subagent";
-	if (agent.deliveryState === "detached") {
+	if (runDeliveryState(agent) === "detached") {
 		return theme.fg("muted", `[${label}]`);
 	}
 	return theme.fg("accent", `[${label}]`);
@@ -182,8 +183,7 @@ export class SubagentWidgetManager {
 				task: agent.task,
 				title: agent.title,
 				mode: "background",
-				executionState: "running",
-				deliveryState: "detached",
+				phase: "running",
 				parentClosePolicy: "continue",
 				blocking: false,
 				async: true,

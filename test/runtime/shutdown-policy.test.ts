@@ -1,4 +1,6 @@
+import { isParentDeliveryClosed } from "../../src/runtime/delivery-queue.ts";
 import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
+import { claimRunEnd, isRunEndHeld, runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import {
 	afterEach,
 	assert,
@@ -27,8 +29,7 @@ describe("subagent shutdown policy", () => {
 			name: "Interactive child",
 			task: "Close with parent",
 			mode: "interactive" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/interactive-close.jsonl",
@@ -73,10 +74,8 @@ describe("subagent shutdown policy", () => {
 			name: "Terminate child",
 			task: "Stop on shutdown",
 			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "awaited" as const,
+			phase: "running" as const,
 			parentClosePolicy: "terminate" as const,
-			resultOwner: { kind: "wait" as const, ownerId: "wait:shutdown" },
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-close-1.jsonl",
 			abortController: terminateAbort,
@@ -86,16 +85,16 @@ describe("subagent shutdown policy", () => {
 			name: "Abandon child",
 			task: "Keep running",
 			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "awaited" as const,
+			phase: "running" as const,
 			parentClosePolicy: "continue" as const,
-			resultOwner: { kind: "wait" as const, ownerId: "wait:shutdown-2" },
 			startTime: Date.now(),
 			sessionFile: abandonSessionFile,
 		};
 
 		for (const running of [terminate, abandon]) {
 			setRunningSubagentForTest(running);
+			// A wait owns each run when the parent closes.
+			claimRunEnd(running);
 		}
 
 		const actions = await shutdownSubagentsForTest({
@@ -107,11 +106,11 @@ describe("subagent shutdown policy", () => {
 			["child-close-1:terminate", "child-close-2:continue"],
 		);
 		assert.equal(terminateAbortCount, 1);
-		assert.equal((terminate as any).resultOwner, undefined);
-		assert.equal((abandon as any).resultOwner, undefined);
-		assert.equal(terminate.deliveryState, "detached");
-		assert.equal(abandon.deliveryState, "detached");
-		assert.equal((abandon as any).allowSteerDelivery, false);
+		assert.equal(isRunEndHeld(terminate.id), false);
+		assert.equal(isRunEndHeld(abandon.id), false);
+		assert.equal(runDeliveryState(terminate), "detached");
+		assert.equal(runDeliveryState(abandon), "detached");
+		assert.equal(isParentDeliveryClosed(abandon), true);
 		assert.equal(existsSync(abandon.sessionFile), true);
 
 		const sent: Array<{ message: any; options: any }> = [];
