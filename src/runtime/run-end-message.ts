@@ -67,7 +67,13 @@ export function runEnds(customType: unknown, content: unknown, details: unknown)
 	if (Array.isArray(details.results)) {
 		return details.results.flatMap((entry) =>
 			isRecord(entry) && isRunEndType(entry.customType) && isRecord(entry.details)
-				? [{ customType: entry.customType, content: typeof entry.content === "string" ? entry.content : "", details: entry.details }]
+				? [
+						{
+							customType: entry.customType,
+							content: typeof entry.content === "string" ? entry.content : "",
+							details: entry.details,
+						},
+					]
 				: [],
 		);
 	}

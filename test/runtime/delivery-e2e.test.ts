@@ -1,126 +1,30 @@
-import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	type ExtensionAPI,
-	type ExtensionFactory,
-	ModelRuntime,
-	SessionManager,
-	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
-import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
-import { ResultStore, readResultRecord } from "../../src/runtime/result-files.ts";
-import type { RunId } from "../../src/runtime/result-record.ts";
+import { pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
+import { readResultRecord } from "../../src/runtime/result-files.ts";
 import {
 	getSubagentBatchStopMetadata,
 	markSubagentBatchBlocking,
 	requestSubagentBatchStop,
 } from "../../src/runtime/state.ts";
-import { wireSubagentSteerBack } from "../../src/runtime/wiring.ts";
-import type { RunningSubagent } from "../../src/types.ts";
-import { assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
+import {
+	CHILD_NAME,
+	endWatchedChild,
+	failWatcher,
+	type Parent,
+	type Request,
+	recordingReply,
+	startParent,
+	waitFor,
+} from "../support/delivery-parent.ts";
+import { assert, describe, it } from "../support/index.ts";
 
 // D15 at the extension boundary: a real Pi parent session with a faux provider. The child is a
 // fake process under the real background watcher, and its end goes through the production wiring
 // (wireSubagentSteerBack) and the production delivery queue, so the result files and the session's
 // boundaries decide what the next model request carries.
-
-interface Request {
-	text: string;
-	/** Whether the run's committed record and its report file were on disk when this request was built. */
-	recordOnDisk: boolean;
-}
-
-interface Parent {
-	pi: ExtensionAPI;
-	requests: Request[];
-	store: ResultStore;
-	resultsDir: string;
-	runIds: RunId[];
-	/** What Alt+Up does: take every queued message out of Pi's steer and follow-up queues. */
-	clearQueue(): void;
-	pendingReplies(): number;
-	prompt(text: string): Promise<void>;
-	dispose(): Promise<void>;
-}
-
-const CHILD_NAME = "delivery-worker";
-
-/** A child session file with a header and one assistant reply, the transcript the watcher reads. */
-function childSessionFile(): string {
-	const file = join(createTestDir(), "child.jsonl");
-	const at = new Date().toISOString();
-	const header = { type: "session", version: 3, id: "child", timestamp: at, cwd: "/" };
-	const reply = {
-		type: "message",
-		id: "m1",
-		parentId: null,
-		timestamp: at,
-		message: { role: "assistant", content: [{ type: "text", text: "Child report." }], timestamp: Date.now() },
-	};
-	writeFileSync(file, `${JSON.stringify(header)}\n${JSON.stringify(reply)}\n`);
-	return file;
-}
-
-/** A watched child whose watcher fails: wires a rejected watch through the production wiring. */
-function failWatcher(parent: Parent): RunId {
-	const reservation = parent.store.reserve();
-	parent.runIds.push(reservation.runId);
-	const running = {
-		id: reservation.runId,
-		name: CHILD_NAME,
-		task: "Work",
-		agent: "scout",
-		mode: "background",
-		executionState: "running",
-		deliveryState: "detached",
-		parentClosePolicy: "terminate",
-		async: true,
-		startTime: Date.now(),
-		sessionFile: childSessionFile(),
-		resultTarget: { store: parent.store, reservation, parentCwd: createTestDir(), warnings: [] },
-	} as unknown as RunningSubagent;
-	wireSubagentSteerBack(parent.pi, running, Promise.reject(new Error("watcher broke")));
-	return reservation.runId;
-}
-
-/** Starts a watched child and ends it at once; resolves after the end was routed. */
-async function endWatchedChild(parent: Parent): Promise<string> {
-	const reservation = parent.store.reserve();
-	parent.runIds.push(reservation.runId);
-	const child = new EventEmitter() as ChildProcess;
-	const running = {
-		id: reservation.runId,
-		name: CHILD_NAME,
-		task: "Work",
-		agent: "scout",
-		mode: "background",
-		executionState: "running",
-		deliveryState: "detached",
-		parentClosePolicy: "terminate",
-		async: true,
-		startTime: Date.now(),
-		sessionFile: childSessionFile(),
-		childProcess: child,
-		resultTarget: { store: parent.store, reservation, parentCwd: createTestDir(), warnings: [] },
-	} as unknown as RunningSubagent;
-	const watch = watchBackgroundSubagent(
-		running,
-		{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
-		new AbortController().signal,
-	);
-	wireSubagentSteerBack(parent.pi, running, watch);
-	setTimeout(() => child.emit("exit", 0, null), 10);
-	await watch;
-	await new Promise((resolve) => setImmediate(resolve));
-	return reservation.runId;
-}
 
 /**
  * A launch tool that sets the batch flags the way the subagent tool_call hook does and takes the
@@ -152,91 +56,6 @@ function launchTool(
 			},
 		});
 	};
-}
-
-function recordAndReportOnDisk(resultsDir: string, runId: RunId): boolean {
-	const record = readResultRecord(join(resultsDir, runId));
-	return !!record && record.report.saved && existsSync(record.report.path);
-}
-
-function recordingReply(parent: () => Parent, text: string): FauxResponseStep {
-	return (context) => {
-		const p = parent();
-		const runId = p.runIds.at(-1);
-		p.requests.push({
-			text: JSON.stringify(context.messages),
-			recordOnDisk: runId ? recordAndReportOnDisk(p.resultsDir, runId) : false,
-		});
-		return fauxAssistantMessage(text);
-	};
-}
-
-async function startParent(options: {
-	replies: (parent: () => Parent) => FauxResponseStep[];
-	extensions?: (parent: () => Parent) => ExtensionFactory[];
-}): Promise<Parent> {
-	const root = createTestDir();
-	const agentDir = join(root, "agent");
-	const faux = fauxProvider();
-	let parent: Parent | undefined;
-	const get = () => parent!;
-	faux.setResponses(options.replies(get));
-	const modelRuntime = await ModelRuntime.create({
-		authPath: join(agentDir, "auth.json"),
-		modelsPath: null,
-		modelsStorePath: join(agentDir, "models-store.json"),
-		refreshOnCreate: false,
-	});
-	modelRuntime.registerNativeProvider(faux.provider);
-	let captured: ExtensionAPI | undefined;
-	const capture: ExtensionFactory = (pi) => {
-		captured = pi;
-		registerDeliveryQueue(pi);
-	};
-	const resourceLoader = new DefaultResourceLoader({
-		cwd: root,
-		agentDir,
-		extensionFactories: [capture, ...(options.extensions?.(get) ?? [])],
-		noExtensions: true,
-		noSkills: true,
-		noPromptTemplates: true,
-		noContextFiles: true,
-	});
-	await resourceLoader.reload();
-	const { session } = await createAgentSession({
-		cwd: root,
-		agentDir,
-		modelRuntime,
-		model: faux.getModel(),
-		resourceLoader,
-		settingsManager: SettingsManager.inMemory({}),
-		sessionManager: SessionManager.create(root, join(root, "sessions")),
-	});
-	await session.bindExtensions({});
-	parent = {
-		pi: captured!,
-		requests: [],
-		store: new ResultStore(join(root, "results"), () => {}),
-		resultsDir: join(root, "results"),
-		runIds: [],
-		clearQueue: () => void session.clearQueue(),
-		pendingReplies: () => faux.getPendingResponseCount(),
-		prompt: (text) => session.prompt(text),
-		async dispose() {
-			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-			session.dispose();
-			resetSubagentStateForTest();
-		},
-	};
-	return parent;
-}
-
-async function waitFor(condition: () => boolean, what: string): Promise<void> {
-	const deadline = Date.now() + 3000;
-	while (!condition()) {
-		if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	}
 }
 
 function carriesResult(request: Request | undefined, runId: string): boolean {
