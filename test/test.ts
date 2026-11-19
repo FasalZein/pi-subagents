@@ -76,6 +76,7 @@ import "./runtime/launch-waits-queue.test.ts";
 import "./runtime/launch-wait-e2e.test.ts";
 import "./tools/wait-tool.test.ts";
 import "./runtime/wait-join.test.ts";
+import "./runtime/run-lookup.test.ts";
 import "./runtime/result-router.test.ts";
 import "./runtime/result-assembler.test.ts";
 import "./runtime/result-render.test.ts";
