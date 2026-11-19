@@ -84,6 +84,7 @@ import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
 import { registerSubagentAgentsTool } from "./tools/agents-tool.ts";
 import { registerSubagentKillTool } from "./tools/kill-tool.ts";
+import { registerSubagentWaitTool } from "./tools/wait-tool.ts";
 import { createManagementToolExposure } from "./tools/tool-exposure.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
@@ -379,6 +380,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const grant = { mayLaunch };
 	const managementTools = managementToolExposure.recordingApi;
 	registerSubagentKillTool(managementTools, shouldRegister, stopRunningSubagent, grant);
+	registerSubagentWaitTool(managementTools, shouldRegister, grant);
 	registerSubagentResumeTool(
 		managementTools,
 		shouldRegister,
