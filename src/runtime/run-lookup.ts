@@ -38,6 +38,7 @@ export function lookUpRecord(store: ResultStore | undefined, query: string): Res
  * copy. Launch warnings are not part of the record, so a lookup after a reload carries none.
  */
 export function renderLookup(record: ResultRecord, cwd: string): string {
+	// Limit: launch warnings are not stored in the record, so this copy omits them; revisit if D13 stores them.
 	return renderResult(record, { cwd, homeDir: homedir(), showContextUsage: record.contextUsage !== undefined });
 }
 
