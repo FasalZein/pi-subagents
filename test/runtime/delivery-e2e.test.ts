@@ -68,6 +68,28 @@ function childSessionFile(): string {
 	return file;
 }
 
+/** A watched child whose watcher fails: wires a rejected watch through the production wiring. */
+function failWatcher(parent: Parent): RunId {
+	const reservation = parent.store.reserve();
+	parent.runIds.push(reservation.runId);
+	const running = {
+		id: reservation.runId,
+		name: CHILD_NAME,
+		task: "Work",
+		agent: "scout",
+		mode: "background",
+		executionState: "running",
+		deliveryState: "detached",
+		parentClosePolicy: "terminate",
+		async: true,
+		startTime: Date.now(),
+		sessionFile: childSessionFile(),
+		resultTarget: { store: parent.store, reservation, parentCwd: createTestDir(), warnings: [] },
+	} as unknown as RunningSubagent;
+	wireSubagentSteerBack(parent.pi, running, Promise.reject(new Error("watcher broke")));
+	return reservation.runId;
+}
+
 /** Starts a watched child and ends it at once; resolves after the end was routed. */
 async function endWatchedChild(parent: Parent): Promise<string> {
 	const reservation = parent.store.reserve();
@@ -307,6 +329,22 @@ describe("delivery owner at the extension boundary (D15)", () => {
 				true,
 				"the committed record and its report file were on disk when the result was delivered",
 			);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("R2: a watcher error publishes a failed record before it is handed over", async () => {
+		const parent = await startParent({
+			replies: (p) => [fauxAssistantMessage("Nothing to do."), recordingReply(p, "Read the result.")],
+		});
+		try {
+			await parent.prompt("hello");
+			const runId = failWatcher(parent);
+			await waitFor(() => parent.requests.length === 1, "the turn that the result starts");
+			assert.ok(carriesResult(parent.requests[0], runId));
+			assert.equal(parent.requests[0]!.recordOnDisk, true, "the failed end was committed to disk first");
+			assert.equal(readResultRecord(join(parent.resultsDir, runId))?.outcome, "failed");
 		} finally {
 			await parent.dispose();
 		}
