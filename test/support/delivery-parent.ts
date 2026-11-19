@@ -87,7 +87,7 @@ export function failWatcher(parent: Parent, name = CHILD_NAME): RunId {
 }
 
 /** Starts a watched child and ends it at once; resolves after the end was routed. */
-export async function endWatchedChild(parent: Parent, name = CHILD_NAME): Promise<string> {
+export async function endWatchedChild(parent: Parent, name = CHILD_NAME, exitCode = 0): Promise<string> {
 	const reservation = parent.store.reserve();
 	parent.runIds.push(reservation.runId);
 	const child = new EventEmitter() as ChildProcess;
@@ -112,7 +112,7 @@ export async function endWatchedChild(parent: Parent, name = CHILD_NAME): Promis
 		new AbortController().signal,
 	);
 	wireSubagentSteerBack(parent.pi, running, watch);
-	setTimeout(() => child.emit("exit", 0, null), 10);
+	setTimeout(() => child.emit("exit", exitCode, null), 10);
 	await watch;
 	await new Promise((resolve) => setImmediate(resolve));
 	return reservation.runId;

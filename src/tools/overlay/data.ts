@@ -419,9 +419,9 @@ function recoverSummary(content: string): string {
 	return firstLine(afterHeader.replace(/\n\nSession:[\s\S]*$/, ""), 90) || "completed";
 }
 
-/** A run that exited cleanly but published blocked or partial shows that outcome (D14). */
-function shownOutcomeOf(status: string, outcome: string | undefined): string | undefined {
-	return status === "completed" && outcome && outcome !== "done" ? outcome.replace("_", " ") : undefined;
+/** Outcomes that the status icon does not already say (D14): blocked, partial, timed out. */
+function shownOutcomeOf(outcome: string | undefined): string | undefined {
+	return outcome && !["done", "failed", "cancelled"].includes(outcome) ? outcome.replace("_", " ") : undefined;
 }
 
 function statusVisuals(status: "completed" | "cancelled" | "failed") {
@@ -492,7 +492,7 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 		seen.add(dedupeKey);
 
 		const visual = statusVisuals(r.status);
-		const shownOutcome = shownOutcomeOf(r.status, r.resultOutcome);
+		const shownOutcome = shownOutcomeOf(r.resultOutcome);
 
 		const summary = r.errorMessage
 			? `error: ${firstLine(r.errorMessage, 40)}`
@@ -550,7 +550,7 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 				const summary = recovered.errorMessage
 					? `error: ${firstLine(recovered.errorMessage, 80)}`
 					: recoverSummary(recovered.content);
-				const shownOutcome = shownOutcomeOf(recovered.status, recovered.outcome);
+				const shownOutcome = shownOutcomeOf(recovered.outcome);
 				const sessionStats = readCompletedSessionStats(recovered.sessionFile);
 				const meta = safeMeta(recovered.sessionFile);
 				const defs = recovered.agent ? safeDefs(recovered.agent, ctx.cwd) : null;
