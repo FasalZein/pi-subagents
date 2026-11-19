@@ -523,6 +523,153 @@ PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 pi
 
 That only removes the runtime stop. The parent still owns only work it did not delegate.
 
+## Workflow scripts
+
+A workflow script is one `codemode` call that launches a batch, waits for it, and returns a short digest. Only the digest reaches the parent model, so the reports of many children cost the parent a few hundred tokens instead of their full text. The extension ships no workflow runner and no agent definitions: copy the recipes below and change the inputs.
+
+To give a parent codemode, start Pi with the built-in codemode extension:
+
+```bash
+pi -e builtin:codemode --tools +codemode
+```
+
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses gives the refusal text as a string and starts nothing.
+
+### Recipe: run a batch in one script
+
+The script launches the batch, prints the run ids, and waits with a time limit. For each run it checks three fields of the record:
+
+- `outcome`: `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`.
+- `typed`: `false` when the child ended without `subagent_done`. The result then has no data, and the report is the child's last text.
+- `dataError`: set when the child's `data` did not match the `schema` of its launch. The record then has no data.
+
+The script returns about 1,500 tokens or less: one entry per run with the run id, the outcome, a cut summary, the report file path, and the data or the reason for no data. On the time limit it returns the pending run ids and says that their work must not be redone.
+
+<!-- recipe: workflow-script -->
+```js
+// @options: {"timeout_ms": 1800000, "max_output_tokens": 2000}
+// Inputs. Write fixed values here: a rerun repeats only what the script does not read from the clock or Math.random().
+const BATCH = [
+	{ agent: "worker", name: "auth-audit", title: "Audit the auth module", task: "Audit src/auth. Write your report to a file." },
+	{ agent: "worker", name: "billing-audit", title: "Audit the billing module", task: "Audit src/billing. Write your report to a file." },
+	{ agent: "worker", name: "search-audit", title: "Audit the search module", task: "Audit src/search. Write your report to a file." },
+];
+const WAIT_SECONDS = 1500;
+// Keeps the digest near 1,500 tokens for any batch size.
+const FIELD_CHARS = Math.min(300, Math.floor(2000 / BATCH.length));
+
+const launch = await tools.subagent({ children: BATCH });
+if (typeof launch === "string") return `Launch refused, nothing started: ${launch}`;
+// The first output: if the script fails later, its partial output still names every run.
+text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
+
+function digest(id, record, fallback) {
+	if (!record) return { id, outcome: "unknown", summary: fallback.slice(0, FIELD_CHARS) };
+	const entry = {
+		id,
+		name: record.name,
+		outcome: record.outcome,
+		summary: record.summary.slice(0, FIELD_CHARS),
+		report: record.report.saved ? record.report.path : `not saved: ${record.report.error}`,
+	};
+	if (!record.typed) entry.check = "untyped: the child ended without subagent_done; read its report";
+	else if (record.dataError) entry.check = `data error: ${record.dataError.slice(0, FIELD_CHARS)}`;
+	else if (record.data !== undefined) entry.data = JSON.stringify(record.data).slice(0, FIELD_CHARS);
+	return entry;
+}
+
+const runs = launch.children.filter((child) => child.state === "ended").map((child) => digest(child.runId, child.record, ""));
+const started = launch.children.filter((child) => child.state === "started").map((child) => child.runId);
+let pending = [];
+let missing = [];
+if (started.length > 0) {
+	const wait = await tools.subagent_wait({ ids: started, timeout: WAIT_SECONDS });
+	runs.push(...wait.results.map((result) => digest(result.id, result.record, result.text)));
+	pending = wait.pending;
+	missing = wait.missing;
+}
+
+const result = {
+	ok: launch.status === "launched" && pending.length === 0 && missing.length === 0 && runs.every((run) => run.outcome === "done" && !run.check),
+	runs,
+};
+if (launch.status === "launch_failed")
+	result.launchFailed = { ...launch.failed, note: "The children before it started and keep running. Launch only this child and the ones after it." };
+if (pending.length > 0)
+	result.pending = { ids: pending, note: "These runs still work and report by message. Do not redo their work. Wait for them with subagent_wait({ ids })." };
+if (missing.length > 0) result.missing = missing;
+return result;
+```
+
+To type the data of a child, add a `schema` (JSON Schema) to its entry in `BATCH`. When the data of a child does not match, its record has a `dataError` instead of data.
+
+### Recover after a failed script
+
+A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Recover with `subagent_wait` instead:
+
+1. Read the run ids from the `Run ids:` line of the partial output.
+2. Call `subagent_wait({ ids })` with those ids. A run that ended returns its result from the result records of the session. The call waits for a run that still works.
+3. If the output has no run ids, call `subagent_wait({ recent: true })`. It lists the last 20 ended runs of this session, newest first, with run id, name, and outcome. Look up an older run by its run id.
+4. To wait for every run that is still running or queued, call `subagent_wait({})`.
+5. Launch only the children that have no run id.
+
+A result can arrive twice: once in a wait reply and once by message, for example after an interrupted wait. Treat a second copy with the same run id as the same result.
+
+### Limits of a waiting script
+
+- At most two codemode workers are alive in one Pi process by default, across all its sessions. `PI_CODEMODE_MAX_WORKERS` changes the limit. A waiting script holds one worker for the whole wait.
+- A third script waits for a free worker in arrival order. If no worker is free within 60 seconds, or before its own shorter `timeout_ms`, the script fails without running: `No codemode worker became free within 60 seconds.`
+- A cancelled worker keeps its slot until the worker exits.
+- A waiting script must not depend on another script. Two scripts that wait for each other hold both workers.
+- A script cannot be resumed from the middle. After a failure, recover as described above.
+- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops only the script and its wait. The children keep running and report by message.
+- Time and random values come from outside the script if a rerun should repeat them. Write them into the inputs.
+- Each child runs in its own Pi process, so the scripts of a child do not take the workers of the parent.
+
+### Recipe: a coordinator child
+
+A child with `spawning` can coordinate a batch for the parent. The parent then launches one child and gets one result. Save this file as `.pi/agents/batch-coordinator.md`:
+
+<!-- recipe: coordinator-child -->
+```md
+---
+name: batch-coordinator
+description: Run a batch of worker children, check each result, and return one digest.
+mode: background
+spawning: worker
+spawn-width: 4
+timeout: 3600
+---
+
+You coordinate one batch. You do not do the work of the batch yourself.
+
+1. Launch every child that the task names in one subagent call. Give each child a name, a title, and a task.
+2. Read the result of each child: outcome, summary, report path, and data.
+3. Call subagent_done once. Set outcome to done only when every child is done. Put one line per child in the summary: its name, outcome, and report path. Put the digest in data, in the shape that the task asks for.
+
+Do not launch a child again after it fails. Name the failure in your summary.
+```
+
+A background child is a `pi -p` process, so its `subagent` call waits for every child and returns their reports in the tool result. `spawning: worker` lets the coordinator launch only the `worker` agent. With the default `spawn-depth: 1`, the workers cannot launch children. `spawn-width` limits how many children run at the same time, up to the hard ceiling of 16.
+
+The parent launches the coordinator with the workflow script above. Put one entry in `BATCH`, and add a `schema` for the digest:
+
+```js
+const BATCH = [
+	{
+		agent: "batch-coordinator",
+		name: "audit-coordinator",
+		title: "Coordinate the module audits",
+		task: "Launch three worker children to audit src/auth, src/billing, and src/search. Return data as { modules: [{ name, outcome, report }] }.",
+		schema: {
+			type: "object",
+			required: ["modules"],
+			properties: { modules: { type: "array", items: { type: "object", required: ["name", "outcome", "report"] } } },
+		},
+	},
+];
+```
+
 ## Session modes
 
 A child session has two questions:
