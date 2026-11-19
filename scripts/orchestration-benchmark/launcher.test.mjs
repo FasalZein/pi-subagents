@@ -424,10 +424,10 @@ test("[F8] probes and session files match one to one: either side alone is infra
 		classify(evidence(childSession(["stop"]), { probes: outside })).infraReason,
 		"probe without its session file",
 	);
-	// Two probes claim one session file.
+	// Two probes claim one session file (independent objects, as readProbes parses them).
 	assert.equal(
 		classify(
-			evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }),
+			evidence(childSession(["stop"]), { probes: [...probes, structuredClone(probes[1])] }),
 		).infraReason,
 		"probe without its session file",
 	);
@@ -455,7 +455,7 @@ test("[T04] a deadline timeout with a child probe but no child session file stay
 	// Other unsound joins stay infra on a timeout: two probes claim one file.
 	assert.equal(
 		classify(
-			evidence(childSession(["stop"]), { probes: [...probes, probes[1]] }),
+			evidence(childSession(["stop"]), { probes: [...probes, structuredClone(probes[1])] }),
 			{ kind: "verdict", verdict: "timeout" },
 		).infraReason,
 		"probe without its session file",

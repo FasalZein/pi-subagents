@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { classifyAttempt, observe } from "./attempt.mjs";
-import { answerParser, loadEvidence } from "./record.mjs";
+import { answerParser, childEnded, loadEvidence, summarizeChild } from "./record.mjs";
 import recon from "./scenarios/recon/scenario.mjs";
 import { collectEvidence } from "./session-evidence.mjs";
 
@@ -59,7 +59,7 @@ function attemptRoot() {
  * and the six launched children have their own session files; each resume run the
  * parent started (subagent_resume tool results) names the session file it resumed.
  */
-function writeProbes(root) {
+function writeProbes(root, { extra = [] } = {}) {
 	const probeDir = join(root, "probes");
 	mkdirSync(probeDir);
 	const sessions = join(root, "sessions");
@@ -71,7 +71,7 @@ function writeProbes(root) {
 		.filter((e) => e.type === "message" && e.message.toolName === "subagent_resume")
 		.map((e) => e.message.details.sessionFile);
 	assert.equal(resumed.length, 2, "the fixture parent resumed two children");
-	const probes = [...files, ...resumed].map((sessionFile) => {
+	const probes = [...files, ...resumed, ...extra.map((name) => childFile(root, name))].map((sessionFile) => {
 		const agent = agentOf(sessionFile);
 		return {
 			sessionFile,
@@ -85,13 +85,25 @@ function writeProbes(root) {
 	return { probeDir, parentFile, resumed };
 }
 
-test("[T68] a resumed child is matched to its session: the sample settles and scores wrong-answer", async () => {
-	const root = attemptRoot();
-	const { probeDir, parentFile, resumed } = writeProbes(root);
-	// The clock starts after the last file write, so only pending children can hold it.
+/** The session file of the child launched under this name. */
+function childFile(root, name) {
+	const sessions = join(root, "sessions");
+	return readdirSync(sessions)
+		.map((file) => join(sessions, file))
+		.find((file) => parseJsonl(file).some((e) => e.customType === LAUNCH_METADATA && e.data.name === name));
+}
+
+const writeJsonl = (file, events) => writeFileSync(file, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`);
+
+/** Index of the child's first user message after its first run: the resumed task. */
+const resumeTaskIndex = (events) =>
+	events.findIndex((e, i) => i > events.findIndex((x) => x.message?.role === "user") && e.message?.role === "user");
+
+/** Observe the attempt with a fake clock that starts after the last file write. */
+function observeRoot(root, probeDir, parentFile) {
 	const start = Date.now() + 60_000;
 	let now = start;
-	const observed = await observe({
+	return observe({
 		parent: {},
 		parentFile,
 		root,
@@ -107,6 +119,12 @@ test("[T68] a resumed child is matched to its session: the sample settles and sc
 			alive: () => true,
 		},
 	});
+}
+
+test("[T68] a resumed child is matched to its session: the sample settles and scores wrong-answer", async () => {
+	const root = attemptRoot();
+	const { probeDir, parentFile, resumed } = writeProbes(root);
+	const observed = await observeRoot(root, probeDir, parentFile);
 	assert.equal(observed.kind, "answered", "the observer settles before the deadline");
 	// The reply says "FACT-7: Not found"; a value with a space is no keyed value, so
 	// the parsed answer holds the six facts the children returned and no FACT-7.
@@ -139,7 +157,44 @@ test("[T68] a resumed child is matched to its session: the sample settles and sc
 	}
 });
 
-test("[T68] a second probe of the parent file or of a file that is no child's stays unmatched", () => {
+// Fix round 1, P1 stale completion: the first run's completion stays in the file
+// while the resumed run works. Each resumed run is pending until a completion after
+// its own resume boundary; the two resumed children of the fixture end separately.
+for (const [label, name, keep] of [
+	["recon-3 has its resumed task and no new completion", "recon-3", (events) => resumeTaskIndex(events) + 1],
+	["recon-3 resumed process has no task yet", "recon-3", (events) => resumeTaskIndex(events)],
+	["recon-4 has its resumed task and no new completion", "recon-4", (events) => resumeTaskIndex(events) + 1],
+]) {
+	test(`[T68] a resumed run without its own completion keeps the sample open: ${label}`, async () => {
+		const root = attemptRoot();
+		const file = childFile(root, name);
+		const events = parseJsonl(file);
+		writeJsonl(file, events.slice(0, keep(events)));
+		const { probeDir, parentFile } = writeProbes(root);
+		// The parent's final keyed reply is settled; only the open resumed run can hold it.
+		assert.deepEqual(await observeRoot(root, probeDir, parentFile), { kind: "verdict", verdict: "timeout" });
+	});
+}
+
+// Fix round 1, P1 fail-open duplicate: a second probe on a child file that no
+// parent resume names is the F8 case (infra), not a resume.
+test("[T68] an extra probe on a child file that no resume names stays infra", async () => {
+	const root = attemptRoot();
+	const { probeDir, parentFile } = writeProbes(root, { extra: ["recon-1"] });
+	const observed = await observeRoot(root, probeDir, parentFile);
+	const result = classifyAttempt({
+		observed,
+		evidence: collectEvidence(root, probeDir),
+		cli: CLI,
+		scenario: recon,
+		checkoutChanged: false,
+		workDir: join(root, "workspace"),
+	});
+	assert.equal(result.infraReason, "probe without its session file");
+});
+
+test("[T68] probe join: a resume probe needs a parent resume of that file; each resume needs its probe", () => {
+	// Independent objects, as readProbes parses each probe file on its own.
 	const probe = (sessionFile, agent) => ({
 		sessionFile,
 		agent,
@@ -147,7 +202,7 @@ test("[T68] a second probe of the parent file or of a file that is no child's st
 		thinking: CLI.thinking,
 		tools: [{ name: agent ? "caller_ping" : "subagent", path: "/c/src/index.ts" }],
 	});
-	const join = (probes) =>
+	const join = (probes, resumedFiles = []) =>
 		loadEvidence(probes, {
 			parentFile: "/r/p.jsonl",
 			childFiles: ["/r/c.jsonl"],
@@ -155,13 +210,48 @@ test("[T68] a second probe of the parent file or of a file that is no child's st
 			checkout: "/c",
 			parentTool: "subagent",
 			childTool: "caller_ping",
+			resumedFiles,
 		});
 	const base = [probe("/r/p.jsonl", null), probe("/r/c.jsonl", "a"), probe("/r/o.jsonl", "b")];
+	const again = probe("/r/c.jsonl", "a");
 	assert.equal(join(base).unmatchedProbes, 1, "the other file is no child file");
-	assert.equal(join([...base, probe("/r/c.jsonl", "a")]).unmatchedProbes, 1, "a resume of the child");
-	assert.equal(join([...base, probe("/r/p.jsonl", null)]).unmatchedProbes, 2);
-	assert.equal(join([...base, probe("/r/o.jsonl", "b")]).unmatchedProbes, 3);
-	assert.deepEqual(join([...base, probe("/r/c.jsonl", "a")]).resumes, [
+	assert.equal(join([...base, again]).unmatchedProbes, 2, "no resume names the child file");
+	assert.equal(join([...base, again], ["/r/c.jsonl"]).unmatchedProbes, 1, "a resume of the child");
+	assert.equal(
+		join([...base, again, probe("/r/c.jsonl", "a")], ["/r/c.jsonl"]).unmatchedProbes,
+		2,
+		"one resume, two probes",
+	);
+	assert.equal(join([...base, probe("/r/p.jsonl", null)], ["/r/p.jsonl"]).unmatchedProbes, 2, "no parent resume");
+	assert.equal(join([...base, probe("/r/o.jsonl", "b")], ["/r/o.jsonl"]).unmatchedProbes, 3, "no child file");
+	assert.equal(join(base, ["/r/c.jsonl"]).missingProbes, 1, "a resume without its probe");
+	assert.deepEqual(join([...base, again], ["/r/c.jsonl"]).resumes, [
 		{ agent: "a", model: CLI.model, thinking: CLI.thinking },
 	]);
+});
+
+// Fix round 1, P1 usage truncation: a resume with a model or thinking override
+// appends a launch marker (modelSource "resume-override"). The child's own work
+// still starts at its first launch marker of this attempt.
+test("[T68] a resume marker does not cut the child's earlier requests, launch order or role", () => {
+	const root = attemptRoot();
+	const file = childFile(root, "recon-3");
+	const events = parseJsonl(file);
+	const launch = events.find((e) => e.customType === LAUNCH_METADATA);
+	const at = resumeTaskIndex(events);
+	const marker = {
+		...launch,
+		id: "resume-marker",
+		timestamp: events[at].timestamp,
+		data: { ...launch.data, modelSource: "resume-override", requestedThinkingOverride: "high" },
+	};
+	const withMarker = [...events.slice(0, at), marker, ...events.slice(at)];
+	const before = summarizeChild(events);
+	const after = summarizeChild(withMarker);
+	assert.equal(before.requests, 4, "recon-3 made 4 requests: 2 at launch, 2 resumed");
+	assert.deepEqual(
+		[after.requests, after.cost, after.launchedAt, after.launchEntryId, after.role],
+		[4, before.cost, launch.timestamp, launch.id, "bench-recon-3"],
+	);
+	assert.equal(childEnded(withMarker), true);
 });

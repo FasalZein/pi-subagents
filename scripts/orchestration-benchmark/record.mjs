@@ -213,15 +213,22 @@ export function summarizeParent(events) {
 	};
 }
 
+// Both releases write this model source on the launch marker that a resume with a
+// model or thinking override appends to the child's session (resume-service.ts).
+const RESUME_MARKER_SOURCE = "resume-override";
+
 /**
- * Index after the child's own launch boundary: the LAST launch marker, because a
- * nested fork copies its ancestors' markers before its own.
+ * Index of the child's own launch boundary: the LAST launch marker that a launch
+ * wrote, because a nested fork copies its ancestors' markers before its own. A
+ * marker a resume appended does not move it: the resumed run's requests, cost and
+ * reads belong to the same child (T68).
  */
 function launchBoundary(events) {
 	for (let i = events.length - 1; i >= 0; i--) {
 		if (
 			events[i]?.type === "custom" &&
-			events[i].customType === LAUNCH_METADATA
+			events[i].customType === LAUNCH_METADATA &&
+			events[i].data?.modelSource !== RESUME_MARKER_SOURCE
 		)
 			return i;
 	}
