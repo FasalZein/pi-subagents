@@ -17,7 +17,7 @@ const launchedChildFields = {
 	where: Type.Union([Type.Literal("pane"), Type.Literal("headless")]),
 };
 
-export const LaunchedChildSchema = Type.Union([
+const LaunchedChildSchema = Type.Union([
 	Type.Object({ ...launchedChildFields, state: Type.Literal("started") }),
 	Type.Object({
 		...launchedChildFields,
@@ -26,7 +26,7 @@ export const LaunchedChildSchema = Type.Union([
 		record: Type.Union([ResultRecordSchema, Type.Null()]),
 	}),
 ]);
-export type LaunchedChild = Static<typeof LaunchedChildSchema>;
+type LaunchedChild = Static<typeof LaunchedChildSchema>;
 
 const FailedChildSchema = Type.Object({
 	/** 1-based position of the child in the children list. */
