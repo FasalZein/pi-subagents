@@ -8,8 +8,10 @@ import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummary
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
 import {
 	CANCELLED_SUMMARY,
+	isAcceptedCompletion,
 	isDeadlineEnforceable,
 	isStopRequested,
+	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
 	STOPPED_REASON,
@@ -211,6 +213,8 @@ function watchBackgroundGeneration(
 		let terminalSeenAt = 0;
 		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 		let groupExitPoll: ReturnType<typeof setInterval> | undefined;
+		/** An exit record consumed while the process group still exits; it is no longer on disk. */
+		let consumedExit: ReturnType<typeof consumeSubagentExitSignal> = null;
 
 		const cleanup = () => {
 			clearInterval(pollInterval);
@@ -255,7 +259,7 @@ function watchBackgroundGeneration(
 			// before the signal goes out. Its Pi process writes an ordinary `done`
 			// on the way out of our own SIGTERM, so anything published after this
 			// point is a consequence of the kill, not a verdict that outranks it.
-			if (hasSubagentExitSidecar(running.sessionFile)) return false;
+			if (hasSubagentExitSidecar(running.sessionFile) || isAcceptedCompletion(consumedExit)) return false;
 			running.timeoutExpiry = expired;
 			running.phase = "stopping";
 			if (!running.timeoutKillTimer) beginKill();
@@ -360,7 +364,12 @@ function watchBackgroundGeneration(
 			code: number | null,
 			exitSignal: ReturnType<typeof consumeSubagentExitSignal>,
 		) => {
-			if (running.phase === "soft-limit" && !signal.aborted && exitSignal?.reason !== "ping") {
+			if (
+				running.phase === "soft-limit" &&
+				!signal.aborted &&
+				exitSignal?.reason !== "ping" &&
+				!keepsCompletionOverWrapUp(running, exitSignal)
+			) {
 				finish({ kind: "restart" });
 				return;
 			}
@@ -457,6 +466,7 @@ function watchBackgroundGeneration(
 		};
 		const onExit = (code: number | null) => {
 			const exitSignal = consumeSubagentExitSignal(running.sessionFile);
+			consumedExit = exitSignal;
 			const runtimeOwnsExit =
 				Boolean(running.timeoutExpiry) ||
 				running.phase === "soft-limit" ||

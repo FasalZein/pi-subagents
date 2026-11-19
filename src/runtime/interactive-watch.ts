@@ -14,6 +14,7 @@ import {
 	CANCELLED_SUMMARY,
 	isDeadlineEnforceable,
 	isStopRequested,
+	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
 	STOPPED_REASON,
@@ -303,11 +304,14 @@ async function watchInteractiveGeneration(
 		// exit status, so a late error record never becomes a success because the shell reported 0.
 		const end = lateExitSignal && pollResult.reason === "sentinel" ? lateExitSignal : pollResult;
 		const exitSignal = end === lateExitSignal ? undefined : lateExitSignal;
+		// The child has exited: no later deadline tick may change how this end is decided.
+		if (deadlineTimer) clearTimeout(deadlineTimer);
 		if (
 			running.phase === "soft-limit" &&
 			!signal.aborted &&
 			end.reason !== "ping" &&
-			exitSignal?.reason !== "ping"
+			exitSignal?.reason !== "ping" &&
+			!keepsCompletionOverWrapUp(running, end, exitSignal)
 		) {
 			cleanupDoneSentinel(running);
 			try {

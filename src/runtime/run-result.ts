@@ -104,6 +104,25 @@ export function isDeadlineEnforceable(signal: AbortSignal): boolean {
 	return !signal.aborted;
 }
 
+/** D7: the child's completion call was accepted; a plain `done` from a shutdown carries no call. */
+export function isAcceptedCompletion(end: { reason: string; acceptedCall?: unknown } | null | undefined): boolean {
+	return end?.reason === "done" && end.acceptedCall !== undefined;
+}
+
+/**
+ * D7: a completion accepted while the soft interruption is under way, so before the hard deadline,
+ * is the run's end. The report-only wrap-up never runs, so the run carries no wrap-up marker.
+ */
+export function keepsCompletionOverWrapUp(
+	running: RunningSubagent,
+	...ends: Array<{ reason: string; acceptedCall?: unknown } | null | undefined>
+): boolean {
+	if (running.phase !== "soft-limit" || !ends.some(isAcceptedCompletion)) return false;
+	running.timeoutWrapUp = undefined;
+	running.timeoutWrapUpDeadlineAt = undefined;
+	return true;
+}
+
 /** D7: the reason a stopped run's record names. */
 export const STOPPED_REASON = "stopped by the parent";
 
