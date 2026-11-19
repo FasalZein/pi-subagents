@@ -8,10 +8,24 @@ import { basename, dirname, join } from "node:path";
 
 const LAUNCH_METADATA = "pi-subagents_launch_metadata";
 
+/**
+ * Entries of a folder of the live sample tree, or none when the folder vanished
+ * between listing and reading (Pi and the candidate remove temporary folders while
+ * the observer polls: the T59a smoke ended on such an ENOENT).
+ */
+export function liveEntries(dir) {
+	try {
+		return readdirSync(dir, { withFileTypes: true });
+	} catch (error) {
+		if (error?.code === "ENOENT") return [];
+		throw error;
+	}
+}
+
 function listFiles(dir, suffix) {
 	if (!existsSync(dir)) return [];
 	const files = [];
-	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+	for (const entry of liveEntries(dir)) {
 		const path = join(dir, entry.name);
 		if (entry.isDirectory()) files.push(...listFiles(path, suffix));
 		else if (entry.isFile() && path.endsWith(suffix)) files.push(path);

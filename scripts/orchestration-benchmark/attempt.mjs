@@ -6,7 +6,6 @@
 import {
 	cpSync,
 	existsSync,
-	readdirSync,
 	readFileSync,
 	statSync,
 } from "node:fs";
@@ -34,6 +33,7 @@ import {
 } from "./sample-home.mjs";
 import {
 	collectEvidence,
+	liveEntries,
 	parseJsonlStrict,
 	readProbes,
 } from "./session-evidence.mjs";
@@ -100,11 +100,14 @@ function hasPrompt(events, prompt) {
 function lastActivity(root) {
 	let latest = 0;
 	const walk = (dir) => {
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		for (const entry of liveEntries(dir)) {
 			const path = join(dir, entry.name);
 			if (entry.isDirectory()) walk(path);
 			else if (path.endsWith(".jsonl"))
-				latest = Math.max(latest, statSync(path).mtimeMs);
+				latest = Math.max(
+					latest,
+					statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0,
+				);
 		}
 	};
 	walk(root);
@@ -380,11 +383,18 @@ const KEPT_FILES = /(\.jsonl|^record\.json|^launch\.json)$/;
  * the delivery accounting can be checked by hand against the sessions.
  */
 export function keepEvidence(root, dest) {
-	cpSync(root, dest, {
-		recursive: true,
-		filter: (source) =>
-			!statSync(source).isFile() || KEPT_FILES.test(basename(source)),
-	});
+	// A debugging copy never decides a sample: a file that vanishes mid-copy is reported.
+	try {
+		cpSync(root, dest, {
+			recursive: true,
+			filter: (source) => {
+				const stat = statSync(source, { throwIfNoEntry: false });
+				return Boolean(stat) && (!stat.isFile() || KEPT_FILES.test(basename(source)));
+			},
+		});
+	} catch (error) {
+		console.error(`kept copy incomplete: ${error?.code ?? error?.name ?? "unknown"}`);
+	}
 }
 
 /** @returns {Promise<object>} a sanitized attempt result */
