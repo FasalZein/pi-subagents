@@ -4,6 +4,8 @@ import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agents/launchable-agents.ts";
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
+import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
+import { parseDataSchema } from "./data-schema.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
 	enforceAgentFrontmatter,
@@ -62,6 +64,11 @@ export const SubagentChildParams = Type.Object({
 	),
 	thinking: Type.Optional(
 		Type.String({ description: "Thinking level for this child, such as high; the rule for model applies." }),
+	),
+	schema: Type.Optional(
+		Type.Unknown({
+			description: "JSON Schema (draft 2020-12 or 7) that this child's completion data must match; every $ref stays inside it.",
+		}),
 	),
 });
 
@@ -359,6 +366,9 @@ export function registerSubagentCoreTools(
 					const agentDefs = runtime.loadAgentDefaults(child.agent, ctx.cwd);
 					const error = getLaunchError(child, agentDefs, currentAgent, launchable);
 					if (error) throw new Error(error);
+					// D12: a bad schema refuses the whole batch before any child starts.
+					const schema = child.schema === undefined ? undefined : parseDataSchema(child.schema);
+					if (schema && !schema.ok) throw new Error(`Error: child ${child.name}: ${schema.error}`);
 					return {
 						child,
 						agentDefs,
@@ -403,7 +413,11 @@ export function registerSubagentCoreTools(
 						const childCapSlots = unlaunchedCapSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
-							const { child, agentDefs, warning } = entry;
+							const { agentDefs, warning } = entry;
+							const child =
+								entry.child.schema === undefined
+									? entry.child
+									: { ...entry.child, dataSchemaFile: writeDataSchemaArtifact(entry.child.name, entry.child.schema, ctx) };
 							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();

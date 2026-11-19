@@ -16,7 +16,7 @@ function getArtifactDir(cwd: string, sessionId: string): string {
 	return getSessionArtifactDir(cwd, sessionId);
 }
 
-function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = ""): string {
+function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = "", extension = "md"): string {
 	const sessionId = ctx.sessionManager.getSessionId();
 	const artifactDir = getArtifactDir(ctx.cwd, sessionId);
 	const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -26,7 +26,7 @@ function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = ""
 		.replace(/\s+/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "");
-	return join(artifactDir, `context/${safeName || "subagent"}${suffix ? `-${suffix}` : ""}-${ts}.md`);
+	return join(artifactDir, `context/${safeName || "subagent"}${suffix ? `-${suffix}` : ""}-${ts}.${extension}`);
 }
 
 export function writeTaskArtifact(name: string, task: string, ctx: ArtifactContext): string {
@@ -62,6 +62,14 @@ export function writeResumeTaskArtifact(name: string, task: string, sessionFile:
 		cwd: header.cwd ?? cwd,
 		sessionManager: { getSessionId: () => header.id },
 	});
+}
+
+/** D12: the launch schema of one child as JSON; the child's completion call reads it. */
+export function writeDataSchemaArtifact(name: string, schema: unknown, ctx: ArtifactContext): string {
+	const artifactPath = getSubagentArtifactPath(name, ctx, "schema", "json");
+	mkdirSync(dirname(artifactPath), { recursive: true });
+	writeFileSync(artifactPath, JSON.stringify(schema), "utf8");
+	return artifactPath;
 }
 
 export function writeSystemPromptArtifact(name: string, systemPrompt: string, ctx: ArtifactContext): string {

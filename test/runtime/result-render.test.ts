@@ -36,7 +36,9 @@ function recordFor(reportLength: number, typed: boolean, report: ReportStorage):
 	const { record } = assembleResult(
 		facts(entries, {
 			sessionFile: SESSION_FILE,
-			dataError: typed ? "data/n: must be string" : undefined,
+			acceptedCall: typed
+				? { toolCallId: "c1", args: { outcome: "partial", summary: text.slice(0, 1_500) }, dataError: "data/n: must be string" }
+				: undefined,
 			contextUsage: { tokens: 91_000, window: 100_000 },
 			resume: { resumable: false, reason: "no-session child: its temporary session file was deleted" },
 		}),

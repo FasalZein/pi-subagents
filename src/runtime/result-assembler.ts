@@ -52,11 +52,16 @@ export interface RunFacts {
 	 * (D12). Pi omits nested-call arguments over 8 KiB per call or 32 KiB per result
 	 * (NESTED_CALL_LIMITS), so this is the payload source for such a call; recorded arguments win.
 	 */
-	acceptedCall?: { toolCallId: string; args: Record<string, unknown> };
-	/** Set when the accepted completion call carried data that failed its schema twice (D12). */
-	dataError?: string;
+	acceptedCall?: AcceptedPayload;
 	contextUsage?: ContextUsage;
 	resume: ResumeFacts;
+}
+
+/** An accepted completion payload; dataError is set when its data failed the launch schema twice (D12). */
+export interface AcceptedPayload {
+	toolCallId: string;
+	args: Record<string, unknown>;
+	dataError?: string;
 }
 
 export interface AssembledResult {
@@ -95,6 +100,8 @@ interface RunTranscript {
 	texts: AssistantText[];
 	/** Accepted completion payloads the child recorded in its session, by tool call id (D12). */
 	accepted: Map<string, Record<string, unknown>>;
+	/** Data errors of accepted calls, by tool call id (D12). */
+	dataErrors: Map<string, string>;
 	/** Tool call ids of accepted calls made with no takeover: each is final for the result (D12). */
 	autonomous: Set<string>;
 	/** The last completion call that succeeded, if any. */
@@ -133,13 +140,19 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 /** A completion call the child's tool accepted and recorded in the session (SUBAGENT_ACCEPTED_CALL_ENTRY). */
 function acceptedEntry(
 	entry: SessionEntry,
-): { id: string; tool: CompletionTool; args: Record<string, unknown>; autonomous: boolean } | undefined {
+): { id: string; tool: CompletionTool; args: Record<string, unknown>; autonomous: boolean; dataError?: string } | undefined {
 	const raw = entry as { type?: unknown; customType?: unknown; data?: unknown };
 	if (raw.type !== "custom" || raw.customType !== SUBAGENT_ACCEPTED_CALL_ENTRY || !isRecord(raw.data)) return undefined;
-	const { toolCallId, tool, args, autonomous } = raw.data;
+	const { toolCallId, tool, args, autonomous, dataError } = raw.data;
 	const kind = completionTool(tool);
 	if (typeof toolCallId !== "string" || !kind || !isRecord(args)) return undefined;
-	return { id: toolCallId, tool: kind, args, autonomous: autonomous === true };
+	return {
+		id: toolCallId,
+		tool: kind,
+		args,
+		autonomous: autonomous === true,
+		dataError: typeof dataError === "string" ? dataError : undefined,
+	};
 }
 
 /**
@@ -154,12 +167,14 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 	const completed: CompletionCall[] = [];
 	const accepted = new Map<string, Record<string, unknown>>();
 	const autonomous = new Set<string>();
+	const dataErrors = new Map<string, string>();
 	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
 		const entry = entries[i];
 		const acceptance = acceptedEntry(entry);
 		if (acceptance) {
 			accepted.set(acceptance.id, acceptance.args);
 			if (acceptance.autonomous) autonomous.add(acceptance.id);
+			if (acceptance.dataError !== undefined) dataErrors.set(acceptance.id, acceptance.dataError);
 			const request = requested.get(acceptance.id);
 			completed.push(request ?? { tool: acceptance.tool, id: acceptance.id, at: [i, 0], args: acceptance.args });
 			continue;
@@ -187,7 +202,7 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 		(last, c) => (!last || before(last.at, c.at) ? c : last),
 		undefined,
 	);
-	return { texts, accepted, autonomous, call };
+	return { texts, accepted, dataErrors, autonomous, call };
 }
 
 /** Cuts `text` to at most `max` characters with the cut mark, never inside a surrogate pair. */
@@ -333,9 +348,11 @@ function typedBody(
 	text: string | undefined,
 	facts: RunFacts,
 	recorded: ReadonlyMap<string, Record<string, unknown>>,
+	dataErrors: ReadonlyMap<string, string>,
 ): Body | undefined {
 	const args = callArgs(call, recorded, facts.acceptedCall);
-	const dataError = facts.dataError;
+	const dataError =
+		dataErrors.get(call.id) ?? (facts.acceptedCall?.toolCallId === call.id ? facts.acceptedCall.dataError : undefined);
 	if (!args) return undefined;
 	if (call.tool === "ping") return pingBody(args.message);
 	const outcome = parseCallOutcome(args.outcome);
@@ -393,13 +410,13 @@ function endOverridesCall(end: RunEnd): boolean {
  * acknowledgement turn. The report boundary is chosen apart from the typed flag.
  */
 export function assembleResult(facts: RunFacts): AssembledResult {
-	const { texts, accepted, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
+	const { texts, accepted, dataErrors, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const final = call !== undefined && autonomous.has(call.id);
 	const text = reportText(texts, call, final, facts.nudgeEntryIndex);
 	const typing = call && (final || !textAfterCall(texts, call)) && !endOverridesCall(facts.end);
 	const body =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
-		(typing ? typedBody(call, text, facts, accepted) : undefined) ??
+		(typing ? typedBody(call, text, facts, accepted, dataErrors) : undefined) ??
 		untypedBody(facts, text);
 	const record: AssembledRecord = {
 		...body.typing,
