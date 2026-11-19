@@ -1,5 +1,5 @@
 import { testResultsDir } from "../support/result-fixtures.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { applyWinnerToSource, ApplyError } from "../../src/vf/apply.ts";
@@ -12,7 +12,7 @@ import {
 import { waitForVerifiedRunResult } from "../../src/vf/run/client.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { readVerifiedRunManifest, type VerifiedRunManifest } from "../../src/vf/run/types.ts";
-import { verifiedRunToSubagentResult } from "../../src/vf/run/launch.ts";
+import { verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
 import { assert, createTestDir } from "../support/index.ts";
 import { buildSupervisedRun, gitRun as run, setupVerifiedRunFixture } from "../support/verified-runs.ts";
 
@@ -108,15 +108,22 @@ describe("verified fan-out apply gate (live processes)", () => {
 		// ONE logical result: the winner's report plus the compact footer.
 		const result = verifiedRunToSubagentResult(manifest, runDir, { name: "vf-run", task: "do the thing" }, Date.now());
 		assert.equal(result.exitCode, 0);
-		assert.ok(result.summary.startsWith(selection.winnerReport), "summary leads with the winner report");
-		assert.equal(result.summary.match(/\[llm-as-a-verifier /g)?.length, 1, "exactly one footer block");
-		assert.match(result.summary, /winner w1 of 3 attempts \(3 distinct\)/);
-		assert.match(result.summary, /rank 0\.\d+/);
-		assert.match(result.summary, /criteria alignment\+evidence\+completeness/);
-		assert.match(result.summary, /verifier deepseek-v4-flash \(\d+ calls, \d+ in \/ \d+ out tokens\)/);
-		assert.match(result.summary, /artifacts .*vf-runs/);
-		assert.match(result.summary, /git diff --staged/);
-		assert.match(result.summary, new RegExp(`git reset --hard ${manifest.request.baseCommit}`));
+		// D18: the capped text keeps the winner report and the staged fact; the report file keeps the full provenance.
+		assert.ok(result.resultText && result.resultText.length <= 1900);
+		assert.ok(result.resultText.includes(selection.winnerReport.trim()), "text holds the winner report");
+		assert.match(result.resultText, /verifier: winner staged/);
+		assert.match(result.resultText, /git diff --staged/);
+		assert.ok(result.reportFile, "the text names a report file");
+		const report = readFileSync(result.reportFile, "utf8");
+		assert.ok(report.startsWith(selection.winnerReport), "report leads with the winner report");
+		assert.equal(report.match(/\[llm-as-a-verifier /g)?.length, 1, "exactly one provenance block");
+		assert.match(report, /winner w1 of 3 attempts \(3 distinct\)/);
+		assert.match(report, /rank 0\.\d+/);
+		assert.match(report, /criteria alignment\+evidence\+completeness/);
+		assert.match(report, /verifier deepseek-v4-flash \(\d+ calls, \d+ in \/ \d+ out tokens\)/);
+		assert.match(report, /artifacts .*vf-runs/);
+		assert.match(report, /git diff --staged/);
+		assert.match(report, new RegExp(`git reset --hard ${manifest.request.baseCommit}`));
 	});
 
 	it("skips the apply on source drift during selection, keeps worktrees, and points at the branch", async () => {
@@ -155,8 +162,10 @@ describe("verified fan-out apply gate (live processes)", () => {
 			"winner branch retained",
 		);
 		const result = verifiedRunToSubagentResult(manifest, runDir, { name: "vf-run", task: "t" }, Date.now());
-		assert.match(result.summary, /winner not applied \(source-drift\)/);
-		assert.match(result.summary, new RegExp(`kept on branch .?vf/${runId.replace(/^vf-/, "")}/w1`));
+		assert.match(result.resultText, /verifier: winner not applied/);
+		const report = readFileSync(result.reportFile ?? "", "utf8");
+		assert.match(report, /winner not applied \(source-drift\)/);
+		assert.match(report, new RegExp(`kept on branch .?vf/${runId.replace(/^vf-/, "")}/w1`));
 	});
 
 	it("refuses to resume a finalized run's candidate session with the precise error", async () => {
