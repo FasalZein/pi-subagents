@@ -14,7 +14,7 @@ export interface PollResult {
 	ping?: { name: string; message: string };
 	errorMessage?: string;
 	/** The completion call as the child's completion tool accepted it (RunFacts.acceptedCall, D12). */
-	acceptedCall?: { toolCallId: string; args: Record<string, unknown> };
+	acceptedCall?: { toolCallId: string; args: Record<string, unknown>; dataError?: string };
 }
 
 /**
@@ -41,9 +41,10 @@ function withDefinedContextUsage(
 }
 
 function withDefinedAcceptedCall(obj: PollResult, call: unknown): PollResult {
-	const { toolCallId, args } = (call ?? {}) as { toolCallId?: unknown; args?: unknown };
+	const { toolCallId, args, dataError } = (call ?? {}) as { toolCallId?: unknown; args?: unknown; dataError?: unknown };
 	if (typeof toolCallId === "string" && typeof args === "object" && args !== null && !Array.isArray(args)) {
 		obj.acceptedCall = { toolCallId, args: args as Record<string, unknown> };
+		if (typeof dataError === "string") obj.acceptedCall.dataError = dataError;
 	}
 	return obj;
 }
