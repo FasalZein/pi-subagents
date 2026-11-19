@@ -20,7 +20,7 @@ export interface RunEndEntry {
 	details: Record<string, unknown>;
 }
 
-export interface GroupedRunEndDetails {
+interface GroupedRunEndDetails {
 	ids: string[];
 	results: RunEndEntry[];
 }
