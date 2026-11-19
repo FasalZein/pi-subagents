@@ -187,7 +187,7 @@ const LAUNCH = [
 	),
 ];
 
-function waitCall(id: string, args: Record<string, unknown>): ToolCall {
+function waitCall(id: string, args: Parameters<typeof fauxToolCall>[1]): ToolCall {
 	return fauxToolCall("subagent_wait", args, { id });
 }
 

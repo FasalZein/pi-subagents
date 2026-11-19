@@ -1,6 +1,5 @@
 import type { RunningSubagent } from "../types.ts";
 import { queuedRunEnd, queuedRunEndIds, settleWaitReply } from "./delivery-queue.ts";
-import { findTrackedSubagent } from "./running-registry.ts";
 import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
 import { getSubagentWaitSuccessResult } from "./wait-result.ts";
@@ -51,7 +50,7 @@ function snapshotEnd(id: string): JoinedResult {
 	const cached = completedSubagentResults.get(id);
 	if (cached) {
 		const reply = getSubagentWaitSuccessResult(cached);
-		return { id, text: reply.content[0]!.text, record: reply.details };
+		return { id, text: reply.content.map((block) => block.text).join("\n\n"), record: reply.details };
 	}
 	return { id, text: `Sub-agent "${id}" ended without a result.`, record: { id, status: "failed" } };
 }
@@ -60,13 +59,16 @@ function resolveTarget(query: string): Target | MissingRun {
 	// An active run comes first, by id or by name: a named run that still runs takes part (D16).
 	const byId = runningSubagents.get(query);
 	if (byId) return { kind: "active", running: byId };
-	const byName = [...runningSubagents.values()].filter((running) => running.name === query);
-	if (byName.length === 1) return { kind: "active", running: byName[0]! };
-	if (byName.length > 1) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
+	const [named, ...others] = [...runningSubagents.values()].filter((running) => running.name === query);
+	if (named && others.length === 0) return { kind: "active", running: named };
+	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
 	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query) };
-	const match = findTrackedSubagent(query);
-	if (match.cached) return { kind: "ended", result: snapshotEnd(match.cached.id) };
-	if (match.error) return { id: query, error: match.error };
+	// An ended run this process still knows, by id or by name: a lookup returns its rendering.
+	const [endedId, ...otherEnded] = completedSubagentResults.get(query)
+		? [query]
+		: [...completedSubagentResults.values()].filter((cached) => cached.name === query).map((cached) => cached.id);
+	if (endedId && otherEnded.length === 0) return { kind: "ended", result: snapshotEnd(endedId) };
+	if (endedId) return { id: query, error: `Multiple ended subagents match "${query}". Use the id instead.` };
 	return { id: query, error: `No result record for "${query}".` };
 }
 
@@ -104,8 +106,7 @@ export async function joinRuns(params: JoinParams, signal?: AbortSignal): Promis
 		};
 		(running.completionPromise ?? new Promise<never>(() => {})).then(ended, ended);
 	}
-	const isMet = () =>
-		mode === "any" ? results.size > 0 : active.every((running) => results.has(running.id));
+	const isMet = () => (mode === "any" ? results.size > 0 : active.every((running) => results.has(running.id)));
 
 	let status: "complete" | "timeout" | "interrupted" = "complete";
 	let timer: ReturnType<typeof setTimeout> | undefined;
