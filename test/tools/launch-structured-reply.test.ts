@@ -11,7 +11,8 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
+import { pendingRunEndCount, queuedRunEndIds, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
+import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
@@ -54,6 +55,8 @@ interface Harness {
 	/** Ends a child the way its watcher does after the child called subagent_done: a published record. */
 	finishWithCall(name: string, summary: string): void;
 	stopped: string[];
+	/** What the model read on each request that ended a turn. */
+	requests: string[];
 	toolResults(name: string): { text: string; details: Record<string, unknown>; isError: boolean }[];
 	dispose(): Promise<void>;
 }
@@ -66,7 +69,12 @@ function textOf(content: unknown): string {
 
 async function startParent(
 	plan: Record<string, ReturnType<typeof fauxToolCall>[]>,
-	options: { codemode?: boolean; beforeFailure?: (harness: Harness) => Promise<void> } = {},
+	options: {
+		codemode?: boolean;
+		beforeFailure?: (harness: Harness) => Promise<void>;
+		/** Runs before a child's launch returns, so a test can hold that launch. */
+		beforeLaunch?: (name: string) => Promise<void>;
+	} = {},
 ): Promise<Harness> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
@@ -75,8 +83,10 @@ async function startParent(
 		const last = context.messages.at(-1);
 		const calls = last?.role === "user" ? plan[textOf(last.content)] : undefined;
 		if (calls) return fauxAssistantMessage(calls, { stopReason: "toolUse" });
+		requests.push(JSON.stringify(context.messages.map((message) => message.content)));
 		return fauxAssistantMessage("ok");
 	};
+	const requests: string[] = [];
 	faux.setResponses(Array.from({ length: 20 }, () => step as never));
 	const modelRuntime = await ModelRuntime.create({
 		authPath: join(agentDir, "auth.json"),
@@ -133,6 +143,7 @@ async function startParent(
 				await options.beforeFailure?.(harness);
 				throw new Error("pane could not be created");
 			}
+			await options.beforeLaunch?.(params.name);
 			const reservation = store.reserve();
 			const running = {
 				id: reservation.runId,
@@ -213,6 +224,7 @@ async function startParent(
 		launched: (name) => finish.has(name),
 		finishWithCall,
 		stopped,
+		requests,
 		toolResults: (name) =>
 			session.messages.flatMap((message) =>
 				message.role === "toolResult" && message.toolName === name
@@ -350,6 +362,50 @@ describe("T28: structured launch replies", () => {
 			assert.equal(only?.record.summary, "WAITED-SUMMARY");
 			assert.equal(only?.record.runId, runOf(harness, "child-wait").id);
 		} finally {
+			await harness.dispose();
+		}
+	});
+});
+
+describe("T28 fix round 1: a started reply does not deliver a queued result", () => {
+	it("P1: child one ends while child two launches; its report reaches the model by message and stays owed until then", async () => {
+		let releaseLaunch!: () => void;
+		const launchGate = new Promise<void>((resolve) => {
+			releaseLaunch = resolve;
+		});
+		const harness = await startParent(
+			{
+				go: [fauxToolCall("subagent", { children: [child("child-one"), child("child-two")] }, { id: "launch-1" })],
+			},
+			{ beforeLaunch: (name) => (name === "child-two" ? launchGate : Promise.resolve()) },
+		);
+		// A subscriber makes the runtime keep its outstanding-work count (as the Herdr sidebar does).
+		const unsubscribe = outstandingWork.subscribe(() => {});
+		const atLaunchReply: { queued: string[]; owed: number }[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "tool_execution_end" && event.toolName === "subagent")
+				atLaunchReply.push({ queued: queuedRunEndIds(), owed: outstandingWork.count });
+		});
+		try {
+			const run = harness.session.prompt("go");
+			await until(() => harness.launched("child-one"), "child one runs");
+			harness.finishWithCall("child-one", "ONE-EARLY-REPORT");
+			await until(() => pendingRunEndCount() === 1, "child one's end is queued");
+			releaseLaunch();
+			await run;
+			await harness.session.waitForIdle();
+			const one = runOf(harness, "child-one").id;
+			const [reply] = harness.toolResults("subagent");
+			assert.doesNotMatch(reply?.text ?? "", /ONE-EARLY-REPORT/, "the started reply holds no report");
+			assert.deepEqual(atLaunchReply[0]?.queued, [one], "child one's end is still queued after the started reply");
+			assert.ok((atLaunchReply[0]?.owed ?? 0) >= 1, "child one's report is still owed");
+			assert.ok(
+				harness.requests.some((request) => request.includes("ONE-EARLY-REPORT")),
+				"child one's report reaches the model",
+			);
+			assert.equal(pendingRunEndCount(), 0, "the committed message delivered it");
+		} finally {
+			unsubscribe();
 			await harness.dispose();
 		}
 	});

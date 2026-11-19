@@ -23,12 +23,13 @@ import {
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
-import { settleWaitReply } from "../runtime/delivery-queue.ts";
+import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
+import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
-import { formatSubagentBatchLines, formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
+import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { type ChildDelivery, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
 import {
@@ -446,7 +447,7 @@ export function registerSubagentCoreTools(
 				);
 				settleWaitReply(
 					launched.map((running) => running.id),
-					results,
+					reportedRunIds(results),
 					signal,
 				);
 				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,

@@ -52,7 +52,7 @@ describe("boundaries skip run ends a wait holds (T22)", () => {
 		deliverRunEnd(parent.pi, "held", end("held"), { heldByWait: true });
 		parent.fire("turn_end", turnEnd);
 		assert.deepEqual(parent.ids(), []);
-		settleWaitReply(["held"], [{ details: { id: "held" } }]);
+		settleWaitReply(["held"], ["held"]);
 		parent.fire("turn_end", turnEnd);
 		parent.fire("agent_settled");
 		assert.deepEqual(parent.ids(), []);

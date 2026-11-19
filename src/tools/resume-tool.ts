@@ -3,7 +3,8 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
-import { settleWaitReply } from "../runtime/delivery-queue.ts";
+import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
+import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { parseRunId, type RunId } from "../runtime/result-record.ts";
@@ -12,7 +13,7 @@ import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
-import { formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
+import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { asStructuredContent, launchedChildData, SubagentLaunchOutput } from "./launch-structured.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
@@ -185,7 +186,7 @@ export function registerSubagentResumeTool(
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
-				settleWaitReply([running.id], [result], signal);
+				settleWaitReply([running.id], reportedRunIds([result]), signal);
 				const delivered = isFinishedStatus((result.details as { status?: string } | undefined)?.status);
 				const structuredContent = asStructuredContent({
 					status: "launched",
