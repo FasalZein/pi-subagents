@@ -24,7 +24,9 @@ export type RunEnd =
 	| { kind: "exited"; code?: number; signal?: string }
 	| { kind: "failed"; error: string; code?: number; signal?: string }
 	| { kind: "timed_out"; budget: SubagentTimeoutKind; seconds: number; wrapUp: boolean }
-	| { kind: "cancelled"; reason: string };
+	| { kind: "cancelled"; reason: string }
+	/** D12: the child asked its parent for help with caller_ping; the exit record carries the message. */
+	| { kind: "pinged"; message: string; code?: number };
 
 export interface RunFacts {
 	runId: RunId;
@@ -236,6 +238,8 @@ function describeEnd(end: RunEnd, sessionFile: string | undefined): string {
 			return `timed out after ${end.seconds}s (${end.budget})`;
 		case "cancelled":
 			return `cancelled: ${end.reason}`;
+		case "pinged":
+			return "the run asked its parent for help without a message";
 	}
 }
 
@@ -249,6 +253,8 @@ function endOutcome(end: RunEnd): ResultOutcome {
 			return "timed_out";
 		case "cancelled":
 			return "cancelled";
+		case "pinged":
+			return "blocked";
 	}
 }
 
@@ -256,6 +262,8 @@ function exitFacts(end: RunEnd): ExitFacts {
 	switch (end.kind) {
 		case "exited":
 			return { code: end.code, signal: end.signal };
+		case "pinged":
+			return { code: end.code };
 		case "failed":
 			return { code: end.code, signal: end.signal, error: end.error };
 		case "timed_out":
@@ -286,17 +294,7 @@ function typedBody(call: CompletionCall, text: string | undefined, facts: RunFac
 	const args = callArgs(call, facts.acceptedCall);
 	const dataError = facts.dataError;
 	if (!args) return undefined;
-	if (call.tool === "ping") {
-		const message = nonBlankString(args.message);
-		if (!message) return undefined;
-		return {
-			typing: { typed: true },
-			outcome: "blocked",
-			summary: cutText(message, SUMMARY_MAX_CHARS),
-			report: message,
-			artifacts: [],
-		};
-	}
+	if (call.tool === "ping") return pingBody(args.message);
 	const outcome = parseCallOutcome(args.outcome);
 	const fullSummary = nonBlankString(args.summary);
 	if (!outcome || !fullSummary) return undefined;
@@ -309,6 +307,23 @@ function typedBody(call: CompletionCall, text: string | undefined, facts: RunFac
 		summary: cutText(fullSummary, SUMMARY_MAX_CHARS),
 		report,
 		artifacts: parseArtifacts(args.artifacts),
+	};
+}
+
+/**
+ * D12: a caller_ping with a message is typed and blocked; its full message is the report and only the
+ * summary is cut. The exit record is the source on a ping end: the ping tool requests shutdown before
+ * Pi can record its successful result, so the transcript may hold the request alone.
+ */
+function pingBody(value: unknown): Body | undefined {
+	const message = nonBlankString(value);
+	if (!message) return undefined;
+	return {
+		typing: { typed: true },
+		outcome: "blocked",
+		summary: cutText(message, SUMMARY_MAX_CHARS),
+		report: message,
+		artifacts: [],
 	};
 }
 
@@ -337,7 +352,10 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 	const { texts, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const text = reportText(texts, call, facts.nudgeEntryIndex);
 	const typing = call && !textAfterCall(texts, call) && !endOverridesCall(facts.end);
-	const body = (typing ? typedBody(call, text, facts) : undefined) ?? untypedBody(facts, text);
+	const body =
+		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
+		(typing ? typedBody(call, text, facts) : undefined) ??
+		untypedBody(facts, text);
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,

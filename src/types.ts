@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import type { ResultOutcome } from "./runtime/result-record.ts";
 import type { ResultTarget } from "./runtime/run-result.ts";
 import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts";
 
@@ -106,6 +107,8 @@ export interface SubagentResult {
 	/** Run id and report file of the published result record (D13). */
 	resultRunId?: string;
 	reportFile?: string;
+	/** The published record's outcome; status and displays derive from it when it is set (D14). */
+	resultOutcome?: ResultOutcome;
 }
 
 export interface CompletedSubagentResult extends SubagentResult {
@@ -269,6 +272,10 @@ export interface SubagentResultMessageDetails {
 	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
 	error?: string;
 	errorMessage?: string;
+	/** The published record's outcome (D14); the TUI header shows it instead of the exit facts. */
+	outcome?: ResultOutcome;
+	/** Set when the result was published (D13); the content is then the rendered record. */
+	runId?: string;
 }
 
 export interface SubagentPingMessageDetails {
@@ -285,6 +292,10 @@ export interface SubagentPingMessageDetails {
 	sessionFile?: string;
 	outputTokens?: number;
 	message?: string;
+	/** Set when the ping was published as a blocked record (D14). */
+	runId?: string;
+	reportFile?: string;
+	outcome?: ResultOutcome;
 }
 
 export interface WidgetThemeLike {

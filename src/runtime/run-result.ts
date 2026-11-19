@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
-import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
-import { assembleResult, NO_REPORT_LINE } from "./result-assembler.ts";
+import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
+import { assembleResult, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
@@ -64,7 +64,7 @@ export interface PublishedResult {
 	summarySource: SubagentSummarySource;
 }
 
-/** How a watched child ended, as its watcher decided it once; only an end of its own is published here. */
+/** How a watched child ended, as its watcher saw it; publishRunResult decides the outcome from it once. */
 export interface WatchedEnd {
 	/** The actual exit code; the record keeps it. */
 	exitCode: number;
@@ -73,33 +73,110 @@ export interface WatchedEnd {
 	 * without a child error: a successful end when the child answered, a failure when it did not.
 	 */
 	operatorClosed: boolean;
-	timedOut: boolean;
-	pinged: boolean;
+	/** D7: the parent asked this run to stop; it ends cancelled whatever the dying child wrote. */
+	stopped: boolean;
+	/** The hard budget the runtime killed the child on; unset when the child's own outcome beat it. */
+	timedOut?: { kind: SubagentTimeoutKind; seconds: number };
+	/** The child ended with caller_ping; the message comes from its exit record. */
+	ping?: { message: string };
 	errorMessage?: string;
 	/** The exit record that carries the completion call, if any. */
 	exitSignal: PollResult | null | undefined;
 	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean };
 }
 
+/** The summary of a stopped run that has no published record. */
+export const CANCELLED_SUMMARY = "Subagent cancelled.";
+
 /**
- * D13 and D14: assembles, publishes and renders the result of a headless or pane child that exited
- * on its own with code 0, also after a context-pressure wrap-up, and of an operator-closed manual
- * pane that answered. Returns undefined for any other end: time-limit, error and ping ends keep their
- * own texts until their tickets move them here (T09). A no-session child is assembled from its
- * temporary session file, which the watcher deletes after this returns, so its record names no
- * session file and says that it cannot be resumed.
+ * D7: the watcher's abort signal fired because the parent asked the run to stop. The first cause
+ * wins: a time limit that already expired keeps timed out, never cancelled (a pane kill that cannot
+ * be confirmed aborts the same signal), and a deadline that passes after the stop never sets
+ * timeoutExpiry (isDeadlineEnforceable), so the stop stays cancelled.
+ */
+export function isStopRequested(running: RunningSubagent, signal: AbortSignal): boolean {
+	return signal.aborted && !running.timeoutExpiry;
+}
+
+/** D7: a deadline counts only while no stop came first; a later deadline does not change why the run ended. */
+export function isDeadlineEnforceable(signal: AbortSignal): boolean {
+	return !signal.aborted;
+}
+
+/** D7: the reason a stopped run's record names. */
+export const STOPPED_REASON = "stopped by the parent";
+
+/**
+ * D7 and D12: one decision per watched end. A stop wins over everything; a ping, which asks the
+ * parent for help, outranks the time-limit kill; then the kill, a child error, a finished report-only
+ * wrap-up, and an end of the child's own. A nonzero exit that is no operator close is a crash: it
+ * fails with its exit code.
+ */
+function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
+	if (end.stopped) return { kind: "cancelled", reason: STOPPED_REASON };
+	if (end.ping) return { kind: "pinged", message: end.ping.message, code: end.exitCode };
+	if (end.timedOut) {
+		return { kind: "timed_out", budget: end.timedOut.kind, seconds: end.timedOut.seconds, wrapUp: false };
+	}
+	if (end.errorMessage) return { kind: "failed", error: end.errorMessage, code: end.exitCode };
+	const wrapUp = running.timeoutWrapUp;
+	if (wrapUp && running.timeoutWrapUpMode) {
+		return { kind: "timed_out", budget: wrapUp.kind, seconds: wrapUp.seconds, wrapUp: true };
+	}
+	if (end.exitCode === 0 || end.operatorClosed) return { kind: "exited", code: end.exitCode };
+	return { kind: "failed", error: `exited with code ${end.exitCode}`, code: end.exitCode };
+}
+
+/** D14: an operator closed a manual pane with a nonzero status before the child answered. */
+const CLOSED_WITHOUT_ANSWER_ERROR = "the pane closed with a nonzero status before the sub-agent answered";
+
+/**
+ * D13 and D14: assembles, publishes and renders the result of a watched headless or pane child, for
+ * every end the watcher decided (classifyWatchedEnd), a crash included. Returns undefined only for a
+ * child that exited cleanly without a session file. An operator-closed pane with a nonzero status
+ * and no answer publishes a failed record. A no-session child is assembled from its temporary session file, which the
+ * watcher deletes after this returns, so its record names no session file and says that it cannot be
+ * resumed.
  */
 export function publishRunResult(running: RunningSubagent, end: WatchedEnd): PublishedResult | undefined {
-	const target = running.resultTarget;
-	const endedOnItsOwn =
-		(end.exitCode === 0 || end.operatorClosed) &&
-		!end.timedOut &&
-		!end.pinged &&
-		!end.errorMessage &&
-		!running.timeoutWrapUp;
-	if (!target || !endedOnItsOwn || !existsSync(running.sessionFile)) return undefined;
+	const runEnd = classifyWatchedEnd(running, end);
+	if (runEnd.kind === "exited" && !existsSync(running.sessionFile)) return undefined;
 	const { contextUsage } = end;
-	const assembled = assembleResult({
+	return publishEnd(running, runEnd, {
+		acceptedCall: end.exitSignal?.acceptedCall,
+		contextUsage:
+			contextUsage.contextTokens !== undefined
+				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
+				: undefined,
+		contextWarned: contextUsage.contextWarned === true,
+		// A nonzero operator close without an answer is a failure, not the child's own end.
+		failWithoutText: runEnd.kind === "exited" && end.exitCode !== 0,
+	});
+}
+
+/**
+ * D14 for an end the watcher built without an exit of the child's own (a stop before the exit, a
+ * wrap-up that could not start, a watcher error): the same assembled record and rendering, as a
+ * runtime-built SubagentResult with the published record's summary.
+ */
+export function withRuntimeEnd(running: RunningSubagent, result: SubagentResult, end: RunEnd): SubagentResult {
+	const published = publishEnd(running, end, { contextWarned: false, failWithoutText: false });
+	if (!published) return result;
+	return { ...result, summary: published.summary, summarySource: published.summarySource, ...publishedResultFields(published) };
+}
+
+interface PublishOptions {
+	acceptedCall?: RunFacts["acceptedCall"];
+	contextUsage?: RunFacts["contextUsage"];
+	contextWarned: boolean;
+	/** Publish a failed end instead when the run left no text (a nonzero operator close). */
+	failWithoutText: boolean;
+}
+
+function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
+	const target = running.resultTarget;
+	if (!target) return undefined;
+	const assemble = (runEnd: RunEnd) => assembleResult({
 		runId: target.reservation.runId,
 		name: running.name,
 		agent: running.agent ?? "",
@@ -108,32 +185,48 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		sessionFile: running.noSession ? undefined : running.sessionFile,
 		startedAt: running.startTime,
 		endedAt: Date.now(),
-		end: { kind: "exited", code: end.exitCode },
-		entries: getEntries(running.sessionFile),
+		end: runEnd,
+		entries: existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [],
 		launchEntryCount: running.launchEntryCount ?? 0,
-		acceptedCall: end.exitSignal?.acceptedCall,
-		contextUsage:
-			contextUsage.contextTokens !== undefined
-				? { tokens: contextUsage.contextTokens, window: contextUsage.contextWindow }
-				: undefined,
-		resume: resumeFact(running.noSession === true, contextUsage.contextWarned === true),
+		acceptedCall: options.acceptedCall,
+		contextUsage: options.contextUsage,
+		resume: resumeFact(running, runEnd, options.contextWarned),
 	});
-	const noText = !assembled.record.typed && assembled.report === `${assembled.record.summary}\n\n${NO_REPORT_LINE}`;
-	// A nonzero end without an answer is a crash, not an operator close: it keeps its failure text.
-	if (end.exitCode !== 0 && noText) return undefined;
+	const hasNoText = (result: ReturnType<typeof assembleResult>) =>
+		!result.record.typed && result.report === `${result.record.summary}\n\n${NO_REPORT_LINE}`;
+	let assembled = assemble(end);
+	if (options.failWithoutText && hasNoText(assembled)) {
+		end = { kind: "failed", error: CLOSED_WITHOUT_ANSWER_ERROR, code: end.kind === "exited" ? end.code : undefined };
+		assembled = assemble(end);
+	}
+	const noText = hasNoText(assembled);
 	const record = target.store.publish(target.reservation, assembled);
+	const killUnconfirmed = end.kind === "timed_out" && running.timeoutKillFailed === true;
 	const text = renderResult(record, {
 		cwd: target.parentCwd,
 		homeDir: homedir(),
-		warnings: target.warnings,
+		warnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING, ...target.warnings] : target.warnings,
 		showContextUsage: running.reportContextUsage !== false,
 	});
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
 }
 
-function resumeFact(noSession: boolean, contextWarned: boolean): ResultRecord["resume"] {
+/** An unconfirmed kill must not read as a clean one: the pane can still be running. */
+const KILL_UNCONFIRMED_WARNING =
+	"the system could not confirm that this sub-agent stopped; check its pane and close it before you trust this result";
+
+/** D8 with the agent's time-limit policy: why a run that a time limit stopped cannot resume. */
+export const TIME_LIMIT_RESUME_REASON = "its agent does not allow a resume after a time limit stops it";
+
+function resumeFact(running: RunningSubagent, end: RunEnd, contextWarned: boolean): ResultRecord["resume"] {
+	const noSession = running.noSession === true;
 	if (noSession && contextWarned) return { resumable: false, reason: NO_SESSION_CONTEXT_PRESSURE_RESUME_REASON };
 	if (noSession) return { resumable: false, reason: NO_SESSION_RESUME_REASON };
+	// The resume guard reads the timeout sidecar that only a hard kill writes: a report-only
+	// continuation that finished before its hard deadline stays resumable.
+	if (end.kind === "timed_out" && !end.wrapUp && running.timeoutBlocksResume === true) {
+		return { resumable: false, reason: TIME_LIMIT_RESUME_REASON };
+	}
 	if (contextWarned) return { resumable: false, reason: CONTEXT_PRESSURE_RESUME_REASON };
 	return { resumable: true };
 }
@@ -141,10 +234,11 @@ function resumeFact(noSession: boolean, contextWarned: boolean): ResultRecord["r
 /** The SubagentResult fields that carry a published rendering to the message and wait paths. */
 export function publishedResultFields(
 	published: PublishedResult | undefined,
-): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile"> {
+): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile" | "resultOutcome"> {
 	if (!published) return {};
 	return {
 		resultText: published.text,
+		resultOutcome: published.record.outcome,
 		resultRunId: published.record.runId,
 		...(published.record.report.saved ? { reportFile: published.record.report.path } : {}),
 	};

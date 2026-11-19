@@ -11,7 +11,7 @@ import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
-import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import { formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
@@ -22,7 +22,7 @@ export interface ResumeToolRuntime extends ResumeServiceRuntime {
 	getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
 }
 
-function assertResumeAllowed(sessionFile: string): void {
+export function assertResumeAllowed(sessionFile: string): void {
 	// The child ended on instruction from its context-warning policy, so its
 	// window is spent. Resuming buys no room and only repeats the wrap-up.
 	// Operators can still resume it deliberately from the /subagents overlay.
@@ -130,7 +130,7 @@ export function registerSubagentResumeTool(
 		renderResult(result, opts, theme, context) {
 			const details = result.details as { status?: string } | undefined;
 			if (details?.status === "started") return new Text("", 0, 0);
-			if (details?.status === "completed" || details?.status === "failed" || details?.status === "cancelled") {
+			if (isFinishedStatus(details?.status)) {
 				return renderSubagentCompletionText(
 					result,
 					opts,
