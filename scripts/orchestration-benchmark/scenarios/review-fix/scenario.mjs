@@ -24,7 +24,7 @@ const contract = (key, anyLine = false) => ({
 export default {
 	name: "review-fix",
 	prompt:
-		'Run three children one after another with the subagent tool, and launch each one only after the result of the one before it has arrived. First: name "build", agent "bench-build", task "The test test/cart.test.mjs fails. Make it pass.". Second: name "review", agent "bench-review", task "Review src/cart.mjs.". Third: name "fix", agent "bench-fix", and as its task the full report of the review child, copied verbatim. Do not read, edit or run anything yourself. When the result of the fix child has arrived, reply with exactly three lines: TESTS: <value the build child reported>, FINDING: <rule id the review child reported>, FIXED: <rule id the fix child reported>',
+		'Run three children one after another with the subagent tool, and launch each one only after the result of the one before it has arrived. First: name "cart-build", agent "bench-build", task "The test test/cart.test.mjs fails. Make it pass.". Second: name "cart-review", agent "bench-review", task "Review src/cart.mjs.". Third: name "cart-fix", agent "bench-fix", and as its task the full report of the review child, copied verbatim. Do not read, edit or run anything yourself. When the result of the fix child has arrived, reply with exactly three lines: TESTS: <value the build child reported>, FINDING: <rule id the review child reported>, FIXED: <rule id the fix child reported>',
 	expectedFacts: facts,
 	// Fixed launch order: a build or a fix without the review before it fails.
 	expectedChildRoles: ["bench-build", "bench-review", "bench-fix"],

@@ -297,3 +297,13 @@ describe("review-fix verdicts", () => {
 		assert.equal(score({ workspace: null }), "wrong-answer");
 	});
 });
+
+// T68: both releases refuse a launch name outside the documented contract of the
+// subagent tool's name parameter (2-4 lower-kebab words, max 32 characters, the
+// pattern in its description). A refused first launch cost every parent a request.
+test("[T68] the prompt gives each child a launch name both releases accept", () => {
+	const LAUNCH_NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+){1,3}$/;
+	const names = [...scenario.prompt.matchAll(/name "([^"]*)"/g)].map((m) => m[1]);
+	assert.deepEqual(names, ["cart-build", "cart-review", "cart-fix"]);
+	for (const name of names) assert.ok(LAUNCH_NAME.test(name) && name.length <= 32, name);
+});
