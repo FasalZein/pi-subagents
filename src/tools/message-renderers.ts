@@ -25,6 +25,8 @@ type SubagentCompletionDetails = SubagentResultMessageDetails & {
 	async?: boolean;
 	autoExit?: boolean;
 	summary?: string;
+	/** The report text this child's batch reply delivered; the box shows it, not the legacy summary. */
+	report?: string;
 	task?: string;
 	title?: string;
 };
@@ -75,9 +77,12 @@ function formatContextUsageLine(details: SubagentCompletionDetails | undefined):
 	return formatted ? formatted.trim() : undefined;
 }
 
-function firstTextContent(result: AgentToolResult<unknown>): string {
-	const first = result.content?.[0];
-	return first?.type === "text" ? first.text : "";
+/** All text blocks of a reply: a notice block before the result must not hide the result. */
+function replyTextContent(result: AgentToolResult<unknown>): string {
+	return (result.content ?? [])
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
 }
 
 function getChildArg(args: SubagentBatchArgs | undefined, index: number): BatchChildArgs | undefined {
@@ -167,15 +172,20 @@ function formatSubagentCompletionHeader(
  * D14: the published outcome decides the header; the exit facts decide it only for a result without
  * a published record (an old message or a run without a result store).
  */
-function completionVerdict(
-	details: (SubagentResultMessageDetails & { status?: string }) | undefined,
-): { label: string; tone: "ok" | "failed" | "help" } {
+function completionVerdict(details: (SubagentResultMessageDetails & { status?: string }) | undefined): {
+	label: string;
+	tone: "ok" | "failed" | "help";
+} {
 	const outcome = details?.outcome;
 	if (outcome) {
 		const tone = outcome === "done" || outcome === "partial" ? "ok" : outcome === "blocked" ? "help" : "failed";
 		return { label: OUTCOME_WORDS[outcome], tone };
 	}
 	if (details?.status === "pinged") return { label: "needs help", tone: "help" };
+	// A wait that ended without a report (the launch reply's typed status): no completion to show.
+	if (details?.status === "interrupted") return { label: "interrupted", tone: "failed" };
+	if (details?.status === "wait_failed")
+		return { label: `wait failed (${details.error ?? "unknown"})`, tone: "failed" };
 	const errorMessage = details?.errorMessage;
 	const exitCode = details?.exitCode ?? 0;
 	const failed = !!errorMessage || exitCode !== 0;
@@ -197,7 +207,7 @@ export function formatSubagentCompletionLines(
 	formatElapsed: (elapsed: number) => string = formatElapsedDefault,
 ): string[] {
 	const details = result.details as SubagentCompletionDetails | undefined;
-	const rawContent = firstTextContent(result);
+	const rawContent = replyTextContent(result);
 	const elapsed = details?.elapsed != null ? formatElapsed(details.elapsed) : "?";
 	const lines = [formatSubagentCompletionHeader(details, theme, formatElapsed)];
 	const summary = extractSummary(rawContent, details, elapsed);
@@ -231,7 +241,8 @@ export function formatSubagentBatchLines(
 		const fallbackAgent = getChildAgent(child, args, index);
 		lines.push(formatSubagentCompletionHeader(child, theme, formatElapsed, fallbackName, fallbackAgent));
 
-		const summary = child.summary ?? "";
+		const elapsed = child.elapsed != null ? formatElapsed(child.elapsed) : "?";
+		const summary = child.report !== undefined ? extractSummary(child.report, child, elapsed) : (child.summary ?? "");
 		appendExpandableLines(lines, summary, options, theme);
 
 		const contextUsage = formatContextUsageLine(child);

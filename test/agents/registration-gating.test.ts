@@ -164,6 +164,7 @@ describe("extension registration gating", () => {
 			assert.deepEqual([...captured.handlers.keys()].sort(), [
 				"agent_end",
 				"agent_settled",
+				"agent_start",
 				"before_agent_start",
 				"context",
 				"input",
@@ -172,6 +173,7 @@ describe("extension registration gating", () => {
 				"session_start",
 				"tool_call",
 				"tool_result",
+				"turn_end",
 				"turn_start",
 			]);
 		} finally {

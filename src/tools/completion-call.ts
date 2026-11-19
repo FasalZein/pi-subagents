@@ -35,6 +35,12 @@ export interface AcceptedCallEntry {
 	toolCallId: string;
 	tool: string;
 	args: Record<string, unknown>;
+	/**
+	 * True when no person had taken over: the call ends the run and is final for its result (D12). Pi
+	 * ends the turn only when every call of a batch terminates, so a call inside codemode or beside
+	 * another tool can get an acknowledgement turn; that later text never replaces the result.
+	 */
+	autonomous: boolean;
 }
 
 export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry: AcceptedCallEntry): void {
@@ -97,9 +103,10 @@ export function registerSubagentDoneTool(
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			refuseOversizeSummary((params as { summary?: unknown }).summary);
 			const args = params as Record<string, unknown>;
-			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args });
+			const autonomous = !deps.isTakenOver();
+			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args, autonomous });
 			deps.onAccepted();
-			if (deps.isTakenOver()) {
+			if (!autonomous) {
 				// D11/D12: the result stays in this session; the pane closes only
 				// when the person closes it. The model's turn still ends here.
 				return {

@@ -117,9 +117,10 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
-			recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params });
+			const autonomous = !deps.isTakenOver();
+			recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params, autonomous });
 			deps.onAccepted();
-			if (deps.isTakenOver()) {
+			if (!autonomous) {
 				// D11/D12: the ping stays in this session; no exit record, no shutdown. The parent
 				// reads it when the person closes the pane.
 				return {
