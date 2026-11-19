@@ -78,11 +78,22 @@ function snapshotEnd(id: string, sources: RecordSources): JoinedResult {
 	return { id, text: `Sub-agent "${id}" ended without a result.`, record };
 }
 
+/**
+ * D16 and D18: the runs this parent may receive. A verified run this session only observes is not
+ * one; it fails closed, so a verified run counts only when it says that this session is a recipient.
+ */
+function receivableRuns(): RunningSubagent[] {
+	return [...runningSubagents.values()].filter(
+		(running) => running.verifiedRunId === undefined || running.verifiedRunCancelDenied === false,
+	);
+}
+
 function resolveTarget(query: string, sessionStore: ResultStore | undefined): Target | MissingRun {
+	const receivable = receivableRuns();
 	// An active run comes first, by id or by name: a named run that still runs takes part (D16).
-	const byId = runningSubagents.get(query);
+	const byId = receivable.find((running) => running.id === query);
 	if (byId) return { kind: "active", running: byId };
-	const [named, ...others] = [...runningSubagents.values()].filter((running) => running.name === query);
+	const [named, ...others] = receivable.filter((running) => running.name === query);
 	if (named && others.length === 0) return { kind: "active", running: named };
 	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
 	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
@@ -96,7 +107,7 @@ function resolveTarget(query: string, sessionStore: ResultStore | undefined): Ta
 }
 
 function defaultIds(): string[] {
-	return [...new Set([...runningSubagents.keys(), ...queuedRunEndIds()])];
+	return [...new Set([...receivableRuns().map((running) => running.id), ...queuedRunEndIds()])];
 }
 
 /**

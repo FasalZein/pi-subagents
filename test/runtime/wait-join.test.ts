@@ -206,6 +206,58 @@ describe("T24: joinRuns", () => {
 	});
 });
 
+/** A verified run this session watches (D18); a recipient may receive it, an observer may not. */
+function watchVerifiedRun(id: string, recipient: boolean): void {
+	setRunningSubagentForTest({
+		id,
+		name: `vf-${id}`,
+		task: "t",
+		agent: "worker-a",
+		mode: "background",
+		executionState: "running",
+		deliveryState: "detached",
+		parentClosePolicy: "continue",
+		async: true,
+		startTime: Date.now(),
+		sessionFile: "",
+		verifiedRunId: `run-${id}`,
+		verifiedRunCancelDenied: !recipient,
+		completionPromise: new Promise<SubagentResult>(() => {}),
+	} as RunningSubagent);
+}
+
+describe("T24 fix round 1 (P1): a wait sees only runs this parent may receive", () => {
+	it("a no-ids wait skips a verified-run observer that is not a recipient", async () => {
+		resetSubagentStateForTest();
+		watchVerifiedRun("foreign", false);
+		const outcome = await joinRuns({ timeout: 0.2 });
+		assert.equal(outcome.status, "empty");
+		assert.deepEqual(outcome.pending, []);
+		resetSubagentStateForTest();
+	});
+
+	it("an observer's id or name gets no result record", async () => {
+		resetSubagentStateForTest();
+		watchVerifiedRun("foreign", false);
+		const outcome = await joinRuns({ ids: ["foreign", "vf-foreign"], timeout: 0.2 });
+		assert.equal(outcome.status, "empty");
+		assert.deepEqual(
+			outcome.missing.map((missing) => missing.id),
+			["foreign", "vf-foreign"],
+		);
+		resetSubagentStateForTest();
+	});
+
+	it("an authorized adopter still waits for its verified run", async () => {
+		resetSubagentStateForTest();
+		watchVerifiedRun("adopted", true);
+		const outcome = await joinRuns({ timeout: 0.1 });
+		assert.equal(outcome.status, "timeout");
+		assert.deepEqual(outcome.pending, ["adopted"]);
+		resetSubagentStateForTest();
+	});
+});
+
 describe("T24: the tool gives scripts structured records", () => {
 	it("check 6: declares an output schema and returns structured content that matches it", async () => {
 		resetSubagentStateForTest();

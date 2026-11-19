@@ -307,6 +307,8 @@ export async function launchVerifiedFanOut(
 			modelRef,
 			verifiedRunDir: started.runDir,
 			verifiedRunId: runId,
+			// The origin is a recipient; a wait admits a verified run only with this set (D18).
+			verifiedRunCancelDenied: false,
 		};
 		const watcherAbort = new AbortController();
 		running.abortController = watcherAbort;
