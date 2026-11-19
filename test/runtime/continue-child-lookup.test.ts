@@ -143,9 +143,11 @@ describe("T25 check 5: a continue child that ended after its parent exited", () 
 		const header = (dir: string) =>
 			`${JSON.stringify({ type: "session", version: 3, id: "child-session", timestamp: new Date().toISOString(), cwd: dir })}\n`;
 		try {
-			const childSession = join(resumeDir, "child.jsonl");
-			writeFileSync(childSession, header(resumeDir));
-			// The same relative name exists where the restarted parent runs: it must not be named.
+			// Review b2 g2 P1: a relative session file names a file of the parent session's project, as in
+			// Pi, not of the directory the parent process runs in.
+			const childSession = join(parentCwd, "child.jsonl");
+			writeFileSync(childSession, header(parentCwd));
+			// The same relative name exists where the parent process runs: it must not be named.
 			writeFileSync(join(otherDir, "child.jsonl"), header(otherDir));
 			await writeSubagentLaunchMetadataEntryForTest(childSession, {
 				version: 1,
@@ -165,7 +167,7 @@ describe("T25 check 5: a continue child that ended after its parent exited", () 
 				boundarySystemPrompt: false,
 			});
 			const sessionId = "t25-relative-resume";
-			process.chdir(resumeDir);
+			process.chdir(otherDir);
 			const quiet = new Promise<never>(() => {});
 			const running = await resumeSubagentSession(
 				{

@@ -32,7 +32,7 @@ import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
 import { muxSetupHint } from "../mux.ts";
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
-import { getEntryCount } from "../session/session.ts";
+import { getEntryCount, readSessionHeaderCwd } from "../session/session.ts";
 import {
 	isResumeMode,
 	type PersistedSubagentLaunchMetadata,
@@ -182,6 +182,8 @@ function mergeResumeInvocationMetadata(
 		spawnBudget: launchMetadata.spawnBudget,
 		spawnableAgents: launchMetadata.spawnableAgents,
 		denyTools: launchMetadata.denyTools,
+		// One deny-env for every process generation of the run: the resume and its wrap-up replacement.
+		denyEnv: launchMetadata.denyEnv,
 	};
 }
 
@@ -198,9 +200,10 @@ export async function resumeSubagentSession(
 	requested: ResumeSessionInput,
 	runtime: ResumeServiceRuntime,
 ): Promise<RunningSubagent> {
-	// D16: a relative session file is resolved here, once, so the record, the launch note and the
-	// child name the same file after a restart from another directory.
-	const input = { ...requested, sessionFile: resolve(requested.sessionFile) };
+	// D16: a relative session file is resolved here, once, against the parent session's project (not
+	// the directory this process started in), so the record, the launch note and the child name the
+	// same file after a restart from another directory.
+	const input = { ...requested, sessionFile: resolve(requested.parent.parentCwd, requested.sessionFile) };
 	// Verified fan-out candidates are non-resumable (SPEC): their run is
 	// finalized and their worktree workspace is deleted after selection, so a
 	// resume would resurrect a session whose cwd no longer exists. Follow-up
@@ -312,7 +315,13 @@ async function resumeSubagentSessionWithoutWidth(
 		runtime.modelRegistry,
 	);
 	const resumedAutoExit = metadata.mode === "background" ? true : invocationMetadata?.autoExit ?? metadata.autoExit ?? true;
-	const targetCwd = launchMetadata?.cwd ?? invocationMetadataSource?.cwd ?? process.cwd();
+	// Without launch metadata the session header names the project, as Pi uses it on resume; the agent
+	// catalog of another directory could shadow the project's agent and its deny-env.
+	const targetCwd =
+		launchMetadata?.cwd ??
+		invocationMetadataSource?.cwd ??
+		readSessionHeaderCwd(sessionFile) ??
+		input.parent.parentCwd;
 	const savedList = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
 	// A resume keeps its saved list minus the entries that no longer resolve (D10). Skill discovery,
 	// the child arguments and the metadata a time-limit wrap-up restart reuses all take the filtered list.
