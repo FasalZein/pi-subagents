@@ -99,12 +99,16 @@ describe("verified fan-out launch reply", () => {
 	});
 
 	it("keeps a name that PI_SUBAGENT_ENV_DENY protects out of the manifest after the root-session reset", async () => {
+		// The reset runs on the shared test process: restore every variable afterwards, and keep the
+		// test-owned capsule folder (test/support/capsule-root.ts) during the launch.
+		const saved = { ...process.env };
 		// The parent shell as a Pi child exports it: a deny list and the value that it protects.
 		process.env.PI_SUBAGENT_ENV_DENY = "B1_DENIED_MARKER";
 		process.env.B1_DENIED_MARKER = "denied";
 		process.env.B1_ALLOWED_MARKER = "allowed";
 		try {
 			dropInheritedSubagentEnv(process.env);
+			process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = saved.PI_SUBAGENT_ENV_CAPSULE_DIR;
 			const { artifactRoot } = await launchWaitedVerifiedRun();
 			const manifestName = basename(verifiedRunFilePaths(artifactRoot).manifest);
 			const manifests = readdirSync(artifactRoot, { recursive: true })
@@ -118,9 +122,8 @@ describe("verified fan-out launch reply", () => {
 				{ denied: false, allowed: true },
 			);
 		} finally {
-			delete process.env.B1_DENIED_MARKER;
-			delete process.env.B1_ALLOWED_MARKER;
-			delete process.env.PI_SUBAGENT_ENV_DENY;
+			for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+			Object.assign(process.env, saved);
 		}
 	});
 });
