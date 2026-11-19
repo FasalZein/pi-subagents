@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import type { SubagentTimeoutBudget, SubagentTimeoutKind } from "../types.ts";
 
 /**
@@ -10,8 +11,8 @@ import type { SubagentTimeoutBudget, SubagentTimeoutKind } from "../types.ts";
  * writers would race, and the child's record would sometimes land last.
  *
  * The parent owns the kill, so the parent owns the record. It lives beside the
- * session rather than inside it, and a resume clears it, so a later clean run
- * releases whatever the timeout had blocked.
+ * session rather than inside it. A resume leaves it in force until the resumed
+ * run ends (D8): a clean end removes it, a new timeout replaces it.
  */
 export interface SubagentTimeoutVerdict {
 	kind: SubagentTimeoutKind;
@@ -32,10 +33,21 @@ export function getSubagentTimeoutSidecarPath(sessionFile: string): string {
 	return `${sessionFile}.timeout`;
 }
 
+/**
+ * D8: a verdict is replaced by an atomic rename, never by truncation, so a reader or a parent
+ * that dies mid-write always finds the old verdict or the new one in full.
+ */
 export function writeSubagentTimeoutSidecar(sessionFile: string, verdict: SubagentTimeoutVerdict): void {
+	const path = getSubagentTimeoutSidecarPath(sessionFile);
+	const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		writeFileSync(getSubagentTimeoutSidecarPath(sessionFile), JSON.stringify(verdict), "utf8");
-	} catch {}
+		writeFileSync(temp, JSON.stringify(verdict), { encoding: "utf8", flag: "wx" });
+		renameSync(temp, path);
+	} catch {
+		try {
+			rmSync(temp, { force: true });
+		} catch {}
+	}
 }
 
 export function readSubagentTimeoutSidecar(sessionFile: string): SubagentTimeoutVerdict | null {

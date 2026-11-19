@@ -1,4 +1,5 @@
 import type { SessionEntry } from "../session/session.ts";
+import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import type { SubagentTimeoutKind } from "../types.ts";
 import {
@@ -92,6 +93,8 @@ interface CompletionCall {
 
 interface RunTranscript {
 	texts: AssistantText[];
+	/** Accepted completion payloads the child recorded in its session, by tool call id (D12). */
+	accepted: Map<string, Record<string, unknown>>;
 	/** The last completion call that succeeded, if any. */
 	call?: CompletionCall;
 }
@@ -125,16 +128,36 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 	return calls;
 }
 
+/** A completion call the child's tool accepted and recorded in the session (SUBAGENT_ACCEPTED_CALL_ENTRY). */
+function acceptedEntry(entry: SessionEntry): { id: string; tool: CompletionTool; args: Record<string, unknown> } | undefined {
+	const raw = entry as { type?: unknown; customType?: unknown; data?: unknown };
+	if (raw.type !== "custom" || raw.customType !== SUBAGENT_ACCEPTED_CALL_ENTRY || !isRecord(raw.data)) return undefined;
+	const { toolCallId, tool, args } = raw.data;
+	const kind = completionTool(tool);
+	if (typeof toolCallId !== "string" || !kind || !isRecord(args)) return undefined;
+	return { id: toolCallId, tool: kind, args };
+}
+
 /**
  * Reads assistant text and completion facts of this run; tool output never counts as text (D12).
- * A completion is accepted only from its successful result, never from a request alone (D14).
+ * A completion is accepted from its successful result or from the accepted-call entry the child's
+ * tool wrote before it returned, never from a request alone (D14). The entry stands at its request's
+ * position, so it types the result also before Pi persists the tool result.
  */
 function readTranscript(entries: readonly SessionEntry[], launchEntryCount: number): RunTranscript {
 	const texts: AssistantText[] = [];
 	const requested = new Map<string, CompletionCall>();
 	const completed: CompletionCall[] = [];
+	const accepted = new Map<string, Record<string, unknown>>();
 	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
 		const entry = entries[i];
+		const acceptance = acceptedEntry(entry);
+		if (acceptance) {
+			accepted.set(acceptance.id, acceptance.args);
+			const request = requested.get(acceptance.id);
+			completed.push(request ?? { tool: acceptance.tool, id: acceptance.id, at: [i, 0], args: acceptance.args });
+			continue;
+		}
 		if (entry.type !== "message" || !isRecord(entry.message)) continue;
 		const message = entry.message;
 		if (message.role === "toolResult") {
@@ -158,7 +181,7 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 		(last, c) => (!last || before(last.at, c.at) ? c : last),
 		undefined,
 	);
-	return { texts, call };
+	return { texts, accepted, call };
 }
 
 /** Cuts `text` to at most `max` characters with the cut mark, never inside a surrogate pair. */
@@ -284,14 +307,23 @@ interface Body {
 	artifacts: string[];
 }
 
-/** The call's recorded arguments, else the accepted payload of the same call. */
-function callArgs(call: CompletionCall, accepted: RunFacts["acceptedCall"]): Record<string, unknown> | undefined {
-	return call.args ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
+/** The call's recorded arguments, else the accepted payload of the same call from the session or the exit record. */
+function callArgs(
+	call: CompletionCall,
+	recorded: ReadonlyMap<string, Record<string, unknown>>,
+	accepted: RunFacts["acceptedCall"],
+): Record<string, unknown> | undefined {
+	return call.args ?? recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
 }
 
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */
-function typedBody(call: CompletionCall, text: string | undefined, facts: RunFacts): Body | undefined {
-	const args = callArgs(call, facts.acceptedCall);
+function typedBody(
+	call: CompletionCall,
+	text: string | undefined,
+	facts: RunFacts,
+	recorded: ReadonlyMap<string, Record<string, unknown>>,
+): Body | undefined {
+	const args = callArgs(call, recorded, facts.acceptedCall);
 	const dataError = facts.dataError;
 	if (!args) return undefined;
 	if (call.tool === "ping") return pingBody(args.message);
@@ -349,12 +381,12 @@ function endOverridesCall(end: RunEnd): boolean {
  * D12). The report boundary is chosen apart from the typed flag.
  */
 export function assembleResult(facts: RunFacts): AssembledResult {
-	const { texts, call } = readTranscript(facts.entries, facts.launchEntryCount);
+	const { texts, accepted, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const text = reportText(texts, call, facts.nudgeEntryIndex);
 	const typing = call && !textAfterCall(texts, call) && !endOverridesCall(facts.end);
 	const body =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
-		(typing ? typedBody(call, text, facts) : undefined) ??
+		(typing ? typedBody(call, text, facts, accepted) : undefined) ??
 		untypedBody(facts, text);
 	const record: AssembledRecord = {
 		...body.typing,

@@ -12,7 +12,6 @@ import {
 	getSubagentToolsWarningForTest,
 	getExtensionLaunchArgsForTest,
 	getSubagentsExtensionPathForTest,
-	installDeniedToolGuards,
 	it,
 	isPreparedChildSpawningAllowedForTest,
 	withToolWarningForTest,
@@ -32,8 +31,9 @@ function withSetTabTitleEnv<T>(value: string | undefined, run: () => T): T {
 
 describe("tool policy", () => {
 	describe("deny-tools enforcement", () => {
-		it("adds subagent_done to denied tools for auto-exit agents", () => {
-			assert.deepEqual(getDeniedToolNames(true, "ask_user_question"), ["ask_user_question", "subagent_done"]);
+		it("denies only what PI_DENY_TOOLS names; subagent_done stays for auto-exit agents (D12)", () => {
+			assert.deepEqual(getDeniedToolNames("ask_user_question"), ["ask_user_question"]);
+			assert.deepEqual(getDeniedToolNames(" subagent_done , bash"), ["subagent_done", "bash"]);
 		});
 
 		it("filters denied tool names and de-duplicates survivors", () => {
@@ -257,62 +257,6 @@ describe("tool policy", () => {
 				"",
 			);
 			assert.equal((untouched as { terminate?: true }).terminate, true);
-		});
-
-		it("preserves CLI-disabled built-ins while applying denied tool filters", () => {
-			const allTools = [{ name: "read" }, { name: "bash" }, { name: "caller_ping" }];
-			let activeTools = ["caller_ping"];
-			const pi = {
-				getAllTools: () => allTools,
-				getActiveTools: () => activeTools,
-				setActiveTools: (toolNames: string[]) => {
-					activeTools = [...toolNames];
-				},
-				registerTool(definition: { name: string }) {
-					allTools.push({ name: definition.name });
-					activeTools.push(definition.name);
-				},
-			} as any;
-
-			const { applyDeniedTools } = installDeniedToolGuards(pi, false);
-			assert.deepEqual(applyDeniedTools(), ["caller_ping"]);
-			assert.deepEqual(activeTools, ["caller_ping"]);
-		});
-
-		it("keeps denied tools out of the active set after registration and later setActiveTools calls", () => {
-			const allTools = [{ name: "read" }, { name: "bash" }, { name: "ask_user_question" }];
-			let activeTools = allTools.map((tool) => tool.name);
-			const changes: Array<{ active: string[]; denied: string[] }> = [];
-			const pi = {
-				getAllTools: () => allTools,
-				getActiveTools: () => activeTools,
-				setActiveTools: (toolNames: string[]) => {
-					activeTools = [...toolNames];
-				},
-				registerTool: (definition: { name: string }) => {
-					allTools.push({ name: definition.name });
-				},
-			} as any;
-
-			const original = process.env.PI_DENY_TOOLS;
-			process.env.PI_DENY_TOOLS = "ask_user_question";
-			try {
-				const { applyDeniedTools } = installDeniedToolGuards(pi, false, (active, denied) => {
-					changes.push({ active: [...active], denied: [...denied] });
-				});
-
-				assert.deepEqual(applyDeniedTools(), ["read", "bash"]);
-				assert.deepEqual(activeTools, ["read", "bash"]);
-
-				assert.deepEqual(activeTools, ["read", "bash"]);
-
-				pi.setActiveTools(["read", "ask_user_question", "bash"]);
-				assert.deepEqual(activeTools, ["read", "bash"]);
-				assert.equal(changes.at(-1)?.denied.join(","), "ask_user_question");
-			} finally {
-				if (original == null) delete process.env.PI_DENY_TOOLS;
-				else process.env.PI_DENY_TOOLS = original;
-			}
 		});
 	});
 

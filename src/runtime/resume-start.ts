@@ -10,28 +10,23 @@ import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
 import { closeSurface, createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { getSubagentExitSidecarPath } from "../session/exit-sidecar.ts";
 import { getDoneSentinelFile, type PersistedSubagentLaunchMetadata } from "../session/session-files.ts";
-import { getSubagentTimeoutSidecarPath } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent } from "../types.ts";
 import { resolveResumeHerdrPlacementPolicy, resolveResumeZellijPlacementPolicy } from "./resume-placement.ts";
 import { addResultWarning } from "./run-result.ts";
 
 /**
- * D6: the previous run's exit and timeout verdicts move aside until the resumed child has
- * started, so the new child's watcher never reads them as its own. A failed resume puts them
- * back unchanged. Call the returned function after the child started to drop them.
+ * D6, D8: the previous run's exit record moves aside before the resumed child starts, so the new
+ * child's watcher reads only the record the new child writes. A failed resume puts it back
+ * unchanged. Call the returned function after the child started to drop it. The timeout verdict
+ * is not touched here: it stays in force until the resumed run ends (settleVerdictAfterRun).
  */
-export function setAsidePreviousVerdicts(sessionFile: string, undo: LaunchUndo): () => void {
-	const asidePaths: string[] = [];
-	for (const path of [getSubagentExitSidecarPath(sessionFile), getSubagentTimeoutSidecarPath(sessionFile)]) {
-		if (!existsSync(path)) continue;
-		const aside = `${path}.previous`;
-		renameSync(path, aside);
-		asidePaths.push(aside);
-		undo.add(() => renameSync(aside, path));
-	}
-	return () => {
-		for (const aside of asidePaths) rmSync(aside, { force: true });
-	};
+export function setAsidePreviousExitRecord(sessionFile: string, undo: LaunchUndo): () => void {
+	const path = getSubagentExitSidecarPath(sessionFile);
+	if (!existsSync(path)) return () => {};
+	const aside = `${path}.previous`;
+	renameSync(path, aside);
+	undo.add(() => renameSync(aside, path));
+	return () => rmSync(aside, { force: true });
 }
 
 export interface ResumedChildStart {

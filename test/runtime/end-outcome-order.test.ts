@@ -6,7 +6,7 @@ import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { startTimeoutWrapUpWithinDeadline } from "../../src/runtime/timeout-restart.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
-import { assertResumeAllowed } from "../../src/tools/resume-tool.ts";
+import { assertResumeAllowed } from "../../src/runtime/resume-guards.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {

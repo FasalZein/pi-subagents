@@ -333,7 +333,9 @@ A resumed run gets the same limits as the first run. A child that loops stops ag
 
 Use the `subagent_resume` tool to continue the work. A plain `pi --session` run is not a tracked child, so that run has no limit.
 
-Set `on-timeout: block-resume` when a second partial run is not safe. An example is an agent that writes to something outside the repository. Then `subagent_resume` refuses the session, and the result hides the session line from the model. You can still resume the session yourself from the `/subagents` overlay.
+Set `on-timeout: block-resume` when a second partial run is not safe. An example is an agent that writes to something outside the repository. Then `subagent_resume` refuses the session, and the result hides the session line from the model. You can still resume the session yourself from the `/subagents` overlay; that override applies only to that one resume.
+
+The block-resume verdict stays until the resumed run ends. The published outcome of that run decides, not its exit status: a done, partial or blocked result removes the verdict, and a new timeout replaces it. A cancelled resumed run leaves the verdict in force, so a non-idempotent agent stays blocked. A resume that fails before the child starts, a failed run, and a parent that exits during the run also leave the verdict in force, so a later `subagent_resume` is still refused.
 
 `parent-close-policy: continue` remains intentionally detached. If the parent exits, it no longer owns either timeout clock, so strict enforcement is no longer guaranteed for that surviving child.
 
@@ -589,7 +591,9 @@ Use `caller_ping` when the child needs the parent. The child sends a message up,
 
 ## Resuming child sessions
 
-`subagent_resume` starts an existing child session again. You can pass a follow-up task.
+`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record says it is not resumable, such as a run without a session, is refused with the reason from that record. `subagent_kill` stops a running child by its run id or its name.
+
+Only one resume of a session runs at a time in one Pi process: a second resume of the same session is refused, also when both start together. Two Pi processes that resume one session at the same moment are not covered.
 
 Resume tries to preserve the original launch shape: mode, model, prompt style, cwd, tools, extensions, and lifecycle settings. A resumed child should continue as the same child, even if the agent file changed after the first launch.
 
