@@ -281,11 +281,22 @@ function assistantMessages(events) {
 
 /** Tool names the parent called, in order. */
 export function parentToolCalls(events) {
-	return assistantMessages(events).flatMap((message) =>
-		(message.content ?? [])
-			.filter((part) => part.type === "toolCall")
-			.map((part) => part.name),
+	// Calls nested in a codemode script (candidate) count as the parent's tools too.
+	const nested = events.flatMap((e) =>
+		e?.type === "message" &&
+		e.message?.role === "toolResult" &&
+		Array.isArray(e.message.nestedCalls?.calls)
+			? e.message.nestedCalls.calls.map((call) => call.name)
+			: [],
 	);
+	return [
+		...assistantMessages(events).flatMap((message) =>
+			(message.content ?? [])
+				.filter((part) => part.type === "toolCall")
+				.map((part) => part.name),
+		),
+		...nested,
+	];
 }
 
 const lines = (text) =>

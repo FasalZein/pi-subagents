@@ -256,7 +256,11 @@ export function classifyAttempt({
 		return infra("request without usage");
 	if (load.missingProbes > 0) return infra("load probe missing");
 	// Children join their run ids by launch name, so names must be unique (a known limit).
-	const names = launchedRuns(evidence.parent.events, scenario.parentLoadTool)
+	const names = launchedRuns(
+		evidence.parent.events,
+		scenario.parentLoadTool,
+		evidence.runFolders,
+	)
 		.map((run) => run.name)
 		.filter(Boolean);
 	if (new Set(names).size !== names.length)
@@ -315,6 +319,7 @@ export function classifyAttempt({
 		answeredAt: observed.kind === "answered" ? observed.answeredAt : null,
 		scenario,
 		workDir,
+		runFolders: evidence.runFolders,
 	});
 	const childOutcomes = childFacts.map((child, index) => ({
 		...child.fulfils,
@@ -408,6 +413,10 @@ export async function runAttempt({
 			shellQuote(cli.thinking),
 			"-e",
 			shellQuote(join(cli.checkout, "src", "index.ts")),
+			// A workflow scenario (candidate arm of (b)) activates Pi's built-in codemode tool.
+			...(scenario.parentTools
+				? ["--tools", shellQuote(scenario.parentTools)]
+				: []),
 			"--session-dir",
 			shellQuote(home.sessionDir),
 		].join(" ");

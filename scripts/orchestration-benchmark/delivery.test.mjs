@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { carriers, deliveryAccounting } from "./delivery.mjs";
+import { carriers, deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	answerMatches,
 	answerParser,
@@ -634,3 +634,136 @@ test("[T02b-5] FACT-7 counts only when it arrives through child 4's own report",
 		[true, true],
 	);
 });
+
+// Candidate shapes (T59a), taken from a real candidate session (T54 run-m1 final.jsonl):
+// a codemode tool result keeps its nested calls (name, status, arguments) but not their
+// results; the run ids live in the run folders the extension writes (record.json, launch.json).
+const codemodeCall = (id) =>
+	assistant("toolUse", "", [
+		{ type: "toolCall", id, name: "codemode", arguments: { code: "..." } },
+	]);
+const codemodeResult = (id, names, digestText, extraCalls = []) => ({
+	type: "message",
+	message: {
+		role: "toolResult",
+		toolCallId: id,
+		toolName: "codemode",
+		isError: false,
+		content: [
+			{ type: "text", text: "Script completed\nWall time 114.9 seconds\nOutput:\n" },
+			{ type: "text", text: digestText },
+		],
+		details: {
+			calls: [{ id: `${id}/1`, name: "subagent", args: "{...", status: "ok" }],
+		},
+		nestedCalls: {
+			calls: [
+				{
+					id: `${id}/1`,
+					name: "subagent",
+					status: "ok",
+					arguments: { children: names.map((name) => ({ agent: `bench-${name}`, name, task: "t" })) },
+				},
+				{ id: `${id}/2`, name: "subagent_wait", status: "ok", arguments: { ids: ["f9886ad6", "a0cc61e8"] } },
+				...extraCalls,
+			],
+			complete: true,
+		},
+	},
+});
+const WORKFLOW = {
+	parentToolAllowlist: ["codemode", "subagent", "subagent_wait"],
+	parentLoadTool: "subagent",
+	digestOperations: [{ toolName: "codemode", covers: ["a", "b"] }],
+};
+const RUN_FOLDERS = [
+	{ runId: "f9886ad6", name: "a" },
+	{ runId: "a0cc61e8", name: "b" },
+];
+
+test("[T59a] a launch nested in a codemode script binds each name to the run id of its run folder", () => {
+	const events = [codemodeCall("c1"), codemodeResult("c1", ["a", "b"], "a: x-1\nb: y-2")];
+	assert.deepEqual(launchedRuns(events, "subagent", RUN_FOLDERS), [
+		{ runId: "f9886ad6", name: "a", launchedAt: 0 },
+		{ runId: "a0cc61e8", name: "b", launchedAt: 0 },
+	]);
+	// Without run folders (v2.9.2), a nested launch binds nothing.
+	assert.deepEqual(launchedRuns(events, "subagent"), []);
+});
+
+test("[T59a] a declared workflow digest delivers every covered run to the answer by its run id", () => {
+	const events = [
+		codemodeCall("c1"),
+		codemodeResult("c1", ["a", "b"], '{"digest":"a: x-1\nb: y-2"}\na: x-1\nb: y-2'),
+		assistant("stop", "a: x-1\nb: y-2"),
+	];
+	const record = deliveryAccounting({
+		parentEvents: events,
+		children: [child("a", "x-1"), child("b", "y-2")],
+		answeredAt: 2,
+		scenario: WORKFLOW,
+		workDir: WORK,
+		runFolders: RUN_FOLDERS,
+	});
+	assert.deepEqual(
+		record.runs.map((r) => [r.runId, r.handover, r.availableToAnswer, r.outcome]),
+		[
+			["f9886ad6", "digest", true, "clean_yield"],
+			["a0cc61e8", "digest", true, "clean_yield"],
+		],
+	);
+	assert.deepEqual(
+		[record.transfers, record.extraCopies, record.undelivered, record.digests, record.unbound],
+		[0, 0, 0, 2, 0],
+	);
+	// A digest that does not hold a run's value delivers nothing for that run.
+	const partial = deliveryAccounting({
+		parentEvents: [codemodeCall("c1"), codemodeResult("c1", ["a", "b"], "a: x-1"), assistant("stop", "a: x-1")],
+		children: [child("a", "x-1"), child("b", "y-2")],
+		answeredAt: 2,
+		scenario: WORKFLOW,
+		workDir: WORK,
+		runFolders: RUN_FOLDERS,
+	});
+	assert.deepEqual(
+		partial.runs.map((r) => [r.handover, r.delivered]),
+		[
+			["digest", true],
+			["undelivered", false],
+		],
+	);
+});
+
+test("[T59a] a result message after the digest is an extra copy of that run, not new work", () => {
+	const events = [
+		codemodeCall("c1"),
+		codemodeResult("c1", ["a"], "a: x-1"),
+		{ type: "custom_message", customType: "subagent_result", content: "a: x-1", details: { id: "f9886ad6" } },
+		assistant("stop", "a: x-1"),
+	];
+	const record = deliveryAccounting({
+		parentEvents: events,
+		children: [child("a", "x-1")],
+		answeredAt: 3,
+		scenario: WORKFLOW,
+		workDir: WORK,
+		runFolders: RUN_FOLDERS,
+	});
+	assert.deepEqual([record.runs[0].handover, record.transfers, record.undelivered], ["delivered", 1, 0]);
+});
+
+test("[T59a] a fixture read inside a codemode script is duplicate work; a report file read is not", () => {
+	const read = (path) => ({ id: "c1/3", name: "read", status: "ok", arguments: { path } });
+	const run = (path) =>
+		deliveryAccounting({
+			parentEvents: [codemodeCall("c1"), codemodeResult("c1", ["a"], "a: x-1", [read(path)]), assistant("stop", "a: x-1")],
+			children: [child("a", "x-1")],
+			answeredAt: 2,
+			scenario: WORKFLOW,
+			workDir: WORK,
+			runFolders: RUN_FOLDERS,
+		}).runs[0].outcome;
+	assert.equal(run("a.md"), "duplicate");
+	assert.equal(run("/home/.pi/artifacts/x/results/f9886ad6/report-1.md"), "clean_yield");
+});
+

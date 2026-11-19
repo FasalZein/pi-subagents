@@ -7,6 +7,7 @@ import {
 	canonicalJson,
 	endsWithProviderError,
 	loadEvidence,
+	parentToolCalls,
 	rerunDecision,
 	sampleKey,
 	sampleKeyId,
@@ -20,6 +21,7 @@ import {
 import recon from "./scenarios/recon/scenario.mjs";
 import review from "./scenarios/review/scenario.mjs";
 import reviewFix from "./scenarios/review-fix/scenario.mjs";
+import reviewWorkflow from "./scenarios/review-workflow/scenario.mjs";
 
 const KEY_PARTS = {
 	checkoutRevision: "cf6dbf4",
@@ -380,3 +382,45 @@ for (const scenario of [recon, review, reviewFix])
 		const repeated = parse(answer([`${firstKey}: ${firstValue}`]));
 		assert.equal(answerMatches(repeated, scenario), true);
 	});
+
+test("[T59a] calls nested in a codemode script count as parent tool calls", () => {
+	// Shape of a real candidate codemode result (T54 run-m1 final.jsonl).
+	const events = [
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "c1", name: "codemode", arguments: { code: "..." } }],
+			},
+		},
+		{
+			type: "message",
+			message: {
+				role: "toolResult",
+				toolCallId: "c1",
+				toolName: "codemode",
+				content: [{ type: "text", text: "Script completed" }],
+				nestedCalls: {
+					calls: [
+						{ id: "c1/1", name: "subagent", status: "ok", arguments: { children: [] } },
+						{ id: "c1/2", name: "read", status: "ok", arguments: { path: "review/auth.md" } },
+					],
+					complete: true,
+				},
+			},
+		},
+	];
+	assert.deepEqual(parentToolCalls(events), ["codemode", "subagent", "read"]);
+	// A nested read is outside the workflow allowlist: the delegation is wrong.
+	assert.equal(
+		scoreAttempt({
+			answer: reviewWorkflow.expectedFacts,
+			childRoles: reviewWorkflow.expectedChildRoles,
+			parentTools: parentToolCalls(events),
+			childOutcomes: [],
+			scenario: reviewWorkflow,
+		}),
+		"wrong-delegation",
+	);
+});
+

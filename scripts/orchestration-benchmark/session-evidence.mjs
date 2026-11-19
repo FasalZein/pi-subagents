@@ -3,8 +3,8 @@
  * (a child may keep its sessions in another config folder) and the load probes.
  * Malformed lines are counted, never dropped silently.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 const LAUNCH_METADATA = "pi-subagents_launch_metadata";
 
@@ -89,6 +89,50 @@ export function classifySessions(sessions, probes) {
 	};
 }
 
+function readJson(path) {
+	try {
+		return JSON.parse(readFileSync(path, "utf8"));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Run folders the candidate writes (results/<runId>/ with launch.json at launch and
+ * record.json at the end): run id and launch name. The name comes from record.json,
+ * else from the launch metadata of the session file that launch.json names.
+ * v2.9.2 writes no run folder, so its list is empty.
+ * @param {Array<{file: string, events: object[]}>} sessions
+ * @returns {Array<{runId: string, name: string | null}>}
+ */
+export function readRunFolders(root, sessions) {
+	const folders = new Set(
+		[...listFiles(root, "/launch.json"), ...listFiles(root, "/record.json")]
+			.map((file) => dirname(file))
+			.filter((dir) => basename(dirname(dir)) === "results"),
+	);
+	return [...folders].sort().map((dir) => {
+		const record = readJson(join(dir, "record.json"));
+		const launch = readJson(join(dir, "launch.json"));
+		const session = sessions.find(
+			(s) => typeof launch?.sessionFile === "string" && sameFile(s.file, launch.sessionFile),
+		);
+		const marker = session?.events.find(
+			(e) => e?.type === "custom" && e.customType === LAUNCH_METADATA,
+		);
+		const name = record?.name ?? marker?.data?.name ?? null;
+		return { runId: basename(dir), name: typeof name === "string" ? name : null };
+	});
+}
+
+function sameFile(a, b) {
+	try {
+		return realpathSync(a) === realpathSync(b);
+	} catch {
+		return a === b;
+	}
+}
+
 /** Everything one attempt left below its root. */
 export function collectEvidence(root, probeDir) {
 	let malformed = 0;
@@ -98,5 +142,10 @@ export function collectEvidence(root, probeDir) {
 		return { file, events: parsed.events };
 	});
 	const probes = readProbes(probeDir);
-	return { ...classifySessions(sessions, probes), probes, malformed };
+	return {
+		...classifySessions(sessions, probes),
+		probes,
+		malformed,
+		runFolders: readRunFolders(root, sessions),
+	};
 }

@@ -24,7 +24,11 @@ import {
 	settingsFingerprint,
 } from "./sample-home.mjs";
 import recon from "./scenarios/recon/scenario.mjs";
-import { classifySessions, parseJsonlStrict } from "./session-evidence.mjs";
+import {
+	classifySessions,
+	parseJsonlStrict,
+	readRunFolders,
+} from "./session-evidence.mjs";
 
 // Every folder of this file lives below one private scratch base, removed at the end.
 // The shared benchmark base is never touched.
@@ -756,3 +760,37 @@ test("[guard] only a clean linked worktree with a detached HEAD is measured", ()
 	writeFileSync(join(detached, "new.ts"), "y");
 	assert.throws(() => assertPrivateCheckout(detached), /untracked/);
 });
+
+test("[T59a] run folders bind run ids to launch names: record.json first, else the session that launch.json names", () => {
+	const root = mkdtempSync(join(tmpdir(), "bench-runs-"));
+	try {
+		const results = join(root, "artifacts", "p", "artifacts", "s1", "results");
+		const ended = join(results, "9d20d77f");
+		const running = join(results, "a0cc61e8");
+		mkdirSync(ended, { recursive: true });
+		mkdirSync(running, { recursive: true });
+		const childFile = join(root, "sessions", "child.jsonl");
+		// Shapes of a real candidate run folder (T54 run-m1).
+		writeFileSync(join(ended, "launch.json"), JSON.stringify({ sessionFile: join(root, "sessions", "other.jsonl") }));
+		writeFileSync(
+			join(ended, "record.json"),
+			JSON.stringify({ typed: true, runId: "9d20d77f", name: "review-auth", outcome: "done", summary: "auth: approve-4417" }),
+		);
+		writeFileSync(join(running, "launch.json"), JSON.stringify({ sessionFile: childFile }));
+		const sessions = [
+			{
+				file: childFile,
+				events: [{ type: "custom", customType: "pi-subagents_launch_metadata", data: { version: 1, name: "review-cache" } }],
+			},
+		];
+		assert.deepEqual(readRunFolders(root, sessions), [
+			{ runId: "9d20d77f", name: "review-auth" },
+			{ runId: "a0cc61e8", name: "review-cache" },
+		]);
+		// v2.9.2 writes no run folder.
+		assert.deepEqual(readRunFolders(join(root, "sessions"), sessions), []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+

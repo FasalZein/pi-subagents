@@ -17,6 +17,15 @@
  *   the scenario declares (scenario.digestOperations: tool name and the launch
  *   names it covers) holds the result. A scenario without that declaration has
  *   no digest class, so a sibling's quote never hides a missing handover.
+ *   A declared digest is the deliberate handover of a workflow script (G2.1 (b),
+ *   candidate arm): when it holds the result before the scored reply, the run is
+ *   available to the answer, with zero transfers.
+ *
+ * Candidate workflow scripts (T59a): a codemode tool result keeps its nested calls
+ * (name, status, arguments) but not their results, so a launch inside a script
+ * binds its names to run ids through the run folders the extension writes
+ * (runFolders, see session-evidence.mjs), and a read inside a script counts as a
+ * parent read. v2.9.2 sessions have no nested calls, so nothing changes for them.
  * - undelivered: no carrier, but the child ended its turn. This is the gate class:
  *   the spec gates on zero lost AND zero parked, so their sum is the gate.
  *   Its subClass comes only from positive evidence, never from stopReason:
@@ -49,18 +58,62 @@ function runsOf(details) {
 }
 
 /**
- * Run ids the parent launched, with their names, from successful launch tool results.
- * launchedAt: entry index of the assistant message that made the launch call
- * (null when no call carries the result's toolCallId).
+ * Successful nested calls of codemode scripts, with the entry index of the
+ * assistant message that made the codemode call (null when none carries it).
+ * @returns {Array<{name: string, arguments: object, calledAt: number | null}>}
  */
-export function launchedRuns(events, launchTool) {
+export function nestedCalls(events) {
+	const callAt = toolCallIndex(events);
+	return events.flatMap((e) => {
+		const m = e?.type === "message" ? e.message : null;
+		if (m?.role !== "toolResult" || !Array.isArray(m.nestedCalls?.calls))
+			return [];
+		return m.nestedCalls.calls
+			.filter((call) => call?.status === "ok")
+			.map((call) => ({
+				name: call.name,
+				arguments: call.arguments ?? {},
+				calledAt: callAt.get(m.toolCallId) ?? null,
+			}));
+	});
+}
+
+function toolCallIndex(events) {
 	const callAt = new Map();
 	events.forEach((e, index) => {
 		if (e?.type !== "message" || e.message?.role !== "assistant") return;
 		for (const part of e.message.content ?? [])
 			if (part.type === "toolCall") callAt.set(part.id, index);
 	});
+	return callAt;
+}
+
+/**
+ * Run ids the parent launched, with their names, from successful launch tool results,
+ * and from launches nested in codemode scripts joined by name to the run folders.
+ * launchedAt: entry index of the assistant message that made the launch call
+ * (null when no call carries the result's toolCallId).
+ * @param {Array<{runId: string, name: string | null}>} [runFolders]
+ */
+export function launchedRuns(events, launchTool, runFolders = []) {
+	const callAt = toolCallIndex(events);
 	const runs = new Map();
+	for (const call of nestedCalls(events)) {
+		if (call.name !== launchTool) continue;
+		for (const entry of call.arguments.children ?? []) {
+			const folders = runFolders.filter((f) => f.name && f.name === entry?.name);
+			for (const folder of folders)
+				runs.set(folder.runId, {
+					runId: folder.runId,
+					name: folder.name,
+					launchedAt: call.calledAt,
+				});
+		}
+	}
+	return [...directRuns(events, launchTool, callAt, runs).values()];
+}
+
+function directRuns(events, launchTool, callAt, runs) {
 	for (const e of events) {
 		const m = e?.type === "message" ? e.message : null;
 		if (m?.role !== "toolResult" || m.toolName !== launchTool || m.isError)
@@ -72,7 +125,7 @@ export function launchedRuns(events, launchTool) {
 				launchedAt: callAt.get(m.toolCallId) ?? null,
 			});
 	}
-	return [...runs.values()];
+	return runs;
 }
 
 /**
@@ -200,7 +253,11 @@ export function handover({
 		return { handover: "duplicate-carrier", transfers: own.length, correct };
 	if (own.length === 1) return { handover: "delivered", transfers: 1, correct };
 	if (digests.some(holds))
-		return { handover: "digest", transfers: 0, correct: false };
+		return {
+			handover: "digest",
+			transfers: 0,
+			correct: digests.some((c) => c.index < answeredAt && holds(c)),
+		};
 	if (!ended) return { handover: "no-result", transfers: 0, correct: false };
 	return {
 		handover: "undelivered",
@@ -222,6 +279,8 @@ export function handover({
  * @param {{parentToolAllowlist: string[], parentLoadTool: string,
  *   digestOperations?: Array<{toolName: string, covers: string[]}>}} input.scenario
  * @param {string} input.workDir
+ * @param {Array<{runId: string, name: string | null}>} [input.runFolders] - run
+ *   folders of the candidate (see session-evidence.mjs); none for v2.9.2
  */
 export function deliveryAccounting({
 	parentEvents,
@@ -229,8 +288,9 @@ export function deliveryAccounting({
 	answeredAt = null,
 	scenario,
 	workDir,
+	runFolders = [],
 }) {
-	const runs = launchedRuns(parentEvents, scenario.parentLoadTool);
+	const runs = launchedRuns(parentEvents, scenario.parentLoadTool, runFolders);
 	const cutoff = answeredAt ?? -1;
 	const carried = carriers(parentEvents, scenario.parentToolAllowlist);
 	const finalText =
@@ -242,6 +302,9 @@ export function deliveryAccounting({
 					.map((part) => resolveReadPath(part.arguments?.path, workDir))
 			: [],
 	);
+	for (const call of nestedCalls(parentEvents))
+		if (call.name === "read")
+			parentReads.push(resolveReadPath(call.arguments.path, workDir));
 	const rows = children.map((child) => {
 		const named = runs.filter((run) => run.name && run.name === child.name);
 		const runId = named.length === 1 ? named[0].runId : null;
@@ -271,7 +334,7 @@ export function deliveryAccounting({
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
 			parentReads.includes(resolveReadPath(file, workDir)),
 		);
-		// Delivered for the verdict: an own carrier held the expected result before the scored reply.
+		// Delivered for the verdict: an own carrier, or a declared digest, held the expected result before the scored reply.
 		const byOwnRun = correct;
 		// By key for a keyed contract: a value under another key is not surfaced.
 		const surfaced =
