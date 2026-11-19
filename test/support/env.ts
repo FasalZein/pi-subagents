@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach } from "node:test";
+import { namesDeniedByParentEnv } from "../../src/launch/child-env.ts";
 
 export const TRACKED_ENV_KEYS = [
 	"CMUX_SOCKET_PATH",
@@ -70,7 +71,9 @@ export const TRACKED_ENV_KEYS = [
 // and PI_DENY_TOOLS values (agent, spawn grants, session), and the code under test
 // would then treat the test process as that child. Drop them once, before the
 // snapshot that restoreTrackedEnv() returns to. Live-test settings (PI_SUBAGENT_LIVE_*) stay.
+// The names PI_SUBAGENT_ENV_DENY protects go with it, so no launch receives them.
 export function dropInheritedSubagentEnv(env: NodeJS.ProcessEnv): void {
+	for (const key of namesDeniedByParentEnv(env)) delete env[key];
 	for (const key of Object.keys(env)) {
 		if ((key.startsWith("PI_SUBAGENT_") && !key.startsWith("PI_SUBAGENT_LIVE_")) || key === "PI_DENY_TOOLS") delete env[key];
 	}

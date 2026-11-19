@@ -117,6 +117,16 @@ export function resolveDenyEnvPatterns(
 }
 
 /**
+ * The names of `env` that its PI_SUBAGENT_ENV_DENY protects. A harness that drops the PI_SUBAGENT_*
+ * controls it inherited from a child drops these names too: dropping the deny list must never
+ * release the values that it protects.
+ */
+export function namesDeniedByParentEnv(env: Record<string, string | undefined>): string[] {
+	const patterns = resolveDenyEnvPatterns(undefined, env);
+	return Object.keys(env).filter((name) => patterns.some((pattern) => envNameMatchesPattern(name, pattern)));
+}
+
+/**
  * Match an env name against a pattern where `*` stands for any sequence
  * (including empty). Everything else is compared literally, so names with
  * shell-hostile characters stay plain string data.

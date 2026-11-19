@@ -7,6 +7,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { installLiveTestCleanup } from "./live-test-cleanup.mjs";
 import { acquireLiveWindowLock, LIVE_TEST_MODEL, requireLiveWindowOptIn } from "./live-test-guard.mjs";
+import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 
 const piBin = process.env.PI_E2E_PI_BIN ?? "pi";
 
@@ -193,6 +194,8 @@ const ghostty = spawn("ghostty", ["-e", "bash", "-lc", launchCommand], {
 	stdio: "ignore",
 	env: (() => {
 		const env = { ...process.env };
+		// Dropping PI_SUBAGENT_ENV_DENY must not release the names it protects.
+		for (const key of namesDeniedByParentEnv(env)) delete env[key];
 		for (const key of Object.keys(env)) {
 			if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS" || key === "PI_ARTIFACT_PROJECT_ROOT") {
 				delete env[key];

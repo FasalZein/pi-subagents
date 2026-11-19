@@ -54,6 +54,7 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 
 export const LOADOUTS = ["on", "only", "none"];
 export const INLINE_BUDGET = 3000;
@@ -65,6 +66,8 @@ const EXTENSION_TOOL = /^(subagent|caller_ping)/;
 const declarationChars = (tool) => JSON.stringify(toToolDeclaration(tool)).length;
 
 function rootEnv() {
+	// Dropping PI_SUBAGENT_ENV_DENY must not release the names it protects.
+	for (const key of namesDeniedByParentEnv(process.env)) delete process.env[key];
 	for (const key of Object.keys(process.env)) {
 		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS") delete process.env[key];
 	}
