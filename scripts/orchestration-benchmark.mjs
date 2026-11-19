@@ -3,7 +3,7 @@
  * Orchestration benchmark launcher: runs one sample and writes one JSON record.
  *
  *   PI_SUBAGENT_LIVE_MODEL=<provider/model:thinking> node scripts/orchestration-benchmark.mjs \\
- *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>] [--plan]
+ *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>] [--plan] [--keep-sessions]
  *
  * --plan prints the sample's full key and file name as one JSON line and runs nothing;
  * the gate runner (orchestration-benchmark-gate.mjs) plans its queue with it.
@@ -40,9 +40,9 @@
  * - T04 finding 5: on a timeout, an unfiled child probe is forgiven without checking
  *   that it names this attempt's session root, model and checkout.
  * - Revisit all of these before parallel benchmark jobs run on one checkout.
- * - T04 finding 1: scenario (b) has the v2.9.2 arm only (direct launches). The candidate
- *   arm (workflow script, G2.1) gets its own scenario folder at T59, so the baseline
- *   fixture hash does not change.
+ * - T04 finding 1: scenario review is the v2.9.2 arm of (b) (direct launches). The candidate
+ *   arm (workflow script, G2.1) is scenario review-workflow, so the baseline fixture
+ *   hash does not change.
  * - Namesakes: children join their run ids by launch name. A scenario must give
  *   its children unique launch names; an attempt where two launched children
  *   share a name ends as an infrastructure error. Revisit when a scenario needs
@@ -50,8 +50,10 @@
  * - Duplicate work is attributed by the parent's requested read paths, not by
  *   facts observed in successful tool results (a failed read counts, a bash read
  *   does not). It feeds the duplicate outcome class only, never the verdict.
- * - Candidate adapters (grouped result messages, lookups, capped report
- *   references, workflow digests of the candidate release) are left to T03.
+ * - Candidate adapters (T59a, see delivery.mjs): grouped result messages, launches
+ *   and reads nested in codemode scripts (run ids from the run folders), and
+ *   declared workflow digests. A parent read of a report file is no duplicate work.
+ * - review-workflow (G2.1 (b), candidate arm): the parent gets --tools +codemode.
  * - Undelivered results have the sub-class unknown on v2.9.2: its session files
  *   record no queue or drop evidence (see delivery.mjs).
  */
@@ -71,6 +73,10 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { runAttempt } from "./orchestration-benchmark/attempt.mjs";
+import {
+	forRelease,
+	releaseCapabilities,
+} from "./orchestration-benchmark/candidate-evidence.mjs";
 import {
 	acquireClaim,
 	holdsClaim,
@@ -134,6 +140,7 @@ function parseCli() {
 			thinking: { type: "string" },
 			set: { type: "string" },
 			plan: { type: "boolean" },
+			"keep-sessions": { type: "boolean" },
 		},
 	});
 	const live = process.env.PI_SUBAGENT_LIVE_MODEL?.trim();
@@ -172,6 +179,7 @@ function parseCli() {
 		thinking,
 		outDir,
 		plan: values.plan === true,
+		keepSessions: values["keep-sessions"] === true,
 	};
 }
 
@@ -254,7 +262,7 @@ async function main() {
 		});
 	}
 	const cli = parseCli();
-	const scenario = await loadScenario(cli.scenario);
+	const loaded = await loadScenario(cli.scenario);
 	if (
 		!existsSync(join(cli.checkout, "src", "index.ts")) ||
 		!existsSync(join(cli.checkout, "node_modules"))
@@ -268,6 +276,8 @@ async function main() {
 	if (recovered.length)
 		console.log(`removed ${recovered.length} abandoned attempt folder(s)`);
 	const checkout = assertPrivateCheckout(cli.checkout);
+	// Candidate-only allowances follow the measured release (candidate-evidence.mjs).
+	const scenario = forRelease(loaded, releaseCapabilities(cli.checkout));
 	const provider = cli.model.split("/")[0];
 	const piVersion = execFileSync("pi", ["--version"], {
 		encoding: "utf8",
@@ -281,6 +291,9 @@ async function main() {
 		parentMode: "interactive",
 		deadlineMs: SCENARIO_DEADLINE_MS,
 		maxAttempts: MAX_ATTEMPTS,
+		// Only a scenario that loads extra parent tools adds the field, so the settings
+		// hash of every other scenario stays equal to T04's.
+		...(scenario.parentTools ? { parentTools: scenario.parentTools } : {}),
 	};
 	const key = sampleKey({
 		checkoutRevision: checkout.commit,
@@ -323,6 +336,10 @@ async function main() {
 			deadlineMs: SCENARIO_DEADLINE_MS,
 			loginMarginMs: LOGIN_MARGIN_MS,
 			probePath: join(BENCH_DIR, "load-probe.ts"),
+			// --keep-sessions: session files and run folders next to the record, for a hand check.
+			keepDir: cli.keepSessions
+				? join(cli.outDir, "sessions", sampleFileName(key).replace(/\.json$/, ""))
+				: null,
 		});
 		attempts.push(result);
 		if (result.kind !== "provider-error") break;

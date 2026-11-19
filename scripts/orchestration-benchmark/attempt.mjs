@@ -3,8 +3,15 @@
  * private tmux server that gets its prompt after startup, then a classified
  * result built from the session evidence. The root is removed on every exit path.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+	cpSync,
+	existsSync,
+	lstatSync,
+	readFileSync,
+	statSync,
+} from "node:fs";
+import { join, relative } from "node:path";
+import { parentToolNames } from "./candidate-evidence.mjs";
 import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	answerParser,
@@ -12,7 +19,6 @@ import {
 	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
-	parentToolCalls,
 	scoreAttempt,
 	summarizeChild,
 	summarizeChildren,
@@ -28,6 +34,7 @@ import {
 } from "./sample-home.mjs";
 import {
 	collectEvidence,
+	liveEntries,
 	parseJsonlStrict,
 	readProbes,
 } from "./session-evidence.mjs";
@@ -94,11 +101,14 @@ function hasPrompt(events, prompt) {
 function lastActivity(root) {
 	let latest = 0;
 	const walk = (dir) => {
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		for (const entry of liveEntries(dir)) {
 			const path = join(dir, entry.name);
 			if (entry.isDirectory()) walk(path);
 			else if (path.endsWith(".jsonl"))
-				latest = Math.max(latest, statSync(path).mtimeMs);
+				latest = Math.max(
+					latest,
+					statSync(path, { throwIfNoEntry: false })?.mtimeMs ?? 0,
+				);
 		}
 	};
 	walk(root);
@@ -256,10 +266,17 @@ export function classifyAttempt({
 		return infra("request without usage");
 	if (load.missingProbes > 0) return infra("load probe missing");
 	// Children join their run ids by launch name, so names must be unique (a known limit).
-	const names = launchedRuns(evidence.parent.events, scenario.parentLoadTool)
+	const names = launchedRuns(
+		evidence.parent.events,
+		scenario.parentLoadTool,
+		evidence.runFolders,
+	)
 		.map((run) => run.name)
 		.filter(Boolean);
-	if (new Set(names).size !== names.length)
+	// On the candidate a repeated launch name is a parent that ran work twice: a
+	// counted failure (scoreAttempt). v2.9.2 keeps the T04 contract (infra).
+	const repeatedLaunch = new Set(names).size !== names.length;
+	if (repeatedLaunch && !scenario.release?.candidate)
 		return infra("two launched children share a launch name");
 	// A deadline timeout stays a timeout (G2.1): a child that started but never
 	// got its task has a probe and no session file, which is measured behaviour.
@@ -315,6 +332,7 @@ export function classifyAttempt({
 		answeredAt: observed.kind === "answered" ? observed.answeredAt : null,
 		scenario,
 		workDir,
+		runFolders: evidence.runFolders,
 	});
 	const childOutcomes = childFacts.map((child, index) => ({
 		...child.fulfils,
@@ -332,7 +350,13 @@ export function classifyAttempt({
 	const verdict = scoreAttempt({
 		answer: observed.answer,
 		childRoles: children.roles,
-		parentTools: parentToolCalls(evidence.parent.events),
+		parentTools: parentToolNames(
+			evidence.parent.events,
+			evidence.runFolders,
+			workDir,
+		),
+		workflowScript: delivery.workflowScript,
+		repeatedLaunch,
 		childOutcomes,
 		workspace,
 		handoffInOrder: delivery.handoffInOrder,
@@ -360,6 +384,40 @@ function sanitize(result) {
 	};
 }
 
+// Files a kept copy holds: session files and the run folders' record and launch
+// files. Credentials, settings and the workspace stay out.
+// Known evidence paths only: session files below sessions/ and the record and
+// launch files of run folders below artifacts/. Credentials, settings, the
+// workspace and every symbolic link stay out.
+const KEPT_DIRS = /^(sessions|artifacts)(\/|$)/;
+const KEPT_FILES = [
+	/^sessions\/.+\.jsonl$/,
+	/^artifacts\/.+\/results\/[^/]+\/(record|launch)\.json$/,
+];
+
+/**
+ * Copy the evidence of an attempt before cleanup (launcher --keep-sessions), so
+ * the delivery accounting can be checked by hand against the sessions.
+ */
+export function keepEvidence(root, dest) {
+	// A debugging copy never decides a sample: a file that vanishes mid-copy is reported.
+	try {
+		cpSync(root, dest, {
+			recursive: true,
+			filter: (source) => {
+				const path = relative(root, source);
+				if (path === "") return true;
+				const stat = lstatSync(source, { throwIfNoEntry: false });
+				if (!stat || stat.isSymbolicLink()) return false;
+				if (stat.isDirectory()) return KEPT_DIRS.test(path);
+				return stat.isFile() && KEPT_FILES.some((pattern) => pattern.test(path));
+			},
+		});
+	} catch (error) {
+		console.error(`kept copy incomplete: ${error?.code ?? error?.name ?? "unknown"}`);
+	}
+}
+
 /** @returns {Promise<object>} a sanitized attempt result */
 export async function runAttempt({
 	cli,
@@ -369,11 +427,13 @@ export async function runAttempt({
 	deadlineMs,
 	loginMarginMs,
 	probePath,
+	keepDir = null,
 }) {
 	const root = createAttemptRoot();
 	const socket = socketPath(root);
 	const cleanup = () => {
 		stopServer(socket);
+		if (keepDir) keepEvidence(root, join(keepDir, `attempt-${attempt}`));
 		removeAttemptRoot(root);
 	};
 	const unregister = cleanups.add(cleanup);
@@ -408,6 +468,10 @@ export async function runAttempt({
 			shellQuote(cli.thinking),
 			"-e",
 			shellQuote(join(cli.checkout, "src", "index.ts")),
+			// A workflow scenario (candidate arm of (b)) activates Pi's built-in codemode tool.
+			...(scenario.parentTools
+				? ["--tools", shellQuote(scenario.parentTools)]
+				: []),
 			"--session-dir",
 			shellQuote(home.sessionDir),
 		].join(" ");
