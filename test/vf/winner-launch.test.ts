@@ -10,7 +10,7 @@ import {
 	wireSubagentSteerBack,
 } from "../../src/runtime/wiring.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { assert, createTestDir } from "../support/index.ts";
+import { assert, createTestDir, ORIGINAL_ENV } from "../support/index.ts";
 import { gitRun as run, setupVerifiedRunFixture } from "../support/verified-runs.ts";
 
 /**
@@ -24,13 +24,14 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_VF_MOCK_VERIFIER",
 	"TEST_CAPTURE_DIR",
 	"TEST_MARKER_MAP",
-	"PI_ARTIFACT_PROJECT_ROOT",
 ];
 
 afterEach(() => {
 	resetSubagentStateForTest();
 	resetSpawnWidthForTest();
 	for (const key of ENV_KEYS) delete process.env[key];
+	// Back to test support's temporary root: deleting it would send later suites to ~/.pi/history.
+	process.env.PI_ARTIFACT_PROJECT_ROOT = ORIGINAL_ENV.PI_ARTIFACT_PROJECT_ROOT;
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
