@@ -689,3 +689,32 @@ describe("g2 P1: a launch wait for a ping that a concurrent subagent_wait took",
 		}
 	});
 });
+
+describe("g9 P2: a launch error names no session path, also one with spaces", () => {
+	const cases = [
+		["quoted", "EACCES: permission denied, open '/tmp/My Sessions/child three.jsonl'"],
+		["unquoted", "EACCES: permission denied, mkdir /tmp/My Sessions/child three.jsonl"],
+	] as const;
+	for (const [kind, failError] of cases) {
+		it(`scrubs the whole ${kind} path and keeps the reason`, async () => {
+			const harness = await startParent(
+				{ go: [fauxToolCall("subagent", BATCH_OF_THREE, { id: "launch-1" })] },
+				{ failError },
+			);
+			try {
+				await harness.session.prompt("go");
+				await harness.session.waitForIdle();
+				const [reply] = harness.toolResults("subagent");
+				const failed = (reply?.details as { failed?: { error: string } } | undefined)?.failed;
+				for (const text of [reply?.text ?? "", failed?.error ?? ""]) {
+					for (const part of ["/tmp", "Sessions", "three.jsonl"]) {
+						assert.equal(text.includes(part), false, `no "${part}" in: ${text}`);
+					}
+				}
+				assert.match(failed?.error ?? "", /^EACCES: permission denied, (open|mkdir) /);
+			} finally {
+				await harness.dispose();
+			}
+		});
+	}
+});
