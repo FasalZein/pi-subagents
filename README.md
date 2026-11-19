@@ -4,7 +4,7 @@
 
 It began as a fork of [HazAT/pi-interactive-subagents](https://github.com/HazAT/pi-interactive-subagents), then grew into a monumental refactor: named agents, interactive panes, background workers, async parallelism, blocking agents, child-to-parent communication, forked context, a beautiful TUI widget, and much more!
 
-Use it when one agent should hand work to another agent instead of trying to do everything in one transcript. Interactive children open in Herdr, cmux, tmux, zellij, or WezTerm; background children run headlessly.
+Use it when one agent should hand work to another agent instead of trying to do everything in one transcript. Interactive children open in the Herdr app (herdr-core), Rex, Herdr, cmux, tmux, zellij, or WezTerm; background children run headlessly.
 
 https://github.com/user-attachments/assets/e0b97493-6c9b-4710-ba26-a6c08230ba28
 
@@ -38,23 +38,42 @@ Two axes matter:
 - `interactive` or `background`: where the child runs
 - async or sync: whether the parent waits
 
-`interactive` means foreground. Pi opens a visible surface through Herdr, cmux, tmux, zellij, or WezTerm. Normal launches use a backend-specific surface, such as a tab, window, split, or stacked pane.
+`interactive` means foreground. Pi opens a visible surface through the Herdr app, Rex, Herdr, cmux, tmux, zellij, or WezTerm. Normal launches use a backend-specific surface, such as a tab, window, split, or stacked pane.
 
 `background` means headless. Pi starts a `pi -p` child process without opening a pane.
 
-Async means the parent gets a “started” result and the child answer comes back later. Sync means the parent waits for the child answer before it continues.
+Async means the parent gets a launch reply with run ids, and each result comes back later. Sync means the parent waits for the results before it continues. [Launching and waiting](#launching-and-waiting) describes both.
 
 ### Interactive mux backends
 
-Interactive children open in your current terminal backend. `pi-subagents` supports Herdr, cmux, tmux, zellij, and WezTerm.
+Interactive children open in your current terminal backend. `pi-subagents` supports seven backends:
 
-Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it, or set it to `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` to force one.
+| `PI_SUBAGENT_MUX` | Backend | Detected when |
+| --- | --- | --- |
+| `herdr-core` | The Herdr app, through herdr-core | Pi runs in a herdr-core terminal (`HC_TERMINAL_ID` and `HC_TERMINAL_SOCKET` are set) and the Herdr app answers |
+| `rex` | Rex | `REX_SESSION` and `REX_BLOCK` are set and the `rex` command is found on `PATH` or in `REX_BIN_DIR` |
+| `herdr` | The Herdr TUI | `HERDR_PANE_ID` is set |
+| `cmux` | cmux | Pi runs in a cmux surface |
+| `tmux` | tmux | Pi runs in a tmux pane |
+| `zellij` | zellij | Pi runs in a zellij pane |
+| `wezterm` | WezTerm | Pi runs in a WezTerm pane |
+
+Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
 The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, interactive launches fail with a setup hint.
 
-Normal launches use a backend-specific surface. Herdr keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. Other backends may use windows, splits, or stacked panes.
+Normal launches use a backend-specific surface:
 
-### Orchestrator mode is removed
+- The Herdr app opens a child as a split beside the parent pane. The split moves the app's focus, so Pi focuses the parent pane, splits it, and puts the saved focus back; the parent pane can show focus for under a second. When the split fails, the child gets a tab in the parent's space. Pi starts the child launcher as the program of the new terminal, with no shell and no startup delay.
+- Rex opens a child in the parent's Rex session: as a split to the right of the parent block, at most 2 per window, and then in a new window of the same session. Pi never moves the focus. Pi reads the Rex API revision from `rex whoami` and accepts revision 16; another revision makes the backend unavailable with a hint. Remote Rex servers and minimized layers are not supported.
+- The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
+- Other backends may use windows, splits, or stacked panes.
+
+In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it.
+
+### Removed: orchestrator mode and ambient awareness
+
+The parent no longer gets the hidden roster message that older versions called ambient awareness. The [agent index](#agent-index) replaces it: one system-prompt section with one line per agent, and the `subagent_agents` tool for the rest.
 
 Earlier versions had an orchestrator mode for the parent session. It removed every parent tool except `subagent`, `subagent_resume`, `subagent_kill`, and `set_tab_title`, and it replaced Pi's system prompt with a delegation-only prompt.
 
@@ -90,7 +109,7 @@ tools: read,grep,find,ls
 You are a codebase scout. Find the relevant files, read enough to be useful, and return a concise map of what matters.
 ```
 
-The `description` matters. Pi uses it for ambient awareness, explained next.
+The `description` matters. The parent routes on its first 100 characters in the [agent index](#agent-index).
 
 For a fuller example of the intended style, see the [scout agent gist by edxeth](https://gist.github.com/edxeth/11b6a6cdf7c6068771a5e3f96ab5e34b). It shows the shape this package works best with: a sharp role, an explicit contract, and little room for interpretation.
 
@@ -99,7 +118,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | Field | Default | What it controls |
 | --- | --- | --- |
 | `name` | filename | Stable agent name used by `agent: "..."` |
-| `description` | unset | One-line routing hint for ambient awareness |
+| `description` | unset | One-line routing hint for the agent index |
 | `enabled` | `true` | Set `false` to hide and block the agent. `Space` on the `/subagents` Agents tab flips this value in the agent file |
 | `model` | Pi default | Child default model, including optional thinking suffix. When unset, the child inherits the parent's model. |
 | `thinking` | model default | Child thinking level. When unset, the child inherits the parent's thinking level. |
@@ -113,7 +132,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `inject-skills` | unset | Comma-separated skills to load into the child prompt before the task |
 | `no-context-files` | `false` | Skip project context-file discovery in the child, including `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md`. Pi loads these files independently of project approval. |
 | `inherit-append-system` | `false` | Let Pi load the child's applicable global or trusted-project `APPEND_SYSTEM.md` file |
-| `no-session` | `false` | Use an ephemeral child session file and delete it after completion |
+| `no-session` | `false` | Use an ephemeral child session file and delete it after completion. The report is kept in the result files, and the run cannot be resumed |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
 | `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
@@ -140,7 +159,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `visible-to` | `all` | Who may launch this agent: `all` (anyone), `root` (only the top-level session), or a comma-separated list of agent names. |
 | `async` | `true` | `false` makes the launch sync |
 | `mode` | `interactive` | `interactive` pane or `background` process |
-| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running) |
+| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running). A `continue` child that ends after its parent exits gets no result record |
 
 Use YAML block syntax for more than one env var:
 
