@@ -31,11 +31,9 @@ function isExecutableFile(path: string): boolean {
 
 /** rex on PATH, else in REX_BIN_DIR: inside a Rex block rex is not on PATH (D28, live check 6). */
 export function resolveRexBinary(): string | undefined {
-	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+	for (const dir of [...(process.env.PATH ?? "").split(delimiter), process.env.REX_BIN_DIR]) {
 		if (dir && isExecutableFile(join(dir, "rex"))) return join(dir, "rex");
 	}
-	const binDir = process.env.REX_BIN_DIR;
-	if (binDir && isExecutableFile(join(binDir, "rex"))) return join(binDir, "rex");
 	return undefined;
 }
 
