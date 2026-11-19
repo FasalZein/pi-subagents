@@ -4,16 +4,17 @@ import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
-import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { parseRunId, type RunId } from "../runtime/result-record.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
+import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import { type ChildDelivery, renderLaunchReply } from "./launch-reply.ts";
 import { asStructuredContent, launchedChildData, SubagentLaunchOutput } from "./launch-structured.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
@@ -44,6 +45,13 @@ function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string
 	if (!record.resume.resumable) throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
 	if (!record.sessionFile) throw new Error(`Run ${runId} cannot be resumed: its record names no session file.`);
 	return record.sessionFile;
+}
+
+function textOf(result: AgentToolResult<unknown>): string {
+	return result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n\n");
 }
 
 function forceSynchronousResumeIfNeeded(running: RunningSubagent, hasUI: boolean): void {
@@ -182,33 +190,31 @@ export function registerSubagentResumeTool(
 			forceSynchronousResumeIfNeeded(running, ctx.hasUI);
 
 			// D10: dropped entries are named outside the result frame, once per reply.
-			const dropped = droppedExtensionLines(running.droppedExtensions ?? []).join("\n");
+			const dropped = droppedExtensionLines(running.droppedExtensions ?? []);
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
-				settleWaitReply([running.id], reportedRunIds([result]), signal);
-				const delivered = isFinishedStatus((result.details as { status?: string } | undefined)?.status);
-				const structuredContent = asStructuredContent({
-					status: "launched",
-					children: [launchedChildData(running, running.agent ?? "", delivered)],
-				});
-				const prefix = [isRenderedResult(result) ? "" : warning, dropped].filter(Boolean).join("\n\n");
-				if (!prefix) return { ...result, structuredContent };
+				const reported = reportedRunIds([result]);
+				settleWaitReply([running.id], reported, signal);
+				const resultBody = textOf(result);
+				// D23: the same launch facts as a launch, then the report; a published rendering holds its warnings.
+				const delivery: ChildDelivery =
+					reported.length > 0
+						? { report: [isRenderedResult(result) ? "" : warning, resultBody].filter(Boolean).join("\n\n") }
+						: { waitError: resultBody };
 				return {
 					...result,
-					content: [{ type: "text" as const, text: prefix }, ...result.content],
-					structuredContent,
+					content: [{ type: "text" as const, text: renderLaunchReply([running], [delivery], dropped) }],
+					structuredContent: asStructuredContent({
+						status: "launched",
+						children: [launchedChildData(running, running.agent ?? "", reported.length > 0)],
+					}),
 				};
 			}
 
 			requestSubagentBatchStop();
 			return {
-				content: [
-					{
-						type: "text" as const,
-						text: [warning, dropped, `Session "${running.name}" resumed.`].filter(Boolean).join("\n\n"),
-					},
-				],
+				content: [{ type: "text" as const, text: renderLaunchReply([running], [null], [warning, ...dropped]) }],
 				details: {
 					id: running.id,
 					name: running.name,

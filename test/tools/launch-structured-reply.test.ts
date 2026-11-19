@@ -478,7 +478,7 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			const warning = getIgnoredModelOverrideWarning("worker-locked", false, lockedChild);
 			assert.ok(warning, "the locked agent's model override gives a warning");
 			assert.ok(text.includes(warning), "the started child's launch warning is in the failure text");
-			const failed = (reply?.details as { failed?: { error: string } }).failed;
+			const failed = (reply?.details as { failed?: { error: string } } | undefined)?.failed;
 			assert.equal(failed?.error.includes(sessionPath), false, "no session path in the data either");
 		} finally {
 			await harness.dispose();

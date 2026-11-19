@@ -146,7 +146,13 @@ describe("resume by run id (D8)", () => {
 			});
 
 			const runtime = createRuntime();
-			const started = (await resumeTool(runtime).execute("c1", { runId: "aaaa0001" }, undefined, undefined, ctx)) as {
+			const started = (await resumeTool(runtime).execute(
+				"c1",
+				{ runId: "aaaa0001", agent: "fixture-agent" },
+				undefined,
+				undefined,
+				ctx,
+			)) as {
 				content: { text: string }[];
 				details: { id: string; sessionFile: string };
 				structuredContent: { status: string; children: Record<string, unknown>[] };
@@ -159,14 +165,21 @@ describe("resume by run id (D8)", () => {
 					{
 						runId: started.details.id,
 						name: "blocked",
-						agent: started.structuredContent.children[0]?.agent,
+						agent: "fixture-agent",
 						sessionFile,
 						where: "headless",
 						state: "started",
 					},
 				],
 			});
-			assert.equal(started.content[0]?.text.includes(sessionFile), false);
+			// D23 (T28 fix round 1): the direct reply has the launch facts: new run id, agent, model, headless.
+			const text = started.content[0]?.text ?? "";
+			assert.match(
+				text,
+				new RegExp(`^- blocked \\(agent fixture-agent\\): run ${started.details.id}, model .+, headless$`, "m"),
+			);
+			assert.match(text, /Each report arrives later/);
+			assert.equal(text.includes(sessionFile), false);
 
 			await assert.rejects(
 				() => resumeTool(runtime).execute("c2", { runId: "aaaa0002" }, undefined, undefined, ctx),
@@ -176,6 +189,44 @@ describe("resume by run id (D8)", () => {
 				() => resumeTool(runtime).execute("c3", { runId: "ffff9999" }, undefined, undefined, ctx),
 				/No result with run id "ffff9999"/,
 			);
+		});
+	});
+
+	it("gives a waiting resume the launch facts before the child's report (T28 fix round 1)", async () => {
+		const dir = createTestDir();
+		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
+		await withFakePi(bin, async () => {
+			process.env.PI_ARTIFACT_PROJECT_ROOT = dir;
+			const sessionFile = writeBlockedSession(dir, "waited.jsonl");
+			writeSubagentTimeoutSidecar(sessionFile, { kind: "timeout", blocksResume: false });
+			// A parent without UI awaits every resume.
+			const ctx = parentToolCtx(dir, { hasUI: false });
+			const runtime = {
+				...createRuntime(),
+				getLaunchedSubagentResult: async (running: RunningSubagent) => ({
+					content: [{ type: "text", text: "CHILD-ANSWER" }],
+					details: { id: running.id, status: "completed" },
+				}),
+			};
+			const reply = (await resumeTool(runtime as never).execute(
+				"c1",
+				{ sessionFile, agent: "fixture-agent" },
+				undefined,
+				undefined,
+				ctx,
+			)) as {
+				content: { text: string }[];
+				details: { id: string };
+				structuredContent: { children: { state: string; runId: string }[] };
+			};
+			const text = reply.content.map((block) => block.text).join("\n");
+			assert.match(
+				text,
+				new RegExp(`^- blocked \\(agent fixture-agent\\): run ${reply.details.id}, model .+, headless\\n`),
+			);
+			assert.match(text, /This call waited for its children; each report follows below\.\n\nCHILD-ANSWER/);
+			assert.equal(text.includes(sessionFile), false);
+			assert.equal(reply.structuredContent.children[0]?.state, "ended");
 		});
 	});
 
