@@ -244,4 +244,37 @@ describe("run phase", () => {
 		const stopResult = await settleWithin(watch, 4000, "stop request");
 		assert.equal(stopResult.error, "cancelled");
 	});
+
+	it("sends a stopping run no soft interruption and no reaper signal", async () => {
+		const sessionFile = makeSession();
+		// A finished answer the terminal-summary reaper would act on for a running auto-exit child.
+		appendAssistantEntry(sessionFile, "final", "Sweep finished.");
+		const child = new EventEmitter() as ChildProcess;
+		const signals: NodeJS.Signals[] = [];
+		const running = makeRunning(sessionFile, {
+			autoExit: true,
+			// Soft limit at 1 s, hard deadline at 4 s.
+			timeoutBudget: { timeoutSeconds: 4 },
+			timeoutWarnThreshold: 25,
+			childProcess: child,
+		});
+		// A parent close without an abort controller sets stopping and signals the child itself.
+		running.phase = "stopping";
+		const watch = watchBackgroundSubagent(
+			running,
+			{
+				cleanupNoSessionSessionFile() {},
+				terminateBackgroundChildProcess(_running, signal) {
+					signals.push(signal);
+				},
+			},
+			new AbortController().signal,
+		);
+		await sleep(2600); // past the soft limit, two polls and the reaper's grace
+		assert.deepEqual(signals, [], "the watcher adds no signal to a stopping run");
+		assert.equal(running.timeoutWrapUp, undefined);
+		assert.equal(running.phase, "stopping");
+		child.emit("exit", 143);
+		await settleWithin(watch, 4000, "stopping run exit");
+	});
 });

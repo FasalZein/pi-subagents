@@ -250,9 +250,9 @@ async function watchInteractiveGeneration(
 			return;
 		}
 		const wrapUp = checkSubagentTimeoutWrapUp(running, now);
-		if (wrapUp && running.phase !== "wrapping-up" && !hasSubagentExitSidecar(running.sessionFile)) {
+		if (wrapUp && running.phase === "running" && !hasSubagentExitSidecar(running.sessionFile)) {
 			running.timeoutWrapUp = wrapUp;
-			if (running.phase === "running") running.phase = "soft-limit";
+			running.phase = "soft-limit";
 			const baseline =
 				wrapUp.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + wrapUp.seconds * 1000;

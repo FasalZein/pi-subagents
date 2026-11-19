@@ -269,10 +269,11 @@ function watchBackgroundGeneration(
 		const enforceTimeoutWrapUp = (now: number): boolean => {
 			if (!isDeadlineEnforceable(signal)) return false;
 			const due = checkSubagentTimeoutWrapUp(running, now);
-			if (!due || running.phase === "wrapping-up") return false;
+			// Only a running generation is interrupted for its wrap-up; a stopping or wrapping-up one is not.
+			if (!due || running.phase !== "running") return false;
 			if (hasSubagentExitSidecar(running.sessionFile)) return false;
 			running.timeoutWrapUp = due;
-			if (running.phase === "running") running.phase = "soft-limit";
+			running.phase = "soft-limit";
 			const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + due.seconds * 1000;
 			beginKill();
@@ -329,7 +330,8 @@ function watchBackgroundGeneration(
 				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
 				return;
 			}
-			if (running.timeoutExpiry || running.phase === "soft-limit") return;
+			// The runtime already ends this generation; one more SIGTERM could force the child's exit.
+			if (running.phase === "soft-limit" || running.phase === "stopping") return;
 			if (!sessionReadable) return;
 			try {
 				if (!shouldReapStableTerminalSummary(running)) return;
