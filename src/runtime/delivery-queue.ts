@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { outstandingWork } from "./outstanding-work.ts";
-import { groupRunEnds, type RunEndMessage, runEndIds } from "./run-end-message.ts";
+import { groupRunEnds, isFinishedStatus, type RunEndMessage, runEndIds } from "./run-end-message.ts";
 
 /**
  * D15: the one owner of run-end delivery to the parent. A result stays in this queue until the
@@ -152,24 +152,25 @@ export function queuedRunEndIds(): string[] {
  * model (codemode discards it), so every result it holds stays queued and is handed over as a
  * message; when Pi commits the reply anyway, the second copy is capped like every copy.
  */
-export function settleWaitReply(
-	ids: readonly string[],
-	replies: readonly { details?: unknown }[],
-	signal?: AbortSignal,
-): void {
-	// A wait error (interrupted, timed out) carries an error and no result.
-	const returned = new Set(
-		replies.flatMap((reply) => {
-			const details = reply.details as { id?: unknown; error?: unknown } | undefined;
-			return typeof details?.id === "string" && !details.error ? [details.id] : [];
-		}),
-	);
+export function settleWaitReply(ids: readonly string[], reported: readonly string[], signal?: AbortSignal): void {
+	const returned = new Set(reported);
 	for (const id of ids) {
 		if (!signal?.aborted && returned.has(id)) {
 			deliveryQueue.take(id);
 			outstandingWork.release(id);
 		} else deliveryQueue.release(id);
 	}
+}
+
+/**
+ * The runs whose finished report these launch or resume replies carry. A started or pending reply
+ * and a wait error (interrupted, timed out) carry none, so they deliver nothing.
+ */
+export function reportedRunIds(replies: readonly { details?: unknown }[]): string[] {
+	return replies.flatMap((reply) => {
+		const details = reply.details as { id?: unknown; status?: string } | undefined;
+		return typeof details?.id === "string" && isFinishedStatus(details.status) ? [details.id] : [];
+	});
 }
 
 /** Forget the session-scoped queue (test isolation and runtime reset). */
