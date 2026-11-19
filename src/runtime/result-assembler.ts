@@ -1,5 +1,6 @@
 import type { SessionEntry } from "../session/session.ts";
-import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
+import { COMPLETION_JSON_FIELDS, SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
+import { parseJsonFields } from "../tools/json-string-args.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import type { SubagentTimeoutKind } from "../types.ts";
 import {
@@ -339,7 +340,9 @@ function callArgs(
 	recorded: ReadonlyMap<string, Record<string, unknown>>,
 	accepted: RunFacts["acceptedCall"],
 ): Record<string, unknown> | undefined {
-	return call.args ?? recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
+	const args = call.args ?? recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
+	// T64: the transcript keeps the model's raw arguments; parse them as the child's tool did.
+	return parseJsonFields(args, COMPLETION_JSON_FIELDS);
 }
 
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */

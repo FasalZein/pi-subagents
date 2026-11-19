@@ -6,6 +6,7 @@ import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agen
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
 import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
 import { parseDataSchema } from "./data-schema.ts";
+import { parseLaunchJsonFields } from "./json-string-args.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
 	enforceAgentFrontmatter,
@@ -355,6 +356,7 @@ export function registerSubagentCoreTools(
 			label: "Subagent",
 			description: "Start one or more child agents, each named with its task in the children list.",
 			parameters: SubagentParams,
+			prepareArguments: (args) => parseLaunchJsonFields(args) as never,
 			outputSchema: SubagentLaunchOutput,
 			execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
 				const children = params.children.map((child) => stripInternalLaunchOverrides(child as SubagentParamsInput));

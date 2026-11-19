@@ -29,6 +29,7 @@ import "./tools/subagent-done-recovery.test.ts";
 import "./tools/subagent-done-takeover.test.ts";
 import "./tools/completion-call.test.ts";
 import "./tools/data-schema.test.ts";
+import "./tools/json-string-args.test.ts";
 import "./tools/data-schema-preflight.test.ts";
 import "./runtime/completion-call-e2e.test.ts";
 import "./runtime/data-schema-e2e.test.ts";
