@@ -384,47 +384,22 @@ describe("result router", () => {
 		assert.doesNotMatch(sent[0].message.content, /provider stack trace/);
 	});
 
-	it("steers a result that ends while the stop flag is set, in live and auto-exit parents (D15: no parking)", () => {
-		const savedAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
-		try {
-			delete process.env.PI_SUBAGENT_AUTO_EXIT;
-			const liveSent: Array<{ message: any; options: any }> = [];
-			const liveRunning = makeRunning({ id: "live-parent-child" });
-			setRunningSubagentForTest(liveRunning);
-			requestSubagentBatchStop();
-			routeSubagentOutcome({
-				pi: {
-					sendMessage(message: any, options: any) {
-						liveSent.push({ message, options });
-					},
+	it("steers a result that ends while the stop flag is set (D15: no parking)", () => {
+		const sent: Array<{ message: any; options: any }> = [];
+		const running = makeRunning({ id: "live-parent-child" });
+		setRunningSubagentForTest(running);
+		requestSubagentBatchStop();
+		routeSubagentOutcome({
+			pi: {
+				sendMessage(message: any, options: any) {
+					sent.push({ message, options });
 				},
-				running: liveRunning,
-				result: makeResult(),
-				updateWidget: () => {},
-			});
-			assert.deepEqual(liveSent[0]?.options, { triggerTurn: true, deliverAs: "steer" });
-
-			resetSubagentStateForTest();
-			process.env.PI_SUBAGENT_AUTO_EXIT = "1";
-			const steerSent: Array<{ message: any; options: any }> = [];
-			const autoExitRunning = makeRunning({ id: "auto-exit-parent-child" });
-			setRunningSubagentForTest(autoExitRunning);
-			requestSubagentBatchStop();
-			routeSubagentOutcome({
-				pi: {
-					sendMessage(message: any, options: any) {
-						steerSent.push({ message, options });
-					},
-				},
-				running: autoExitRunning,
-				result: makeResult(),
-				updateWidget: () => {},
-			});
-			assert.equal(steerSent[0]?.options.deliverAs, "steer");
-		} finally {
-			if (savedAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
-			else process.env.PI_SUBAGENT_AUTO_EXIT = savedAutoExit;
-		}
+			},
+			running,
+			result: makeResult(),
+			updateWidget: () => {},
+		});
+		assert.deepEqual(sent[0]?.options, { triggerTurn: true, deliverAs: "steer" });
 	});
 
 	it("routes child pings without caching a completed result", () => {

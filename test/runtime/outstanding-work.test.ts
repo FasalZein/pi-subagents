@@ -150,8 +150,6 @@ test("awaited children and manual-close children count, foreign adopted observat
 
 test("a report steered while the stop flag is set keeps its lease until a settled turn carried it", async () => {
 	const h = await harness();
-	const savedAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
-	delete process.env.PI_SUBAGENT_AUTO_EXIT;
 	try {
 		const running = child("parked");
 		runningSubagents.set(running.id, running);
@@ -168,8 +166,6 @@ test("a report steered while the stop flag is set keeps its lease until a settle
 		await h.emit("agent_settled");
 		assert.equal(h.counts.at(-1), 0);
 	} finally {
-		if (savedAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
-		else process.env.PI_SUBAGENT_AUTO_EXIT = savedAutoExit;
 		await h.stop();
 	}
 });
