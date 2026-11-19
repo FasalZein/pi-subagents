@@ -55,20 +55,27 @@
 		]
 	},
 	"knip": {
-		"ignoreBinaries": [
-			"cmux",
-			"ghostty",
-			"herdr",
-			"pkill",
-			"where.exe",
-			"wezterm",
-			"zellij"
+		"entry": [
+			"src/index.ts",
+			"scripts/context-cost-probe.mjs",
+			"scripts/orchestration-benchmark.mjs",
+			"scripts/orchestration-benchmark-gate.mjs",
+			"scripts/orchestration-benchmark/freeze-agents.mjs",
+			"scripts/orchestration-benchmark/load-probe.ts",
+			"scripts/orchestration-benchmark/scenarios/**/*.mjs",
+			"scripts/pi-extension-load.mjs",
+			"scripts/roster-limits-benchmark.mjs"
 		],
 		"ignoreFiles": [
 			"scripts/live-vf-candidate-router.mjs",
 			"scripts/check-file-sizes.mjs",
 			"src/launch/run-child.mjs"
-		]
+		],
+		"ignoreIssues": {
+			"scripts/orchestration-benchmark/{attempt,baseline-plan,baseline-report,delivery,record,sample-home}.mjs": [
+				"exports"
+			]
+		}
 	},
 	"trustedDependencies": [
 		"koffi",
