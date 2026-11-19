@@ -51,6 +51,7 @@ export default function (pi: ExtensionAPI) {
 	// Factory-scoped because the takeover machinery that suppresses it lives
 	// inside the `if (autoExit)` block, while caller_ping registers outside it.
 	const callerPingState = createCallerPingState();
+	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: shouldRegisterSubagentDone(denied) });
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
@@ -268,8 +269,6 @@ export default function (pi: ExtensionAPI) {
 		let toolExecutionsThisTurn = 0;
 		let terminatingToolExecutionsThisTurn = 0;
 		let terminatingSubagentLaunchesThisTurn = 0;
-		const completionNudge = createCompletionNudge(pi);
-		pi.on("session_start", (_event, ctx) => completionNudge.markRunStart(ctx));
 
 		const AUTO_EXIT_DISABLED_MSG = "Auto-exit disabled — close manually or /auto-exit to re-enable";
 		// Single owner of the disabled latch and the operator-facing status/toast.
@@ -449,7 +448,7 @@ export default function (pi: ExtensionAPI) {
 			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
 			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
-			if (completionNudge.nudgeOnce(ctx)) return;
+			if (completionNudge.nudgeOnce()) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});
@@ -491,6 +490,7 @@ export default function (pi: ExtensionAPI) {
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
 			isTakenOver: () => takeover.tookOver,
+			onAccepted: completionNudge.markCallAccepted,
 		});
 	}
 
@@ -500,6 +500,7 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
+			onAccepted: completionNudge.markCallAccepted,
 		});
 	}
 

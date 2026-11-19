@@ -4,7 +4,9 @@ import {
 	clearPublishedRunningSubagentCountForTest,
 	createTestDir,
 	describe,
+	isCompletionNudge,
 	it,
+	NUDGE_ANSWERED_WITHOUT_CALL,
 	join,
 	readFileSync,
 	resetSubagentStateForTest,
@@ -53,9 +55,12 @@ describe("subagent-done.ts", () => {
 					handlers.set(event, handler);
 				},
 				sendUserMessage(message: string, options?: unknown) {
+					// D12: the model answers the completion nudge without a call; the child then exits.
+					if (isCompletionNudge(message)) return void handlers.get("agent_end")?.(NUDGE_ANSWERED_WITHOUT_CALL, ctx);
 					sentMessages.push(message);
 					sentMessageOptions.push(options);
 				},
+				appendEntry() {},
 				registerShortcut() {},
 			} as any);
 

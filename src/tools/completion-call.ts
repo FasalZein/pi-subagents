@@ -78,6 +78,8 @@ export interface SubagentDoneDeps {
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => unknown;
 	requestShutdown: (ctx: { shutdown: () => void }) => void;
 	getOutputTokens: () => number;
+	/** D12: an accepted call; the run gets no missing-call nudge after it. */
+	onAccepted(): void;
 }
 
 export function registerSubagentDoneTool(
@@ -96,6 +98,7 @@ export function registerSubagentDoneTool(
 			refuseOversizeSummary((params as { summary?: unknown }).summary);
 			const args = params as Record<string, unknown>;
 			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args });
+			deps.onAccepted();
 			if (deps.isTakenOver()) {
 				// D11/D12: the result stays in this session; the pane closes only
 				// when the person closes it. The model's turn still ends here.

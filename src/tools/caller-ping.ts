@@ -59,6 +59,8 @@ export interface CallerPingDeps {
 	getOutputTokens: () => number;
 	/** D11: a person took over the pane; no exit path of the child may close it. */
 	isTakenOver: () => boolean;
+	/** D12: an accepted ping; the run gets no missing-call nudge after it. */
+	onAccepted(): void;
 }
 
 function buildCallerPingParams() {
@@ -116,6 +118,7 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 			}
 
 			recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params });
+			deps.onAccepted();
 			if (deps.isTakenOver()) {
 				// D11/D12: the ping stays in this session; no exit record, no shutdown. The parent
 				// reads it when the person closes the pane.

@@ -3,8 +3,10 @@ import {
 	assert,
 	createTestDir,
 	describe,
+	isCompletionNudge,
 	it,
 	join,
+	NUDGE_ANSWERED_WITHOUT_CALL,
 	readFileSync,
 	rmSync,
 	shouldAutoExitOnAgentEnd,
@@ -540,6 +542,7 @@ describe("subagent-done.ts", () => {
 				let statusKey: string | undefined;
 				let statusMessage: string | undefined;
 				let notifyMsg: string | undefined;
+				const sent: unknown[] = [];
 				subagentDoneExtension({
 					getAllTools: () => [],
 					getActiveTools: () => [],
@@ -551,6 +554,9 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					sendUserMessage(message: unknown) {
+						sent.push(message);
+					},
 					appendEntry() {},
 					registerCommand(name: string, def: any) {
 						commands.set(name, def);
@@ -591,15 +597,17 @@ describe("subagent-done.ts", () => {
 
 				// Now simulate a new turn completing normally
 				handlers.get("agent_start")?.({});
-				// After /auto-exit, agent_end should auto-exit
-				handlers.get("agent_end")?.(
-					{ messages: [{ role: "assistant", stopReason: "stop" }] },
-					{
-						shutdown() {
-							shutdowns += 1;
-						},
+				// After /auto-exit, agent_end should auto-exit: after the one D12
+				// completion nudge, which the model answers without a call.
+				const endCtx = {
+					shutdown() {
+						shutdowns += 1;
 					},
-				);
+				};
+				handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "stop" }] }, endCtx);
+				assert.equal(sent.length, 1);
+				assert.ok(isCompletionNudge(sent[0]), "the re-armed child gets the completion nudge first");
+				handlers.get("agent_end")?.(NUDGE_ANSWERED_WITHOUT_CALL, endCtx);
 				await sleep(0);
 
 				assert.equal(shutdowns, 1, "should auto-exit after /auto-exit re-enables it");
