@@ -274,9 +274,19 @@ export function wireSubagentSteerBack(
 					id: running.id,
 					name: running.name,
 					task: running.task,
+					agent: running.agent,
+					status: "failed",
+					outcome: failed.resultOutcome ?? "failed",
+					exitCode: failed.exitCode,
+					elapsed: failed.elapsed,
+					// The durable session target only; an ephemeral session is never exposed.
+					sessionFile: failed.sessionFile,
 					deliveryState: running.deliveryState,
 					parentClosePolicy: running.parentClosePolicy,
+					errorMessage: error,
 					error: err?.message,
+					...(failed.resultRunId ? { runId: failed.resultRunId } : {}),
+					...(failed.reportFile ? { reportFile: failed.reportFile } : {}),
 				},
 			});
 		});

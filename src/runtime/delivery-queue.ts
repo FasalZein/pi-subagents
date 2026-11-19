@@ -1,18 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { outstandingWork } from "./outstanding-work.ts";
-
-interface RunEndMessage {
-	customType: "subagent_result" | "subagent_ping";
-	content: string;
-	display: true;
-	details: { id: string };
-}
+import { groupRunEnds, type RunEndMessage, runEndIds } from "./run-end-message.ts";
 
 /**
  * D15: the one owner of run-end delivery to the parent. A result stays in this queue until the
  * parent session commits its message (Pi emits message_end for it). Pi's own steer queue is
  * editable: Alt+Up or Esc can clear it, so a result enters it only at a turn boundary, right
- * before Pi polls it, and one at a time while it is empty. A result that the boundary did not
+ * before Pi polls it, and only while it is empty. All results queued at one boundary leave as one
+ * message (D15). A result that the boundary did not
  * commit is handed over again at the next boundary, or at once when the parent is idle. Delivery
  * is at least once; no result waits for the person's next prompt.
  */
@@ -36,12 +31,11 @@ class DeliveryQueue {
 			const stop = (event.message as { stopReason?: string }).stopReason;
 			// An aborted or failed turn polls no steer; the settle step hands the result over.
 			if (stop === "aborted" || stop === "error" || ctx.hasPendingMessages()) return;
-			const [next] = this.pending.values();
-			if (next) this.send(next, true);
+			this.sendPending();
 		});
 		pi.on("agent_settled", () => {
 			this.busy = false;
-			for (const message of this.pending.values()) this.send(message, true);
+			this.sendPending();
 		});
 		pi.on("session_shutdown", () => {
 			// A closed or replaced session gets no more deliveries (D15); results stay in their files.
@@ -52,8 +46,8 @@ class DeliveryQueue {
 	}
 
 	/**
-	 * A run end that a wait holds: queued like every run end, but not sent at once. The wait's reply
-	 * takes it, an aborted wait releases it, and a boundary that comes first hands it over.
+	 * A run end that a wait holds: queued like every run end, but the wait owns it. The wait's reply
+	 * takes it, or an aborted wait releases it; no boundary hands it over before that (R4).
 	 */
 	hold(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage): void {
 		this.pending.set(message.details.id, message);
@@ -95,12 +89,18 @@ class DeliveryQueue {
 		this.pi?.sendMessage(message, { triggerTurn, deliverAs: "steer" });
 	}
 
+	/** One boundary hands every queued result that no wait holds over as one message. */
+	private sendPending(): void {
+		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
+		if (free.length === 0) return;
+		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
+	}
+
+	/** A committed message delivers every run end it carries, grouped or single. */
 	private commit(message: unknown): void {
-		if (!message || typeof message !== "object" || !("role" in message) || message.role !== "custom") return;
-		const details = (message as { details?: { id?: unknown } }).details;
-		if (typeof details?.id === "string") {
-			this.pending.delete(details.id);
-			this.held.delete(details.id);
+		for (const id of runEndIds(message)) {
+			this.pending.delete(id);
+			this.held.delete(id);
 		}
 	}
 

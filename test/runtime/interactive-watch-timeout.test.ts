@@ -194,6 +194,19 @@ describe("interactive watcher timeout outcome", () => {
 		assert.equal(result.timedOut, undefined);
 		assert.match(result.summary, /Subagent error/);
 		assert.equal(readSubagentTimeoutSidecar(sessionFile), null);
+		// T22 fix round 1: the failed end keeps the durable session target for resume and the overlay.
+		assert.equal(result.sessionFile, sessionFile);
+	});
+
+	it("never exposes an ephemeral session on a plain surface failure", async () => {
+		const sessionFile = makeSession();
+		const result = await watchSubagent(
+			makeRunning(sessionFile, { noSession: true }),
+			{ cleanupNoSessionSessionFile() {}, async closeRunningSurface() {} },
+			new AbortController().signal,
+		);
+		assert.match(result.summary, /Subagent error/);
+		assert.equal(result.sessionFile, undefined);
 	});
 
 	it("closes a blocked pane at the warning threshold and continues the same session for wrap-up", async () => {

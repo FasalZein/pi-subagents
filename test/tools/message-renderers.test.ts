@@ -1,3 +1,4 @@
+import { groupRunEnds } from "../../src/runtime/run-end-message.ts";
 import {
 	formatSubagentBatchLines,
 	formatSubagentCompletionLines,
@@ -56,6 +57,42 @@ describe("subagent message renderers", () => {
 			assert.equal(unpaddedContent.startsWith(" "), false);
 			assert.equal(paddedContent.startsWith(" "), true);
 		}
+	});
+
+	it("renders a grouped run-end message as one box per result, each in its own kind", () => {
+		const renderers = new Map<string, (...args: any[]) => any>();
+		registerSubagentMessageRenderers(
+			{
+				registerMessageRenderer: (name: string, renderer: (...args: any[]) => any) => renderers.set(name, renderer),
+			} as any,
+			(seconds) => `${seconds}s`,
+		);
+		const group = groupRunEnds([
+			{
+				customType: "subagent_result",
+				content: "done text",
+				display: true,
+				details: { id: "a", name: "alpha", status: "completed", exitCode: 0, elapsed: 1 } as any,
+			},
+			{
+				customType: "subagent_ping",
+				content: "help text",
+				display: true,
+				details: { id: "b", name: "beta", message: "need help", elapsed: 2 } as any,
+			},
+			{
+				customType: "subagent_result",
+				content: "failed text",
+				display: true,
+				details: { id: "c", name: "gamma", status: "failed", exitCode: 1, elapsed: 3 } as any,
+			},
+		]);
+		const lines: string[] = renderers.get(group.customType)!(group, { expanded: true, outputPad: 0 }, theme).render(60);
+		const headers = lines.map((line) => line.trim()).filter((line) => /^[✓?✗]/.test(line));
+		assert.equal(headers.length, 3, JSON.stringify(lines));
+		assert.match(headers[0]!, /^✓ alpha/);
+		assert.match(headers[1]!, /^\? beta/);
+		assert.match(headers[2]!, /^✗ gamma/);
 	});
 
 	it("renders expandable task previews with the native tool expand hint", () => {

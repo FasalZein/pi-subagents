@@ -1,5 +1,6 @@
 import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
+import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -261,35 +262,37 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(seen[0], abort.signal);
 	});
 
-	it("a tool result and a committed message both carry child 1: capped copies, released once by id", async () => {
+	it("a tool result and a committed message both carry child 1: capped copies, released once by id; a running sibling stays counted", async () => {
 		const parent = mockParent();
 		const counts: number[] = [];
 		const unsubscribe = outstandingWork.subscribe(() => counts.push(outstandingWork.count));
 		try {
 			const running = { ...blockingRunning("child-one"), blocking: false, async: true };
 			setRunningSubagentForTest(running as any);
+			// T22: a sibling that is still running counts through both copies.
+			setRunningSubagentForTest({ ...blockingRunning("sibling"), blocking: false, async: true } as any);
 			// The parent is idle, so the run end goes to Pi at once and Pi holds a copy.
 			routeDetachedSubagentCompletionForTest(parent.pi, running as any, endOf(running.name, LONG_REPORT));
 			assert.equal(parent.sent.length, 1);
-			// From here the run is outstanding only as a delivery lease.
-			assert.equal(outstandingWork.count, 1);
+			// From here child-one is outstanding only as a delivery lease.
+			assert.equal(outstandingWork.count, 2);
 			counts.length = 0;
 			const waited = await waitForSubagentForTest({ id: running.id });
 			const waitCopy = waited.content[0].text as string;
 			const message = parent.sent[0];
 			// Pi commits the copy it already held and the next request carries it.
 			parent.fire("message_end", { message: { role: "custom", ...message } });
-			outstandingWork.consume([{ role: "custom", ...message }]);
-			outstandingWork.settle();
+			// The reporting hook releases what the committed message carries (work-reporting.ts).
+			outstandingWork.release(...runEndIds({ role: "custom", ...message }));
 
 			for (const copy of [waitCopy, message.content]) {
 				assert.match(copy, /REPORT-HEAD/);
 				assert.ok(copy.length <= COPY_CAP, `copy is ${copy.length} chars`);
 				assert.ok(!copy.includes(REPORT_TAIL));
 			}
-			const releases = counts.filter((count, index) => count === 0 && (counts[index - 1] ?? 1) > 0);
+			const releases = counts.filter((count, index) => count === 1 && (counts[index - 1] ?? 2) > 1);
 			assert.equal(releases.length, 1, `counts ${JSON.stringify(counts)}`);
-			assert.equal(outstandingWork.count, 0);
+			assert.equal(outstandingWork.count, 1, "the running sibling still counts");
 			assert.equal(pendingRunEndCount(), 0);
 		} finally {
 			unsubscribe();
