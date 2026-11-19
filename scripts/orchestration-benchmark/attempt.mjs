@@ -19,6 +19,7 @@ import {
 	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
+	resumedRuns,
 	scoreAttempt,
 	summarizeChild,
 	summarizeChildren,
@@ -254,6 +255,9 @@ export function classifyAttempt({
 		checkout: cli.checkout,
 		parentTool: scenario.parentLoadTool,
 		childTool: scenario.childLoadTool,
+		resumedFiles: evidence.parent
+			? resumedRuns(evidence.parent.events).map((run) => run.sessionFile)
+			: [],
 	});
 	const metrics = { parent, children, load };
 	const probed = [...load.children, ...load.resumes];

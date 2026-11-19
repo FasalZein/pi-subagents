@@ -380,11 +380,52 @@ export function containsToken(text, token) {
 
 /** True when the child's own last reply ended its turn normally. */
 export function childEnded(events) {
-	const own = events.slice(Math.max(0, launchBoundary(events)) + 1);
+	return endedAfter(events, launchBoundary(events));
+}
+
+function endedAfter(events, index) {
+	const own = events.slice(Math.max(0, index) + 1);
 	return (
 		assistantMessages(own).at(-1)?.stopReason === "stop" ||
 		acceptedCompletion(own) !== null
 	);
+}
+
+const RESUME_TOOL = "subagent_resume";
+
+/**
+ * Resumes the parent started: one per successful subagent_resume tool result, with
+ * the session file it names (both releases put it in details.sessionFile, also for
+ * a resume by run id) and the time of the parent entry that made the call.
+ * @returns {Array<{sessionFile: string, calledAt: number}>}
+ */
+export function resumedRuns(parentEvents) {
+	const calledAt = new Map();
+	const resumes = [];
+	for (const e of parentEvents) {
+		const m = e?.type === "message" ? e.message : null;
+		if (m?.role === "assistant")
+			for (const part of m.content ?? [])
+				if (part.type === "toolCall") calledAt.set(part.id, Date.parse(e.timestamp));
+		if (m?.role !== "toolResult" || m.toolName !== RESUME_TOOL || m.isError) continue;
+		const sessionFile = m.details?.sessionFile;
+		if (typeof sessionFile === "string")
+			resumes.push({ sessionFile, calledAt: calledAt.get(m.toolCallId) ?? Number.NaN });
+	}
+	return resumes;
+}
+
+/**
+ * True when the resumed run has ended: a completion after its own boundary, the
+ * first user message (its task) written after the parent's resume call. The first
+ * run's completion earlier in the same file does not count. Before its task
+ * arrives the run is open.
+ */
+export function resumeEnded(events, calledAt) {
+	const task = events.findIndex(
+		(e) => e?.type === "message" && e.message?.role === "user" && Date.parse(e.timestamp) > calledAt,
+	);
+	return task >= 0 && endedAfter(events, task);
 }
 
 // Candidate (T59a): an auto-exit child ends with a subagent_done call that the
@@ -627,23 +668,30 @@ export function endsWithProviderError(events) {
  * otherFiles are the remaining session files of the attempt (no parent, no
  * launch marker): each needs a probe too, or it counts as a missing probe. Its
  * probe is still unmatched, because the file is no parent or child session.
- * @param {{parentFile: string, childFiles: string[], otherFiles: string[], checkout: string, parentTool: string, childTool: string}} input
+ * resumedFiles: the session file of each resume the parent started (resumedRuns).
+ * @param {{parentFile: string, childFiles: string[], otherFiles: string[], checkout: string, parentTool: string, childTool: string, resumedFiles?: string[]}} input
  */
 export function loadEvidence(
 	probes,
-	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool },
+	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool, resumedFiles = [] },
 ) {
-	// The first probe of a session file is its launch; a later probe of a child
-	// file is a resumed run (subagent_resume appends to the child's session file).
+	// The first probe of a session file is its launch. A later probe of a child
+	// file is a resumed run only up to the number of parent resumes that name the
+	// file (subagent_resume appends to it); any other second probe is unmatched (F8).
 	const bySession = new Map();
-	for (const probe of probes)
-		if (!bySession.has(probe.sessionFile))
-			bySession.set(probe.sessionFile, probe);
+	const extra = new Map();
+	for (const probe of probes) {
+		if (!bySession.has(probe.sessionFile)) bySession.set(probe.sessionFile, probe);
+		else extra.set(probe.sessionFile, [...(extra.get(probe.sessionFile) ?? []), probe]);
+	}
 	const childFileSet = new Set(childFiles);
-	const resumes = probes.filter(
-		(probe) =>
-			childFileSet.has(probe.sessionFile) &&
-			bySession.get(probe.sessionFile) !== probe,
+	const allowed = new Map();
+	for (const file of resumedFiles)
+		if (childFileSet.has(file)) allowed.set(file, (allowed.get(file) ?? 0) + 1);
+	const resumes = [...extra].flatMap(([file, list]) => list.slice(0, allowed.get(file) ?? 0));
+	const unprobedResumes = [...allowed].reduce(
+		(sum, [file, count]) => sum + Math.max(0, count - (extra.get(file)?.length ?? 0)),
+		0,
 	);
 	const fromCheckout = (probe, tool) =>
 		Boolean(
@@ -660,6 +708,7 @@ export function loadEvidence(
 		parent ? null : "parent",
 		...children.filter((c) => !c.probe).map(() => "child"),
 		...otherFiles.filter((file) => !bySession.has(file)).map(() => "other"),
+		...Array(unprobedResumes).fill("resume"),
 	].filter(Boolean);
 	// The reverse join: every probe needs its own session file of this attempt.
 	const sessionFiles = new Set([parentFile, ...childFiles]);
