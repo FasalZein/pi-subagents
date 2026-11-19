@@ -347,11 +347,12 @@ function watchBackgroundGeneration(
 
 		const onAbort = () => {
 			terminateChildProcessGroup(running, "SIGTERM");
+			// Unref, like the time-limit escalation: it must not keep the parent alive after a stop.
 			setTimeout(() => {
 				if (processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 					terminateChildProcessGroup(running, "SIGKILL");
 				}
-			}, 5000);
+			}, 5000).unref?.();
 		};
 		const finalizeExit = (
 			code: number | null,

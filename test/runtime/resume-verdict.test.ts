@@ -15,22 +15,15 @@ import {
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
+import "../support/ambient-spawn-grant.ts";
 import { assert, createTestDir, existsSync, writeExecutable, writeFileSync } from "../support/index.ts";
 import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 
-const SPAWN_GRANT_VARS = [
-	"PI_SUBAGENT_SPAWNABLE",
-	"PI_SUBAGENT_SPAWN_BUDGET",
-	"PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE",
-	"PI_SUBAGENT_SPAWN_DEPTH",
-] as const;
-
-/** Runs with the ambient spawn grant and the fake Pi command set, then restores both. */
+/** Runs with the fake Pi command set, then restores it; the ambient spawn grant hook clears the grant. */
 async function withFakePi<T>(bin: string, run: () => Promise<T>): Promise<T> {
-	const saved = [...SPAWN_GRANT_VARS, "PI_SUBAGENT_PI_COMMAND", "PI_ARTIFACT_PROJECT_ROOT"].map(
+	const saved = ["PI_SUBAGENT_PI_COMMAND", "PI_ARTIFACT_PROJECT_ROOT"].map(
 		(name) => [name, process.env[name]] as const,
 	);
-	for (const name of SPAWN_GRANT_VARS) delete process.env[name];
 	process.env.PI_SUBAGENT_PI_COMMAND = bin;
 	try {
 		return await run();
@@ -88,6 +81,15 @@ function createRuntime(watch: Watcher = async () => cleanResult()) {
 
 function cleanResult(overrides: Partial<SubagentResult> = {}): SubagentResult {
 	return { name: "blocked", task: "t", summary: "done", exitCode: 0, elapsed: 0, ...overrides };
+}
+
+/** A watcher that stays in flight until the test releases it, so the test can settle its leases. */
+function heldWatcher() {
+	let release: (result: SubagentResult) => void = () => {};
+	const result = new Promise<SubagentResult>((resolve) => {
+		release = resolve;
+	});
+	return { watch: () => result, release: () => release(cleanResult({ exitCode: 1, resultOutcome: "cancelled" })) };
 }
 
 function resumeTool(runtime: ReturnType<typeof createRuntime>) {
@@ -202,13 +204,12 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
 		await withFakePi(bin, async () => {
 			const sessionFile = writeBlockedSession(dir, "in-flight.jsonl");
-			const running = await serviceResume(
-				sessionFile,
-				createRuntime(() => new Promise(() => {})),
-				true,
-			);
+			const held = heldWatcher();
+			const running = await serviceResume(sessionFile, createRuntime(held.watch), true);
 			await waitForExit(running);
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);
+			held.release();
+			await running.completionPromise;
 		});
 	});
 
@@ -228,7 +229,8 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 		await withFakePi(bin, async () => {
 			const sessionFile = writeBlockedSession(dir, "twice.jsonl");
 			writeSubagentTimeoutSidecar(sessionFile, { kind: "timeout", blocksResume: false });
-			const runtime = createRuntime(() => new Promise(() => {}));
+			const held = heldWatcher();
+			const runtime = createRuntime(held.watch);
 			const [first, second] = await Promise.allSettled([
 				serviceResume(sessionFile, runtime),
 				serviceResume(sessionFile, runtime),
@@ -236,7 +238,11 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			assert.equal(first.status, "fulfilled");
 			assert.equal(second.status, "rejected");
 			assert.match(String((second as PromiseRejectedResult).reason), /already being resumed/);
-			if (first.status === "fulfilled") await waitForExit(first.value);
+			if (first.status === "fulfilled") {
+				await waitForExit(first.value);
+				held.release();
+				await first.value.completionPromise;
+			}
 		});
 	});
 
@@ -250,7 +256,8 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			const sessionFile = writeBlockedSession(realDir, "aliased.jsonl");
 			const aliasFile = join(dir, "alias", "aliased.jsonl");
 			writeSubagentTimeoutSidecar(sessionFile, { kind: "timeout", blocksResume: false });
-			const runtime = createRuntime(() => new Promise(() => {}));
+			const held = heldWatcher();
+			const runtime = createRuntime(held.watch);
 			const [first, second] = await Promise.allSettled([
 				serviceResume(sessionFile, runtime),
 				serviceResume(aliasFile, runtime),
@@ -258,7 +265,11 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			assert.equal(first.status, "fulfilled");
 			assert.equal(second.status, "rejected");
 			assert.match(String((second as PromiseRejectedResult).reason), /already being resumed/);
-			if (first.status === "fulfilled") await waitForExit(first.value);
+			if (first.status === "fulfilled") {
+				await waitForExit(first.value);
+				held.release();
+				await first.value.completionPromise;
+			}
 
 			const other = createRuntime();
 			other.runningSubagents.set("cccc0001", {
