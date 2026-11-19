@@ -31,7 +31,13 @@ describe("overlay rows from run-end messages (T22)", () => {
 			{
 				customType: "subagent_result",
 				content: "old result",
-				details: { id: "old-1", name: "old-result", status: "completed", exitCode: 0, sessionFile: join(dir, "a.jsonl") },
+				details: {
+					id: "old-1",
+					name: "old-result",
+					status: "completed",
+					exitCode: 0,
+					sessionFile: join(dir, "a.jsonl"),
+				},
 			},
 			{
 				customType: "subagent_ping",
@@ -51,7 +57,12 @@ describe("overlay rows from run-end messages (T22)", () => {
 	it("a grouped message with done, blocked and failed reads back as three rows", async () => {
 		const dir = createTestDir();
 		const entry = (customType: RunEndMessage["customType"], id: string, details: object): RunEndMessage =>
-			({ customType, content: `${id} text`, display: true, details: { id, name: id, sessionFile: join(dir, `${id}.jsonl`), ...details } }) as RunEndMessage;
+			({
+				customType,
+				content: `${id} text`,
+				display: true,
+				details: { id, name: id, sessionFile: join(dir, `${id}.jsonl`), ...details },
+			}) as RunEndMessage;
 		const group = groupRunEnds([
 			entry("subagent_result", "r-done", { status: "completed", outcome: "done", exitCode: 0 }),
 			entry("subagent_ping", "r-blocked", { outcome: "blocked", message: "help" }),
@@ -81,12 +92,19 @@ describe("overlay rows from run-end messages (T22)", () => {
 		} as CompletedSubagentResult);
 		// The session file holds its message too, without a session file of its own.
 		const file = sessionWith(dir, [
-			{ customType: "subagent_result", content: "done", details: { id: "ephemeral", name: "ephemeral", status: "completed" } },
+			{
+				customType: "subagent_result",
+				content: "done",
+				details: { id: "ephemeral", name: "ephemeral", status: "completed" },
+			},
 		]);
 		const items = await buildCompletedItems(overlayCtx(file));
 		assert.equal(items.length, 1);
 		assert.equal(items[0]?.canResume, false);
 		completedSubagentResults.clear();
-		assert.equal((await buildCompletedItems(overlayCtx(file))).some((item) => item.canResume), false);
+		assert.equal(
+			(await buildCompletedItems(overlayCtx(file))).some((item) => item.canResume),
+			false,
+		);
 	});
 });
