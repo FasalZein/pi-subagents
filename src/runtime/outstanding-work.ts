@@ -23,12 +23,11 @@ class OutstandingWork {
 		return ids.size;
 	}
 
-	delivery(id: string, send: () => void, consumedOnDelivery = false): void {
+	delivery(id: string, send: () => void): void {
 		// No consumer means no reporting state to retain (headless/non-Herdr).
 		if (!this.listener) { send(); return; }
 		this.pending.add(id);
-		if (consumedOnDelivery) this.consumed.add(id);
-		else this.consumed.delete(id);
+		this.consumed.delete(id);
 		this.listener();
 		try { send(); } catch (error) {
 			this.pending.delete(id);

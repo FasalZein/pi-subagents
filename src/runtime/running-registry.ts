@@ -1,7 +1,8 @@
-import { outstandingWork } from "./outstanding-work.ts";
+import { deliverRunEnd } from "./delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, routeSubagentOutcome } from "./result-router.ts";
+import { withRuntimeEnd } from "./run-result.ts";
 import { resultTextOf } from "./unpublished-result.ts";
 import {
 	clearSubagentShutdownTimer,
@@ -248,33 +249,35 @@ export function wireSubagentSteerBack(
 			releaseSpawnWidthSlot(running);
 			runningSubagents.delete(running.id);
 			updateWidget();
-			outstandingWork.delivery(running.id, () => pi.sendMessage(
+			// D14 and R2: a watcher error is a failed end, published to the run's files before the
+			// hand-over and rendered by the one renderer.
+			const error = `watcher error: ${err?.message ?? String(err)}`;
+			const failed = withRuntimeEnd(
+				running,
 				{
-					customType: "subagent_result",
-					// D14: a watcher error is a failed end with the one rendering.
-					content: resultTextOf({
-						id: running.id,
-						name: running.name,
-						agent: running.agent,
-						task: running.task,
-						summary: "",
-						summarySource: "runtime",
-						sessionFile: running.noSession ? undefined : running.sessionFile,
-						exitCode: 1,
-						elapsed: (Date.now() - running.startTime) / 1000,
-						errorMessage: `watcher error: ${err?.message ?? String(err)}`,
-					}),
-					display: true,
-					details: {
-						id: running.id,
-						name: running.name,
-						task: running.task,
-						deliveryState: running.deliveryState,
-						parentClosePolicy: running.parentClosePolicy,
-						error: err?.message,
-					},
+					name: running.name,
+					task: running.task,
+					summary: "",
+					summarySource: "runtime",
+					sessionFile: running.noSession ? undefined : running.sessionFile,
+					exitCode: 1,
+					elapsed: (Date.now() - running.startTime) / 1000,
+					errorMessage: error,
 				},
-				{ triggerTurn: true, deliverAs: "steer" },
-			));
+				{ kind: "failed", error },
+			);
+			deliverRunEnd(pi, running.id, {
+				customType: "subagent_result",
+				content: resultTextOf({ ...failed, id: running.id, agent: running.agent }),
+				display: true,
+				details: {
+					id: running.id,
+					name: running.name,
+					task: running.task,
+					deliveryState: running.deliveryState,
+					parentClosePolicy: running.parentClosePolicy,
+					error: err?.message,
+				},
+			});
 		});
 }
