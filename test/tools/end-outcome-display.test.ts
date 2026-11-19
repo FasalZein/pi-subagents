@@ -56,8 +56,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
-		deliveryState: "detached",
+		phase: "running",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -114,6 +113,7 @@ async function renderedWaitingLaunch(running: RunningSubagent, result: SubagentR
 	const reply = result.ping
 		? await waitForSubagentResult({ id: running.id }, {
 				findTrackedSubagent: () => ({ running: { ...running, completionPromise: Promise.resolve(result) } }),
+				runningSubagents: new Map(),
 				updateWidget() {},
 			} as never)
 		: await waitForSubagentResult({ id: running.id }, {
@@ -210,6 +210,7 @@ function publishedWait(running: RunningSubagent, result: SubagentResult) {
 		result.ping
 			? waitForSubagentResult({ id: running.id }, {
 					findTrackedSubagent: () => ({ running: { ...running, completionPromise: Promise.resolve(result) } }),
+					runningSubagents: new Map(),
 					updateWidget() {},
 				} as never)
 			: waitForSubagentResult({ id: running.id }, {
@@ -336,7 +337,7 @@ describe("end outcome displays (T09 fix round 1)", () => {
 	it("shows a finished report-only wrap-up as timed out with its notice, not completed", async () => {
 		const running = setup(DONE_CALL, {
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			timeoutWrapUpMode: true,
+			phase: "wrapping-up",
 		});
 		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: running.timeoutWrapUp });
 		for (const shown of [renderedMessage(running, result).text, await renderedWaitingLaunch(running, result)]) {

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
 import type { CompletedSubagentResult, DeliveryState, RunningSubagent, SubagentResult, WaitParams } from "../types.ts";
 import { queuedRunEnd } from "./delivery-queue.ts";
+import { claimRunEnd, releaseRunEndClaim } from "./wait-holds.ts";
 import type { WaitRuntime } from "./wait.ts";
 import { getTimeoutResultDetails } from "./timeout-budget.ts";
 import { resultTextOf } from "./unpublished-result.ts";
@@ -72,16 +72,6 @@ function getSubagentWaitErrorResult(message: string, error: string, extra: Recor
 	};
 }
 
-function releaseSubagentWaitOwnership(runtime: WaitRuntime, running: RunningSubagent, ownerId: string): void {
-	if (runtime.runningSubagents.get(running.id) !== running) return;
-	if (running.resultOwner?.kind !== "wait") return;
-	if (running.resultOwner.ownerId !== ownerId) return;
-	running.resultOwner = undefined;
-	running.allowSteerDelivery = true;
-	running.deliveryState = "detached";
-	runtime.updateWidget();
-}
-
 export async function waitForSubagentResult(params: WaitParams, runtime: WaitRuntime, signal?: AbortSignal) {
 	const match = runtime.findTrackedSubagent(params.id);
 	// A run end that is queued without a cached result (an early ping) is taken like any other.
@@ -125,13 +115,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 
 	const running = match.running!;
-	if (running.resultOwner) {
-		return getSubagentWaitErrorResult(
-			`Sub-agent "${running.name}" is already owned by another synchronization call.`,
-			"already_owned",
-			{ id: running.id },
-		);
-	}
 	if (!running.completionPromise) {
 		return getSubagentWaitErrorResult(`Sub-agent "${running.name}" is missing completion tracking.`, "not_found", {
 			id: running.id,
@@ -146,10 +129,14 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		});
 	}
 
-	const ownerId = `wait:${randomUUID()}`;
-	running.resultOwner = { kind: "wait", ownerId };
-	running.allowSteerDelivery = false;
-	running.deliveryState = "awaited";
+	const claim = claimRunEnd(running);
+	if (!claim) {
+		return getSubagentWaitErrorResult(
+			`Sub-agent "${running.name}" is already owned by another synchronization call.`,
+			"already_owned",
+			{ id: running.id },
+		);
+	}
 	runtime.updateWidget();
 
 	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -201,7 +188,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 			return getSubagentWaitSuccessResult(completed);
 		}
 
-		releaseSubagentWaitOwnership(runtime, running, ownerId);
 		if (outcome.kind === "interrupted") {
 			// D16: Esc stops only the wait. The run keeps running and reports by message, for
 			// subagent_wait and for a launch that waits alike.
@@ -232,5 +218,8 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	} finally {
 		if (timeoutHandle) clearTimeout(timeoutHandle);
 		abortCleanup();
+		// The run ended or the wait stopped: no claim outlives this wait. A row still shown loses its badge.
+		releaseRunEndClaim(running, claim);
+		if (runtime.runningSubagents.get(running.id) === running) runtime.updateWidget();
 	}
 }

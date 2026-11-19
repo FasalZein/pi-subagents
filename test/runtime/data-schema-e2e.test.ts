@@ -126,8 +126,7 @@ async function startParent(plan: Record<string, ReturnType<typeof fauxToolCall>[
 				task: params.task,
 				agent: "reviewer",
 				mode: "background",
-				executionState: "running",
-				deliveryState: "detached",
+				phase: "running",
 				parentClosePolicy: "terminate",
 				blocking: false,
 				async: true,
@@ -267,15 +266,18 @@ function launchWith(schema: unknown) {
 	];
 }
 
-async function launchAndRunChild(replies: FauxResponseStep[]) {
-	const parent = await startParent({
+async function launchAndRunChild(
+	replies: FauxResponseStep[],
+	calls = {
 		delegate: launchWith(VERDICT_SCHEMA),
 		join: [fauxToolCall("subagent_wait", { ids: ["id-diff-reviewer"] }, { id: "wait-1" })],
-	});
+	},
+) {
+	const parent = await startParent(calls);
 	await parent.session.prompt("delegate");
 	await parent.session.waitForIdle();
 	const params = parent.launches.get("diff-reviewer");
-	assert.ok(params?.dataSchemaFile, "the launch hands the child a schema file");
+	assert.ok(params?.dataSchemaFile, `the launch hands the child a schema file: ${parent.toolReplies("subagent")[0]?.text}`);
 	assert.deepEqual(JSON.parse(readFileSync(params.dataSchemaFile, "utf8")), VERDICT_SCHEMA);
 	const launchReply = parent.toolReplies("subagent")[0]!;
 	assert.doesNotMatch(launchReply.text, /additionalProperties|approve/, "the launch reply does not echo the schema");
@@ -432,4 +434,69 @@ describe("T37: data checked against a launch schema, end to end", () => {
 			}
 		});
 	}
+});
+
+// T64: Claude-family models send object and array arguments as JSON strings. A string that parses as
+// a JSON object or array is that value; any other string stays a string and is checked as one.
+describe("T64: object and array arguments sent as JSON strings, end to end", () => {
+	// The model's raw arguments: children, each child's schema and the wait ids as JSON strings.
+	const children = [
+		{
+			name: "diff-reviewer",
+			task: "Review the change.",
+			title: "Review the change",
+			agent: "reviewer",
+			schema: JSON.stringify(VERDICT_SCHEMA),
+		},
+	];
+	const launchAsStrings = (replies: FauxResponseStep[]) =>
+		launchAndRunChild(replies, {
+			delegate: [fauxToolCall("subagent", { children: JSON.stringify(children) } as ToolArgs, { id: "launch-1" })],
+			join: [fauxToolCall("subagent_wait", { ids: JSON.stringify(["id-diff-reviewer"]) } as ToolArgs, { id: "wait-1" })],
+		});
+
+	const doneWith = (args: Record<string, unknown>, id: string) =>
+		fauxAssistantMessage(
+			[fauxToolCall(DONE, { outcome: "done", summary: "Reviewed the change.", ...args } as ToolArgs, { id })],
+			{ stopReason: "toolUse" },
+		);
+
+	it("children, schema, ids, data and artifacts as JSON strings: data is an object in the wait reply's record", async () => {
+		const { parent, child, record } = await launchAsStrings([
+			doneWith({ data: JSON.stringify(GOOD_DATA), artifacts: JSON.stringify(["/tmp/review.md"]) }, "c1"),
+			fauxAssistantMessage("late"),
+		]);
+		try {
+			assert.deepEqual(
+				child.doneResults.map((r) => r.isError),
+				[false],
+				child.doneResults.map((r) => r.text).join("\n"),
+			);
+			assert.equal(record.typed, true);
+			assert.deepEqual(record.data, GOOD_DATA);
+			assert.equal(record.dataError, undefined);
+			assert.deepEqual(record.artifacts, ["/tmp/review.md"]);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("a data string that is not JSON stays a string and is refused by the schema check", async () => {
+		const { parent, child, record } = await launchAsStrings([
+			doneWith({ data: "verdict: approve" }, "c1"),
+			doneWith({ data: "verdict: approve" }, "c2"),
+			fauxAssistantMessage("late"),
+		]);
+		try {
+			assert.deepEqual(
+				child.doneResults.map((r) => r.isError),
+				[true, false],
+			);
+			assert.match(child.doneResults[0]!.text, /- data: expected object, got string/);
+			assert.equal(record.data, undefined);
+			assert.match(String(record.dataError), /expected object, got string/);
+		} finally {
+			await parent.dispose();
+		}
+	});
 });
