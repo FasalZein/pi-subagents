@@ -1,8 +1,13 @@
+import { getSessionResultsDir } from "../../artifact-storage.ts";
+import { sessionResultStore } from "../../runtime/result-files.ts";
+import type { ResultOutcome, ResultRecord } from "../../runtime/result-record.ts";
 import { type RunEndEntry, runEnds } from "../../runtime/run-end-message.ts";
 import { firstLine } from "./render-helpers.ts";
+import type { OverlayContext } from "./render-types.ts";
 
-// The /subagents overlay reads finished runs back from the parent session file (D15): one entry
-// per run end, from grouped messages and from old single-result and ping messages alike.
+// The /subagents overlay reads finished runs back from the parent session's published records
+// (D13) and, for runs without one, from the parent session file (D15): one entry per run end,
+// from grouped messages and from old single-result and ping messages alike.
 
 interface RecoveredResultDetails {
 	id: string;
@@ -82,4 +87,36 @@ export function newestRunsBySession(runs: readonly RecoveredResultDetails[]): Ma
 		newest.set(key, run);
 	}
 	return newest;
+}
+
+export function recordStatus(outcome: ResultOutcome): RecoveredResultDetails["status"] {
+	if (outcome === "cancelled") return "cancelled";
+	return outcome === "failed" || outcome === "timed_out" ? "failed" : "completed";
+}
+
+/**
+ * The published records of this parent session (D13), whatever channel delivered them: a message,
+ * the launch reply or a wait. Pi's real session manager always has a session id; without one, none.
+ */
+export function sessionRecords(ctx: OverlayContext): ResultRecord[] {
+	const sessionId = ctx.sessionManager.getSessionId?.();
+	if (!sessionId) return [];
+	try {
+		return sessionResultStore(getSessionResultsDir(ctx.cwd, sessionId)).list();
+	} catch {
+		return [];
+	}
+}
+
+/** The newest record per session (or per run without one), by end time, then run id; oldest row first. */
+export function newestRecordsBySession(records: readonly ResultRecord[]): ResultRecord[] {
+	const newest = new Map<string, ResultRecord>();
+	for (const record of records) {
+		const key = record.sessionFile ?? record.runId;
+		const kept = newest.get(key);
+		if (!kept || record.endedAt > kept.endedAt || (record.endedAt === kept.endedAt && record.runId > kept.runId)) {
+			newest.set(key, record);
+		}
+	}
+	return [...newest.values()].sort((a, b) => a.endedAt - b.endedAt || (a.runId < b.runId ? -1 : 1));
 }

@@ -1,5 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { getSessionResultsDir } from "../../src/artifact-storage.ts";
+import { sessionResultStore } from "../../src/runtime/result-files.ts";
+import type { ResultOutcome, ResultRecord } from "../../src/runtime/result-record.ts";
 import { groupRunEnds, type RunEndMessage } from "../../src/runtime/run-end-message.ts";
 import { completedSubagentResults } from "../../src/runtime/state.ts";
 import { buildCompletedItems } from "../../src/tools/overlay/data.ts";
@@ -18,8 +21,51 @@ function sessionWith(dir: string, messages: Array<{ customType: string; content:
 	return file;
 }
 
-function overlayCtx(sessionFile: string) {
-	return { cwd: createTestDir(), sessionManager: { getSessionFile: () => sessionFile } } as never;
+function overlayCtx(sessionFile: string, cwd = createTestDir()) {
+	return { cwd, sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => PARENT_SESSION_ID } } as never;
+}
+
+const PARENT_SESSION_ID = "parent-session";
+
+/** Publishes one run's record in the parent session's results, as the production publisher does. */
+function publishRecord(
+	cwd: string,
+	run: { name: string; outcome: ResultOutcome; summary: string; sessionFile: string; endedAt: number },
+): ResultRecord {
+	const store = sessionResultStore(getSessionResultsDir(cwd, PARENT_SESSION_ID));
+	const reservation = store.reserve();
+	return store.publish(reservation, {
+		record: {
+			runId: reservation.runId,
+			name: run.name,
+			agent: "worker",
+			outcome: run.outcome,
+			summary: run.summary,
+			sessionFile: run.sessionFile,
+			artifacts: [],
+			endedAt: run.endedAt,
+			elapsedSeconds: 2,
+			exit: { code: 0 },
+			resume: { resumable: true },
+			typed: false,
+		},
+		report: run.summary,
+	});
+}
+
+/** The cache entry of a completion that a message or the launch delivered. */
+function cacheCompletion(record: ResultRecord, sessionFile: string): void {
+	const id: string = record.runId;
+	completedSubagentResults.set(id, {
+		id,
+		name: record.name,
+		task: "t",
+		summary: record.summary,
+		exitCode: 0,
+		elapsed: 2,
+		status: "completed",
+		sessionFile,
+	} as CompletedSubagentResult);
 }
 
 describe("overlay rows from run-end messages (T22)", () => {
@@ -188,5 +234,76 @@ describe("overlay rows from run-end messages (T22)", () => {
 			items.map((item) => item.activity),
 			["The current summary.", "The legacy summary."],
 		);
+	});
+});
+
+describe("overlay rows from published records (g3 P1)", () => {
+	afterEach(() => resetSubagentStateForTest());
+
+	it("a completion, then a resumed ping on the same session: the row is the ping, before and after the cache clears", async () => {
+		const dir = createTestDir();
+		const cwd = createTestDir();
+		const session = join(dir, "child.jsonl");
+		const file = sessionWith(dir, []);
+		const done = publishRecord(cwd, {
+			name: "child",
+			outcome: "done",
+			summary: "FIRST DONE",
+			sessionFile: session,
+			endedAt: 1_000,
+		});
+		cacheCompletion(done, session);
+		// The resumed run pings; a wait takes the ping, so neither the cache nor a message has it.
+		const ping = publishRecord(cwd, {
+			name: "child",
+			outcome: "blocked",
+			summary: "NEED HELP",
+			sessionFile: session,
+			endedAt: 2_000,
+		});
+		const rows = async () =>
+			(await buildCompletedItems(overlayCtx(file, cwd))).map((item) => [
+				item.id,
+				item.status,
+				item.activity,
+				item.canResume,
+			]);
+		assert.deepEqual(await rows(), [[ping.runId, "blocked", "NEED HELP", true]]);
+		completedSubagentResults.clear();
+		assert.deepEqual(await rows(), [[ping.runId, "blocked", "NEED HELP", true]]);
+	});
+
+	it("a ping and a completion that only a wait took are rows, before and after the cache clears", async () => {
+		const dir = createTestDir();
+		const cwd = createTestDir();
+		const file = sessionWith(dir, []);
+		const ping = publishRecord(cwd, {
+			name: "asker",
+			outcome: "blocked",
+			summary: "WHICH BRANCH",
+			sessionFile: join(dir, "asker.jsonl"),
+			endedAt: 1_000,
+		});
+		const done = publishRecord(cwd, {
+			name: "worker",
+			outcome: "done",
+			summary: "ALL DONE",
+			sessionFile: join(dir, "worker.jsonl"),
+			endedAt: 2_000,
+		});
+		const expected = [
+			[ping.runId, "blocked", "WHICH BRANCH", true],
+			[done.runId, undefined, "ALL DONE", true],
+		];
+		const rows = async () =>
+			(await buildCompletedItems(overlayCtx(file, cwd))).map((item) => [
+				item.id,
+				item.status,
+				item.activity,
+				item.canResume,
+			]);
+		assert.deepEqual(await rows(), expected);
+		completedSubagentResults.clear();
+		assert.deepEqual(await rows(), expected);
 	});
 });
