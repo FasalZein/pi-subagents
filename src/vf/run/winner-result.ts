@@ -12,7 +12,7 @@ import { latestVerifiedRecord, publishGeneration } from "./winner-store.ts";
 export type RenderedVerifiedResult = SubagentResult & { resultText: string };
 
 /** D18: an attempt of a verified fan-out is never resumed. */
-const NO_ATTEMPT_RESUME_REASON = "a verified fan-out attempt cannot be resumed; launch a new run for unfinished work";
+const NO_ATTEMPT_RESUME_REASON = "verified fan-out attempts do not resume";
 
 interface WinnerText {
 	end: RunEnd;
@@ -196,10 +196,14 @@ function renderVerified(
 	target: VerifiedRenderTarget,
 	footer: VerifierFooter | undefined,
 ): string {
+	const warnings = target.warnings ?? [];
+	// A launch warning (for example an ignored model override, D22) outranks the verifier's
+	// descriptive detail; the staged or not-applied fact stays, and the report keeps the detail.
+	const verifierFooter = footer && warnings.length > 0 ? { winner: footer.winner } : footer;
 	return renderResult(record, {
 		cwd: target.parentCwd ?? manifest.request.sourceRepo,
 		homeDir: homedir(),
-		verifierFooter: footer,
-		warnings: target.warnings,
+		verifierFooter,
+		warnings,
 	});
 }
