@@ -35,6 +35,13 @@ function clearMuxRuntimeEnv(): void {
 	delete process.env.HERDR_PANE_ID;
 	delete process.env.HERDR_TAB_ID;
 	delete process.env.HERDR_WORKSPACE_ID;
+	// Inherited herdr-core and Rex markers: inside a Rex block, REX_BIN_DIR names the real rex, which unforced
+	// detection would select ahead of old herdr (D29). The support env hooks restore all of them after each test.
+	delete process.env.HC_TERMINAL_ID;
+	delete process.env.HC_TERMINAL_SOCKET;
+	delete process.env.REX_SESSION;
+	delete process.env.REX_BLOCK;
+	delete process.env.REX_BIN_DIR;
 	delete process.env.PI_SUBAGENT_MUX;
 	delete process.env.PI_SUBAGENT_HERDR_PLACEMENT;
 	delete process.env.PI_SUBAGENT_HERDR_MIN_COLUMNS;
