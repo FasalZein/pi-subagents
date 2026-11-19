@@ -135,7 +135,12 @@ export function readRunFolders(root, sessions) {
 			(e) => e?.type === "custom" && e.customType === LAUNCH_METADATA,
 		);
 		const name = record?.name ?? marker?.data?.name ?? null;
-		return { runId: basename(dir), name: typeof name === "string" ? name : null };
+		const report = record?.report?.saved ? record.report.path : null;
+		return {
+			runId: basename(dir),
+			name: typeof name === "string" ? name : null,
+			report: typeof report === "string" ? report : null,
+		};
 	});
 }
 

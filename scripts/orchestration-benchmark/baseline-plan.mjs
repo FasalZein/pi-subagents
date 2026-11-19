@@ -10,12 +10,6 @@
 import { rerunDecision, sampleKeyId } from "./record.mjs";
 
 export const GATE_SCENARIOS = Object.freeze(["recon", "review", "review-fix"]);
-/** The candidate gate (T59): scenario (b) runs as a workflow script (G2.1). */
-export const CANDIDATE_SCENARIOS = Object.freeze([
-	"recon",
-	"review-workflow",
-	"review-fix",
-]);
 export const GATE_REPETITIONS = 3;
 /** Environment variables that hold the two owner-named model refs, in order. */
 export const MODEL_ENV = Object.freeze(["BENCH_MODEL_1", "BENCH_MODEL_2"]);

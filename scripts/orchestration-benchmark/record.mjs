@@ -281,22 +281,11 @@ function assistantMessages(events) {
 
 /** Tool names the parent called, in order. */
 export function parentToolCalls(events) {
-	// Calls nested in a codemode script (candidate) count as the parent's tools too.
-	const nested = events.flatMap((e) =>
-		e?.type === "message" &&
-		e.message?.role === "toolResult" &&
-		Array.isArray(e.message.nestedCalls?.calls)
-			? e.message.nestedCalls.calls.map((call) => call.name)
-			: [],
+	return assistantMessages(events).flatMap((message) =>
+		(message.content ?? [])
+			.filter((part) => part.type === "toolCall")
+			.map((part) => part.name),
 	);
-	return [
-		...assistantMessages(events).flatMap((message) =>
-			(message.content ?? [])
-				.filter((part) => part.type === "toolCall")
-				.map((part) => part.name),
-		),
-		...nested,
-	];
 }
 
 const lines = (text) =>
@@ -392,20 +381,63 @@ export function childEnded(events) {
 }
 
 // Candidate (T59a): an auto-exit child ends with a subagent_done call that the
-// extension accepted and recorded; cf6dbf4 writes no such entry.
+// extension accepted and recorded; an autonomous caller_ping is a blocked end.
+// cf6dbf4 writes no such entry.
 const ACCEPTED_CALL = "pi-subagent-accepted-call";
 const COMPLETION_TOOL = "subagent_done";
+const PING_TOOL = "caller_ping";
+// The candidate's nudge entry: without a call, text before it is the report (D12).
+const NUDGE_ENTRY = "pi-subagent-completion-nudge";
 
-/** The accepted completion call of the child's own entries, or null. */
-function acceptedCompletion(own) {
+/** The last accepted call of the given tools in the child's own entries, or null. */
+function acceptedCompletion(own, tools = [COMPLETION_TOOL, PING_TOOL]) {
 	return (
 		own.findLast(
 			(e) =>
 				e?.type === "custom" &&
 				e.customType === ACCEPTED_CALL &&
-				e.data?.tool === COMPLETION_TOOL,
+				tools.includes(e.data?.tool) &&
+				(e.data?.tool !== PING_TOOL || e.data?.autonomous !== false),
 		) ?? null
 	);
+}
+
+/**
+ * The report the candidate publishes (result-assembler.ts reportText, D12), from
+ * the child's own entries: with an accepted call, the text of the last message
+ * with text before the call (an autonomous call is final; after a takeover a later
+ * message's text wins); without a call, text before the nudge wins over text after
+ * it. The text blocks of one message are joined with a line break.
+ */
+function publishedReport(own, call) {
+	const texts = [];
+	let callAt = null;
+	own.forEach((e, i) => {
+		if (e?.type !== "message" || e.message?.role !== "assistant") return;
+		(e.message.content ?? []).forEach((part, b) => {
+			if (part?.type === "text" && String(part.text ?? "").trim())
+				texts.push({ at: [i, b], text: part.text });
+			else if (part?.type === "toolCall" && part.id === call?.data?.toolCallId)
+				callAt = [i, b];
+		});
+	});
+	const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+	const lastMessage = (list) => {
+		const last = list.at(-1);
+		return last
+			? list.filter((t) => t.at[0] === last.at[0]).map((t) => t.text).join("\n")
+			: "";
+	};
+	if (call && callAt) {
+		const final = call.data?.autonomous !== false;
+		if (!final && texts.some((t) => t.at[0] > callAt[0])) return lastMessage(texts);
+		return lastMessage(texts.filter((t) => before(t.at, callAt)));
+	}
+	const nudge = own.findIndex(
+		(e) => e?.type === "custom" && e.customType === NUDGE_ENTRY,
+	);
+	if (nudge < 0) return lastMessage(texts);
+	return lastMessage(texts.filter((t) => t.at[0] < nudge)) || lastMessage(texts);
 }
 
 // macOS names a temporary folder with or without its /private prefix.
@@ -482,22 +514,31 @@ export function childFulfils(events, contract, workDir) {
 			.map((part) => resolveReadPath(part.arguments?.path, cwd)),
 	);
 	const last = assistantMessages(own).at(-1);
-	const accepted = acceptedCompletion(own);
-	// A candidate child's result is the text of its last message plus its summary.
-	const completed =
-		accepted !== null &&
-		holdsResult(
-			`${textOf(last?.content ?? [])}\n${accepted.data?.args?.summary ?? ""}`,
-			contract,
-		);
+	const accepted = acceptedCompletion(own, [COMPLETION_TOOL]);
+	const nudged = own.some(
+		(e) => e?.type === "custom" && e.customType === NUDGE_ENTRY,
+	);
+	const read = contract.reads.every((file) =>
+		readFiles.includes(resolveReadPath(file, workDir)),
+	);
+	// v2.9.2 (no accepted call, no nudge): the last reply, as T04 scored it.
+	if (!accepted && !nudged)
+		return {
+			read,
+			returned:
+				last?.stopReason === "stop" &&
+				holdsResult(textOf(last.content), contract),
+		};
+	// Candidate: the published report, or the summary of the accepted call; the
+	// strict keyed check applies to each on its own.
+	const report = publishedReport(own, accepted);
 	return {
-		read: contract.reads.every((file) =>
-			readFiles.includes(resolveReadPath(file, workDir)),
-		),
+		read,
 		returned:
-			(last?.stopReason === "stop" &&
-				holdsResult(textOf(last.content), contract)) ||
-			completed,
+			(accepted !== null || last?.stopReason === "stop") &&
+			(holdsResult(report, contract) ||
+				(accepted !== null &&
+					holdsResult(String(accepted.data?.args?.summary ?? ""), contract))),
 	};
 }
 
@@ -524,9 +565,15 @@ export function scoreAttempt({
 	childOutcomes,
 	workspace = null,
 	handoffInOrder = null,
+	workflowScript = null,
+	repeatedLaunch = false,
 	scenario,
 }) {
 	if (!answerMatches(answer, scenario)) return "wrong-answer";
+	// Candidate: a repeated launch name is duplicate work, a counted failure; a
+	// workflow scenario needs its workflow script (candidate-evidence.mjs).
+	if (repeatedLaunch) return "wrong-delegation";
+	if (scenario.workflow && workflowScript !== true) return "wrong-delegation";
 	if (
 		scenario.inspectWorkspace &&
 		!(workspace?.heldOutPassed && workspace.changedTestFiles.length === 0)

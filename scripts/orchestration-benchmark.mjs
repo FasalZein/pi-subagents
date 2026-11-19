@@ -73,7 +73,10 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { runAttempt } from "./orchestration-benchmark/attempt.mjs";
-import { withWaitTool } from "./orchestration-benchmark/delivery.mjs";
+import {
+	forRelease,
+	releaseCapabilities,
+} from "./orchestration-benchmark/candidate-evidence.mjs";
 import {
 	acquireClaim,
 	holdsClaim,
@@ -200,7 +203,7 @@ async function loadScenario(name) {
 			);
 	}
 	return {
-		...withWaitTool(definition),
+		...definition,
 		dir,
 		agentsDir: join(dir, "agents"),
 		workspaceDir: join(dir, "workspace"),
@@ -259,7 +262,7 @@ async function main() {
 		});
 	}
 	const cli = parseCli();
-	const scenario = await loadScenario(cli.scenario);
+	const loaded = await loadScenario(cli.scenario);
 	if (
 		!existsSync(join(cli.checkout, "src", "index.ts")) ||
 		!existsSync(join(cli.checkout, "node_modules"))
@@ -273,6 +276,8 @@ async function main() {
 	if (recovered.length)
 		console.log(`removed ${recovered.length} abandoned attempt folder(s)`);
 	const checkout = assertPrivateCheckout(cli.checkout);
+	// Candidate-only allowances follow the measured release (candidate-evidence.mjs).
+	const scenario = forRelease(loaded, releaseCapabilities(cli.checkout));
 	const provider = cli.model.split("/")[0];
 	const piVersion = execFileSync("pi", ["--version"], {
 		encoding: "utf8",

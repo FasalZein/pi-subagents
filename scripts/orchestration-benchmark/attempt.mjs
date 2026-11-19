@@ -6,10 +6,12 @@
 import {
 	cpSync,
 	existsSync,
+	lstatSync,
 	readFileSync,
 	statSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { join, relative } from "node:path";
+import { parentToolNames } from "./candidate-evidence.mjs";
 import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	answerParser,
@@ -17,7 +19,6 @@ import {
 	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
-	parentToolCalls,
 	scoreAttempt,
 	summarizeChild,
 	summarizeChildren,
@@ -272,7 +273,10 @@ export function classifyAttempt({
 	)
 		.map((run) => run.name)
 		.filter(Boolean);
-	if (new Set(names).size !== names.length)
+	// On the candidate a repeated launch name is a parent that ran work twice: a
+	// counted failure (scoreAttempt). v2.9.2 keeps the T04 contract (infra).
+	const repeatedLaunch = new Set(names).size !== names.length;
+	if (repeatedLaunch && !scenario.release?.candidate)
 		return infra("two launched children share a launch name");
 	// A deadline timeout stays a timeout (G2.1): a child that started but never
 	// got its task has a probe and no session file, which is measured behaviour.
@@ -346,7 +350,13 @@ export function classifyAttempt({
 	const verdict = scoreAttempt({
 		answer: observed.answer,
 		childRoles: children.roles,
-		parentTools: parentToolCalls(evidence.parent.events),
+		parentTools: parentToolNames(
+			evidence.parent.events,
+			evidence.runFolders,
+			workDir,
+		),
+		workflowScript: delivery.workflowScript,
+		repeatedLaunch,
 		childOutcomes,
 		workspace,
 		handoffInOrder: delivery.handoffInOrder,
@@ -376,7 +386,14 @@ function sanitize(result) {
 
 // Files a kept copy holds: session files and the run folders' record and launch
 // files. Credentials, settings and the workspace stay out.
-const KEPT_FILES = /(\.jsonl|^record\.json|^launch\.json)$/;
+// Known evidence paths only: session files below sessions/ and the record and
+// launch files of run folders below artifacts/. Credentials, settings, the
+// workspace and every symbolic link stay out.
+const KEPT_DIRS = /^(sessions|artifacts)(\/|$)/;
+const KEPT_FILES = [
+	/^sessions\/.+\.jsonl$/,
+	/^artifacts\/.+\/results\/[^/]+\/(record|launch)\.json$/,
+];
 
 /**
  * Copy the evidence of an attempt before cleanup (launcher --keep-sessions), so
@@ -388,8 +405,12 @@ export function keepEvidence(root, dest) {
 		cpSync(root, dest, {
 			recursive: true,
 			filter: (source) => {
-				const stat = statSync(source, { throwIfNoEntry: false });
-				return Boolean(stat) && (!stat.isFile() || KEPT_FILES.test(basename(source)));
+				const path = relative(root, source);
+				if (path === "") return true;
+				const stat = lstatSync(source, { throwIfNoEntry: false });
+				if (!stat || stat.isSymbolicLink()) return false;
+				if (stat.isDirectory()) return KEPT_DIRS.test(path);
+				return stat.isFile() && KEPT_FILES.some((pattern) => pattern.test(path));
 			},
 		});
 	} catch (error) {

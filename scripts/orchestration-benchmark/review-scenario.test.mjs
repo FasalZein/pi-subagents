@@ -7,7 +7,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { answerMatches, answerParser, terminalAnswer } from "./record.mjs";
 import review from "./scenarios/review/scenario.mjs";
-import reviewWorkflow from "./scenarios/review-workflow/scenario.mjs";
 
 const reviewDir = join(
 	dirname(fileURLToPath(import.meta.url)),
@@ -104,23 +103,3 @@ test("[T03a-4] a digest of 8 lines that names the wrong targets fails", () => {
 	const seven = verdicts.slice(1).map(([t, v]) => `${t}: ${v}`);
 	assert.equal(score(seven.join("\n")), false);
 });
-
-test("[T59a] the workflow arm keeps the 8 targets, children and verdicts of scenario (b), with codemode and a declared digest", () => {
-	assert.deepEqual(reviewWorkflow.expectedFacts, review.expectedFacts);
-	assert.deepEqual(reviewWorkflow.childResults, review.childResults);
-	assert.equal(reviewWorkflow.parentTools, "+codemode");
-	assert.equal(review.parentTools, undefined);
-	const launchNames = [...reviewWorkflow.prompt.matchAll(/name "([^"]+)"/g)].map((m) => m[1]);
-	assert.deepEqual(reviewWorkflow.digestOperations, [{ toolName: "codemode", covers: launchNames }]);
-	assert.equal(launchNames.length, 8);
-	// Same fixture files as the baseline arm.
-	const workflowDir = join(dirname(reviewDir), "review-workflow");
-	for (const sub of ["agents", "workspace/review"])
-		for (const name of readdirSync(join(reviewDir, sub)))
-			assert.equal(
-				readFileSync(join(workflowDir, sub, name), "utf8"),
-				readFileSync(join(reviewDir, sub, name), "utf8"),
-			);
-	assert.equal(score(Object.entries(review.expectedFacts).map(([k, v]) => `${k}: ${v}`).join("\n")), true);
-});
-

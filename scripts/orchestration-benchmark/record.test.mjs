@@ -5,11 +5,8 @@ import {
 	answerMatches,
 	answerParser,
 	canonicalJson,
-	childEnded,
-	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
-	parentToolCalls,
 	rerunDecision,
 	sampleKey,
 	sampleKeyId,
@@ -23,7 +20,6 @@ import {
 import recon from "./scenarios/recon/scenario.mjs";
 import review from "./scenarios/review/scenario.mjs";
 import reviewFix from "./scenarios/review-fix/scenario.mjs";
-import reviewWorkflow from "./scenarios/review-workflow/scenario.mjs";
 
 const KEY_PARTS = {
 	checkoutRevision: "cf6dbf4",
@@ -384,90 +380,3 @@ for (const scenario of [recon, review, reviewFix])
 		const repeated = parse(answer([`${firstKey}: ${firstValue}`]));
 		assert.equal(answerMatches(repeated, scenario), true);
 	});
-
-test("[T59a] calls nested in a codemode script count as parent tool calls", () => {
-	// Shape of a real candidate codemode result (T54 run-m1 final.jsonl).
-	const events = [
-		{
-			type: "message",
-			message: {
-				role: "assistant",
-				content: [{ type: "toolCall", id: "c1", name: "codemode", arguments: { code: "..." } }],
-			},
-		},
-		{
-			type: "message",
-			message: {
-				role: "toolResult",
-				toolCallId: "c1",
-				toolName: "codemode",
-				content: [{ type: "text", text: "Script completed" }],
-				nestedCalls: {
-					calls: [
-						{ id: "c1/1", name: "subagent", status: "ok", arguments: { children: [] } },
-						{ id: "c1/2", name: "read", status: "ok", arguments: { path: "review/auth.md" } },
-					],
-					complete: true,
-				},
-			},
-		},
-	];
-	assert.deepEqual(parentToolCalls(events), ["codemode", "subagent", "read"]);
-	// A nested read is outside the workflow allowlist: the delegation is wrong.
-	assert.equal(
-		scoreAttempt({
-			answer: reviewWorkflow.expectedFacts,
-			childRoles: reviewWorkflow.expectedChildRoles,
-			parentTools: parentToolCalls(events),
-			childOutcomes: [],
-			scenario: reviewWorkflow,
-		}),
-		"wrong-delegation",
-	);
-});
-
-
-test("[T59a] a candidate child ends with an accepted subagent_done call; its summary is its result", () => {
-	// Shape of a real candidate child session (T54 run-m1): the last assistant message stops
-	// for the subagent_done call, the extension records the accepted call, then shuts down.
-	const contract = review.childResults["bench-review-auth"];
-	const session = (summary, text = "") => [
-		{ type: "session", cwd: "/w" },
-		{ type: "custom", customType: "pi-subagents_launch_metadata", data: { name: "review-auth" } },
-		{
-			type: "message",
-			message: {
-				role: "assistant",
-				stopReason: "toolUse",
-				content: [{ type: "toolCall", id: "r1", name: "read", arguments: { path: "review/auth.md" } }],
-			},
-		},
-		{ type: "message", message: { role: "toolResult", toolCallId: "r1", toolName: "read", isError: false, content: [] } },
-		{
-			type: "message",
-			message: {
-				role: "assistant",
-				stopReason: "toolUse",
-				content: [
-					{ type: "text", text },
-					{ type: "toolCall", id: "d1", name: "subagent_done", arguments: { outcome: "done", summary } },
-				],
-			},
-		},
-		{
-			type: "custom",
-			customType: "pi-subagent-accepted-call",
-			data: { toolCallId: "d1", tool: "subagent_done", args: { outcome: "done", summary }, autonomous: true },
-		},
-		{ type: "custom", customType: "pi-subagent-completion", data: { reason: "normal" } },
-		{ type: "message", message: { role: "toolResult", toolCallId: "d1", toolName: "subagent_done", content: [] } },
-	];
-	assert.equal(childEnded(session("auth: approve-4417")), true);
-	assert.deepEqual(childFulfils(session("auth: approve-4417"), contract, "/w"), { read: true, returned: true });
-	assert.deepEqual(childFulfils(session("verdict sent", "auth: approve-4417"), contract, "/w"), { read: true, returned: true });
-	assert.deepEqual(childFulfils(session("auth: reject-1"), contract, "/w"), { read: true, returned: false });
-	// Without the accepted call (v2.9.2 writes none), a toolUse stop is no end.
-	const unaccepted = session("auth: approve-4417").filter((e) => e.customType !== "pi-subagent-accepted-call");
-	assert.equal(childEnded(unaccepted), false);
-});
-

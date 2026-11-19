@@ -4,6 +4,11 @@
 // unchanged, so its fixture hash stays equal to T04's (T04 finding 1).
 import review from "../review/scenario.mjs";
 
+// Launch names: delivery.mjs joins children by launch name.
+const launches = Object.keys(review.expectedFacts).map(
+	(target) => `review-${target}`,
+);
+
 export default {
 	...review,
 	name: "review-workflow",
@@ -13,12 +18,10 @@ export default {
 	parentTools: "+codemode",
 	// subagent and subagent_wait run inside the script, as nested calls of codemode.
 	parentToolAllowlist: ["codemode", "subagent", "subagent_wait"],
-	// The script's result is a deliberate digest that covers all eight children.
-	// covers names launch names, as delivery.mjs joins children by launch name.
-	digestOperations: [
-		{
-			toolName: "codemode",
-			covers: Object.keys(review.expectedFacts).map((target) => `review-${target}`),
-		},
-	],
+	// The gate (candidate-evidence.mjs workflowScript): one successful codemode
+	// script launches and joins a run of every launch name; no direct launch.
+	workflow: { toolName: "codemode", launches },
+	// The script's result is a deliberate digest; it counts for a run only when
+	// that script joined the run.
+	digestOperations: [{ toolName: "codemode", covers: launches }],
 };

@@ -45,24 +45,15 @@
  * its result reached the parent by its own run id and the parent's terminal reply
  * contains it; auxiliary otherwise.
  */
+import {
+	nestedCalls,
+	reportReads,
+	scriptCoverage,
+	workflowScript,
+} from "./candidate-evidence.mjs";
 import { holdsResult, resolveReadPath, textOf } from "./record.mjs";
 
 const RESULT_MESSAGE = "subagent_result";
-// The candidate's wait and lookup tool (D15). v2.9.2 (cf6dbf4) registers no such tool.
-const WAIT_TOOL = "subagent_wait";
-
-/**
- * The parent allowlist the harness scores with: a scenario that allows the launch
- * tool also allows the candidate's wait tool, since waiting for a run is part of the
- * launch contract there. v2.9.2 has no wait tool, so baseline scoring cannot change,
- * and the scenario files (and their fixture hashes) stay as T04 froze them.
- */
-export function withWaitTool(scenario) {
-	const list = scenario.parentToolAllowlist;
-	return list.includes(scenario.parentLoadTool) && !list.includes(WAIT_TOOL)
-		? { ...scenario, parentToolAllowlist: [...list, WAIT_TOOL] }
-		: scenario;
-}
 // Tool result states that announce a run but carry no result yet.
 const NOT_A_RESULT = new Set(["started", "running", "pending", "pinged"]);
 
@@ -70,27 +61,6 @@ const NOT_A_RESULT = new Set(["started", "running", "pending", "pinged"]);
 function runsOf(details) {
 	const list = Array.isArray(details?.children) ? details.children : [details];
 	return list.filter((run) => typeof run?.id === "string");
-}
-
-/**
- * Successful nested calls of codemode scripts, with the entry index of the
- * assistant message that made the codemode call (null when none carries it).
- * @returns {Array<{name: string, arguments: object, calledAt: number | null}>}
- */
-export function nestedCalls(events) {
-	const callAt = toolCallIndex(events);
-	return events.flatMap((e) => {
-		const m = e?.type === "message" ? e.message : null;
-		if (m?.role !== "toolResult" || !Array.isArray(m.nestedCalls?.calls))
-			return [];
-		return m.nestedCalls.calls
-			.filter((call) => call?.status === "ok")
-			.map((call) => ({
-				name: call.name,
-				arguments: call.arguments ?? {},
-				calledAt: callAt.get(m.toolCallId) ?? null,
-			}));
-	});
 }
 
 function toolCallIndex(events) {
@@ -113,10 +83,17 @@ function toolCallIndex(events) {
 export function launchedRuns(events, launchTool, runFolders = []) {
 	const callAt = toolCallIndex(events);
 	const runs = new Map();
+	// Nested launches bind whatever their status: a launch that failed partway
+	// still started the children before it (their run folders exist).
 	for (const call of nestedCalls(events)) {
 		if (call.name !== launchTool) continue;
-		for (const entry of call.arguments.children ?? []) {
-			const folders = runFolders.filter((f) => f.name && f.name === entry?.name);
+		const children = Array.isArray(call.arguments.children)
+			? call.arguments.children
+			: [];
+		for (const entry of children) {
+			const folders = runFolders.filter(
+				(f) => f.name && f.name === entry?.name,
+			);
 			for (const folder of folders)
 				runs.set(folder.runId, {
 					runId: folder.runId,
@@ -272,11 +249,17 @@ export function handover({
 	carried,
 	digests,
 	answeredAt,
+	reads = [],
 }) {
-	const holds = (c) => Boolean(contract) && holdsResult(c.text, contract);
+	const holds = (c) => Boolean(contract) && holdsResult(c.text ?? "", contract);
 	if (!runId) return { handover: "unbound", transfers: 0, correct: false };
 	const own = carried.filter((c) => c.runId === runId);
-	const correct = own.some((c) => c.index < answeredAt && holds(c));
+	// A successful parent read of this run's report locator (capped carrier) is no
+	// transfer, but its keyed line before the scored reply counts for this run.
+	const pulled = reads.some(
+		(r) => r.runId === runId && r.ok && r.index < answeredAt && holds(r),
+	);
+	const correct = pulled || own.some((c) => c.index < answeredAt && holds(c));
 	if (own.length > 1)
 		return { handover: "duplicate-carrier", transfers: own.length, correct };
 	if (own.length === 1) return { handover: "delivered", transfers: 1, correct };
@@ -284,14 +267,14 @@ export function handover({
 		return {
 			handover: "digest",
 			transfers: 0,
-			correct: digests.some((c) => c.index < answeredAt && holds(c)),
+			correct: pulled || digests.some((c) => c.index < answeredAt && holds(c)),
 		};
-	if (!ended) return { handover: "no-result", transfers: 0, correct: false };
+	if (!ended) return { handover: "no-result", transfers: 0, correct: pulled };
 	return {
 		handover: "undelivered",
 		subClass: undeliveredSubClass(),
 		transfers: 0,
-		correct: false,
+		correct: pulled,
 	};
 }
 
@@ -323,6 +306,12 @@ export function deliveryAccounting({
 	const carried = carriers(parentEvents, scenario.parentToolAllowlist);
 	const finalText =
 		answeredAt === null ? "" : textOf(parentEvents[answeredAt].message.content);
+	const pulls = reportReads(parentEvents, runFolders, workDir);
+	const scripts = scriptCoverage(
+		parentEvents,
+		runFolders,
+		scenario.parentLoadTool,
+	);
 	const parentReads = parentEvents.flatMap((e) =>
 		e?.type === "message" && e.message?.role === "assistant"
 			? (e.message.content ?? [])
@@ -330,6 +319,7 @@ export function deliveryAccounting({
 					.map((part) => resolveReadPath(part.arguments?.path, workDir))
 			: [],
 	);
+	// A requested read counts whatever its status, nested in a script or direct.
 	for (const call of nestedCalls(parentEvents))
 		if (call.name === "read")
 			parentReads.push(resolveReadPath(call.arguments.path, workDir));
@@ -338,18 +328,24 @@ export function deliveryAccounting({
 		const runId = named.length === 1 ? named[0].runId : null;
 		// First own carrier holding the result before the scored reply.
 		const deliveredAt =
-			carried.find(
+			[...carried, ...pulls.filter((r) => r.ok)].find(
 				(c) =>
 					runId &&
 					c.runId === runId &&
 					c.index < cutoff &&
 					Boolean(child.contract) &&
-					holdsResult(c.text, child.contract),
+					holdsResult(c.text ?? "", child.contract),
 			)?.index ?? null;
-		const digests = carried.filter((c) =>
-			(scenario.digestOperations ?? []).some(
-				(op) => op.toolName === c.tool && op.covers.includes(child.name),
-			),
+		// In a workflow scenario a declared digest counts for a run only in the
+		// result of a script that itself joined that run (scriptCoverage); a quote
+		// in another script is no digest. Other scenarios keep the T02b rule.
+		const digests = carried.filter(
+			(c) =>
+				(scenario.digestOperations ?? []).some(
+					(op) => op.toolName === c.tool && op.covers.includes(child.name),
+				) &&
+				(!scenario.workflow ||
+					(Boolean(runId) && Boolean(scripts.get(c.index)?.joined.has(runId)))),
 		);
 		const { correct, ...result } = handover({
 			runId,
@@ -358,6 +354,7 @@ export function deliveryAccounting({
 			carried,
 			digests,
 			answeredAt: cutoff,
+			reads: pulls,
 		});
 		const readByParent = (child.contract?.reads ?? []).some((file) =>
 			parentReads.includes(resolveReadPath(file, workDir)),
@@ -416,6 +413,10 @@ export function deliveryAccounting({
 			.filter((c) => c.runId)
 			.map(({ kind, index, runId }) => ({ kind, index, runId })),
 		answeredAt,
+		// Successful parent reads of a run's report locator (no transfer).
+		reportReads: pulls.filter((r) => r.ok).length,
+		// Only for a scenario that declares a workflow script: the gate of workflowScript.
+		workflowScript: workflowScript(parentEvents, scenario, runFolders),
 		// Only for a scenario that declares serialHandoff; null otherwise.
 		handoffInOrder: scenario.serialHandoff ? serialHandoff(rows) : null,
 		cleanYieldShare: rows.length
