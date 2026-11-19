@@ -1,10 +1,27 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Value } from "typebox/value";
 import { pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
+import { ResultStore } from "../../src/runtime/result-files.ts";
+import { ResultRecordSchema } from "../../src/runtime/result-record-schema.ts";
+import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { joinRuns } from "../../src/runtime/wait-join.ts";
-import { registerSubagentWaitTool, SubagentWaitOutput } from "../../src/tools/wait-tool.ts";
+import {
+	registerSubagentWaitTool,
+	SubagentWaitOutput,
+	type SubagentWaitStructured,
+} from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
-import { assert, describe, it, resetSubagentStateForTest, setRunningSubagentForTest } from "../support/index.ts";
+import {
+	assert,
+	createTestDir,
+	describe,
+	it,
+	resetSubagentStateForTest,
+	setRunningSubagentForTest,
+} from "../support/index.ts";
+import { parentToolCtx, sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
 // T24 below the tool: joinRuns with production routing and the delivery queue. The queue is not
 // registered to a session here, so a message it sends goes to the sink at once.
@@ -22,7 +39,8 @@ function sink(sent: Sent[]) {
 	};
 }
 
-function startRun(name: string, sent: Sent[]): (summary: string) => void {
+/** With a root, the run publishes a typed record when it ends, as its watcher does after subagent_done. */
+function startRun(name: string, sent: Sent[], root?: string): (summary: string) => void {
 	let finish!: (result: SubagentResult) => void;
 	const watch = new Promise<SubagentResult>((resolve) => {
 		finish = resolve;
@@ -41,9 +59,38 @@ function startRun(name: string, sent: Sent[]): (summary: string) => void {
 		startTime: Date.now(),
 		completionPromise: watch,
 	} as RunningSubagent;
+	if (root) {
+		const store = new ResultStore(join(root, "results"), () => {});
+		running.sessionFile = join(root, `${name}.jsonl`);
+		running.resultTarget = { store, reservation: store.reserve(), parentCwd: root, warnings: [] };
+	}
 	setRunningSubagentForTest(running);
 	wireSubagentSteerBack(sink(sent) as never, running, watch, () => {});
-	return (summary) => finish({ name, task: "t", summary, summarySource: "subagent", exitCode: 0, elapsed: 1 });
+	return (summary) => {
+		const base = { name, task: "t", summary, summarySource: "subagent" as const, exitCode: 0, elapsed: 1 };
+		if (!root) return finish(base);
+		const args = { outcome: "done", summary, data: { answer: 42 } };
+		const entries = [
+			sessionHeader(),
+			user("task"),
+			toolCall("subagent_done", args, "d1"),
+			toolResult("subagent_done", "d1", "ok"),
+		];
+		writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+		const exitSignal: WatchedEnd["exitSignal"] = {
+			reason: "done",
+			exitCode: 0,
+			acceptedCall: { toolCallId: "d1", args },
+		};
+		const published = publishRunResult(running, {
+			exitCode: 0,
+			operatorClosed: false,
+			stopped: false,
+			exitSignal,
+			contextUsage: {},
+		});
+		finish({ ...base, ...publishedResultFields(published) });
+	};
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -170,15 +217,20 @@ describe("T24: the tool gives scripts structured records", () => {
 		assert.equal(tool.name, "subagent_wait");
 		assert.equal(tool.outputSchema, SubagentWaitOutput);
 		const sent: Sent[] = [];
-		const finish = startRun("one", sent);
-		const call = tool.execute("c1", { ids: ["id-one"] }, undefined, undefined, {});
+		const root = createTestDir();
+		const finish = startRun("one", sent, root);
+		const call = tool.execute("c1", { ids: ["id-one"] }, undefined, undefined, parentToolCtx(createTestDir(), {}));
 		await tick();
 		finish("ONE-REPORT");
 		const result = await call;
 		assert.ok(Value.Check(SubagentWaitOutput, result.structuredContent), "structured content matches the schema");
-		const structured = result.structuredContent as { results: { id: string; record: { id: string } }[] };
-		assert.equal(structured.results[0]?.record.id, "id-one");
+		const structured = result.structuredContent as SubagentWaitStructured;
+		const record = structured.results[0]?.record;
 		assert.equal(structured.results[0]?.id, "id-one");
+		assert.ok(record && Value.Check(ResultRecordSchema, record), "the published record matches the record schema");
+		assert.equal(record.outcome, "done");
+		assert.equal(record.typed, true);
+		assert.deepEqual(record.data, { answer: 42 });
 		resetSubagentStateForTest();
 	});
 

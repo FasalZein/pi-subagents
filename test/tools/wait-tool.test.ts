@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -10,7 +11,10 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
+import { ResultStore } from "../../src/runtime/result-files.ts";
+import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { isRunEndHeld } from "../../src/runtime/wait-holds.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -25,6 +29,7 @@ import {
 	resetSubagentStateForTest,
 	setRunningSubagentForTest,
 } from "../support/index.ts";
+import { sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
 // T24 at the extension boundary: a real Pi parent session with a faux provider calls the real
 // launch tool with two async children, then the real subagent_wait tool. The children are fakes;
@@ -32,7 +37,14 @@ import {
 
 type ToolCall = ReturnType<typeof fauxToolCall>;
 
-function launchRuntime(finish: Map<string, (result: SubagentResult) => void>): SubagentToolRuntime {
+interface ChildState {
+	root: string;
+	store: ResultStore;
+	finish: Map<string, (result: SubagentResult) => void>;
+	runs: Map<string, RunningSubagent>;
+}
+
+function launchRuntime({ root, store, finish, runs }: ChildState): SubagentToolRuntime {
 	return {
 		loadAgentDefaults: () => ({ spawning: true, async: true, mode: "background" }) as never,
 		resolveEffectiveSessionMode: () => "lineage-only",
@@ -50,9 +62,11 @@ function launchRuntime(finish: Map<string, (result: SubagentResult) => void>): S
 				blocking: false,
 				async: true,
 				startTime: Date.now(),
-				sessionFile: `/tmp/${params.name}.jsonl`,
+				sessionFile: join(root, `${params.name}.jsonl`),
+				resultTarget: { store, reservation: store.reserve(), parentCwd: root, warnings: [] },
 			} as RunningSubagent;
 			setRunningSubagentForTest(running as never);
+			runs.set(params.name, running);
 			return running;
 		},
 		launchSubagent: async () => {
@@ -78,6 +92,10 @@ interface Parent {
 	requests: string[];
 	finish(name: string, summary: string): void;
 	launched(name: string): boolean;
+	/** Ends a child the way its watcher does after the child called subagent_done: a published record. */
+	finishWithCall(name: string, args: Record<string, unknown>): void;
+	/** Lets the test's gate tool return. */
+	releaseGate(): void;
 	waitReplies(): { text: string; details: Record<string, unknown>; isError: boolean }[];
 	resultMessages(): number;
 	dispose(): Promise<void>;
@@ -110,11 +128,31 @@ async function startParent(plan: Record<string, ToolCall[]>, options: { codemode
 		refreshOnCreate: false,
 	});
 	modelRuntime.registerNativeProvider(faux.provider);
-	const finish = new Map<string, (result: SubagentResult) => void>();
+	const children: ChildState = {
+		root,
+		store: new ResultStore(join(root, "results"), () => {}),
+		finish: new Map(),
+		runs: new Map(),
+	};
+	const { finish } = children;
+	let releaseGate!: () => void;
+	const gate = new Promise<void>((resolve) => {
+		releaseGate = resolve;
+	});
 	const extension: ExtensionFactory = (pi) => {
 		registerDeliveryQueue(pi);
-		registerSubagentCoreTools(pi, () => true, launchRuntime(finish));
+		registerSubagentCoreTools(pi, () => true, launchRuntime(children));
 		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
+		pi.registerTool({
+			name: "gate",
+			label: "Gate",
+			description: "Returns when the test releases it.",
+			parameters: Type.Object({}),
+			execute: async () => {
+				await gate;
+				return { content: [{ type: "text", text: "released" }], details: {} };
+			},
+		});
 	};
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root,
@@ -152,6 +190,37 @@ async function startParent(plan: Record<string, ToolCall[]>, options: { codemode
 				elapsed: 1,
 			}),
 		launched: (name) => finish.has(name),
+		finishWithCall: (name, args) => {
+			const running = children.runs.get(name);
+			if (!running) assert.fail(`no child ${name}`);
+			const entries = [
+				sessionHeader(),
+				user("task"),
+				toolCall("subagent_done", args, "done-1"),
+				toolResult("subagent_done", "done-1", "Result recorded."),
+			];
+			writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+			const end: WatchedEnd = {
+				exitCode: 0,
+				operatorClosed: false,
+				stopped: false,
+				exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "done-1", args } },
+				contextUsage: {},
+			};
+			const published = publishRunResult(running, end);
+			if (!published) assert.fail("the run published no record");
+			finish.get(name)?.({
+				name,
+				task: "t",
+				summary: published.summary,
+				summarySource: published.summarySource,
+				sessionFile: running.sessionFile,
+				exitCode: 0,
+				elapsed: 1,
+				...publishedResultFields(published),
+			});
+		},
+		releaseGate,
 		waitReplies: () =>
 			session.messages.flatMap((message) =>
 				message.role === "toolResult" && message.toolName === "subagent_wait"
@@ -301,10 +370,12 @@ describe("T24: subagent_wait in a real Pi session", () => {
 		}
 	});
 
-	it("check 6: a codemode script receives the wait's result records as objects", async () => {
+	it("check 6 (fix round 1, P1): a codemode script receives each run's published record as an object", async () => {
 		const script = [
 			'const r = await tools.subagent_wait({ ids: ["id-child-one", "id-child-two"] });',
-			'return typeof r === "object" ? `OBJECT ${r.status} ${r.results.map((x) => x.record.id).join(",")} ${r.results[0].record.agent}` : `TEXT ${r}`;',
+			'if (typeof r !== "object") return `TEXT ${r}`;',
+			'const one = r.results.find((x) => x.id === "id-child-one").record;',
+			"return `OBJECT ${r.status} answer=${one.data?.answer} outcome=${one.outcome} typed=${one.typed} summary=${one.summary} saved=${one.report?.saved} resumable=${one.resume?.resumable}`;",
 		].join("\n");
 		const parent = await startParent(
 			{ delegate: LAUNCH, join: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
@@ -314,15 +385,18 @@ describe("T24: subagent_wait in a real Pi session", () => {
 			await launchBoth(parent);
 			const run = parent.session.prompt("join");
 			await until(() => isRunEndHeld("id-child-two"), "the script's wait holds the runs");
-			parent.finish("child-one", "CHILD-ONE-REPORT");
-			parent.finish("child-two", "CHILD-TWO-REPORT");
+			parent.finishWithCall("child-one", { outcome: "done", summary: "Finished", data: { answer: 42 } });
+			parent.finishWithCall("child-two", { outcome: "partial", summary: "Half" });
 			await run;
 			await parent.session.waitForIdle();
 			const [scriptText] = parent.session.messages.flatMap((message) =>
 				message.role === "toolResult" && message.toolName === "codemode" ? [textOf(message.content)] : [],
 			);
 			assert.ok(scriptText, "the script ran");
-			assert.match(scriptText, /OBJECT complete id-child-one,id-child-two worker-a/);
+			assert.match(
+				scriptText,
+				/OBJECT complete answer=42 outcome=done typed=true summary=Finished saved=true resumable=true/,
+			);
 			assert.equal(parent.resultMessages(), 0, "the script's returned wait delivered both");
 		} finally {
 			await parent.dispose();

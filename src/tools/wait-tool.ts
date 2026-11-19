@@ -1,6 +1,9 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
+import { getSessionResultsDir } from "../artifact-storage.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
+import { ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
 import { type JoinOutcome, joinRuns } from "../runtime/wait-join.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_WAIT_TOOL_NAME } from "./tool-names.ts";
@@ -33,7 +36,8 @@ export const SubagentWaitOutput = Type.Object({
 		Type.Object({
 			id: Type.String(),
 			text: Type.String(),
-			record: Type.Record(Type.String(), Type.Unknown()),
+			/** The run's published record (D13); null when the run published none. */
+			record: Type.Union([ResultRecordSchema, Type.Null()]),
 		}),
 	),
 	pending: Type.Array(Type.String()),
@@ -52,9 +56,17 @@ function replyText(outcome: JoinOutcome): string {
 	return lines.join("\n\n");
 }
 
-/** A record holds only JSON values; undefined fields are dropped. */
 function toStructured(outcome: JoinOutcome): SubagentWaitStructured {
-	return JSON.parse(JSON.stringify(outcome)) as SubagentWaitStructured;
+	return {
+		status: outcome.status,
+		results: outcome.results.map((result) => ({
+			id: result.id,
+			text: result.text,
+			record: result.record && recordAsJson(result.record),
+		})),
+		pending: outcome.pending,
+		missing: outcome.missing,
+	};
 }
 
 export function registerSubagentWaitTool(
@@ -69,14 +81,16 @@ export function registerSubagentWaitTool(
 		description: "Wait for subagent runs by id (default: all running or queued) and return their results.",
 		parameters: SubagentWaitParams,
 		outputSchema: SubagentWaitOutput,
-		execute: async (_toolCallId, params, signal) => {
+		execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_WAIT_TOOL_NAME));
-			const outcome = await joinRuns(params, signal);
+			const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
+			const outcome = await joinRuns(params, signal, store);
 			const structured = toStructured(outcome);
 			return {
 				content: [{ type: "text" as const, text: replyText(outcome) }],
 				details: structured,
-				// Same object; the schema type is JSON by construction (toStructured round-trips it).
+				// The one cast: a record's data is typed unknown but is JSON (D12 accepts only JSON data,
+				// and a stored record is parsed from record.json).
 				structuredContent: structured as unknown as JsonValue,
 				...(outcome.status === "interrupted" ? { isError: true } : {}),
 			};

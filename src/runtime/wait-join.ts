@@ -1,5 +1,7 @@
-import type { RunningSubagent } from "../types.ts";
+import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { queuedRunEnd, queuedRunEndIds, settleWaitReply } from "./delivery-queue.ts";
+import type { ResultStore } from "./result-files.ts";
+import { parseRunId, type ResultRecord } from "./result-record.ts";
 import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
 import { getSubagentWaitSuccessResult } from "./wait-result.ts";
@@ -14,11 +16,14 @@ export interface JoinParams {
 	timeout?: number;
 }
 
-/** One ended run in a wait reply: the same rendering a message carries, and its record. */
+/**
+ * One ended run in a wait reply: the same rendering a message carries, and the run's published
+ * record (D13), or null when the run published none (a launch that failed before it reserved one).
+ */
 export interface JoinedResult {
 	id: string;
 	text: string;
-	record: Record<string, unknown>;
+	record: ResultRecord | null;
 }
 
 export interface MissingRun {
@@ -40,34 +45,52 @@ type Target = { kind: "active"; running: RunningSubagent } | { kind: "ended"; re
 /** Seconds to milliseconds for the time limit. */
 const MS_PER_SECOND = 1000;
 
-function snapshotEnd(id: string): JoinedResult {
-	// A held or queued run end is the rendering the message path would carry (D14).
-	const queued = queuedRunEnd(id);
-	if (queued) {
-		const status = queued.customType === "subagent_ping" ? "pinged" : queued.details.status;
-		return { id, text: queued.content, record: { ...queued.details, status, deliveryState: "awaited" } };
-	}
-	const cached = completedSubagentResults.get(id);
-	if (cached) {
-		const reply = getSubagentWaitSuccessResult(cached);
-		return { id, text: reply.content.map((block) => block.text).join("\n\n"), record: reply.details };
-	}
-	return { id, text: `Sub-agent "${id}" ended without a result.`, record: { id, status: "failed" } };
+/** Where an ended run's record is read: the run's own store first, then this parent session's. */
+interface RecordSources {
+	runStore?: ResultStore;
+	sessionStore?: ResultStore;
+	/** The published run id the run's end names, when the caller has it. */
+	runId?: string;
 }
 
-function resolveTarget(query: string): Target | MissingRun {
+function readRecord(runId: string | undefined, sources: RecordSources): ResultRecord | null {
+	if (!runId) return null;
+	let id: ReturnType<typeof parseRunId>;
+	try {
+		id = parseRunId(runId);
+	} catch {
+		return null;
+	}
+	return sources.runStore?.read(id) ?? sources.sessionStore?.read(id) ?? null;
+}
+
+function snapshotEnd(id: string, sources: RecordSources): JoinedResult {
+	// The text is the rendering the message path would carry (D14); the record is the published one.
+	const queued = queuedRunEnd(id);
+	const cached = completedSubagentResults.get(id);
+	const queuedRunId = typeof queued?.details.runId === "string" ? queued.details.runId : undefined;
+	const record = readRecord(sources.runId ?? cached?.resultRunId ?? queuedRunId, sources);
+	if (queued) return { id, text: queued.content, record };
+	if (cached) {
+		const reply = getSubagentWaitSuccessResult(cached);
+		return { id, text: reply.content.map((block) => block.text).join("\n\n"), record };
+	}
+	return { id, text: `Sub-agent "${id}" ended without a result.`, record };
+}
+
+function resolveTarget(query: string, sessionStore: ResultStore | undefined): Target | MissingRun {
 	// An active run comes first, by id or by name: a named run that still runs takes part (D16).
 	const byId = runningSubagents.get(query);
 	if (byId) return { kind: "active", running: byId };
 	const [named, ...others] = [...runningSubagents.values()].filter((running) => running.name === query);
 	if (named && others.length === 0) return { kind: "active", running: named };
 	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
-	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query) };
+	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
 	// An ended run this process still knows, by id or by name: a lookup returns its rendering.
 	const [endedId, ...otherEnded] = completedSubagentResults.get(query)
 		? [query]
 		: [...completedSubagentResults.values()].filter((cached) => cached.name === query).map((cached) => cached.id);
-	if (endedId && otherEnded.length === 0) return { kind: "ended", result: snapshotEnd(endedId) };
+	if (endedId && otherEnded.length === 0) return { kind: "ended", result: snapshotEnd(endedId, { sessionStore }) };
 	if (endedId) return { id: query, error: `Multiple ended subagents match "${query}". Use the id instead.` };
 	return { id: query, error: `No result record for "${query}".` };
 }
@@ -81,14 +104,18 @@ function defaultIds(): string[] {
  * delivery queue. A returned reply takes the ends it carries; an interrupted wait gives back each
  * end that no other wait still holds, and the queue sends it as a message.
  */
-export async function joinRuns(params: JoinParams, signal?: AbortSignal): Promise<JoinOutcome> {
+export async function joinRuns(
+	params: JoinParams,
+	signal?: AbortSignal,
+	sessionStore?: ResultStore,
+): Promise<JoinOutcome> {
 	const mode = params.mode ?? "all";
 	const ids = params.ids && params.ids.length > 0 ? params.ids : defaultIds();
 	const missing: MissingRun[] = [];
 	const results = new Map<string, JoinedResult>();
 	const active: RunningSubagent[] = [];
 	for (const query of ids) {
-		const target = resolveTarget(query);
+		const target = resolveTarget(query, sessionStore);
 		if (!("kind" in target)) missing.push(target);
 		else if (target.kind === "ended") results.set(target.result.id, target.result);
 		else if (!active.includes(target.running)) active.push(target.running);
@@ -98,13 +125,14 @@ export async function joinRuns(params: JoinParams, signal?: AbortSignal): Promis
 	const holds = new Map(active.map((running) => [running.id, holdRunEnd(running.id)]));
 	let wake = () => {};
 	for (const running of active) {
-		const ended = () => {
+		const ended = (result?: SubagentResult) => {
 			// The router ran first (it was wired at launch), so the end is held in the queue now.
 			if (!holds.has(running.id)) return;
-			results.set(running.id, snapshotEnd(running.id));
+			const sources = { runStore: running.resultTarget?.store, sessionStore, runId: result?.resultRunId };
+			results.set(running.id, snapshotEnd(running.id, sources));
 			wake();
 		};
-		(running.completionPromise ?? new Promise<never>(() => {})).then(ended, ended);
+		(running.completionPromise ?? new Promise<never>(() => {})).then(ended, () => ended());
 	}
 	const isMet = () => (mode === "any" ? results.size > 0 : active.every((running) => results.has(running.id)));
 
