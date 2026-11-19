@@ -116,6 +116,9 @@ function fakeLaunchTool(
 
 const text = (result: any): string => (typeof result === "string" ? result : result.content[0].text);
 const refused = (result: any): boolean => typeof result !== "string" && result.details?.error === "launch_cap";
+/** An awaited launch: the child ended before the call returned, so no watcher outlives the test. */
+const assertCompleted = (result: any, label = "launch"): void =>
+	assert.equal(result.details?.status, "completed", `${label}: ${text(result)}`);
 
 describe("launch cap (D9)", () => {
 	const saved = new Map<string, string | undefined>();
@@ -238,7 +241,7 @@ describe("launch cap (D9)", () => {
 		mkdirSync(agentsDir, { recursive: true });
 		writeFileSync(
 			join(agentsDir, "worker.md"),
-			"---\nname: worker\ndescription: worker agent\nmode: background\nauto-exit: true\n---\n\nBody.",
+			"---\nname: worker\ndescription: worker agent\nmode: background\nasync: false\nauto-exit: true\n---\n\nBody.",
 		);
 		process.env.PI_CODING_AGENT_DIR = join(cwd, "agent-root");
 		process.env[LAUNCH_CAP_ENV] = "1";
@@ -252,7 +255,7 @@ describe("launch cap (D9)", () => {
 		const first = await loadExtension(cwd, "parent");
 		await first.startSession("startup");
 		const started = await launchIn(first, "before-reload");
-		assert.ok(!refused(started), text(started));
+		assertCompleted(started);
 
 		// Pi's /reload loads src/subagents.ts again as a fresh module instance in the same process.
 		const reloaded = await loadExtension(cwd, "parent");
@@ -272,7 +275,7 @@ describe("launch cap (D9)", () => {
 		for (const reason of ["new", "resume", "fork"]) {
 			await reloaded.startSession(reason);
 			const result = await launchIn(reloaded, `after-${reason}`);
-			assert.ok(!refused(result), `${reason}: ${text(result)}`);
+			assertCompleted(result, reason);
 		}
 	});
 });
