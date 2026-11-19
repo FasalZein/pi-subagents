@@ -166,7 +166,6 @@ describe("extension registration gating", () => {
 				"agent_settled",
 				"agent_start",
 				"before_agent_start",
-				"context",
 				"input",
 				"message_end",
 				"session_shutdown",

@@ -98,8 +98,7 @@ export class SubagentsOverlayController implements Component {
 		} else if (this.state.view.kind === "confirm") {
 			lines.push(...this.renderConfirmView(this.state.view.item, this.state.view.confirmed, width));
 		} else if (this.state.view.kind === "editor") {
-			const item = this.state.items[this.state.view.itemIndex];
-			if (item) lines.push(...this.renderEditorView(item, width));
+			lines.push(...this.renderEditorView(this.state.view.item, width));
 		} else {
 			lines.push(...renderList(this.state, this.theme, width, bodyHeight, this.state.listScroll[this.state.activeTab]));
 		}
@@ -145,7 +144,7 @@ export class SubagentsOverlayController implements Component {
 		}
 		if (matchesKey(data, "m") && item.canResume) {
 			this.editor.setText("");
-			this.state.view = { kind: "editor", itemIndex: this.state.selectedIndex };
+			this.state.view = { kind: "editor", item };
 		}
 		if (matchesKey(data, Key.space) && item.canToggle && item.onToggle) {
 			try {
@@ -331,9 +330,9 @@ export class SubagentsOverlayController implements Component {
 
 	private submitResume(rawText: string): void {
 		if (!rawText.trim() || this.state.view.kind !== "editor") return;
-		const item = this.state.items[this.state.view.itemIndex];
+		const item = this.state.view.item;
 		this.state.view = { kind: "list" };
-		if (!item?.sessionFile) {
+		if (!item.sessionFile) {
 			this.ctx.ui.notify("No session file.", "error");
 			return;
 		}

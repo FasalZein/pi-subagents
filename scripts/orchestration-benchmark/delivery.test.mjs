@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { deliveryAccounting } from "./delivery.mjs";
+import { carriers, deliveryAccounting } from "./delivery.mjs";
 import {
 	answerMatches,
 	answerParser,
@@ -100,6 +100,40 @@ test("one carrier per run id is a clean delivery and a clean yield", () => {
 		[2, 0, 0],
 	);
 	assert.equal(record.cleanYieldShare, 1);
+});
+
+test("[T22] a grouped result message is one carrier for each member, with its own id and text", () => {
+	// The shape groupRunEnds writes (src/runtime/run-end-message.ts): members carry their own details.id.
+	const grouped = {
+		type: "custom_message",
+		customType: "subagent_result",
+		content: "x-1\n\ny-2",
+		details: {
+			results: [
+				{ customType: "subagent_result", content: "x-1", details: { id: "r1" } },
+				{ customType: "subagent_ping", content: "y-2", details: { id: "r2" } },
+			],
+		},
+	};
+	assert.deepEqual(
+		carriers([grouped], SCENARIO.parentToolAllowlist).map((c) => [c.kind, c.runId, c.text]),
+		[
+			["result-message", "r1", "x-1"],
+			["result-message", "r2", "y-2"],
+		],
+	);
+	const record = account(
+		[LAUNCH, grouped, assistant("stop", "x-1 y-2")],
+		[child("a", "x-1"), child("b", "y-2")],
+	);
+	assert.deepEqual(
+		record.runs.map((r) => [r.runId, r.handover]),
+		[
+			["r1", "delivered"],
+			["r2", "delivered"],
+		],
+	);
+	assert.deepEqual([record.transfers, record.extraCopies, record.undelivered], [2, 0, 0]);
 });
 
 test("a blocking batch result is one carrier for each run it lists", () => {

@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { connectMuxWorkReporter } from "../mux.ts";
 import { outstandingWork } from "./outstanding-work.ts";
+import { runEndIds } from "./run-end-message.ts";
 
 /** Optional transport for session-scoped delegated-work facts, never native agent status. */
 export interface WorkReporter {
@@ -36,11 +37,9 @@ export function registerOutstandingWorkReporting(
 	}
 
 	pi.on("tool_result", async () => { await flush(); });
-	pi.on("context", (event) => { if (!stopped) outstandingWork.consume(event.messages); });
-	pi.on("agent_settled", async (_event, ctx) => {
-		if (!stopped && ctx.isIdle()) outstandingWork.settle();
-		await flush();
-	});
+	// D30: a run counts until the message that carries its result is committed, single or grouped.
+	pi.on("message_end", (event) => { if (!stopped) outstandingWork.release(...runEndIds(event.message)); });
+	pi.on("agent_settled", async () => { await flush(); });
 
 	return {
 		start(ctx: ExtensionContext): Promise<void> {

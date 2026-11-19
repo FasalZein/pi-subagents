@@ -105,6 +105,19 @@ export function carriers(events, parentToolAllowlist) {
 	const found = [];
 	events.forEach((e, index) => {
 		if (e?.type === "custom_message" && e.customType === RESULT_MESSAGE) {
+			// One boundary hands several run ends over as one message (D15); each member keeps its own id and text.
+			if (Array.isArray(e.details?.results)) {
+				for (const member of e.details.results) {
+					found.push({
+						kind: "result-message",
+						index,
+						runId: typeof member?.details?.id === "string" ? member.details.id : null,
+						tool: null,
+						text: textOf(member?.content),
+					});
+				}
+				return;
+			}
 			const runId = typeof e.details?.id === "string" ? e.details.id : null;
 			found.push({
 				kind: "result-message",
