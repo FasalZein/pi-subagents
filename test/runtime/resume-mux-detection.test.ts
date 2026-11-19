@@ -1,5 +1,5 @@
 import { testResultsDir } from "../support/result-fixtures.ts";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import {
 	assert,
@@ -38,8 +38,6 @@ echo '{"error":{"code":"unknown_command","message":"unsupported fake herdr comma
 exit 1
 `;
 
-const ENV_KEYS = ["PATH", "PI_SUBAGENT_MUX", "FAKE_HERDR_LOG", "PI_SUBAGENT_ENV_CAPSULE_DIR", "SHELL", "HERDR_PANE_ID"] as const;
-
 describe("subagent_resume mux detection", () => {
 	// Each Herdr availability probe blocks the parent on two CLI calls. 54d185f made 4 status probes on this
 	// resume (measured with this test); the adapter refactor must not add one.
@@ -47,60 +45,55 @@ describe("subagent_resume mux detection", () => {
 		const dir = createTestDir();
 		const binDir = join(dir, "bin");
 		mkdirSync(binDir, { recursive: true });
-		mkdirSync(join(dir, "capsules"));
 		const logFile = join(dir, "herdr.log");
 		writeFileSync(logFile, "");
 		writeExecutable(binDir, "herdr", FAKE_HERDR);
-		const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
+		// The suite capsule root (test/support/capsule-root.ts) is removed at exit; the capsule holds the parent env.
+		const suiteCapsuleRoot = process.env.PI_SUBAGENT_ENV_CAPSULE_DIR!;
+		const capsulesBefore = readdirSync(suiteCapsuleRoot).length;
+		// test/support/env.ts restores these tracked keys after each test.
 		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
 		process.env.PI_SUBAGENT_MUX = "herdr";
 		process.env.FAKE_HERDR_LOG = logFile;
-		process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = join(dir, "capsules");
 		process.env.SHELL = "/bin/sh";
 		process.env.HERDR_PANE_ID = "w1:p1";
-		try {
-			const sessionFile = join(dir, "child.jsonl");
-			writeFileSync(
-				sessionFile,
-				`${JSON.stringify({ type: "session", version: 3, id: "child-session", timestamp: new Date().toISOString(), cwd: dir })}\n`,
-			);
-			await writeSubagentLaunchMetadataEntryForTest(sessionFile, {
-				version: 1,
-				timestamp: new Date().toISOString(),
-				name: "resume-child",
-				agent: "scout",
-				mode: "interactive",
-				sessionMode: "fork",
-				parentClosePolicy: "terminate",
-				async: true,
-				denyTools: [],
-				noContextFiles: false,
-				noSession: false,
-				agentConfigDir: dir,
-				cwd: dir,
-				boundarySystemPrompt: false,
-			});
-			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Detection probe." },
-				{
-					isMuxAvailable: () => true,
-					getShellReadyDelayMs: () => 0,
-					watchBackgroundSubagent: async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 }),
-					watchSubagent: async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 }),
-					getWatcherSignal: (_running: any, controller: AbortController) => controller.signal,
-					startWidgetRefresh: () => {},
-					getContextWindow: () => undefined,
-					runningSubagents: new Map<string, any>(),
-				},
-			);
-			assert.equal(running.surface, "w1:p2");
-			const calls = readFileSync(logFile, "utf8").split("\n");
-			assert.equal(calls.filter((line) => line === "status server --json").length, 4, calls.join("\n"));
-		} finally {
-			for (const [key, value] of saved) {
-				if (value === undefined) delete process.env[key];
-				else process.env[key] = value;
-			}
-		}
+		const sessionFile = join(dir, "child.jsonl");
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: "child-session", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+		);
+		await writeSubagentLaunchMetadataEntryForTest(sessionFile, {
+			version: 1,
+			timestamp: new Date().toISOString(),
+			name: "resume-child",
+			agent: "scout",
+			mode: "interactive",
+			sessionMode: "fork",
+			parentClosePolicy: "terminate",
+			async: true,
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: dir,
+			cwd: dir,
+			boundarySystemPrompt: false,
+		});
+		const running = await resumeSubagentSession(
+			{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Detection probe." },
+			{
+				isMuxAvailable: () => true,
+				getShellReadyDelayMs: () => 0,
+				watchBackgroundSubagent: async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 }),
+				watchSubagent: async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 }),
+				getWatcherSignal: (_running: any, controller: AbortController) => controller.signal,
+				startWidgetRefresh: () => {},
+				getContextWindow: () => undefined,
+				runningSubagents: new Map<string, any>(),
+			},
+		);
+		assert.equal(running.surface, "w1:p2");
+		assert.equal(readdirSync(suiteCapsuleRoot).length, capsulesBefore + 1, "the capsule lands in the suite root");
+		const calls = readFileSync(logFile, "utf8").split("\n");
+		assert.equal(calls.filter((line) => line === "status server --json").length, 4, calls.join("\n"));
 	});
 });

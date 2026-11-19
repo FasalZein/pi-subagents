@@ -1,3 +1,6 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import loadSubagentDoneExtension from "../../src/tools/subagent-done.ts";
+
 export {
 	getArtifactProjectName,
 	getArtifactStorageRoot,
@@ -126,10 +129,18 @@ export {
 	writeSubagentModelStateEntriesForTest,
 	writeSystemPromptArtifactForTest,
 } from "../../src/subagents.ts";
-export {
-	default as subagentDoneExtension,
-	isMissingOptionalDependencyForTest,
-} from "../../src/tools/subagent-done.ts";
+export { isMissingOptionalDependencyForTest } from "../../src/tools/subagent-done.ts";
+
+/**
+ * The child extension. A load with PI_SUBAGENT_SESSION set adds a process exit listener that deletes a
+ * marked session file (src/session/delete-on-exit.ts); no test process needs it, and suites that load
+ * the extension many times would pass Node's listener limit. Drop the listeners this load added.
+ */
+export function subagentDoneExtension(pi: ExtensionAPI): void {
+	const before = new Set(process.listeners("exit"));
+	loadSubagentDoneExtension(pi);
+	for (const listener of process.listeners("exit")) if (!before.has(listener)) process.removeListener("exit", listener);
+}
 export {
 	filterToolNames,
 	getDeniedToolNames,
