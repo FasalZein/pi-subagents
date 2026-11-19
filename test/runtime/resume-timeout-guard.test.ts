@@ -65,7 +65,15 @@ function writeTimedOutSession(
 }
 
 function createResumeRuntime() {
-	const empty = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
+	// A real watcher publishes the run's outcome; the verdict settles from it (D8).
+	const empty = async () => ({
+		name: "",
+		task: "",
+		summary: "",
+		exitCode: 0,
+		elapsed: 0,
+		resultOutcome: "done" as const,
+	});
 	return {
 		isMuxAvailable: () => true,
 		getShellReadyDelayMs: () => 0,

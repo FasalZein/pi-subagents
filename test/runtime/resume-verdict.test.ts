@@ -261,7 +261,11 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			if (first.status === "fulfilled") await waitForExit(first.value);
 
 			const other = createRuntime();
-			other.runningSubagents.set("cccc0001", { id: "cccc0001", name: "aliased", sessionFile: aliasFile } as RunningSubagent);
+			other.runningSubagents.set("cccc0001", {
+				id: "cccc0001",
+				name: "aliased",
+				sessionFile: aliasFile,
+			} as RunningSubagent);
 			await assert.rejects(() => serviceResume(join(realDir, "..", "real", "aliased.jsonl"), other), /already running/);
 		});
 	});
@@ -273,7 +277,9 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			const sessionFile = writeBlockedSession(dir, "override-killed.jsonl");
 			const running = await serviceResume(
 				sessionFile,
-				createRuntime(async () => cleanResult({ exitCode: 1, error: "cancelled", summary: "Subagent cancelled." })),
+				createRuntime(async () =>
+					cleanResult({ exitCode: 1, error: "cancelled", summary: "Subagent cancelled.", resultOutcome: "cancelled" }),
+				),
 				true,
 			);
 			await running.completionPromise;
@@ -299,7 +305,7 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 				createRuntime(async (child) => {
 					await waitForExit(child);
 					seen = JSON.parse(readFileSync(getSubagentExitSidecarPath(sessionFile), "utf8"));
-					return cleanResult();
+					return cleanResult({ resultOutcome: "done" });
 				}),
 				true,
 			);
@@ -339,7 +345,13 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 						kind: "idle-timeout",
 						blocksResume: child.timeoutBlocksResume === true,
 					});
-					return cleanResult({ exitCode: 1, timedOut: "idle-timeout", timedOutAfter: 5, timeoutBlocksResume: true });
+					return cleanResult({
+						exitCode: 1,
+						timedOut: "idle-timeout",
+						timedOutAfter: 5,
+						timeoutBlocksResume: true,
+						resultOutcome: "timed_out",
+					});
 				}),
 				true,
 			);

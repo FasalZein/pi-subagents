@@ -1,7 +1,9 @@
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import { clearSubagentTimeoutSidecar, readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
+import { CALL_OUTCOMES } from "./result-record.ts";
 
 /**
  * D8: the two resume guards. They run inside the resume itself, so the tool, the overlay and any
@@ -31,6 +33,18 @@ export function assertResumeAllowed(sessionFile: string): void {
 	);
 }
 
+/**
+ * One key per session file, whatever its spelling: two spellings of one file (/tmp and /private/tmp
+ * on macOS, a symlinked folder) must not get two reservations.
+ */
+function sessionKey(sessionFile: string): string {
+	try {
+		return realpathSync(sessionFile);
+	} catch {
+		return resolve(sessionFile);
+	}
+}
+
 /** Sessions that a resume in this process holds, from the first synchronous step to the end of its run. */
 const reservedSessions = new Set<string>();
 
@@ -40,9 +54,9 @@ const reservedSessions = new Set<string>();
  * Two Pi processes are not covered (spec, D8).
  */
 export function reserveResumeSession(sessionFile: string, running: Iterable<RunningSubagent>): () => void {
-	const key = resolve(sessionFile);
+	const key = sessionKey(sessionFile);
 	for (const existing of running) {
-		if (existing.sessionFile && resolve(existing.sessionFile) === key) {
+		if (existing.sessionFile && sessionKey(existing.sessionFile) === key) {
 			throw new Error(
 				`Session "${existing.name}" (${existing.agent ?? "subagent"}) is already running with id ${existing.id}. ` +
 					"Use subagent_kill first or wait for it to complete.",
@@ -62,13 +76,14 @@ export function reserveResumeSession(sessionFile: string, running: Iterable<Runn
 }
 
 /**
- * D8: the resumed run's outcome settles the previous verdict. A clean end (exit 0, no error)
- * removes it; a new timeout has already replaced it through the watcher's atomic rename. A
- * cancellation, a failure or a killed child leaves the verdict in force, as does a parent that dies
- * before this runs, because nothing removes it then.
+ * D8: the resumed run's published outcome settles the previous verdict, never its shell status (a
+ * manual pane can publish success with a nonzero status). An end of the child's own (done, partial,
+ * blocked) removes it; a new timeout has already replaced it through the watcher's atomic rename.
+ * A cancelled resumed run leaves the verdict in force, so a non-idempotent agent stays blocked. A
+ * failure, a run with no published record, and a parent that dies before this runs leave it too.
  */
 export function settleVerdictAfterRun(sessionFile: string, result: SubagentResult): void {
-	if (result.timedOut) return;
-	if (result.exitCode !== 0 || result.error) return;
+	const outcome = result.resultOutcome;
+	if (!outcome || !(CALL_OUTCOMES as readonly string[]).includes(outcome)) return;
 	clearSubagentTimeoutSidecar(sessionFile);
 }
