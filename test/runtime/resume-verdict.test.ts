@@ -147,9 +147,26 @@ describe("resume by run id (D8)", () => {
 
 			const runtime = createRuntime();
 			const started = (await resumeTool(runtime).execute("c1", { runId: "aaaa0001" }, undefined, undefined, ctx)) as {
-				details: { sessionFile: string };
+				content: { text: string }[];
+				details: { id: string; sessionFile: string };
+				structuredContent: { status: string; children: Record<string, unknown>[] };
 			};
 			assert.equal(started.details.sessionFile, sessionFile);
+			// D16 (T28): a script gets the resumed child's data; the session file is data, not text.
+			assert.deepEqual(started.structuredContent, {
+				status: "launched",
+				children: [
+					{
+						runId: started.details.id,
+						name: "blocked",
+						agent: started.structuredContent.children[0]?.agent,
+						sessionFile,
+						where: "headless",
+						state: "started",
+					},
+				],
+			});
+			assert.equal(started.content[0]?.text.includes(sessionFile), false);
 
 			await assert.rejects(
 				() => resumeTool(runtime).execute("c2", { runId: "aaaa0002" }, undefined, undefined, ctx),

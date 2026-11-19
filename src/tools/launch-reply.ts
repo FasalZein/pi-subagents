@@ -19,6 +19,23 @@ export function renderLaunchChildLine(child: LaunchedChild): string {
 }
 
 /**
+ * The reply to a batch whose later child failed to launch (D16, D23): the failed child, then one
+ * line per child that started and keeps running, by run id.
+ */
+export function renderLaunchFailure(
+	failed: { position: number; name: string; agent: string; error: string },
+	total: number,
+	started: readonly LaunchedChild[],
+): string {
+	const errorText = failed.error.replace(/^Error:\s*/, "");
+	return [
+		`Error: child ${failed.position} of ${total}, ${failed.name} (agent ${failed.agent}), failed to launch: ${errorText}`,
+		`These children started and keep running; wait for them with subagent_wait or stop them with subagent_kill by run id:`,
+		...started.map(renderLaunchChildLine),
+	].join("\n");
+}
+
+/**
  * The reply to every launch (D23): child lines, the line on how this call's reports return,
  * the warnings of children that report later, then each delivered report unchanged.
  */

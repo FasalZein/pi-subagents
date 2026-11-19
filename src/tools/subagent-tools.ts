@@ -30,7 +30,14 @@ import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../ty
 
 import { formatSubagentBatchLines, formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
-import { type ChildDelivery, renderLaunchReply } from "./launch-reply.ts";
+import { type ChildDelivery, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
+import {
+	asStructuredContent,
+	type FailedChild,
+	launchedChildData,
+	type SubagentLaunchStructured,
+	SubagentLaunchOutput,
+} from "./launch-structured.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
@@ -340,6 +347,7 @@ export function registerSubagentCoreTools(
 			label: "Subagent",
 			description: "Start one or more child agents, each named with its task in the children list.",
 			parameters: SubagentParams,
+			outputSchema: SubagentLaunchOutput,
 			execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
 				const children = params.children.map((child) => stripInternalLaunchOverrides(child as SubagentParamsInput));
 				const widthLimit = getSpawnWidthLimit();
@@ -381,6 +389,7 @@ export function registerSubagentCoreTools(
 				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];
+				let failed: FailedChild | undefined;
 				try {
 					if (prepared.length > 1 && hasBlockingChild) {
 						markSubagentBatchBlocking();
@@ -398,7 +407,15 @@ export function registerSubagentCoreTools(
 						} catch (error) {
 							childSlots.release();
 							childCapSlots.release();
-							throw error;
+							if (launched.length === 0) throw error;
+							// D16: a later child failed; the started children keep running and are named.
+							failed = {
+								position: index + 1,
+								name: entry.child.name,
+								agent: entry.child.agent,
+								error: error instanceof Error ? error.message : String(error),
+							};
+							break;
 						}
 						childCapSlots.commit();
 						launched.push(running);
@@ -410,6 +427,20 @@ export function registerSubagentCoreTools(
 					throw error;
 				}
 				runtime.startWidgetRefresh();
+				if (failed) {
+					unlaunchedSlots.release();
+					unlaunchedCapSlots.release();
+					const started = launched.map((running, index) =>
+						launchedChildData(running, prepared[index].child.agent, false),
+					);
+					const structured: SubagentLaunchStructured = { status: "launch_failed", children: started, failed };
+					return asSubagentToolResult({
+						content: [{ type: "text", text: renderLaunchFailure(failed, prepared.length, launched) }],
+						details: structured,
+						structuredContent: asStructuredContent(structured),
+						isError: true,
+					});
+				}
 				const results = await Promise.all(
 					launched.map((running) => runtime.getLaunchedSubagentResult(running, signal)),
 				);
@@ -441,11 +472,19 @@ export function registerSubagentCoreTools(
 					// D10: outside every result frame, so each dropped entry is named once in this reply.
 					...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
 				]);
+				const structured: SubagentLaunchStructured = {
+					status: "launched",
+					children: launched.map((running, index) =>
+						launchedChildData(running, prepared[index].child.agent, delivered[index]),
+					),
+				};
+				const structuredContent = asStructuredContent(structured);
 				if (launched.length === 1) {
 					return asSubagentToolResult({
 						...results[0],
 						content: [{ type: "text", text }],
 						details: replyDetails(results[0], 0),
+						structuredContent,
 					});
 				}
 				return asSubagentToolResult({
@@ -462,6 +501,7 @@ export function registerSubagentCoreTools(
 							...(deliveries[index] && "report" in deliveries[index] ? { report: deliveries[index].report } : {}),
 						})),
 					},
+					structuredContent,
 					...getSubagentBatchStopMetadata(),
 				});
 			},
@@ -484,6 +524,11 @@ export function registerSubagentCoreTools(
 			},
 			renderResult(result, options, theme, context) {
 				const details = result.details as { status?: string; children?: unknown[] } | undefined;
+				if (details?.status === "launch_failed") {
+					const component = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+					component.setText(`\n${theme.fg("error", resultText(result as ToolResult))}`);
+					return component;
+				}
 				if (details?.children) {
 					if (details.status !== "batch") return new Text("", 0, 0);
 					const component = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);

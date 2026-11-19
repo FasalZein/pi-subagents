@@ -37,6 +37,7 @@ import "./tools/subagents-view.test.ts";
 import "./tools/agents-tab-toggle.test.ts";
 import "./tools/agents-tool.test.ts";
 import "./tools/launch-shape.test.ts";
+import "./tools/launch-structured-reply.test.ts";
 import "./tools/message-renderers.test.ts";
 import "./tools/overlay-run-ends.test.ts";
 import "./tools/overlay-resume-target.test.ts";

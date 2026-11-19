@@ -13,6 +13,7 @@ import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagen
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
+import { asStructuredContent, launchedChildData, SubagentLaunchOutput } from "./launch-structured.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
@@ -66,6 +67,7 @@ export function registerSubagentResumeTool(
 		label: "Resume Subagent",
 		description:
 			"Continue an earlier child session by the run id of its result or by its session file, optionally with a follow-up task.",
+		outputSchema: SubagentLaunchOutput,
 		parameters: Type.Object({
 			runId: Type.Optional(
 				Type.String({
@@ -184,11 +186,17 @@ export function registerSubagentResumeTool(
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
 				settleWaitReply([running.id], [result], signal);
+				const delivered = isFinishedStatus((result.details as { status?: string } | undefined)?.status);
+				const structuredContent = asStructuredContent({
+					status: "launched",
+					children: [launchedChildData(running, running.agent ?? "", delivered)],
+				});
 				const prefix = [isRenderedResult(result) ? "" : warning, dropped].filter(Boolean).join("\n\n");
-				if (!prefix) return result;
+				if (!prefix) return { ...result, structuredContent };
 				return {
 					...result,
 					content: [{ type: "text" as const, text: prefix }, ...result.content],
+					structuredContent,
 				};
 			}
 
@@ -208,6 +216,10 @@ export function registerSubagentResumeTool(
 					deliveryState: "detached" as const,
 					async: running.async,
 				},
+				structuredContent: asStructuredContent({
+					status: "launched",
+					children: [launchedChildData(running, running.agent ?? "", false)],
+				}),
 				...getSubagentBatchStopMetadata(),
 			};
 		},
