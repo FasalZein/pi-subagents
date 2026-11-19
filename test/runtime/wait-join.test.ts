@@ -114,7 +114,7 @@ describe("T24: joinRuns", () => {
 		finishTwo("TWO");
 		const outcome = await wait;
 		assert.equal(outcome.status, "complete");
-		assert.deepEqual(outcome.results.map((result) => result.id).sort(), ["id-one", "id-two"]);
+		assert.deepEqual(outcome.results.map((result) => result.runId).sort(), ["id-one", "id-two"]);
 		assert.deepEqual(sent, [], "no message for a returned result");
 		assert.equal(pendingRunEndCount(), 0);
 		resetSubagentStateForTest();
@@ -137,7 +137,7 @@ describe("T24: joinRuns", () => {
 		finish("NAMED-REPORT");
 		const outcome = await wait;
 		assert.deepEqual(outcome.missing, []);
-		assert.equal(outcome.results[0]?.id, "id-named");
+		assert.equal(outcome.results[0]?.runId, "id-named");
 		assert.match(outcome.results[0]!.text, /NAMED-REPORT/);
 		resetSubagentStateForTest();
 	});
@@ -146,7 +146,7 @@ describe("T24: joinRuns", () => {
 		resetSubagentStateForTest();
 		const outcome = await joinRuns({ ids: ["nope"] });
 		assert.equal(outcome.status, "empty");
-		assert.deepEqual(outcome.missing, [{ id: "nope", error: 'No result record for "nope".' }]);
+		assert.deepEqual(outcome.missing, [{ runId: "nope", error: 'No result record for "nope".' }]);
 	});
 
 	it("check 4: one of two overlapping waits is aborted first; the other returns the result and no message is sent", async () => {
@@ -184,7 +184,7 @@ describe("T24: joinRuns", () => {
 		const outcome = await waitB;
 		assert.equal(outcome.status, "timeout");
 		assert.deepEqual(
-			outcome.results.map((result) => result.id),
+			outcome.results.map((result) => result.runId),
 			["id-one"],
 		);
 		assert.deepEqual(outcome.pending, ["id-two"]);
@@ -273,7 +273,7 @@ describe("T24 fix round 1 (P2): an aborted wait lists canonical ids that still r
 		const waitB = joinRuns({ ids: ["id-two"] });
 		await tick();
 		finishTwo("TWO-REPORT");
-		assert.equal((await waitB).results[0]?.id, "id-two");
+		assert.equal((await waitB).results[0]?.runId, "id-two");
 		abort.abort();
 		const outcome = await waitA;
 		assert.equal(outcome.status, "interrupted");
@@ -289,7 +289,7 @@ describe("T24 fix round 1 (P2): an aborted wait lists canonical ids that still r
 		finish("ONE-REPORT");
 		await tick();
 		const byName = await joinRuns({ ids: ["one"] });
-		assert.deepEqual(byName.missing, [{ id: "one", error: 'No result record for "one".' }]);
+		assert.deepEqual(byName.missing, [{ runId: "one", error: 'No result record for "one".' }]);
 		const byId = await joinRuns({ ids: ["id-one"] });
 		assert.match(byId.results[0]?.text ?? "", /ONE-REPORT/);
 		resetSubagentStateForTest();
@@ -312,7 +312,7 @@ describe("T24 fix round 1 (P1): a wait sees only runs this parent may receive", 
 		const outcome = await joinRuns({ ids: ["foreign", "vf-foreign"], timeout: 0.2 });
 		assert.equal(outcome.status, "empty");
 		assert.deepEqual(
-			outcome.missing.map((missing) => missing.id),
+			outcome.missing.map((missing) => missing.runId),
 			["foreign", "vf-foreign"],
 		);
 		resetSubagentStateForTest();
@@ -348,7 +348,7 @@ describe("T24: the tool gives scripts structured records", () => {
 		assert.ok(Value.Check(SubagentWaitOutput, result.structuredContent), "structured content matches the schema");
 		const structured = result.structuredContent as SubagentWaitStructured;
 		const record = structured.results[0]?.record;
-		assert.equal(structured.results[0]?.id, "id-one");
+		assert.equal(structured.results[0]?.runId, "id-one");
 		assert.ok(record && Value.Check(ResultRecordSchema, record), "the published record matches the record schema");
 		assert.equal(record.outcome, "done");
 		assert.equal(record.typed, true);
@@ -363,5 +363,66 @@ describe("T24: the tool gives scripts structured records", () => {
 			mayLaunch: () => false,
 		});
 		await assert.rejects(tool.execute("c1", {}, undefined, undefined, {}), /may not call subagent_wait/);
+	});
+});
+
+describe("T67: wait entries join to the launch children by runId", () => {
+	// biome-ignore lint/suspicious/noExplicitAny: the captured definition is probed dynamically.
+	function waitTool(): any {
+		// biome-ignore lint/suspicious/noExplicitAny: the captured definition is probed dynamically.
+		let tool: any;
+		registerSubagentWaitTool({ registerTool: (definition: unknown) => (tool = definition) } as never, () => true, {
+			mayLaunch: () => true,
+		});
+		return tool;
+	}
+	const pairs = (structured: SubagentWaitStructured) => structured.results.map((entry) => [entry.runId, entry.name]);
+
+	it("entries carry runId and the launch name, in the order of the requested ids, not completion order", async () => {
+		resetSubagentStateForTest();
+		const sent: Sent[] = [];
+		const finishOne = startRun("one", sent);
+		const finishTwo = startRun("two", sent);
+		const finishThree = startRun("three", sent);
+		const ids = ["id-three", "one", "id-two", "nope"];
+		const call = waitTool().execute("c1", { ids }, undefined, undefined, parentToolCtx(createTestDir(), {}));
+		await tick();
+		finishTwo("TWO");
+		await tick();
+		finishOne("ONE");
+		await tick();
+		finishThree("THREE");
+		const result = await call;
+		assert.ok(Value.Check(SubagentWaitOutput, result.structuredContent), "structured content matches the schema");
+		const structured = result.structuredContent as SubagentWaitStructured;
+		assert.deepEqual(pairs(structured), [
+			["id-three", "three"],
+			["id-one", "one"],
+			["id-two", "two"],
+		]);
+		assert.ok(
+			structured.results.every((entry) => !("id" in entry)),
+			"the launch field name runId replaces id",
+		);
+		assert.deepEqual(structured.missing, [{ runId: "nope", error: 'No result record for "nope".' }]);
+		resetSubagentStateForTest();
+	});
+
+	it("a wait with no ids returns its entries in launch order", async () => {
+		resetSubagentStateForTest();
+		const sent: Sent[] = [];
+		const finishOne = startRun("one", sent);
+		const finishTwo = startRun("two", sent);
+		const call = waitTool().execute("c1", {}, undefined, undefined, parentToolCtx(createTestDir(), {}));
+		await tick();
+		finishTwo("TWO");
+		await tick();
+		finishOne("ONE");
+		const structured = (await call).structuredContent as SubagentWaitStructured;
+		assert.deepEqual(pairs(structured), [
+			["id-one", "one"],
+			["id-two", "two"],
+		]);
+		resetSubagentStateForTest();
 	});
 });

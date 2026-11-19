@@ -6,7 +6,7 @@ const srcUrl = (path: string) => new URL(`../../${path}`, import.meta.url).href;
 
 export interface FreshLookupReply {
 	text: string;
-	details: { status: string; missing: { id: string; error: string }[] };
+	details: { status: string; missing: { runId: string; error: string }[] };
 	running: number;
 }
 

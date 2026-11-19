@@ -108,12 +108,12 @@ describe("T25 check 5: a continue child that ended after its parent exited", () 
 			assert.equal(child.status, 0, child.stderr);
 			const reply = JSON.parse(child.stdout) as {
 				text: string;
-				details: { status: string; missing: { id: string; error: string }[] };
+				details: { status: string; missing: { runId: string; error: string }[] };
 				running: number;
 			};
 			const expected = `No result record for "${running.id}". Its session file: ${running.sessionFile}`;
 			assert.equal(reply.text, expected);
-			assert.deepEqual(reply.details.missing, [{ id: running.id, error: expected }]);
+			assert.deepEqual(reply.details.missing, [{ runId: running.id, error: expected }]);
 			assert.equal(reply.details.status, "empty");
 			assert.equal(reply.running, 0, "the restarted parent launched nothing");
 			assert.deepEqual(readdirSync(resultsDir), [running.id], "no new run folder: nothing launched");
