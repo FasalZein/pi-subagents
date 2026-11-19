@@ -1,36 +1,62 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { outstandingWork } from "./outstanding-work.ts";
 import { groupRunEnds, isFinishedStatus, type RunEndMessage, runEndIds } from "./run-end-message.ts";
 
+type Sink = Pick<ExtensionAPI, "sendMessage">;
+/** What the queue reads of the parent session: the entries Pi committed, in append order. */
+type CommittedEntries = Pick<ExtensionContext["sessionManager"], "getEntries">;
+
+/** A message that Pi commits without an extension message_end: a settle entry or a no-turn message. */
+interface InFlight {
+	message: RunEndMessage;
+	/** The session's entry count when it was proposed or sent; its commit is an entry after this. */
+	mark: number;
+}
+
 /**
  * D15: the one owner of run-end delivery to the parent. A result stays in this queue until the
- * parent session commits its message (Pi emits message_end for it). Pi's own steer queue is
- * editable: Alt+Up or Esc can clear it, so a result enters it only at a turn boundary, right
- * before Pi polls it, and only while it is empty. All results queued at one boundary leave as one
- * message (D15). A result that the boundary did not
- * commit is handed over again at the next boundary, or at once when the parent is idle. Delivery
- * is at least once. The settle step appends the queued results as a session entry and asks for one
- * more request; when the person presses Esc during that step, Pi commits the entry and starts no
- * turn, so the results enter the next request when the person types (D15). No result waits for the
- * person's next prompt in any other case.
+ * parent session commits its message. Pi's own steer queue is editable: Alt+Up or Esc can clear
+ * it, so a result enters it only at a turn boundary, right before Pi polls it, and only while it is
+ * empty. All results queued at one boundary leave as one message (D15). A result that the boundary
+ * did not commit is handed over again at the next boundary, or at once when the parent is idle.
+ * Delivery is at least once.
+ *
+ * Two paths commit without an extension message_end: the settle entry and a no-turn message. Each
+ * stays in flight until a session entry after its mark carries its run id; only then does the run
+ * leave the queue and its work lease end (D30). The settle step proposes the queued results as one
+ * entry and asks for one more request; when the person presses Esc during that step, Pi commits the
+ * entry and starts no turn, and a result that arrives during that step leaves with no turn too, so
+ * both enter the next request when the person types (D15). No result waits for the person's next
+ * prompt in any other case.
  */
 class DeliveryQueue {
 	private pending = new Map<string, RunEndMessage>();
 	/** Run ends that a running wait holds, with the sink to use when an aborted wait gives them back. */
-	private held = new Map<string, Pick<ExtensionAPI, "sendMessage">>();
+	private held = new Map<string, Sink>();
+	private inFlight = new Map<string, InFlight>();
 	/** Only a registered session has boundary events; an unregistered host gets the message at once. */
 	private registered = false;
 	private busy = false;
-	private pi?: Pick<ExtensionAPI, "sendMessage">;
+	/** This run reached the settle step: an abort now came during settling. */
+	private settling = false;
+	private pi?: Sink;
+	private session?: CommittedEntries;
 
 	register(pi: ExtensionAPI): void {
 		this.registered = true;
 		this.pi = pi;
-		pi.on("agent_start", () => {
-			this.busy = true;
+		pi.on("session_start", (_event, ctx) => {
+			this.session = ctx.sessionManager;
 		});
-		pi.on("message_end", (event) => this.commit(event.message));
+		pi.on("agent_start", (_event, ctx) => {
+			this.session = ctx.sessionManager;
+			this.confirm();
+			this.busy = true;
+			this.settling = false;
+		});
+		pi.on("message_end", (event) => this.commitIds(runEndIds(event.message)));
 		pi.on("turn_end", (event, ctx) => {
+			this.confirm();
 			const stop = (event.message as { stopReason?: string }).stopReason;
 			// An aborted or failed turn polls no steer; the settle step hands the result over.
 			if (stop === "aborted" || stop === "error" || ctx.hasPendingMessages()) return;
@@ -39,11 +65,11 @@ class DeliveryQueue {
 		// An aborted run skips this step (extensions.md, lifecycle): its queued results leave when
 		// agent_settled finds the parent idle.
 		pi.on("agent_before_settle", (event) => {
+			this.settling = true;
 			const free = this.takeFree();
 			if (free.length === 0) return;
 			const message = groupRunEnds(free);
-			// Pi emits no message_end for a boundary entry, so its leases end here (D30).
-			outstandingWork.release(...free.map((entry) => entry.details.id));
+			this.propose(free);
 			return {
 				entries: [
 					...event.entries,
@@ -58,45 +84,70 @@ class DeliveryQueue {
 				continue: true,
 			};
 		});
-		pi.on("agent_settled", () => {
+		pi.on("agent_settled", (event) => {
+			this.confirm();
+			// A proposed entry that a later handler replaced, or that Pi failed to append, is queued again.
+			for (const [id, entry] of this.inFlight) this.pending.set(id, entry.message);
+			this.inFlight.clear();
 			this.busy = false;
-			this.sendPending();
+			const escDuringSettle = event.aborted && this.settling;
+			this.settling = false;
+			if (escDuringSettle) this.sendNoTurn(this.pi, this.takeFree());
+			else this.sendPending();
 		});
 		pi.on("session_shutdown", () => {
 			// A closed or replaced session gets no more deliveries (D15); results stay in their files.
 			this.pending.clear();
 			this.held.clear();
+			this.inFlight.clear();
 			this.busy = false;
+			this.settling = false;
+			this.session = undefined;
 		});
 	}
 
 	/**
 	 * A run end that a wait holds: queued like every run end, but the wait owns it. The wait's reply
-	 * takes it, or an aborted wait releases it; no boundary hands it over before that (R4).
+	 * takes it, or an aborted wait gives it back; no boundary hands it over before that (R4).
 	 */
-	hold(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage): void {
+	hold(pi: Sink, message: RunEndMessage): void {
 		this.pending.set(message.details.id, message);
 		this.held.set(message.details.id, pi);
 	}
 
 	/**
-	 * An aborted wait gives the run ends it held back (D15, T26): they leave now as one message that
-	 * starts no turn, since the person stopped the turn. Pi appends it at the end of the aborted
-	 * turn, or at once when idle, so it enters the next request. Runs that end later start turns.
+	 * An aborted wait gives back every run end it took, held during the wait or queued before it
+	 * (D15, T26): they leave now as one message that starts no turn, since the person stopped the
+	 * turn. Pi appends it at the end of the aborted run, or at once when idle, so it enters the next
+	 * request. Runs that end later start turns.
 	 */
 	giveBack(ids: readonly string[]): void {
-		let sink: Pick<ExtensionAPI, "sendMessage"> | undefined;
+		let sink: Sink | undefined;
 		const messages: RunEndMessage[] = [];
+		for (const id of ids) {
+			const holder = this.held.get(id);
+			this.held.delete(id);
+			const message = this.pending.get(id);
+			if (!message) continue;
+			this.pending.delete(id);
+			sink ??= holder;
+			messages.push(message);
+		}
+		this.sendNoTurn(this.registered ? this.pi : sink, messages);
+	}
+
+	/** A wait that returned without these run ends (not aborted) leaves them to the boundaries. */
+	unhold(ids: readonly string[]): void {
 		for (const id of ids) {
 			const pi = this.held.get(id);
 			this.held.delete(id);
 			const message = this.pending.get(id);
 			if (!pi || !message) continue;
-			this.pending.delete(id);
-			sink ??= pi;
-			messages.push(message);
+			if (!this.registered) {
+				this.pending.delete(id);
+				pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+			} else if (!this.busy) this.send(message, true);
 		}
-		if (sink && messages.length > 0) sink.sendMessage<object>(groupRunEnds(messages), { triggerTurn: false });
 	}
 
 	queuedIds(): string[] {
@@ -107,11 +158,14 @@ class DeliveryQueue {
 		return this.pending.get(id);
 	}
 
-	deliver(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage, triggerTurn: boolean): void {
-		// A no-turn message (print-mode verified adoption, D18) is appended at the end of the turn
-		// by Pi and never sits in the steer queue.
-		if (!this.registered || !triggerTurn) {
+	deliver(pi: Sink, message: RunEndMessage, triggerTurn: boolean): void {
+		if (!this.registered) {
 			pi.sendMessage(message, { triggerTurn, deliverAs: "steer" });
+			return;
+		}
+		// A no-turn message (print-mode verified adoption, D18) commits like a give-back.
+		if (!triggerTurn) {
+			this.sendNoTurn(pi, [message]);
 			return;
 		}
 		this.pending.set(message.details.id, message);
@@ -120,6 +174,40 @@ class DeliveryQueue {
 
 	private send(message: RunEndMessage, triggerTurn: boolean): void {
 		this.pi?.sendMessage(message, { triggerTurn, deliverAs: "steer" });
+	}
+
+	/** One message that starts no turn; in a registered session it stays in flight until committed. */
+	private sendNoTurn(sink: Sink | undefined, messages: RunEndMessage[]): void {
+		if (!sink || messages.length === 0) return;
+		if (this.registered) this.propose(messages);
+		sink.sendMessage<object>(groupRunEnds(messages), { triggerTurn: false });
+		// When idle, Pi appends the message at once.
+		this.confirm();
+	}
+
+	/** Track messages that commit without message_end; with no session to read, they count as committed. */
+	private propose(messages: readonly RunEndMessage[]): void {
+		if (!this.session) {
+			this.commitIds(messages.map((message) => message.details.id));
+			return;
+		}
+		const mark = this.session.getEntries().length;
+		for (const message of messages) this.inFlight.set(message.details.id, { message, mark });
+	}
+
+	/** Commit every in-flight run end that a session entry after its mark carries. */
+	private confirm(): void {
+		if (!this.session || this.inFlight.size === 0) return;
+		const first = Math.min(...[...this.inFlight.values()].map((entry) => entry.mark));
+		const committed = new Set<string>();
+		this.session.getEntries().forEach((entry, index) => {
+			if (index < first || entry.type !== "custom_message") return;
+			for (const id of runEndIds({ role: "custom", ...entry })) {
+				const flight = this.inFlight.get(id);
+				if (flight && index >= flight.mark) committed.add(id);
+			}
+		});
+		this.commitIds([...committed]);
 	}
 
 	/** The queued results that no wait holds, taken out of the queue. */
@@ -136,12 +224,14 @@ class DeliveryQueue {
 		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
 	}
 
-	/** A committed message delivers every run end it carries, grouped or single. */
-	private commit(message: unknown): void {
-		for (const id of runEndIds(message)) {
+	/** A committed message delivers every run end it carries, grouped or single; each lease ends once (D30). */
+	private commitIds(ids: readonly string[]): void {
+		for (const id of ids) {
 			this.pending.delete(id);
 			this.held.delete(id);
+			this.inFlight.delete(id);
 		}
+		if (ids.length > 0) outstandingWork.release(...ids);
 	}
 
 	/** A wait reply carried this run end to its caller: no boundary hands it over again. */
@@ -151,15 +241,18 @@ class DeliveryQueue {
 	}
 
 	get size(): number {
-		return this.pending.size;
+		return this.pending.size + this.inFlight.size;
 	}
 
 	reset(): void {
 		this.pending.clear();
 		this.held.clear();
+		this.inFlight.clear();
 		this.registered = false;
 		this.busy = false;
+		this.settling = false;
 		this.pi = undefined;
+		this.session = undefined;
 	}
 }
 
@@ -201,7 +294,8 @@ export function settleWaitReply(ids: readonly string[], reported: readonly strin
 			outstandingWork.release(id);
 		} else givenBack.push(id);
 	}
-	deliveryQueue.giveBack(givenBack);
+	if (signal?.aborted) deliveryQueue.giveBack(givenBack);
+	else deliveryQueue.unhold(givenBack);
 }
 
 /**

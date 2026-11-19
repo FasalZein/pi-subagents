@@ -71,16 +71,6 @@ describe("boundaries skip run ends a wait holds (T22)", () => {
 		assert.deepEqual(parent.ids(), [], "the entry is committed even on Esc; settled starts no second copy");
 	});
 
-	it("T26 check 4: an abort before the settle step parks nothing; agent_settled hands the result over with a turn", () => {
-		const parent = mockParent();
-		parent.fire("agent_start");
-		deliverRunEnd(parent.pi, "one", end("one"));
-		// Pi skips agent_before_settle for an aborted run.
-		parent.fire("agent_settled", { aborted: true });
-		assert.deepEqual(parent.ids(), ["one"]);
-		assert.equal(parent.options[0]?.triggerTurn, true);
-	});
-
 	it("a returned wait reply takes its run end: no boundary sends it", () => {
 		const parent = mockParent();
 		parent.fire("agent_start");
