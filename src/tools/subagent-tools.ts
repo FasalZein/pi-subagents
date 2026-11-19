@@ -51,7 +51,8 @@ let initialPromptLaunchActive = isInitialPromptInvocation();
 export const SubagentChildParams = Type.Object({
 	agent: Type.String({ description: "Name of the agent definition to launch." }),
 	name: Type.String({
-		description: "Lower-kebab handle of 2 to 4 words and at most 32 characters, such as auth-scout or diff-reviewer.",
+		description:
+			"Lower-kebab handle: 2 to 4 words joined by hyphens, at most 32 characters, such as auth-scout; one word, such as build, is refused.",
 	}),
 	title: Type.String({
 		description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map.",

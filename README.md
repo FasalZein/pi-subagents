@@ -527,7 +527,7 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `agent` | yes | Name of the agent definition |
-| `name` | yes | Lower-kebab handle of 2 to 4 words and at most 32 characters, such as `auth-scout` |
+| `name` | yes | Lower-kebab handle: 2 to 4 words joined by hyphens, at most 32 characters, such as `auth-scout`; one word, such as `build`, is refused |
 | `title` | yes | Sentence-case title of 3 to 8 words, such as `Auth implementation map` |
 | `task` | yes | The work for this child |
 | `model` | no | A model for this launch. See [Model names](#model-names) |
