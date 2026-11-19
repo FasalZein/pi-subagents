@@ -22,13 +22,15 @@ const OSC_7501 = new RegExp(`${ESC}\\]7501;([^${BEL}${ESC}]*)${ESC}\\\\`, "g");
 /**
  * A fake OSC 7501 terminal, modeled on the stored shape that hc showed live (live-hc-window-checks.md):
  * the root record (no id) and side records by id; `state=clear` removes the record it names.
+ * A root clear removes every side record too, as both herdr-core and Rex do (T50 review, P1 #2).
  */
 class FakeTerminal {
 	readonly isTTY = true;
 	root: Record | undefined;
 	readonly records = new Map<string, Record>();
 	readonly writes: string[] = [];
-	write(data: string): boolean {
+	write(chunk: string | Uint8Array): boolean {
+		const data = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
 		this.writes.push(data);
 		for (const match of data.matchAll(OSC_7501)) {
 			const pairs = new Map(match[1].split(":").map((pair) => pair.split("=", 2) as [string, string]));
@@ -36,7 +38,10 @@ class FakeTerminal {
 			const state = pairs.get("state") ?? "";
 			const msg = pairs.get("msg");
 			const record = { state, ...(msg ? { msg: Buffer.from(msg, "base64").toString("utf8") } : {}) };
-			if (id === undefined) this.root = state === "clear" ? undefined : record;
+			if (id === undefined && state === "clear") {
+				this.root = undefined;
+				this.records.clear();
+			} else if (id === undefined) this.root = record;
 			else if (state === "clear") this.records.delete(id);
 			else this.records.set(id, record);
 		}
@@ -236,22 +241,89 @@ test("old herdr, other backends and non-TUI sessions write no OSC record", async
 test("herdr-core and Rex expose the OSC writer as their status ability; with old herdr's environment both decline", async () => {
 	const saved = { ...process.env };
 	const savedTty = process.stdout.isTTY;
-	// The abilities write to the real stdout; it must look like a terminal so only the environment decides.
+	const savedWrite = process.stdout.write;
+	const sink: string[] = [];
+	// The abilities write to the real stdout; it must look like a terminal so only the environment decides,
+	// and its write goes to a sink so no record reaches the test runner's output.
 	process.stdout.isTTY = true;
+	process.stdout.write = ((chunk: string | Uint8Array) => sink.push(String(chunk)) > 0) as typeof process.stdout.write;
 	try {
 		for (const name of ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "REX_SESSION", "REX_BLOCK", "PI_SUBAGENT_MUX"])
 			delete process.env[name];
 		Object.assign(process.env, OLD_HERDR_ENV);
 		assert.equal(await herdrCoreBackend.connectWorkReporter?.(session()), undefined);
 		assert.equal(await rexBackend.connectWorkReporter?.(session()), undefined);
-		// Neither reporter is published to or stopped here, so nothing reaches the test's stdout.
 		Object.assign(process.env, HC_ENV);
-		assert.ok(await herdrCoreBackend.connectWorkReporter?.(session()));
+		const hc = await herdrCoreBackend.connectWorkReporter?.(session());
+		assert.ok(hc);
+		await hc.stop();
 		Object.assign(process.env, REX_ENV);
-		assert.ok(await rexBackend.connectWorkReporter?.(session()));
+		const rex = await rexBackend.connectWorkReporter?.(session());
+		assert.ok(rex);
+		await rex.stop();
+		assert.equal(sink.length, 2, "each stop clears the extension's own record once");
 	} finally {
+		process.stdout.write = savedWrite;
 		process.stdout.isTTY = savedTty;
 		for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
 		Object.assign(process.env, saved);
 	}
+});
+
+/**
+ * Pi's TUI stop (exit, Ctrl+Z, Ctrl+G external editor, a TUI mode change) writes a root clear to stdout
+ * (pi-tui terminal.js stop()); its start writes Pi's root record again (writeProgramStatus). Both go
+ * through the same stdout the reporter writes to, so the test drives them through the terminal's write.
+ */
+const piStopsTui = (terminal: FakeTerminal) => terminal.write(formatProgramStatus({ state: "clear" }));
+const piStartsTui = (terminal: FakeTerminal) => terminal.write(formatProgramStatus({ state: "idle", app: "pi" }));
+
+test("after Pi stops and restarts its TUI, the named record is restored with the current count", async () => {
+	const h = await harness("herdr-core");
+	try {
+		const [first, second] = [child("first"), child("second")];
+		runningSubagents.set(first.id, first);
+		runningSubagents.set(second.id, second);
+		await h.emit("tool_result");
+		assert.equal(h.terminal.count, 2);
+		piStopsTui(h.terminal);
+		assert.equal(h.terminal.records.size, 0, "the root clear drops the side record");
+		await h.emit("tool_result");
+		assert.equal(h.terminal.records.size, 0, "no record is written while Pi's TUI is stopped");
+		piStartsTui(h.terminal);
+		assert.deepEqual(h.terminal.records.get(WORK_RECORD_ID), { state: "working", msg: "2 children" });
+		assert.deepEqual(h.terminal.root, { state: "idle" }, "Pi's root record is Pi's own write");
+		// A count change while stopped is written at the restart.
+		piStopsTui(h.terminal);
+		runningSubagents.delete(second.id);
+		await h.emit("tool_result");
+		assert.equal(h.terminal.records.size, 0);
+		piStartsTui(h.terminal);
+		assert.deepEqual(h.terminal.records.get(WORK_RECORD_ID), { state: "working", msg: "1 child" });
+		// At zero a restart writes nothing.
+		runningSubagents.delete(first.id);
+		await h.emit("tool_result");
+		piStopsTui(h.terminal);
+		const writes = h.terminal.writes.length;
+		piStartsTui(h.terminal);
+		assert.equal(h.terminal.writes.length, writes + 1, "only Pi's own root write");
+		assert.equal(h.terminal.records.size, 0);
+	} finally {
+		await h.stop();
+	}
+});
+
+test("stop restores the terminal's write and writes no record after Pi's exit clear", async () => {
+	const terminal = new FakeTerminal();
+	const ownWrite = terminal.write;
+	const reporter = await createOscWorkReporter(session(), "rex", REX_ENV, terminal);
+	assert.ok(reporter);
+	await reporter.publish(2);
+	piStopsTui(terminal);
+	const writes = terminal.writes.length;
+	await reporter.stop();
+	assert.equal(terminal.writes.length, writes, "the exit clear already removed the record");
+	assert.equal(terminal.write, ownWrite);
+	piStartsTui(terminal);
+	assert.equal(terminal.records.size, 0, "a stopped reporter restores nothing");
 });
