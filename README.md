@@ -636,6 +636,7 @@ A child with `spawning` can coordinate a batch for the parent. The parent then l
 name: batch-coordinator
 description: Run a batch of worker children, check each result, and return one digest.
 mode: background
+extensions: none
 spawning: worker
 spawn-width: 4
 timeout: 3600
@@ -650,7 +651,7 @@ You coordinate one batch. You do not do the work of the batch yourself.
 Do not launch a child again after it fails. Name the failure in your summary.
 ```
 
-A background child is a `pi -p` process, so its `subagent` call waits for every child and returns their reports in the tool result. `spawning: worker` lets the coordinator launch only the `worker` agent. With the default `spawn-depth: 1`, the workers cannot launch children. `spawn-width` limits how many children run at the same time, up to the hard ceiling of 16.
+A background child is a `pi -p` process, so its `subagent` call waits for every child and returns their reports in the tool result. `spawning: worker` lets the coordinator launch only the `worker` agent. `extensions: none` loads no other extension into the coordinator. Because the agent has `spawning`, Pi still loads pi-subagents into it, and the coordinator gets the `subagent` tool. That also holds when the parent loaded pi-subagents with `-e` instead of as an installed package. With `extensions: all`, the coordinator gets the `subagent` tool only from an installed pi-subagents package. With the default `spawn-depth: 1`, the workers cannot launch children. `spawn-width` limits how many children run at the same time, up to the hard ceiling of 16.
 
 The parent launches the coordinator with the workflow script above. Put one entry in `BATCH`, and add a `schema` for the digest:
 
