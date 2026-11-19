@@ -176,7 +176,15 @@ Children inherit every environment variable from the parent Pi process, in every
 
 A resume applies the `deny-env` that the session saved before its first launch, in every session mode. A session that saved none, for example a `standalone` session from an older version, takes the current `deny-env` of the agent that `subagent_resume` names. Without an agent name, or when the agent has no definition, the resume stops with an error.
 
-A pane child also gets the identity variables of its own pane, which replace the parent's. In Herdr, the child gets only `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH` and `HERDR_CONFIG_PATH` from the pane, and no parent value of these names. When the pane does not set `HERDR_ENV` or `HERDR_PANE_ID`, or `env` names one of them, the launch stops with an error before Pi starts. Other names in `env` still reach the child, denied names included.
+A pane child also gets the identity variables of its own pane, which replace the parent's. In the Herdr app, Rex and the Herdr TUI, the child gets only these names from its surface, and no parent value of these names:
+
+| Backend | Required names | Names copied when present |
+| --- | --- | --- |
+| Herdr app (`herdr-core`) | `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE` | none |
+| Rex | `REX_SESSION`, `REX_BLOCK` | none |
+| Herdr TUI | `HERDR_ENV`, `HERDR_PANE_ID` | `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, `HERDR_CONFIG_PATH` |
+
+When the surface does not set a required name, or `env` names one, the launch stops with an error before Pi starts. Other names in `env` still reach the child, denied names included. On these three backends, a name that only the multiplexer server has never reaches the child. In the Herdr app and in Rex, the child launcher builds the environment from a launch capsule, because the parent's environment does not reach the new terminal.
 
 Known limit: in tmux, cmux, WezTerm and Zellij the child gets every pane variable that starts with `TMUX`, `CMUX`, `WEZTERM`, `ZELLIJ` or `HERDR`, and `TERM` and `COLORTERM`. `deny-env` does not remove such a name when only the pane or the multiplexer server has it.
 
@@ -527,6 +535,8 @@ The launch reply has one line per child, then one line that says how the results
 Each report arrives later, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.
 ```
 
+A launch waits for its results, and the reply holds them, when the agent has `async: false`, when the parent has no durable turn, or when the call shares a tool batch with a sync launch (see [Mixed sync and async batches](#mixed-sync-and-async-batches)). A direct launch next to a call of another tool, such as `read`, also waits, unless `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`. Inside codemode, a launch returns at once unless it waits by these rules.
+
 An unknown agent name is refused with the three closest names among the agents the caller may launch. When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
 
 ### Model names
@@ -583,7 +593,7 @@ Pi hands each result over once by itself and does not check whether the model re
 
 The wait returns when the mode is met or the time limit passes, and at once when there is nothing to wait for. The reply has the rendered results, the pending run ids, and the run ids it did not find. Two waits on one run both get its result. `Esc` stops the wait; its runs keep running and report by message.
 
-A wait on a run whose result was already delivered is a lookup: it returns the same rendering at once from `record.json`. A lookup changes no state. The recent list holds the run id, name, outcome, and end time of each run, never full results; find an older run by its run id. A run id that is neither running nor recorded gets the answer `no result record`.
+A wait on a run whose result was already delivered is a lookup: it returns the same rendering at once from `record.json`. A lookup changes no state. The recent list holds the run id, name, outcome, and end time of each run, never full results; find an older run by its run id. A run id that is neither running nor recorded gets the answer `No result record for "<id>".`, with the session file from the launch metadata when this process knows it.
 
 #### Mixed sync and async batches
 
@@ -595,13 +605,13 @@ subagent(sync), subagent(async), subagent(async) → all launch
 → returns all three completed results
 ```
 
-Pure async batches stay detached: the parent receives started results and child results arrive later by steer.
+Pure async batches stay detached: the parent receives the launch reply, and each result arrives later as a message or in a `subagent_wait` reply.
 
 After a pure async launch, the parent should get out of the way unless it has separate work. If the parent keeps solving the delegated task, you paid for two agents to race each other.
 
 By default, a successful async launch ends the parent turn after the current tool batch. The children keep running. Their results come back later.
 
-A parent without a durable turn cannot receive a later steer, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way.
+A parent without a durable turn cannot receive a later message, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way.
 
 ```bash
 PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 pi
@@ -619,7 +629,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses gives the refusal text as a string and starts nothing. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -818,7 +828,7 @@ A child session has two questions:
 
 `fork` attaches the child to the tree and copies parent context. Use it when the child needs decisions, files, or prior results already in the parent transcript.
 
-The `isolated context` and `forked context` labels from ambient awareness describe model memory. They do not describe where Pi stores the child in the session tree. A `lineage-only` child is still a child of the parent session even though its model starts clean.
+The `[fork]` flag of the agent index describes model memory. They do not describe where Pi stores the child in the session tree. A `lineage-only` child is still a child of the parent session even though its model starts clean.
 
 For nested launches, `parent` means the session that spawned the child:
 
@@ -865,7 +875,20 @@ Once the operator interrupts (Escape) or sends input to the child, auto-exit is 
 
 ### `subagent_done`
 
-Manual-lifecycle children get a `subagent_done` tool. The child writes its final assistant message, calls `subagent_done`, and Pi returns that final message to the parent.
+`subagent_done` is the completion call. A child calls it to end its run and return its result. Its parameters are all optional:
+
+| Parameter | Meaning |
+| --- | --- |
+| `outcome` | `done`, `partial`, or `blocked` |
+| `summary` | What the child did, at most 1,500 characters |
+| `artifacts` | Paths of the files the child wrote |
+| `data` | Any JSON value. With a launch `schema`, the data must match it |
+
+The child's brief states the 1,500-character limit and the call. A result is typed only when the call has a valid `outcome` and a non-empty `summary`. Any other call, for example the old call with no arguments, still ends the child, and the result is untyped.
+
+A summary over the limit is refused once. A second one is accepted: its first 1,500 characters become the summary with a cut mark, and the full text goes into the report. Data that fails the launch `schema` gets one tool error with at most 10 violations. A second failure ends the run typed, with a data error and no data. Data over 32,000 characters as JSON is refused with a hint to write a file. An untyped result has no data and no data error.
+
+The report is the last assistant text of this run, before the completion call. It is never the output of another tool, fork history, or the text of an earlier run. A run with no assistant text gets its summary and the line `no report beyond the summary`. After a person takes over the pane, a completion call does not end the run: the parent still shows it running. When the pane closes, the result uses the last completion call if no assistant text came after it, else it is untyped and built from the last text.
 
 Every child that can end by itself has `subagent_done` unless its agent lists `subagent_done` in `deny-tools`. If you want an interactive child that only the operator can close, add `subagent_done` to `deny-tools`.
 
@@ -873,7 +896,7 @@ An auto-exit child that is about to exit without calling `subagent_done` or `cal
 
 ### `caller_ping`
 
-Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume.
+Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume. The result is typed with outcome `blocked`. The full message is the report, and only the summary is cut to 1,500 characters. A refused ping does not use up the session's one ping.
 
 ## Resuming child sessions
 
@@ -887,9 +910,9 @@ One exception: attempt sessions of an `llm-as-a-verifier` launch are never resum
 
 ## Child output
 
-The child's final assistant message is its output.
+The child's output is its result: the summary of its completion call, or the start of its last text, plus the report file. See [The result of a run](#the-result-of-a-run).
 
-For large output, let the child use Pi's `write` tool and mention the path in its final message.
+For large output, let the child use Pi's `write` tool and name the path in `artifacts` or in its summary.
 
 ## Child tools and extensions
 
@@ -1129,6 +1152,8 @@ Child sessions can also get session titles like:
 
 Disable child session titles with `PI_SUBAGENT_DISABLE_SESSION_TITLES=1`.
 
+The Completed tab of the `/subagents` overlay lists the runs of this session from their published result records.
+
 ## Launching children through a wrapper
 
 By default, the extension launches children with the same Pi entrypoint it can infer from the parent. If your real Pi command goes through a wrapper, set it:
@@ -1150,8 +1175,8 @@ User-facing knobs:
 | Variable | Use |
 | --- | --- |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
-| `PI_SUBAGENT_MUX` | Force `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
-| `PI_SUBAGENT_LAUNCH_CAP` | Change the number of runs a parent may start between two session starts (default: 64). Each child counts once, a verified fan-out counts each candidate, a resume counts, a time-limit wrap-up does not. A reload keeps the count; a new, resumed or forked session starts at 0 |
+| `PI_SUBAGENT_MUX` | Force `herdr-core`, `rex`, `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
+| `PI_SUBAGENT_LAUNCH_CAP` | Change the number of runs a parent may start between two session starts (default: 64). See [Launch cap](#launch-cap) |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
 | `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
 | `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |
@@ -1193,6 +1218,8 @@ Live test knobs:
 - `PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS` — override the provider-error recovery backoff windows (comma-separated ms, e.g. `10000,11000,12000`) so a live Pi process can exercise the wait → nudge → kill path without waiting the full 30/60/90s. Values below 10000ms are clamped so recovery does not race Pi's own default auto-retry backoff. Defaults to the production `30000,60000,90000`.
 
 ## Herdr placement
+
+This section is about the Herdr TUI (`herdr`). The Herdr app (`herdr-core`) always opens a child as a split beside the parent and falls back to a tab; see [Interactive mux backends](#interactive-mux-backends).
 
 Herdr uses `auto` placement by default. The first child shares the parent tab when both panes remain usable. Later children split the largest pane owned by that parent. Herdr chooses right or down from the pane geometry and opens a dedicated child tab when no safe split remains.
 
