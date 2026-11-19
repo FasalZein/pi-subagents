@@ -7,6 +7,7 @@ import { verifiedRunsBaseDir } from "../../src/vf/run/launch.ts";
 import type { VerifiedRunManifest } from "../../src/vf/run/types.ts";
 import { readVerifiedRunManifest, writeVerifiedRunManifest } from "../../src/vf/run/types.ts";
 import { verifiedRunNotice, verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
+import { ORIGINAL_ENV } from "../support/env.ts";
 import {
 	assert,
 	createTestDir,
@@ -14,7 +15,6 @@ import {
 	setRunningSubagentForTest,
 	waitForSubagentForTest,
 } from "../support/index.ts";
-import { ORIGINAL_ENV } from "../support/env.ts";
 import { buildSupervisedRun, setupVerifiedRunFixture } from "../support/verified-runs.ts";
 
 /**
@@ -280,4 +280,3 @@ describe("verified fan-out winner on adoption", () => {
 		}
 	});
 });
-

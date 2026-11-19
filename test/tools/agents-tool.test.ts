@@ -147,11 +147,12 @@ async function launchAndResumeErrors(cwd: string, agent: string): Promise<{ laun
 		}
 	};
 	const child = { name: "child", title: "Child", task: "Probe.", agent };
+	const launchTool = tools.get("subagent");
+	const resumeTool = tools.get("subagent_resume");
+	assert.ok(launchTool && resumeTool, "the launch and resume tools are registered");
 	return {
-		launch: await errorOf(() => tools.get("subagent")!.execute("c1", { children: [child] }, undefined, undefined, ctx)),
-		resume: await errorOf(() =>
-			tools.get("subagent_resume")!.execute("c2", { sessionFile, task: "Go on." }, undefined, undefined, ctx),
-		),
+		launch: await errorOf(() => launchTool.execute("c1", { children: [child] }, undefined, undefined, ctx)),
+		resume: await errorOf(() => resumeTool.execute("c2", { sessionFile, task: "Go on." }, undefined, undefined, ctx)),
 	};
 }
 

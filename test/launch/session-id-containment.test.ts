@@ -49,7 +49,10 @@ describe("session id path containment", () => {
 			mkdirSync(join(dir, ".pi", "agents"), { recursive: true });
 			writeFileSync(join(dir, ".pi", "agents", "probe.md"), "---\nname: probe\nmode: background\n---\nProbe body.");
 			const parentSession = join(dir, "parent.jsonl");
-			writeFileSync(parentSession, `${JSON.stringify({ type: "session", version: 3, id: "../../outside", cwd: dir })}\n`);
+			writeFileSync(
+				parentSession,
+				`${JSON.stringify({ type: "session", version: 3, id: "../../outside", cwd: dir })}\n`,
+			);
 			const before = listTree(dir);
 			await assert.rejects(
 				launchBackgroundSubagent(
