@@ -46,8 +46,8 @@ class DeliveryQueue {
 	}
 
 	/**
-	 * A run end that a wait holds: queued like every run end, but not sent at once. The wait's reply
-	 * takes it, an aborted wait releases it, and a boundary that comes first hands it over.
+	 * A run end that a wait holds: queued like every run end, but the wait owns it. The wait's reply
+	 * takes it, or an aborted wait releases it; no boundary hands it over before that (R4).
 	 */
 	hold(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage): void {
 		this.pending.set(message.details.id, message);
@@ -85,10 +85,11 @@ class DeliveryQueue {
 		this.pi?.sendMessage(message, { triggerTurn, deliverAs: "steer" });
 	}
 
-	/** One boundary hands every queued result over as one message. */
+	/** One boundary hands every queued result that no wait holds over as one message. */
 	private sendPending(): void {
-		if (this.pending.size === 0) return;
-		this.pi?.sendMessage<object>(groupRunEnds([...this.pending.values()]), { triggerTurn: true, deliverAs: "steer" });
+		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
+		if (free.length === 0) return;
+		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
 	}
 
 	/** A committed message delivers every run end it carries, grouped or single. */
