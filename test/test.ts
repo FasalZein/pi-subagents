@@ -114,6 +114,7 @@ import "./runtime/shutdown-policy.test.ts";
 import "./runtime/resume-tool.test.ts";
 import "./runtime/resume-env-deny.test.ts";
 import "./runtime/resume-authority.test.ts";
+import "./runtime/trace-redaction.test.ts";
 import "./runtime/resume-mux-detection.test.ts";
 import "./runtime/pane-env-boundary.test.ts";
 import "./runtime/headless-env-boundary.test.ts";

@@ -298,7 +298,14 @@ async function watchInteractiveGeneration(
 			name,
 			surface,
 			sessionFile,
-			pollResult,
+			// Facts only: the accepted call's arguments and a ping or error message are payload.
+			reason: pollResult.reason,
+			exitCode: pollResult.exitCode,
+			outputTokens: pollResult.outputTokens,
+			completionReason: pollResult.completionReason,
+			acceptedCall: pollResult.acceptedCall
+				? { toolCallId: pollResult.acceptedCall.toolCallId, dataError: pollResult.acceptedCall.dataError !== undefined }
+				: undefined,
 		});
 		const lateExitSignal = pollResult.outputTokens === undefined ? consumeSubagentExitSignal(sessionFile) : undefined;
 		// One outcome for storage and both carriers: the child's own exit record outranks the shell's
