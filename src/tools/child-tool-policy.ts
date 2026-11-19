@@ -3,15 +3,12 @@ import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
 // Child-side tool policy: which tools PI_DENY_TOOLS removes and whether subagent_done registers.
 
-export function getDeniedToolNames(autoExit: boolean, deniedEnv = process.env.PI_DENY_TOOLS ?? ""): string[] {
-	const denied = deniedEnv
+/** D12: every child keeps subagent_done unless PI_DENY_TOOLS names it, auto-exit children included. */
+export function getDeniedToolNames(deniedEnv = process.env.PI_DENY_TOOLS ?? ""): string[] {
+	return deniedEnv
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
-	if (autoExit && !denied.includes(SUBAGENT_DONE_TOOL_NAME)) {
-		denied.push(SUBAGENT_DONE_TOOL_NAME);
-	}
-	return denied;
 }
 
 export function filterToolNames(toolNames: string[], deniedTools: string[]): string[] {
@@ -24,18 +21,15 @@ export function filterToolNames(toolNames: string[], deniedTools: string[]): str
 	});
 }
 
-export function shouldRegisterSubagentDone(autoExit: boolean, deniedTools: string[], isInteractive = false): boolean {
-	if (deniedTools.includes(SUBAGENT_DONE_TOOL_NAME)) return false;
-	if (autoExit) return false;
-	if (isInteractive) return false;
-	return true;
+/** D12: auto-exit, headless and manual pane children all register it; only a deny entry removes it. */
+export function shouldRegisterSubagentDone(deniedTools: readonly string[]): boolean {
+	return !deniedTools.includes(SUBAGENT_DONE_TOOL_NAME);
 }
 
 type ToolControlAPI = Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "setActiveTools" | "registerTool">;
 
 export function installDeniedToolGuards(
 	pi: ToolControlAPI,
-	autoExit: boolean,
 	onChange?: (activeTools: string[], deniedTools: string[]) => void,
 ) {
 	const originalRegisterTool = pi.registerTool.bind(pi);
@@ -46,7 +40,7 @@ export function installDeniedToolGuards(
 	};
 
 	const applyDeniedTools = (): string[] => {
-		const deniedTools = getDeniedToolNames(autoExit);
+		const deniedTools = getDeniedToolNames();
 		const allowedTools = filterToolNames(pi.getActiveTools(), deniedTools);
 		originalSetActiveTools(allowedTools);
 		notify(allowedTools, deniedTools);
@@ -54,7 +48,7 @@ export function installDeniedToolGuards(
 	};
 
 	pi.setActiveTools = (toolNames: string[]) => {
-		const deniedTools = getDeniedToolNames(autoExit);
+		const deniedTools = getDeniedToolNames();
 		const allowedTools = filterToolNames(toolNames, deniedTools);
 		originalSetActiveTools(allowedTools);
 		notify(allowedTools, deniedTools);

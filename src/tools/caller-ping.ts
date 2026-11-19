@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { COMPLETION_LIMIT_TEXT, createOversizeRefusal } from "./completion-call.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { CALLER_PING_TOOL_NAME } from "./tool-names.ts";
 
@@ -82,11 +83,13 @@ function buildCallerPingParams() {
  * the operator is in the pane and can handle things directly.
  */
 export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState, deps: CallerPingDeps) {
+	const refuseOversizeMessage = createOversizeRefusal(CALLER_PING_TOOL_NAME, "message");
 	pi.registerTool({
 		name: CALLER_PING_TOOL_NAME,
 		label: "Caller Ping",
 		description:
-			"Ask the launching chat for help once with your message and close this session, which that chat can continue later with instructions.",
+			"Ask the launching chat for help once with your message and close this session, which that chat can continue later with instructions. " +
+			`Keep the message to ${COMPLETION_LIMIT_TEXT} or less.`,
 		parameters: buildCallerPingParams(),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const sessionFile = process.env.PI_SUBAGENT_SESSION;
@@ -97,6 +100,8 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
+			// D12: a refused oversize message does not use up the session's one ping.
+			refuseOversizeMessage(params.message);
 			state.count += 1;
 			// The count is attempts, not deliveries: a first ping refused
 			// because a done/error outcome already owns this child still

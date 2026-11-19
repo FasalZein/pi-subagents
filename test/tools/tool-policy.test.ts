@@ -32,8 +32,9 @@ function withSetTabTitleEnv<T>(value: string | undefined, run: () => T): T {
 
 describe("tool policy", () => {
 	describe("deny-tools enforcement", () => {
-		it("adds subagent_done to denied tools for auto-exit agents", () => {
-			assert.deepEqual(getDeniedToolNames(true, "ask_user_question"), ["ask_user_question", "subagent_done"]);
+		it("denies only what PI_DENY_TOOLS names; subagent_done stays for auto-exit agents (D12)", () => {
+			assert.deepEqual(getDeniedToolNames("ask_user_question"), ["ask_user_question"]);
+			assert.deepEqual(getDeniedToolNames(" subagent_done , bash"), ["subagent_done", "bash"]);
 		});
 
 		it("filters denied tool names and de-duplicates survivors", () => {
@@ -274,7 +275,7 @@ describe("tool policy", () => {
 				},
 			} as any;
 
-			const { applyDeniedTools } = installDeniedToolGuards(pi, false);
+			const { applyDeniedTools } = installDeniedToolGuards(pi);
 			assert.deepEqual(applyDeniedTools(), ["caller_ping"]);
 			assert.deepEqual(activeTools, ["caller_ping"]);
 		});
@@ -297,7 +298,7 @@ describe("tool policy", () => {
 			const original = process.env.PI_DENY_TOOLS;
 			process.env.PI_DENY_TOOLS = "ask_user_question";
 			try {
-				const { applyDeniedTools } = installDeniedToolGuards(pi, false, (active, denied) => {
+				const { applyDeniedTools } = installDeniedToolGuards(pi, (active, denied) => {
 					changes.push({ active: [...active], denied: [...denied] });
 				});
 
