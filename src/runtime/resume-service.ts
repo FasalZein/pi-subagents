@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
@@ -194,9 +194,12 @@ function mergeResumeInvocationMetadata(
  * 2. Handle the result (await or return to user) as appropriate
  */
 export async function resumeSubagentSession(
-	input: ResumeSessionInput,
+	requested: ResumeSessionInput,
 	runtime: ResumeServiceRuntime,
 ): Promise<RunningSubagent> {
+	// D16: a relative session file is resolved here, once, so the record, the launch note and the
+	// child name the same file after a restart from another directory.
+	const input = { ...requested, sessionFile: resolve(requested.sessionFile) };
 	// Verified fan-out candidates are non-resumable (SPEC): their run is
 	// finalized and their worktree workspace is deleted after selection, so a
 	// resume would resurrect a session whose cwd no longer exists. Follow-up

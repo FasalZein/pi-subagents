@@ -12,7 +12,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
 
@@ -250,8 +250,10 @@ export class ResultStore {
 	 * child passes none: its temporary file is deleted, and a result never names a missing path.
 	 * A failed write costs only that path after a restart; this process still knows it.
 	 */
-	noteLaunch(reservation: Reservation, sessionFile: string | undefined): void {
-		if (sessionFile === undefined) return;
+	noteLaunch(reservation: Reservation, launchedFile: string | undefined): void {
+		if (launchedFile === undefined) return;
+		// Absolute against this process's directory, where the launch found it; a restart may run elsewhere.
+		const sessionFile = resolve(launchedFile);
 		this.launches.set(reservation.runId, sessionFile);
 		if (reservation.folder === undefined) return;
 		const path = join(reservation.folder, LAUNCH_FILE);

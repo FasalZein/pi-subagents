@@ -4,7 +4,18 @@ import { join } from "node:path";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
 import { launchBackgroundSubagent } from "../../src/launch/background.ts";
 import { LAUNCH_FILE, RECORD_FILE } from "../../src/runtime/result-files.ts";
-import { assert, createTestDir, describe, it, resetSubagentStateForTest, SESSION_HEADER } from "../support/index.ts";
+import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
+import type { RunningSubagent } from "../../src/types.ts";
+import { lookUpInFreshParent } from "../support/fresh-parent-lookup.ts";
+import {
+	assert,
+	createTestDir,
+	describe,
+	it,
+	resetSubagentStateForTest,
+	SESSION_HEADER,
+	writeSubagentLaunchMetadataEntryForTest,
+} from "../support/index.ts";
 import "../support/ambient-spawn-grant.ts";
 
 // T25 check 5: a continue child that ends after its parent process exited gets no result (D13). A
@@ -112,6 +123,87 @@ describe("T25 check 5: a continue child that ended after its parent exited", () 
 			if (saved.root === undefined) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
 			else process.env.PI_ARTIFACT_PROJECT_ROOT = saved.root;
 			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("fix round 1: a resume by a relative session file keeps the absolute path after a restart from another directory", async () => {
+		const resumeDir = realpathSync(createTestDir());
+		const otherDir = realpathSync(createTestDir());
+		const parentCwd = realpathSync(createTestDir());
+		const artifacts = join(parentCwd, "artifacts");
+		const saved = {
+			command: process.env.PI_SUBAGENT_PI_COMMAND,
+			root: process.env.PI_ARTIFACT_PROJECT_ROOT,
+			cwd: process.cwd(),
+		};
+		const fakeChild = join(resumeDir, "fake-child.cjs");
+		writeFileSync(fakeChild, FAKE_CHILD);
+		process.env.PI_SUBAGENT_PI_COMMAND = `${process.execPath} ${fakeChild}`;
+		process.env.PI_ARTIFACT_PROJECT_ROOT = artifacts;
+		const header = (dir: string) =>
+			`${JSON.stringify({ type: "session", version: 3, id: "child-session", timestamp: new Date().toISOString(), cwd: dir })}\n`;
+		try {
+			const childSession = join(resumeDir, "child.jsonl");
+			writeFileSync(childSession, header(resumeDir));
+			// The same relative name exists where the restarted parent runs: it must not be named.
+			writeFileSync(join(otherDir, "child.jsonl"), header(otherDir));
+			await writeSubagentLaunchMetadataEntryForTest(childSession, {
+				version: 1,
+				timestamp: new Date().toISOString(),
+				name: "keeper",
+				agent: "keeper",
+				mode: "background",
+				sessionMode: "lineage-only",
+				autoExit: true,
+				parentClosePolicy: "continue",
+				async: true,
+				denyTools: [],
+				noContextFiles: false,
+				noSession: false,
+				agentConfigDir: resumeDir,
+				cwd: resumeDir,
+				boundarySystemPrompt: false,
+			});
+			const sessionId = "t25-relative-resume";
+			process.chdir(resumeDir);
+			const quiet = new Promise<never>(() => {});
+			const running = await resumeSubagentSession(
+				{
+					resultsDir: getSessionResultsDir(parentCwd, sessionId),
+					parent: { parentCwd, warnings: [] },
+					sessionFile: "child.jsonl",
+					task: "Keep going.",
+				},
+				{
+					isMuxAvailable: () => true,
+					getShellReadyDelayMs: () => 0,
+					watchBackgroundSubagent: () => quiet,
+					watchSubagent: () => quiet,
+					getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
+					startWidgetRefresh: () => {},
+					getContextWindow: () => undefined,
+					runningSubagents: new Map<string, RunningSubagent>(),
+				},
+			);
+			assert.equal(running.sessionFile, childSession, "the running child names the absolute session file");
+			// The parent exits while the continue child runs; it reopens the session from another directory.
+			resetSubagentStateForTest();
+			const reply = lookUpInFreshParent({
+				scriptDir: parentCwd,
+				cwd: parentCwd,
+				processCwd: otherDir,
+				sessionId,
+				ids: [running.id],
+				artifactRoot: artifacts,
+			});
+			assert.equal(reply.text, `No result record for "${running.id}". Its session file: ${childSession}`);
+			assert.equal(reply.running, 0, "the restarted parent launched nothing");
+		} finally {
+			process.chdir(saved.cwd);
+			if (saved.command === undefined) delete process.env.PI_SUBAGENT_PI_COMMAND;
+			else process.env.PI_SUBAGENT_PI_COMMAND = saved.command;
+			if (saved.root === undefined) delete process.env.PI_ARTIFACT_PROJECT_ROOT;
+			else process.env.PI_ARTIFACT_PROJECT_ROOT = saved.root;
 		}
 	});
 });
