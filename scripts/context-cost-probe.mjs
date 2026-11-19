@@ -23,7 +23,16 @@
  * a fake pi that records its agent name. The probe clears PI_SUBAGENT_* and PI_DENY_TOOLS so
  * it measures a root session. All sizes are characters; tokens are estimated as chars / 4.
  */
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -80,9 +89,7 @@ async function runSession({ agentDir, loadout, extension, replies }) {
 				})),
 				toolResults: context.messages
 					.filter((message) => message.role === "toolResult")
-					.map((message) =>
-						(message.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join(""),
-					),
+					.map((message) => (message.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("")),
 			});
 			return reply;
 		}),
@@ -259,7 +266,11 @@ export function agentsOutsideIndex(agentDir, indexText) {
 	const shown = new Set([...indexText.matchAll(/^- ([^:]+):/gm)].map((match) => match[1]));
 	return readdirSync(join(agentDir, "agents"))
 		.filter((file) => file.endsWith(".md"))
-		.map((file) => readFileSync(join(agentDir, "agents", file), "utf8").match(/^name: (.*)$/m)?.[1]?.trim())
+		.map((file) =>
+			readFileSync(join(agentDir, "agents", file), "utf8")
+				.match(/^name: (.*)$/m)?.[1]
+				?.trim(),
+		)
 		.filter((name) => name && !shown.has(name))
 		.sort();
 }
@@ -291,10 +302,17 @@ function formatReport(report) {
 		`declarations: with ${report.declarationSum.with}, without ${report.declarationSum.without}, delta ${report.declarationSum.delta}`,
 		`total: ${report.total} chars (about ${Math.round(report.total / 4)} tokens; cap ${CAPS.total})`,
 	];
-	if (report.agentsNoArg) lines.push(`subagent_agents (no argument): ${report.agentsNoArg.chars} chars (cap ${CAPS.agentsNoArg})`);
+	if (report.agentsNoArg)
+		lines.push(`subagent_agents (no argument): ${report.agentsNoArg.chars} chars (cap ${CAPS.agentsNoArg})`);
 	if (report.outsideLaunch)
-		lines.push(`launch outside index: ${report.outsideLaunch.agent} -> ${report.outsideLaunch.works ? "started" : "FAILED"}`);
-	lines.push(`pass: ${Object.entries(report.pass).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+		lines.push(
+			`launch outside index: ${report.outsideLaunch.agent} -> ${report.outsideLaunch.works ? "started" : "FAILED"}`,
+		);
+	lines.push(
+		`pass: ${Object.entries(report.pass)
+			.map(([k, v]) => `${k}=${v}`)
+			.join(" ")}`,
+	);
 	return lines.join("\n");
 }
 
@@ -317,7 +335,9 @@ async function main(argv) {
 	const json = bool("--json");
 	const [source] = args;
 	if (!source || !LOADOUTS.includes(loadout)) {
-		console.error("usage: node scripts/context-cost-probe.mjs <agent dir> --loadout on|only|none [--generate N [--pinned]] [--json]");
+		console.error(
+			"usage: node scripts/context-cost-probe.mjs <agent dir> --loadout on|only|none [--generate N [--pinned]] [--json]",
+		);
 		return 2;
 	}
 	const agentDir = generate ? generateAgentDir(source, Number(generate), { pinned }) : source;
