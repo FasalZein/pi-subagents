@@ -372,6 +372,7 @@ export function registerSubagentCoreTools(
 					return {
 						child,
 						agentDefs,
+						dataSchema: schema?.ok ? schema.value : undefined,
 						blocking: resolveSubagentBlocking(child, agentDefs),
 						warning: getChildLaunchWarning(child, agentDefs, shouldUseBackgroundLaunch(child, agentDefs, ctx.hasUI)),
 					};
@@ -413,11 +414,10 @@ export function registerSubagentCoreTools(
 						const childCapSlots = unlaunchedCapSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
-							const { agentDefs, warning } = entry;
-							const child =
-								entry.child.schema === undefined
-									? entry.child
-									: { ...entry.child, dataSchemaFile: writeDataSchemaArtifact(entry.child.name, entry.child.schema, ctx) };
+							const { agentDefs, warning, dataSchema } = entry;
+							const child = dataSchema
+								? { ...entry.child, dataSchemaFile: writeDataSchemaArtifact(entry.child.name, dataSchema, ctx) }
+								: entry.child;
 							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();

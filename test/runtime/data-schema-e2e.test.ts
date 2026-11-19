@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
 	type AssistantMessage,
 	type FauxResponseStep,
@@ -234,8 +234,7 @@ async function runChild(env: Record<string, string>, replies: FauxResponseStep[]
 					? [{ text: textOf(message.content), isError: message.isError }]
 					: [],
 			);
-			const tool = session.getAllTools?.().find((t: { name: string }) => t.name === DONE);
-			return { sessionFile, doneResults, unusedReplies: faux.getPendingResponseCount(), tool };
+			return { sessionFile, doneResults, unusedReplies: faux.getPendingResponseCount() };
 		} finally {
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 			// No state reset here: the parent's run registry lives in the same process; its dispose resets.
@@ -350,6 +349,46 @@ describe("T37: data checked against a launch schema, end to end", () => {
 		],
 		["a schema that is not an object", "a string", /JSON Schema object/],
 	];
+	it("each launch gets its own owner-only schema file, also two same-name siblings in one second", async () => {
+		const other = { type: "object", required: ["other"] };
+		const sibling = (schema: unknown) => ({
+			name: "diff-reviewer",
+			task: "t",
+			title: "Review",
+			agent: "reviewer",
+			schema,
+		});
+		const parent = await startParent({
+			delegate: [
+				fauxToolCall("subagent", { children: [sibling(VERDICT_SCHEMA), sibling(other)] } as ToolArgs, {
+					id: "launch-1",
+				}),
+			],
+		});
+		const launched: string[] = [];
+		const umask = process.umask(0o022);
+		try {
+			const record = parent.launches.set.bind(parent.launches);
+			parent.launches.set = (name, params) => {
+				if (params.dataSchemaFile) launched.push(params.dataSchemaFile);
+				return record(name, params);
+			};
+			await parent.session.prompt("delegate");
+			await parent.session.waitForIdle();
+			assert.equal(launched.length, 2);
+			assert.notEqual(launched[0], launched[1], "two launches never share a schema file");
+			assert.deepEqual(JSON.parse(readFileSync(launched[0]!, "utf8")), VERDICT_SCHEMA);
+			assert.deepEqual(JSON.parse(readFileSync(launched[1]!, "utf8")), other);
+			for (const file of launched) {
+				assert.equal(statSync(file).mode & 0o777, 0o600, "the schema file is owner-only");
+				assert.equal(statSync(dirname(file)).mode & 0o777, 0o700, "its folder is owner-only");
+			}
+		} finally {
+			process.umask(umask);
+			await parent.dispose();
+		}
+	});
+
 	it("check 3: one bad schema in a batch refuses the batch; its valid sibling does not start", async () => {
 		const valid = {
 			name: "first-reviewer",

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { compile, type JsonSchema, type ValidationError, type Validator } from "@earendil-works/pi-schema";
 import { formats } from "@earendil-works/pi-schema/formats";
+import { DRAFT_7_META_SCHEMA, DRAFT_2020_12_META_SCHEMA } from "./json-schema-meta.ts";
 
 /** D12: data over this many characters as JSON is refused; the child writes a file and names it in artifacts. */
 export const DATA_MAX_CHARS = 32_000;
@@ -8,90 +9,39 @@ export const DATA_MAX_CHARS = 32_000;
 /** D12: a refusal and a data error name at most this many violations. */
 export const MAX_VIOLATIONS = 10;
 
-/** Internal parent-to-child protocol: the path of the launch schema file; empty when the launch named none. */
+/**
+ * Internal parent-to-child protocol: the path of the launch schema file. Every child environment sets
+ * it, empty unless this launch named a schema, so no child inherits another run's schema.
+ */
 export const DATA_SCHEMA_ENV = "PI_SUBAGENT_DATA_SCHEMA";
 
-const DRAFT_URIS: Readonly<Record<string, "2020-12" | "7">> = {
-	"https://json-schema.org/draft/2020-12/schema": "2020-12",
-	"http://json-schema.org/draft-07/schema": "7",
+type Draft = "2020-12" | "7";
+
+const DRAFT_URIS: ReadonlyMap<string, Draft> = new Map([
+	["https://json-schema.org/draft/2020-12/schema", "2020-12"],
+	["http://json-schema.org/draft-07/schema", "7"],
+]);
+
+const META_SCHEMAS: Readonly<Record<Draft, object>> = {
+	"2020-12": DRAFT_2020_12_META_SCHEMA,
+	"7": DRAFT_7_META_SCHEMA,
 };
 
-/** Where compile() resolves a relative reference of a schema without $id; never an outside URL. */
-const INTERNAL_BASE = "https://json-schema.invalid/";
+/** The base URI of a launch schema without its own $id; a reserved name, never fetched. */
+const LAUNCH_BASE = "https://json-schema.invalid/launch.json";
 
-/**
- * Keyword shapes of drafts 2020-12 and 7, after the draft-07 meta-schema. pi-schema reads keywords
- * defensively and ignores a malformed one, so a launch checks the shapes here first: a schema that a
- * typo would make accept everything is refused before any child starts.
- */
-const nonNegative = { type: "integer", minimum: 0 };
-const schemaArray = { type: "array", minItems: 1, items: { $ref: "#" } };
-const schemaMap = { type: "object", additionalProperties: { $ref: "#" } };
-const stringArray = { type: "array", items: { type: "string" }, uniqueItems: true };
-const typeName = { enum: ["array", "boolean", "integer", "null", "number", "object", "string"] };
-const META_SCHEMA = {
-	type: ["object", "boolean"],
-	properties: {
-		$id: { type: "string" },
-		$schema: { type: "string" },
-		$ref: { type: "string" },
-		$anchor: { type: "string" },
-		$dynamicRef: { type: "string" },
-		$dynamicAnchor: { type: "string" },
-		$defs: schemaMap,
-		definitions: schemaMap,
-		type: { anyOf: [typeName, { type: "array", items: typeName, minItems: 1, uniqueItems: true }] },
-		enum: { type: "array" },
-		multipleOf: { type: "number", exclusiveMinimum: 0 },
-		maximum: { type: "number" },
-		exclusiveMaximum: { type: "number" },
-		minimum: { type: "number" },
-		exclusiveMinimum: { type: "number" },
-		maxLength: nonNegative,
-		minLength: nonNegative,
-		pattern: { type: "string", format: "regex" },
-		items: { anyOf: [{ $ref: "#" }, schemaArray] },
-		prefixItems: schemaArray,
-		additionalItems: { $ref: "#" },
-		unevaluatedItems: { $ref: "#" },
-		contains: { $ref: "#" },
-		maxItems: nonNegative,
-		minItems: nonNegative,
-		maxContains: nonNegative,
-		minContains: nonNegative,
-		uniqueItems: { type: "boolean" },
-		maxProperties: nonNegative,
-		minProperties: nonNegative,
-		required: stringArray,
-		properties: schemaMap,
-		patternProperties: { type: "object", additionalProperties: { $ref: "#" }, propertyNames: { format: "regex" } },
-		additionalProperties: { $ref: "#" },
-		unevaluatedProperties: { $ref: "#" },
-		propertyNames: { $ref: "#" },
-		dependencies: { type: "object", additionalProperties: { anyOf: [{ $ref: "#" }, stringArray] } },
-		dependentRequired: { type: "object", additionalProperties: stringArray },
-		dependentSchemas: schemaMap,
-		if: { $ref: "#" },
-		// biome-ignore lint/suspicious/noThenProperty: a JSON Schema keyword in a plain data object, never awaited.
-		then: { $ref: "#" },
-		else: { $ref: "#" },
-		allOf: schemaArray,
-		anyOf: schemaArray,
-		oneOf: schemaArray,
-		not: { $ref: "#" },
-		format: { type: "string" },
-	},
-} as const;
+declare const checkedSchema: unique symbol;
 
-let metaValidator: Validator | undefined;
-
-/** A JSON Schema that a launch accepted: it compiles with every reference inside the schema itself. */
+/** A JSON Schema that passed parseDataSchema: valid for its draft, every reference inside the schema. */
 export interface DataSchema {
 	readonly schema: JsonSchema;
-	readonly draft: "2020-12" | "7";
+	readonly draft: Draft;
+	readonly [checkedSchema]: true;
 }
 
 export type DataSchemaParse = { ok: true; value: DataSchema } | { ok: false; error: string };
+
+const metaValidators = new Map<Draft, Validator>();
 
 function formatPath(pointer: string): string {
 	if (pointer === "") return "data";
@@ -109,35 +59,106 @@ export function formatViolations(errors: readonly ValidationError[], path = form
 	return lines.join("\n");
 }
 
-function draftOf(schema: JsonSchema): "2020-12" | "7" | undefined {
-	if (typeof schema !== "object" || !("$schema" in schema)) return "2020-12";
-	const uri = (schema as { $schema?: unknown }).$schema;
-	return typeof uri === "string" ? DRAFT_URIS[uri.replace(/#$/, "")] : undefined;
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSchema(value: unknown): value is JsonSchema {
+	return typeof value === "boolean" || isObject(value);
+}
+
+/** The draft a schema object declares with its own $schema; 2020-12 when it declares none. */
+function declaredDraft(node: Record<string, unknown>): Draft | undefined {
+	if (!Object.hasOwn(node, "$schema")) return "2020-12";
+	return typeof node.$schema === "string" ? DRAFT_URIS.get(node.$schema.replace(/#$/, "")) : undefined;
+}
+
+const SINGLE = ["additionalItems", "unevaluatedItems", "items", "contains", "additionalProperties"];
+const SINGLE_MORE = ["unevaluatedProperties", "propertyNames", "if", "then", "else", "not", "contentSchema"];
+const ARRAYS = ["allOf", "anyOf", "oneOf", "prefixItems", "items"];
+const MAPS = ["properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies"];
+
+function pointerSegment(key: string): string {
+	return encodeURIComponent(key.replace(/~/g, "~0").replace(/\//g, "~1"));
+}
+
+/**
+ * The JSON Pointer of every schema position: the root, each subschema of an applicator, and each entry
+ * of a definition or property map, used or not. Literal JSON (const, enum, default, examples) is skipped.
+ */
+function schemaPositions(node: JsonSchema, pointer = "", into: string[] = []): string[] {
+	into.push(pointer);
+	if (!isObject(node)) return into;
+	const visit = (value: unknown, at: string) => {
+		if (isSchema(value)) schemaPositions(value, at, into);
+	};
+	for (const key of [...SINGLE, ...SINGLE_MORE]) if (Object.hasOwn(node, key)) visit(node[key], `${pointer}/${key}`);
+	for (const key of ARRAYS) {
+		const items = node[key];
+		if (Object.hasOwn(node, key) && Array.isArray(items))
+			items.forEach((item, i) => visit(item, `${pointer}/${key}/${i}`));
+	}
+	for (const key of MAPS) {
+		const map = node[key];
+		if (!Object.hasOwn(node, key) || !isObject(map)) continue;
+		for (const [name, value] of Object.entries(map)) visit(value, `${pointer}/${key}/${pointerSegment(name)}`);
+	}
+	return into;
+}
+
+function valueAt(root: JsonSchema, pointer: string): unknown {
+	return pointer
+		.split("/")
+		.slice(1)
+		.reduce<unknown>(
+			(node, segment) =>
+				isObject(node) || Array.isArray(node)
+					? (node as Record<string, unknown>)[decodeURIComponent(segment).replace(/~1/g, "/").replace(/~0/g, "~")]
+					: undefined,
+			root,
+		);
 }
 
 /** The unresolved reference target that compile() names, when it is an outside http or https URL. */
 function outsideUrl(message: string): string | undefined {
 	const target = /no schema registered for (\S+?)\)?$/.exec(message)?.[1];
-	return target && /^https?:\/\//i.test(target) && !target.startsWith(INTERNAL_BASE) ? target : undefined;
+	return target && /^https?:\/\//i.test(target) ? target : undefined;
 }
 
 /**
- * D12: the boundary check of a launch schema. Refuses a value that is no schema, a malformed keyword,
- * a draft other than 2020-12 and 7, and a reference that does not resolve inside the schema; a
- * reference to an outside URL is named as such. pi-schema never fetches, so nothing leaves the host.
+ * D12: the boundary check of a launch schema, before any child starts. Refuses a value that is no
+ * schema, a draft other than 2020-12 and 7 (also on a nested resource), a schema that fails its
+ * draft's meta-schema, and any reference ($ref, $dynamicRef) at any schema position, unused
+ * definitions and lone branches included, that does not resolve inside the schema; a reference to
+ * an outside URL is named as such. pi-schema resolves only registered documents and never fetches.
  */
 export function parseDataSchema(value: unknown): DataSchemaParse {
-	if (typeof value !== "boolean" && (typeof value !== "object" || value === null || Array.isArray(value))) {
-		return { ok: false, error: "schema must be a JSON Schema object or a boolean" };
-	}
-	const schema = value as JsonSchema;
-	metaValidator ??= compile(META_SCHEMA, { formats });
-	const shape = metaValidator.errors(schema);
-	if (shape.length > 0) return { ok: false, error: `invalid schema:\n${formatViolations(shape, schemaPath)}` };
-	const draft = draftOf(schema);
+	if (!isSchema(value)) return { ok: false, error: "schema must be a JSON Schema object or a boolean" };
+	const draft = isObject(value) ? declaredDraft(value) : "2020-12";
 	if (!draft) return { ok: false, error: "invalid schema: $schema names a draft other than 2020-12 and 7" };
+	let meta = metaValidators.get(draft);
+	if (!meta) {
+		meta = compile(META_SCHEMAS[draft], { formats });
+		metaValidators.set(draft, meta);
+	}
+	const shape = meta.errors(value);
+	if (shape.length > 0) return { ok: false, error: `invalid schema:\n${formatViolations(shape, schemaPath)}` };
+	const positions = schemaPositions(value);
+	for (const pointer of positions.slice(1)) {
+		const node = valueAt(value, pointer);
+		if (isObject(node) && declaredDraft(node) !== draft && Object.hasOwn(node, "$schema")) {
+			return {
+				ok: false,
+				error: `invalid schema: ${schemaPath(pointer)} declares a $schema other than the root's draft`,
+			};
+		}
+	}
+	const base =
+		isObject(value) && typeof value.$id === "string" ? new URL(value.$id, LAUNCH_BASE).href.split("#")[0] : LAUNCH_BASE;
 	try {
-		compile(schema, { draft });
+		// One reference per schema position makes compile() reach every subschema, used or not.
+		const everyPosition = { allOf: positions.map((pointer) => ({ $ref: `${base}#${pointer}` })) };
+		compile(everyPosition, { draft, schemas: { [base]: value } });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		const url = outsideUrl(message);
@@ -145,7 +166,7 @@ export function parseDataSchema(value: unknown): DataSchemaParse {
 			return { ok: false, error: `schema refers to an outside URL (${url}); put every definition inside the schema` };
 		return { ok: false, error: `invalid schema: ${message}` };
 	}
-	return { ok: true, value: { schema, draft } };
+	return { ok: true, value: { schema: value, draft } as DataSchema };
 }
 
 /** The schema file a launch wrote for this child, or undefined when the launch named none. */
@@ -170,10 +191,12 @@ export type DataVerdict = { kind: "accept" } | { kind: "data_error"; error: stri
  * the launch schema is refused once with at most 10 violations, and a second failure is accepted as a
  * data error with no data. Only a typed call reaches this: an untyped result has no data.
  */
-export function createDataCheck(tool: string, loadSchema: () => DataSchemaParse | undefined = readLaunchDataSchema) {
+export function createDataCheck(tool: string, launchSchema: DataSchemaParse | undefined) {
 	let refusedOnce = false;
-	let validator: Validator | undefined;
-	let loaded: DataSchemaParse | undefined | null = null;
+	const validator =
+		launchSchema?.ok === true
+			? compile(launchSchema.value.schema, { draft: launchSchema.value.draft, formats })
+			: undefined;
 	return (data: unknown): DataVerdict => {
 		const json = data === undefined ? undefined : JSON.stringify(data);
 		if (json !== undefined && json.length > DATA_MAX_CHARS) {
@@ -182,14 +205,12 @@ export function createDataCheck(tool: string, loadSchema: () => DataSchemaParse 
 					`${DATA_MAX_CHARS.toLocaleString("en-US")}. Write the data to a file, name the file in artifacts, and call ${tool} again with smaller data or none.`,
 			);
 		}
-		if (loaded === null) loaded = loadSchema();
-		if (!loaded) return { kind: "accept" };
-		if (!loaded.ok) return { kind: "data_error", error: loaded.error };
-		validator ??= compile(loaded.value.schema, { draft: loaded.value.draft, formats });
+		if (launchSchema === undefined) return { kind: "accept" };
+		if (!launchSchema.ok) return { kind: "data_error", error: launchSchema.error };
 		const errors =
 			data === undefined
 				? [{ path: "", keyword: "required", message: "missing; the launch schema requires data" }]
-				: validator.errors(data);
+				: (validator?.errors(data) ?? []);
 		if (errors.length === 0) return { kind: "accept" };
 		const violations = formatViolations(errors);
 		if (!refusedOnce) {

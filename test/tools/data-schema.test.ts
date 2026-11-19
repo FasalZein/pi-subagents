@@ -70,7 +70,7 @@ describe("launch schema boundary (D12)", () => {
 
 	it("a refusal names at most 10 violations and counts the rest", () => {
 		const properties = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`f${i}`, { type: "string" }]));
-		const check = createDataCheck("subagent_done", () => accepted({ type: "object", properties }));
+		const check = createDataCheck("subagent_done", accepted({ type: "object", properties }));
 		const data = Object.fromEntries(Array.from({ length: 15 }, (_, i) => [`f${i}`, i]));
 		let error: unknown;
 		try {
@@ -87,7 +87,7 @@ describe("launch schema boundary (D12)", () => {
 	});
 
 	it("one retry: the first failure throws, a second failure is a data error, matching data is accepted", () => {
-		const check = createDataCheck("subagent_done", () => accepted({ type: "object", required: ["ok"] }));
+		const check = createDataCheck("subagent_done", accepted({ type: "object", required: ["ok"] }));
 		assert.deepEqual(check({ ok: 1 }), { kind: "accept" });
 		assert.throws(() => check({}), /data does not match the launch schema:\n- data\.ok: /);
 		assert.deepEqual(check({ ok: 2 }), { kind: "accept" }, "matching data after a refusal is accepted");
@@ -96,7 +96,7 @@ describe("launch schema boundary (D12)", () => {
 	});
 
 	it("data over 32,000 characters as JSON is refused every time with a file hint; 32,000 is accepted", () => {
-		const check = createDataCheck("subagent_done", () => undefined);
+		const check = createDataCheck("subagent_done", undefined);
 		const fits = "x".repeat(32_000 - 2); // JSON adds the two quotes
 		assert.equal(JSON.stringify(fits).length, 32_000);
 		assert.deepEqual(check(fits), { kind: "accept" });
@@ -110,7 +110,7 @@ describe("launch schema boundary (D12)", () => {
 	});
 
 	it("without a launch schema any data is accepted", () => {
-		const check = createDataCheck("subagent_done", () => undefined);
+		const check = createDataCheck("subagent_done", undefined);
 		assert.deepEqual(check({ any: ["thing"] }), { kind: "accept" });
 		assert.deepEqual(check(undefined), { kind: "accept" });
 	});
@@ -122,7 +122,8 @@ describe("launch schema boundary (D12)", () => {
 		assert.equal(readLaunchDataSchema({}), undefined);
 		assert.equal(readLaunchDataSchema({ [DATA_SCHEMA_ENV]: "" }), undefined);
 		assert.equal(readLaunchDataSchema({ [DATA_SCHEMA_ENV]: file })?.ok, true);
-		const missing = createDataCheck("subagent_done", () =>
+		const missing = createDataCheck(
+			"subagent_done",
 			readLaunchDataSchema({ [DATA_SCHEMA_ENV]: join(dir, "gone.json") }),
 		);
 		const verdict = missing("x");

@@ -110,7 +110,7 @@ export function registerSubagentDoneTool(
 ) {
 	const refuseOversizeSummary = createOversizeRefusal(SUBAGENT_DONE_TOOL_NAME, "summary");
 	const launchSchema = readLaunchDataSchema();
-	const checkData = createDataCheck(SUBAGENT_DONE_TOOL_NAME, () => launchSchema);
+	const checkData = createDataCheck(SUBAGENT_DONE_TOOL_NAME, launchSchema);
 	pi.registerTool({
 		name: SUBAGENT_DONE_TOOL_NAME,
 		label: "Subagent Done",
