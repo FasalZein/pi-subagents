@@ -69,7 +69,7 @@ export async function adoptVerifiedRuns(
 ): Promise<AdoptedRunOutcome[]> {
 	const outcomes: AdoptedRunOutcome[] = [];
 	for (const runDir of listVerifiedRuns(verifiedRunsBaseDir(cwd))) {
-		let snapshot;
+		let snapshot: ReturnType<typeof attachVerifiedRun>;
 		try {
 			snapshot = attachVerifiedRun(runDir);
 		} catch {
@@ -195,7 +195,7 @@ function registerAdoptedWatcher(
 		running,
 		(async (): Promise<SubagentResult> => {
 			try {
-				let final;
+				let final: Awaited<ReturnType<typeof waitForVerifiedRunResult>>;
 				try {
 					final = await waitForVerifiedRunResult(runDir, {
 						signal: moduleAbortController.signal,

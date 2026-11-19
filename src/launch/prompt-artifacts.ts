@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { getSessionArtifactDir } from "../artifact-storage.ts";
 import type { DataSchema } from "../tools/data-schema.ts";
 
@@ -27,19 +27,24 @@ function safeArtifactName(name: string): string {
 		.replace(/^-|-$/g, "");
 }
 
-function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = ""): string {
-	const sessionId = ctx.sessionManager.getSessionId();
-	const artifactDir = getArtifactDir(ctx.cwd, sessionId);
+/**
+ * The child reads this file after its process starts, so each launch gets its own file, created
+ * exclusively under a random name: a same-name sibling started in the same second never replaces
+ * it. Owner-only (0600 in a 0700 folder), because a task or system prompt can hold private text.
+ */
+function writeContextArtifact(name: string, text: string, ctx: ArtifactContext, suffix = ""): string {
+	const folder = join(getArtifactDir(ctx.cwd, ctx.sessionManager.getSessionId()), "context");
+	mkdirSync(folder, { recursive: true, mode: 0o700 });
+	chmodSync(folder, 0o700);
 	const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-	const safeName = safeArtifactName(name);
-	return join(artifactDir, `context/${safeName || "subagent"}${suffix ? `-${suffix}` : ""}-${ts}.md`);
+	const stem = `${safeArtifactName(name) || "subagent"}${suffix ? `-${suffix}` : ""}-${ts}-${randomUUID()}`;
+	const artifactPath = join(folder, `${stem}.md`);
+	writeFileSync(artifactPath, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
+	return artifactPath;
 }
 
 export function writeTaskArtifact(name: string, task: string, ctx: ArtifactContext): string {
-	const artifactPath = getSubagentArtifactPath(name, ctx);
-	mkdirSync(dirname(artifactPath), { recursive: true });
-	writeFileSync(artifactPath, task, "utf8");
-	return artifactPath;
+	return writeContextArtifact(name, task, ctx);
 }
 
 function safeArtifactSessionId(value: unknown, fallback: string): string {
@@ -85,8 +90,5 @@ export function writeDataSchemaArtifact(name: string, schema: DataSchema, ctx: A
 }
 
 export function writeSystemPromptArtifact(name: string, systemPrompt: string, ctx: ArtifactContext): string {
-	const artifactPath = getSubagentArtifactPath(name, ctx, "sysprompt");
-	mkdirSync(dirname(artifactPath), { recursive: true });
-	writeFileSync(artifactPath, systemPrompt, "utf8");
-	return artifactPath;
+	return writeContextArtifact(name, systemPrompt, ctx, "sysprompt");
 }

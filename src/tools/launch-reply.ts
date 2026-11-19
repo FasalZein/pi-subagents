@@ -18,8 +18,15 @@ export function renderLaunchChildLine(child: LaunchedChild): string {
 	return `- ${child.name} (agent ${child.agent ?? "unknown"}): run ${child.id}, model ${child.modelRef ?? "not set"}, ${where}`;
 }
 
-/** An absolute path at the start of a word; a URL's path follows ":" and is kept. */
-const ABSOLUTE_PATH = /(^|[\s'"(=])\/[^\s'"()]+/g;
+/** A quoted absolute path, spaces included, up to its closing quote. */
+const QUOTED_PATH = /(['"])\/[^'"\n]*\1/g;
+
+/**
+ * An unquoted absolute path at the start of a word; a URL's path follows ":" and is kept. A path
+ * goes on past a space while the next word holds a "/" or ends in a file extension, so a folder
+ * or file name with spaces does not leak. Limit: a later word such as "node.js" is taken as well.
+ */
+const ABSOLUTE_PATH = /(^|[\s(=])\/[^\s'"()]+(?: (?:[^\s'"()]*\/[^\s'"()]*|[^\s'"()]+\.[A-Za-z0-9]+))*/g;
 
 /**
  * A launch error without file paths: a file-system error names the child's session file (the
@@ -27,7 +34,10 @@ const ABSOLUTE_PATH = /(^|[\s'"(=])\/[^\s'"()]+/g;
  */
 export function launchErrorReason(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
-	return message.replace(/^Error:\s*/, "").replace(ABSOLUTE_PATH, "$1<path>");
+	return message
+		.replace(/^Error:\s*/, "")
+		.replace(QUOTED_PATH, "$1<path>$1")
+		.replace(ABSOLUTE_PATH, "$1<path>");
 }
 
 /**

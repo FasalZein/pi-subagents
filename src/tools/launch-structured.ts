@@ -37,7 +37,7 @@ const FailedChildSchema = Type.Object({
 });
 export type FailedChild = Static<typeof FailedChildSchema>;
 
-export const SubagentLaunchOutput = Type.Union([
+const SubagentLaunchStructuredSchema = Type.Union([
 	Type.Object({ status: Type.Literal("launched"), children: Type.Array(LaunchedChildSchema) }),
 	Type.Object({
 		status: Type.Literal("launch_failed"),
@@ -46,7 +46,22 @@ export const SubagentLaunchOutput = Type.Union([
 		failed: FailedChildSchema,
 	}),
 ]);
-export type SubagentLaunchStructured = Static<typeof SubagentLaunchOutput>;
+/** The reply as the code builds it: failed is there exactly when status is launch_failed. */
+export type SubagentLaunchStructured = Static<typeof SubagentLaunchStructuredSchema>;
+
+/**
+ * The reply as the tool declares it, one object instead of the union: Pi writes the declared type
+ * into the codemode description, and the union wrote the children type twice (G1.1 cost).
+ * asStructuredContent checks at compile time that every SubagentLaunchStructured fits it.
+ */
+export const SubagentLaunchOutput = Type.Object({
+	status: Type.Union([Type.Literal("launched"), Type.Literal("launch_failed")]),
+	children: Type.Array(LaunchedChildSchema),
+	failed: Type.Optional({
+		...FailedChildSchema,
+		description: "Only with launch_failed; the listed children started and keep running.",
+	}),
+});
 
 type ChildSource = Pick<
 	RunningSubagent,
@@ -74,5 +89,6 @@ export function launchedChildData(running: ChildSource, agent: string, delivered
 
 /** The one cast: a record's data is typed unknown but is JSON (D12 accepts only JSON data). */
 export function asStructuredContent(output: SubagentLaunchStructured): JsonValue {
-	return output as unknown as JsonValue;
+	const declared: Static<typeof SubagentLaunchOutput> = output;
+	return declared as unknown as JsonValue;
 }

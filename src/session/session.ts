@@ -39,6 +39,16 @@ export function getEntries(sessionFile: string): SessionEntry[] {
 	return getNonEmptyLines(sessionFile).map((line, index) => parseEntryLine(sessionFile, line, index + 1));
 }
 
+/** The working directory saved in a session header; Pi resumes a session in this directory. */
+export function readSessionHeaderCwd(sessionFile: string): string | undefined {
+	try {
+		const header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0] ?? "") as { cwd?: unknown };
+		return typeof header.cwd === "string" && header.cwd ? header.cwd : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function getLeafId(sessionFile: string): string | null {
 	const entries = getEntries(sessionFile);
 	return entries.length > 0 ? entries[entries.length - 1].id : null;

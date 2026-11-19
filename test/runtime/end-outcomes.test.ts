@@ -13,7 +13,9 @@ import {
 	type WatchedEnd,
 } from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { settleVerdictAfterRun } from "../../src/runtime/resume-guards.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
+import { readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -271,6 +273,56 @@ describe("end outcomes (T09)", () => {
 		const published = publishRunResult(running, watchedEnd({ stopped: true, ping: { message: "help" } }));
 		assert.equal(published?.record.outcome, "cancelled");
 		assert.equal(published?.record.summary, `cancelled: ${STOPPED_REASON}`);
+	});
+
+	// Review b2 g1 P1: a person took over a resumed pane; the child called subagent_done(done), which
+	// recorded the call in the session but wrote no exit record, and the pane stayed open until the
+	// hard deadline closed it. The call never ended the run, so the deadline did (D7) and its
+	// block-resume verdict stays (D8).
+	it("files a taken-over pane whose recorded call never ended the run as timed out at the hard deadline", async () => {
+		const savedMux = process.env.PI_SUBAGENT_MUX;
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		try {
+			const { running, store, reservation, sessionFile } = setup(DONE_CALL, {
+				mode: "interactive",
+				surface: "pi-subagents-nonexistent-surface",
+				autoExit: false,
+				startTime: Date.now() - 2000,
+				timeoutBudget: { timeoutSeconds: 1 },
+				timeoutBlocksResume: true,
+			});
+			let closed!: () => void;
+			const surfaceClosed = new Promise<void>((resolve) => {
+				closed = resolve;
+			});
+			const result = await watchSubagent(
+				running,
+				{
+					cleanupNoSessionSessionFile() {},
+					async closeRunningSurface() {
+						closed();
+					},
+					async pollForExit() {
+						await surfaceClosed;
+						return { reason: "sentinel", exitCode: 0 };
+					},
+				} as never,
+				new AbortController().signal,
+			);
+			const record = store.read(reservation.runId);
+			assert.equal(record?.outcome, "timed_out");
+			assert.equal(record?.typed, false);
+			assert.equal(result.resultOutcome, "timed_out");
+			settleVerdictAfterRun(sessionFile, result);
+			assert.deepEqual(readSubagentTimeoutSidecar(sessionFile), {
+				kind: "timeout",
+				blocksResume: true,
+				budget: { timeoutSeconds: 1 },
+			});
+		} finally {
+			if (savedMux === undefined) delete process.env.PI_SUBAGENT_MUX;
+			else process.env.PI_SUBAGENT_MUX = savedMux;
+		}
 	});
 
 	it("keeps the own outcome of a child that completed before the hard deadline and is alive at it", async () => {

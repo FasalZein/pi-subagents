@@ -96,7 +96,9 @@ function schemaPositions(node: JsonSchema, pointer = "", into: string[] = []): s
 	for (const key of ARRAYS) {
 		const items = node[key];
 		if (Object.hasOwn(node, key) && Array.isArray(items))
-			items.forEach((item, i) => visit(item, `${pointer}/${key}/${i}`));
+			items.forEach((item, i) => {
+				visit(item, `${pointer}/${key}/${i}`);
+			});
 	}
 	for (const key of MAPS) {
 		const map = node[key];

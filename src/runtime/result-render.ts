@@ -17,6 +17,8 @@ export interface RenderOptions {
 	cwd: string;
 	homeDir: string;
 	warnings?: readonly string[];
+	/** Warnings that survive every cap, such as an unconfirmed kill; the other warnings get the rest. */
+	requiredWarnings?: readonly string[];
 	/** Verified fan-out footer (D18), kept inside the frame. */
 	verifierFooter?: VerifierFooter;
 	/** True when the agent asks for the context usage line. */
@@ -111,6 +113,7 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 		const { tokens, window } = record.contextUsage;
 		lines.push({ fact: window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens` });
 	}
+	for (const warning of options.requiredWarnings ?? []) lines.push({ fact: `warning: ${warning}` });
 	return lines;
 }
 

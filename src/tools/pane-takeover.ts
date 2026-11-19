@@ -26,7 +26,16 @@ function isOperatorKeystroke(data: string): boolean {
 	if (data.length === 0 || isKeyRelease(data)) return false;
 	if (matchesKey(data, "escape")) return true;
 	if (decodeKittyPrintable(data) !== undefined) return true;
-	return !data.startsWith("\x1b") && !/[\x00-\x1f\x7f]/u.test(data);
+	return !data.startsWith("\x1b") && !hasControlCharacter(data);
+}
+
+/** A C0 control character or DEL; a surrogate code unit is never one, so code units suffice. */
+function hasControlCharacter(data: string): boolean {
+	for (let index = 0; index < data.length; index++) {
+		const code = data.charCodeAt(index);
+		if (code <= 0x1f || code === 0x7f) return true;
+	}
+	return false;
 }
 
 interface PaneTakeoverDeps {

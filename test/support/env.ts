@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, afterEach, before, beforeEach } from "node:test";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach } from "node:test";
 import { namesDeniedByParentEnv } from "../../src/launch/child-env.ts";
 
 export const TRACKED_ENV_KEYS = [
@@ -87,6 +88,22 @@ const testArtifactRoot = mkdtempSync(join(tmpdir(), "pi-test-artifacts-"));
 process.env.PI_ARTIFACT_PROJECT_ROOT = testArtifactRoot;
 process.once("exit", () => rmSync(testArtifactRoot, { recursive: true, force: true }));
 
+// A verified fan-out test starts the real supervisor, which provisions the verifier runtime under the
+// operator's Pi config by default and removes an unmarked venv there first. Every test process uses
+// one test-owned root in this checkout instead, kept between runs so a warm install is reused.
+// UV_NO_CONFIG=1: a user uv config can require hashes, and the managed install of llm-verifier has
+// no hash lock, so uv refuses it. Limit: a real verified fan-out launch under require-hashes still
+// fails; revisit (hash-lock the install) if the owner starts using llm-verifier.
+process.env.PI_SUBAGENT_LLM_VERIFIER_VENV = join(
+	dirname(fileURLToPath(import.meta.url)),
+	"..",
+	"..",
+	"node_modules",
+	".cache",
+	"pi-subagents-test-llm-verifier-venv",
+);
+process.env.UV_NO_CONFIG = "1";
+
 export const ORIGINAL_ENV = Object.fromEntries(TRACKED_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<
 	(typeof TRACKED_ENV_KEYS)[number],
 	string | undefined
@@ -117,24 +134,6 @@ beforeEach(() => {
 	clearIsolatedSubagentEnv();
 });
 
-/**
- * Call inside a describe whose tests provision the managed verifier venv:
- * sets UV_NO_CONFIG=1 so the uv calls of ensureVerifierRuntime() ignore the
- * user's uv.toml. Why: a user uv config can require hashes, and the managed
- * install of llm-verifier has no hash lock, so uv refuses it.
- * Limit: a real verified fan-out launch under require-hashes still fails;
- * revisit (hash-lock the install) if the owner starts using llm-verifier.
- */
-export function ignoreUserUvConfig(): void {
-	const saved = process.env.UV_NO_CONFIG;
-	before(() => {
-		process.env.UV_NO_CONFIG = "1";
-	});
-	after(() => {
-		if (saved === undefined) delete process.env.UV_NO_CONFIG;
-		else process.env.UV_NO_CONFIG = saved;
-	});
-}
 
 afterEach(() => {
 	restoreTrackedEnv();
