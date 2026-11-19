@@ -164,6 +164,7 @@ async function startBackgroundSubagent(
 	const plan = await buildBackgroundLaunchPlan(params, ctx, { undo });
 	const { launch, invocation, denyPatterns } = plan;
 	const { prepared, noSession } = launch;
+	store.noteLaunch(reservation, noSession ? undefined : prepared.subagentSessionFile);
 
 	const startTime = Date.now();
 	const { envVars, launchEntryCount } = launch;

@@ -5,6 +5,7 @@ import {
 	fsyncSync,
 	mkdirSync,
 	openSync,
+	readdirSync,
 	readFileSync,
 	renameSync,
 	rmdirSync,
@@ -17,6 +18,12 @@ import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from ".
 
 /** The commit point of one run folder (D13). */
 export const RECORD_FILE = "record.json";
+
+/**
+ * D16: the durable session file of a run, written at launch, so a lookup of a run that ended
+ * without a record (a continue child after its parent exited) can name it after a restart.
+ */
+export const LAUNCH_FILE = "launch.json";
 
 /**
  * Run folders and result files are private from the first write: a report holds the child's whole
@@ -86,7 +93,10 @@ export function reserveRunId(resultsDir: string, draw: () => RunId = drawRunId):
  * folder is removed, so a folder that holds results is never lost.
  */
 export function discardReservation(reservation: Reservation): void {
-	if (reservation.folder !== undefined) rmdirSync(reservation.folder);
+	if (reservation.folder === undefined) return;
+	// The launch note is the one file a launch writes before its id reaches a reply (D16).
+	rmSync(join(reservation.folder, LAUNCH_FILE), { force: true });
+	rmdirSync(reservation.folder);
 }
 
 /** Low-level file steps, replaceable in tests to fail one step. */
@@ -176,6 +186,8 @@ export function readResultRecord(folder: string): ResultRecord | undefined {
  */
 export class ResultStore {
 	private readonly memory = new Map<RunId, ResultRecord>();
+	/** Session files of the runs this process launched (D16), also when the folder failed. */
+	private readonly launches = new Map<RunId, string>();
 	/** Every id this store handed out: without a folder on disk, only this set keeps ids exclusive. */
 	private readonly reserved = new Set<RunId>();
 	private noticeSent = false;
@@ -208,6 +220,58 @@ export class ResultStore {
 			if (reservation.folder !== undefined) this.storageFailed(record.report.error);
 		}
 		return record;
+	}
+
+	/**
+	 * D16: keeps the run's durable session file for a later lookup without a record. A no-session
+	 * child passes none: its temporary file is deleted, and a result never names a missing path.
+	 * A failed write costs only that path after a restart; this process still knows it.
+	 */
+	noteLaunch(reservation: Reservation, sessionFile: string | undefined): void {
+		if (sessionFile === undefined) return;
+		this.launches.set(reservation.runId, sessionFile);
+		if (reservation.folder === undefined) return;
+		const path = join(reservation.folder, LAUNCH_FILE);
+		removeQuietly(path);
+		try {
+			writeNewFile(path, JSON.stringify({ sessionFile }));
+		} catch {
+			// Best effort, see above.
+		}
+	}
+
+	/** The session file a launch of this run named, from this process or the run folder (D16). */
+	launchSessionFile(runId: RunId): string | undefined {
+		const known = this.launches.get(runId);
+		if (known !== undefined) return known;
+		try {
+			const parsed = JSON.parse(readFileSync(join(this.resultsDir, runId, LAUNCH_FILE), "utf8")) as unknown;
+			const sessionFile = (parsed as { sessionFile?: unknown } | null)?.sessionFile;
+			return typeof sessionFile === "string" && existsSync(sessionFile) ? sessionFile : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Every record of this session: each committed run folder, and the in-memory records (D13, D16). */
+	list(): ResultRecord[] {
+		let folders: string[] = [];
+		try {
+			folders = readdirSync(this.resultsDir);
+		} catch {
+			// No results folder: only the in-memory records.
+		}
+		const ids = new Set<string>([...folders, ...this.memory.keys()]);
+		return [...ids].flatMap((name) => {
+			let id: RunId;
+			try {
+				id = parseRunId(name);
+			} catch {
+				return [];
+			}
+			const record = this.read(id);
+			return record ? [record] : [];
+		});
 	}
 
 	/** The newest record of a run: its committed file, else the in-memory record. */

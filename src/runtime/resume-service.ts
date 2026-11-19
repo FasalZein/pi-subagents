@@ -450,6 +450,7 @@ async function resumeSubagentSessionWithoutWidth(
 
 	const reservation = sessionResultStore(input.resultsDir).reserve();
 	undo.add(() => discardReservation(reservation));
+	sessionResultStore(input.resultsDir).noteLaunch(reservation, sessionFile);
 	const running: RunningSubagent = {
 		id: reservation.runId,
 		name,

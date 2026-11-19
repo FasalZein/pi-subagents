@@ -69,6 +69,7 @@ async function startInteractiveSubagent(
 		undo,
 	});
 	const { prepared, sessionMode, noSession, directTask } = launch;
+	store.noteLaunch(reservation, noSession ? undefined : prepared.subagentSessionFile);
 	traceSubagentLaunch("interactive.prepared", {
 		id,
 		name: params.name,

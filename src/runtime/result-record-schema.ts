@@ -19,20 +19,22 @@ const ResultTypingSchema = Type.Union([
 	}),
 ]);
 
+export const ResultOutcomeSchema = Type.Union([
+	Type.Literal("done"),
+	Type.Literal("partial"),
+	Type.Literal("blocked"),
+	Type.Literal("failed"),
+	Type.Literal("timed_out"),
+	Type.Literal("cancelled"),
+]);
+
 const ResultFieldsSchema = Type.Object({
 	runId: Type.String(),
 	name: Type.String(),
 	agent: Type.String(),
 	title: Type.Optional(Type.String()),
 	modelRef: Type.Optional(Type.String()),
-	outcome: Type.Union([
-		Type.Literal("done"),
-		Type.Literal("partial"),
-		Type.Literal("blocked"),
-		Type.Literal("failed"),
-		Type.Literal("timed_out"),
-		Type.Literal("cancelled"),
-	]),
+	outcome: ResultOutcomeSchema,
 	summary: Type.String(),
 	sessionFile: Type.Optional(Type.String()),
 	artifacts: Type.Array(Type.String()),

@@ -2,6 +2,7 @@ import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { queuedRunEnd, queuedRunEndIds, settleWaitReply } from "./delivery-queue.ts";
 import type { ResultStore } from "./result-files.ts";
 import { parseRunId, type ResultRecord } from "./result-record.ts";
+import { lookUpRecord, noRecordText, renderLookup } from "./run-lookup.ts";
 import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
 import { getSubagentWaitSuccessResult } from "./wait-result.ts";
@@ -40,7 +41,20 @@ export type JoinOutcome =
 	| { status: "complete" | "timeout" | "empty"; results: JoinedResult[]; pending: string[]; missing: MissingRun[] }
 	| { status: "interrupted"; results: []; pending: string[]; missing: MissingRun[] };
 
-type Target = { kind: "active"; running: RunningSubagent } | { kind: "ended"; result: JoinedResult };
+/**
+ * An ended run: queued (the wait takes it, D15) or already delivered (a lookup, D16, which changes
+ * no state: no queue take, no release).
+ */
+type Target =
+	| { kind: "active"; running: RunningSubagent }
+	| { kind: "ended"; result: JoinedResult; lookup: boolean };
+
+/** This parent session's results, for the record of an ended run and for a lookup's rendering. */
+export interface SessionResults {
+	store: ResultStore;
+	/** The parent's working directory, for the report locator of a rendered record. */
+	cwd: string;
+}
 
 /** Seconds to milliseconds for the time limit. */
 const MS_PER_SECOND = 1000;
@@ -88,7 +102,8 @@ function receivableRuns(): RunningSubagent[] {
 	);
 }
 
-function resolveTarget(query: string, sessionStore: ResultStore | undefined): Target | MissingRun {
+function resolveTarget(query: string, session: SessionResults | undefined): Target | MissingRun {
+	const sessionStore = session?.store;
 	const receivable = receivableRuns();
 	// An active run comes first, by id or by name: a named run that still runs takes part (D16).
 	const byId = receivable.find((running) => running.id === query);
@@ -96,10 +111,14 @@ function resolveTarget(query: string, sessionStore: ResultStore | undefined): Ta
 	const [named, ...others] = receivable.filter((running) => running.name === query);
 	if (named && others.length === 0) return { kind: "active", running: named };
 	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
-	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
+	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: false };
 	// An ended run this process still knows, by id only (D16): a lookup returns its rendering.
-	if (completedSubagentResults.has(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }) };
-	return { id: query, error: `No result record for "${query}".` };
+	if (completedSubagentResults.has(query))
+		return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: true };
+	// After a reload, a restart or a compaction: the record file, or the record kept in memory (D13).
+	const record = lookUpRecord(sessionStore, query);
+	if (record && session) return { kind: "ended", result: { id: query, text: renderLookup(record, session.cwd), record }, lookup: true };
+	return { id: query, error: noRecordText(sessionStore, query) };
 }
 
 function defaultIds(): string[] {
@@ -114,18 +133,23 @@ function defaultIds(): string[] {
 export async function joinRuns(
 	params: JoinParams,
 	signal?: AbortSignal,
-	sessionStore?: ResultStore,
+	session?: SessionResults,
 ): Promise<JoinOutcome> {
+	const sessionStore = session?.store;
 	const mode = params.mode ?? "all";
 	const ids = params.ids && params.ids.length > 0 ? params.ids : defaultIds();
 	const missing: MissingRun[] = [];
 	const results = new Map<string, JoinedResult>();
+	/** Already delivered runs in this reply: copies by lookup that settle nothing (D16). */
+	const lookups = new Set<string>();
 	const active: RunningSubagent[] = [];
 	for (const query of ids) {
-		const target = resolveTarget(query, sessionStore);
+		const target = resolveTarget(query, session);
 		if (!("kind" in target)) missing.push(target);
-		else if (target.kind === "ended") results.set(target.result.id, target.result);
-		else if (!active.includes(target.running)) active.push(target.running);
+		else if (target.kind === "ended") {
+			results.set(target.result.id, target.result);
+			if (target.lookup) lookups.add(target.result.id);
+		} else if (!active.includes(target.running)) active.push(target.running);
 	}
 	if (active.length === 0 && results.size === 0) return { status: "empty", results: [], pending: [], missing };
 
@@ -174,6 +198,7 @@ export async function joinRuns(
 
 	// Freeze the reply, then end this wait's holds before the queue is settled.
 	const reply = [...results.values()];
+	const settled = reply.filter((result) => !lookups.has(result.id));
 	const pending = active.filter((running) => !results.has(running.id)).map((running) => running.id);
 	const stillHeld = new Set<string>();
 	for (const [id, token] of holds) {
@@ -183,7 +208,7 @@ export async function joinRuns(
 	if (status === "interrupted") {
 		// Another wait that still holds an end delivers it when it returns (or gives it back).
 		settleWaitReply(
-			reply.map((result) => result.id).filter((id) => !stillHeld.has(id)),
+			settled.map((result) => result.id).filter((id) => !stillHeld.has(id)),
 			[],
 			signal,
 		);
@@ -191,8 +216,8 @@ export async function joinRuns(
 		return { status, results: [], pending, missing };
 	}
 	settleWaitReply(
-		reply.map((result) => result.id),
-		reply.map((result) => ({ details: { id: result.id } })),
+		settled.map((result) => result.id),
+		settled.map((result) => ({ details: { id: result.id } })),
 	);
 	return { status, results: reply, pending, missing };
 }
