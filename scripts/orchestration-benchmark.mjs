@@ -50,10 +50,9 @@
  * - Duplicate work is attributed by the parent's requested read paths, not by
  *   facts observed in successful tool results (a failed read counts, a bash read
  *   does not). It feeds the duplicate outcome class only, never the verdict.
- * - Candidate adapters (T59a, candidate-evidence.mjs and delivery.mjs): grouped result
- *   messages, wait replies, calls nested in codemode scripts (run ids from the run
- *   folders), the workflow gate, digests of the script that joined the run, and
- *   report-locator reads. Candidate-only allowances follow the measured release.
+ * - Candidate adapters (T59a, see delivery.mjs): grouped result messages, launches
+ *   and reads nested in codemode scripts (run ids from the run folders), and
+ *   declared workflow digests. A parent read of a report file is no duplicate work.
  * - review-workflow (G2.1 (b), candidate arm): the parent gets --tools +codemode.
  * - Undelivered results have the sub-class unknown on v2.9.2: its session files
  *   record no queue or drop evidence (see delivery.mjs).
