@@ -327,12 +327,14 @@ describe("subagent_agents tool", () => {
 		// visible-to itself is invalid, so no caller may see the file.
 		writeAgent(agentsDir, "unreadable", "name: unreadable\ndescription: Unreadable\nvisible-to: all, root");
 		writeAgent(agentsDir, "granted", "name: granted\ndescription: Granted\ntimeout: 0");
+		// An unterminated header is read to the end of the file: its visible-to still holds.
+		writeFileSync(join(agentsDir, "open-root.md"), "---\nname: open-root\ndescription: Open\nvisible-to: root\n\nBody.");
 		writeAgent(agentsDir, "worker", "name: worker\ndescription: Works");
 		process.env.PI_SUBAGENT_AGENT = "coordinator";
 		process.env.PI_SUBAGENT_SPAWNABLE = "true";
 		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
 		const call = loadAgentsTool(cwd);
-		const hidden = /root-only|unreadable/;
+		const hidden = /root-only|unreadable|open-root/;
 		assert.match(await call({}), /^2 agents that you may launch \(1 malformed\)\. /);
 		assert.doesNotMatch(await call({ name: "root-only" }), hidden);
 		assert.doesNotMatch(await call({ name: "unreadable" }), hidden);
@@ -340,7 +342,7 @@ describe("subagent_agents tool", () => {
 		assert.doesNotMatch(await call({ query: "root only unreadable granted worker" }), hidden);
 		assert.match(await call({ name: "granted" }), /^Agent 'granted' is malformed in .*granted\.md: .*timeout/);
 		// Launch and resume check the grant before they name the file or its parse error (review b1 g3).
-		for (const agent of ["root-only", "unreadable"]) {
+		for (const agent of ["root-only", "unreadable", "open-root"]) {
 			const errors = await launchAndResumeErrors(cwd, agent);
 			for (const [path, text] of Object.entries(errors)) {
 				assert.doesNotMatch(text, /malformed|\.md|timeout/, `${agent} ${path}: ${text}`);
@@ -359,6 +361,8 @@ describe("subagent_agents tool", () => {
 		const root = await launchAndResumeErrors(cwd, "root-only");
 		assert.match(root.launch, /Agent "root-only" is malformed in .*root-only\.md: .*timeout/);
 		assert.match(root.resume, /Agent "root-only" is malformed in .*root-only\.md: .*timeout/);
+		const open = await launchAndResumeErrors(cwd, "open-root");
+		assert.match(open.launch, /Agent "open-root" is malformed in .*open-root\.md: /);
 	});
 
 	it("answers only when the session may launch (review 3)", async () => {

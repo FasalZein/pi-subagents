@@ -89,8 +89,9 @@ export interface MalformedAgentFile {
 	path: string;
 	error: string;
 	/**
-	 * The visible-to the file states, read apart from the error; [] (no caller)
-	 * when the header is unterminated or the value itself is invalid.
+	 * The visible-to the file states, read apart from the error. An unterminated
+	 * header is read to the end of the file, as its name is; without the key the
+	 * default ("all") holds. An invalid value gives [] (no caller).
 	 */
 	visibleTo: string[];
 }
@@ -148,7 +149,8 @@ function parseAgentDefinition(
  * file: an unrelated error must never widen its visibility.
  */
 function readVisibleTo(content: string): string[] {
-	const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1];
+	// Same header read as the name of a malformed file: an unterminated header runs to the end.
+	const frontmatter = content.match(/^---\r?\n([\s\S]*?)(?:\n---|$)/)?.[1];
 	if (frontmatter === undefined) return [];
 	try {
 		return parseVisibleTo(frontmatter.match(/^visible-to:[ \t]*(.+)$/m)?.[1].trim());
