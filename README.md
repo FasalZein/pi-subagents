@@ -50,7 +50,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 | `PI_SUBAGENT_MUX` | Backend | Detected when |
 | --- | --- | --- |
-| `herdr-core` | The Herdr app, through herdr-core | Pi runs in a herdr-core terminal (`HC_TERMINAL_ID` and `HC_TERMINAL_SOCKET` are set) and the Herdr app answers |
+| `herdr-core` | The Herdr app, through herdr-core | Pi runs in a herdr-core terminal (`HC_TERMINAL_ID` and `HC_TERMINAL_SOCKET` are set), the `hc` command is on `PATH`, and the Herdr app answers |
 | `rex` | Rex | `REX_SESSION` and `REX_BLOCK` are set and the `rex` command is found on `PATH` or in `REX_BIN_DIR` |
 | `herdr` | The Herdr TUI | `HERDR_PANE_ID` is set |
 | `cmux` | cmux | Pi runs in a cmux surface |
@@ -217,14 +217,10 @@ context-warn-threshold: 80%
 
 With the default `5%` step, `80%` warns at 80%, 85%, and 90%. Set `context-warn-step: 10%` to space them at 80%, 90%, and 99%. (The third lands at 100%, so it moves down to 99% to arrive before compaction.) If usage crosses two or more thresholds in one turn, Pi sends only the most urgent one. The child holds each warning only while its usage stays at or above that percentage. A reload at the same usage does not repeat a warning, but a drop below the threshold — after compaction, for example — releases it, so a child that keeps working is never left without warnings.
 
-A child that wraps up on the **last** warning did what it was told, so the parent must not read the short result as a premature exit. Pi marks that case in the result it sends to the parent:
+A child that wraps up on the **last** warning did what it was told, so the parent must not read the short result as a premature exit. Pi marks that case in the footer of the result it sends to the parent:
 
 ```text
-Sub-agent context: 182K/200K tokens (91%) used at finish. It stopped early as
-instructed by its context-warning policy: check what is unfinished and launch a
-fresh sub-agent for it if needed. A short or partial report here is expected and
-not a failure. Do not resume this session; resuming re-does already-summarized
-work and wastes a turn.
+not resumable: stopped early by its context-warning policy and its context window is spent; launch a fresh sub-agent for unfinished work
 ```
 
 Only the last warning counts. A child that sees an earlier warning and then finishes its work normally is reported as an ordinary completion, and stays resumable. A child that fails with a provider error is reported as a failure, never as an instructed wrap-up.
@@ -232,8 +228,6 @@ Only the last warning counts. A child that sees an earlier warning and then fini
 A child that fails after the last warning is a failure, not a wrap-up, so the parent keeps the cheap retry. Its result says the context window is spent and that a fresh sub-agent is usually better, and `subagent_resume` still works on it. Only a warning-driven wrap-up is blocked.
 
 Warnings only ever come in three stages, and the last stage is the one that says to stop. A setting that cannot reach three stages, such as `context-warn-threshold: 99%`, still warns the child but never blocks it, because the child was never told to stop.
-
-Warned results also omit the `Resume: pi --session …` line, so the parent is not handed a command that would bypass the block below. The session path is still shown.
 
 `report-context-usage: false` hides the token counts but still reports the early stop, because a parent that does not know the reason resumes a child that cannot work.
 
@@ -311,15 +305,14 @@ For `idle-timeout`, the hard deadline that triggered the wrap-up is pinned. Outp
 If the wrap-up completes, the parent receives a result such as:
 
 ```text
-Sub-agent "scout" completed its time-limit wrap-up (12m 3s). The parent
-interrupted its active operation at 80% of its whole-run limit so the remaining
-time was reserved for this report. A short or partial report is expected; check
-what remains unfinished.
-
+auth-scout · scout · timed out · 12m3s · untyped
 Mapped the auth flow. The session layer still needs verification.
+report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run>
+wrap-up: 900s for the whole run: the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains
 ```
 
-The wrap-up is a normal completion, not a hard timeout. Its session stays resumable unless another policy blocks it.
+The outcome of a wrap-up is `timed_out`, and the result is untyped, because the report-only run gets no completion call. The record keeps `wrapUp: true` in its `timeLimit`. Its session stays resumable unless another policy blocks it.
 
 The trade-off is deliberate: a legitimate slow tool is cancelled at the threshold. If losing that tool run is worse than losing the final report, leave `timeout-warn-threshold` off and use only the hard limits.
 
@@ -328,23 +321,14 @@ The trade-off is deliberate: a legitimate slow tool is cancelled at the threshol
 A stopped child cannot report its own result, so the parent reports it:
 
 ```text
-Sub-agent "scout" ran out of time, so the system stopped it after 15m. Its
-agent file sets a limit of 15m for the whole run.
-
-Partial work from before it stopped. It is incomplete, so check it before you
-trust it:
-
+auth-scout · scout · timed out · 15m0s · untyped
 Mapped the auth flow. The session layer is untouched.
-
-A sub-agent that used its whole limit once usually does it again. A resume gets
-the same limit, so it can stop at the same point. It is usually better to
-finish the work yourself, or to start a new sub-agent with a smaller task.
-
-Session: /path/to/child.jsonl
-To continue this work, use the subagent_resume tool. It applies the same limit
-again. Do not open this file with a plain pi --session command, because that
-run has no limit.
+report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run>
+time limit: 900s for the whole run: a resume gets the same limit and can stop at the same point; finish the work yourself or start a new sub-agent with a smaller task
 ```
+
+The summary is the start of the partial work. To continue, pass the run id to `subagent_resume`, which applies the same limit again. A plain `pi --session` run has no limit.
 
 #### Resume after a stop
 
@@ -368,14 +352,11 @@ The block-resume verdict stays until the resumed run ends. The published outcome
 With the default value, the parent receives a result such as this:
 
 ```text
-Sub-agent "scout" completed (3s).
-
+auth-scout · scout · done · 3.0s · typed
 Reviewed the authentication flow and found the files that require changes.
-
-Session: /path/to/child.jsonl
-Resume: pi --session /path/to/child.jsonl
-
-Sub-agent context: 145K/200K tokens (72%) used at finish.
+report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run>
+context: 145000/200000 tokens
 ```
 
 The last line shows the context use when the child finished. The parent can use this number before it resumes the child.
@@ -392,12 +373,10 @@ report-context-usage: false
 The parent then receives this result:
 
 ```text
-Sub-agent "scout" completed (3s).
-
+auth-scout · scout · done · 3.0s · typed
 Reviewed the authentication flow and found the files that require changes.
-
-Session: /path/to/child.jsonl
-Resume: pi --session /path/to/child.jsonl
+report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run>
 ```
 
 This field changes only the text that the parent receives. The TUI still shows the context use to the user.
@@ -486,37 +465,125 @@ Before anything is paid for, Pi sends one small request to the backend you chose
 - **Your own file** — a bare name loads `.pi/agents/criteria/<name>.md` from your project, or the same file under your global Pi directory. A project file with a built-in name replaces that built-in.
 - **Path** — a value with a `/` in it is a path, relative to the launch directory.
 
-## Ambient awareness
+## Agent index
 
-Ambient awareness is the quiet note Pi gives the parent model about available agents.
+At the start of each prompt, Pi writes one named system-prompt section, `index`, into the parent prompt. Pi stores the section with the session, patches it only when it changes, and keeps it through compaction, resume, and reload. The section has at most 1,600 characters: three fixed lines, then one line per agent that the session may launch.
 
-Pi stores that note as a hidden custom message. The user does not see it as chat. The LLM sees it as context before it decides whether to call `subagent`.
+```text
+Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
+Do not do delegated work yourself. A script that launches waits in the same script with a time limit and returns the pending ids.
+More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).
+- reviewer: Review a diff for bugs and missing tests. [pane] [manual]
+- scout: Inspect the codebase and report the relevant files.
+```
 
-The note contains agents with `description` fields and labels each one by what the child would see:
+Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too.
 
-- `isolated context` means the child starts clean. The parent must write a self-contained task.
-- `forked context` means the child sees the parent transcript. The parent can rely on context already in the chat.
+A flag shows only where an agent differs from the common case:
 
-Pi sends ambient awareness once when a top-level session first needs it, then sends a fresh copy after reload if the agent list changed.
+- `[pane]`: the child opens in a pane.
+- `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
+- `[manual]`: the pane stays open until a person closes it.
+- `[waits]`: the launch call waits for the result (`async: false`).
 
-Normal child sessions do not receive ambient awareness, even with `spawning: true`. They sit under a parent that made the first routing decision. A `standalone` child can receive its own ambient awareness because Pi treats it as a root session.
+An agent without a `description` is not in the index, and it stays launchable. A child with `spawning` gets the section filtered to the agents it may launch. A child that may launch nothing gets no section and no launch tools.
 
-Agents without descriptions remain launchable, but they do not appear in ambient awareness.
+### Look up an agent with `subagent_agents`
+
+`subagent_agents` covers only the agents that the caller may launch. It takes one of two parameters:
+
+| Parameter | Reply |
+| --- | --- |
+| `name` | The full definition of that agent: description, default model ref, accepted model refs grouped by provider, kind of child, session mode, limits, and what it may launch |
+| `query` | The best matches for the words, one line each. `limit` sets the number of matches: 1 to 50, default 5 |
+| neither | The count of agents and one line on how to search |
+
+A call with both `name` and `query` is refused. A malformed agent file is named here with its parse error.
+
+### One malformed agent file
+
+Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file.
 
 ## Launching and waiting
 
-Async launch:
+### Launch children
 
-1. parent calls `subagent`
-2. child starts
-3. parent receives a “started” result
-4. child result comes back later by steer
+`subagent` takes one parameter, `children`: a list of 1 to the spawn width of children. Each child has these fields:
 
-Sync launch:
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `agent` | yes | Name of the agent definition |
+| `name` | yes | Lower-kebab handle of 2 to 4 words and at most 32 characters, such as `auth-scout` |
+| `title` | yes | Sentence-case title of 3 to 8 words, such as `Auth implementation map` |
+| `task` | yes | The work for this child |
+| `model` | no | A model for this launch. See [Model names](#model-names) |
+| `thinking` | no | A thinking level for this launch, such as `high` |
+| `schema` | no | JSON Schema (draft 2020-12 or 7) that the `data` of the child's completion call must match. Every `$ref` stays inside the schema |
 
-1. the agent has `async: false` in frontmatter
-2. parent waits
-3. tool result contains the child result
+The launch reply has one line per child, then one line that says how the results return, then warnings and dropped extensions:
+
+```text
+- auth-scout (agent scout): run <run>, model <provider/model>, headless
+Each report arrives later, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.
+```
+
+An unknown agent name is refused with the three closest names among the agents the caller may launch. When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
+
+### Model names
+
+Without `model`, the child runs on the default model of its agent. With `model`, Pi searches the accepted models of the agent: its `model` and its `allowed-models`.
+
+- An exact `provider/model` ref wins.
+- `provider/fragment` matches when exactly one accepted model of that provider contains the fragment.
+- A fragment without a provider that matches under several providers takes the provider of the agent's default model. The launch is refused when that provider is not among the matches.
+- When the accepted list has the matched model at several thinking levels, `thinking` picks one. Without it, the agent's default level applies if the list accepts it, else the first listed level.
+- An agent without `allowed-models` takes any exact ref that Pi knows, and matches a fragment against Pi's model list by the same rules.
+
+A refusal names at most 8 matching candidates, grouped by provider, and points to `subagent_agents` with the agent name. An agent with `allow-model-override: false` ignores `model` and says so in the launch reply. `subagent_resume` applies the same rules to its `model`. The launch reply names the model ref that runs.
+
+### Launch cap
+
+A parent starts at most 64 runs between two session starts. `PI_SUBAGENT_LAUNCH_CAP` changes the number. The count starts at 0 when Pi starts or replaces the session (new, resume, fork). A `/reload` keeps the count. Each child of a `children` list counts once, a verified fan-out counts each candidate, a resume counts, and a time-limit wrap-up does not count. A launch over the cap starts nothing and returns an error result with the count and the cap. A launch that the spawn width refuses also returns an error result. In a codemode script, both refusals reject the `tools.subagent` call.
+
+### The result of a run
+
+Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself.
+
+The record holds the run id, name, agent, title, model ref, outcome, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. A run is typed only when the child made a valid completion call (see [`subagent_done`](#subagent_done)). An untyped summary is the start of the report, cut at a line end.
+
+The rendering has a header line, the summary, and a footer:
+
+```text
+auth-scout · scout · done · 3.0s · typed
+Reviewed the authentication flow and found the files that require changes.
+report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run>
+```
+
+The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900. Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The footer names the report file by its shortest path that Pi's `read` tool resolves. It never holds the session path or a resume command line.
+
+Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
+
+Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand. Verified fan-out is the one exception: its supervisor delivers to the launching session or an ancestor that starts next. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
+
+### Delivery: at least once
+
+When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, unless you press `Esc` while the turn settles: the results of that aborted turn then enter the next request when you type.
+
+Pi hands each result over once by itself and does not check whether the model read it. A copy comes only from a lookup, and every copy has the same size limit. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
+
+### Wait, look up, and list runs with `subagent_wait`
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `ids` | every run of this session that is running or queued | Run ids or names to wait for |
+| `mode` | `all` | `all` returns when every run ended; `any` returns when one ended |
+| `timeout` | none | Time limit in seconds. Pending runs then report by message |
+| `recent` | `false` | `true` returns at once one line per ended run of this session: the last 20, newest first. `ids`, `mode`, and `timeout` are ignored |
+
+The wait returns when the mode is met or the time limit passes, and at once when there is nothing to wait for. The reply has the rendered results, the pending run ids, and the run ids it did not find. Two waits on one run both get its result. `Esc` stops the wait; its runs keep running and report by message.
+
+A wait on a run whose result was already delivered is a lookup: it returns the same rendering at once from `record.json`. A lookup changes no state. The recent list holds the run id, name, outcome, and end time of each run, never full results; find an older run by its run id. A run id that is neither running nor recorded gets the answer `no result record`.
 
 #### Mixed sync and async batches
 
