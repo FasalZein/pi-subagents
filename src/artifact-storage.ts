@@ -35,7 +35,19 @@ export function getProjectArtifactsDir(cwd: string): string {
 	return join(getArtifactStorageRoot(), getArtifactProjectName(cwd), "artifacts");
 }
 
+/**
+ * A session id comes from a session header on disk, which Pi checks only for its type. It becomes
+ * one folder name here, so an id that is not one plain path component is refused before any lookup
+ * or folder creation: no separator, no "." or "..", no NUL.
+ */
+function assertSessionIdComponent(sessionId: string): void {
+	if (sessionId === "" || sessionId === "." || sessionId === ".." || /[/\\\0]/.test(sessionId)) {
+		throw new Error(`session id is not one path component: ${JSON.stringify(sessionId)}`);
+	}
+}
+
 export function getSessionArtifactDir(cwd: string, sessionId: string): string {
+	assertSessionIdComponent(sessionId);
 	return join(getProjectArtifactsDir(cwd), sessionId);
 }
 

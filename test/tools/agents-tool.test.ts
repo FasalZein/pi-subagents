@@ -14,6 +14,7 @@ import {
 	resetSubagentStateForTest,
 	subagentsExtension,
 	writeFileSync,
+	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
 
 type AgentsTool = {
@@ -65,6 +66,14 @@ function loadAgentsTool(
 	cwd: string,
 	session: SessionOptions = { hasUI: true },
 ): (params: { name?: string; query?: string; limit?: number }) => Promise<string> {
+	const tool = loadExtensionTools(cwd, session).get("subagent_agents");
+	assert.ok(tool, "subagent_agents is registered");
+	const ctx = { cwd, hasUI: session.hasUI, model: session.model };
+	return async (params) => (await tool.execute("call-1", params, undefined, undefined, ctx)).content[0].text;
+}
+
+/** Load the extension in `cwd` and return every tool it registers at session start. */
+function loadExtensionTools(cwd: string, session: SessionOptions): Map<string, AgentsTool> {
 	const tools = new Map<string, AgentsTool>();
 	const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
 	const api = {
@@ -99,10 +108,52 @@ function loadAgentsTool(
 			sessionManager: { getHeader: () => undefined, getSessionId: () => "agents-tool", getSessionFile: () => "" },
 		},
 	);
-	const tool = tools.get("subagent_agents");
-	assert.ok(tool, "subagent_agents is registered");
-	const ctx = { cwd, hasUI: session.hasUI, model: session.model };
-	return async (params) => (await tool.execute("call-1", params, undefined, undefined, ctx)).content[0].text;
+	return tools;
+}
+
+/**
+ * The error text of a launch and of a resume of `agent` from this session. Both fail before any
+ * child starts: the agent file is malformed, or the caller may not launch the agent.
+ */
+async function launchAndResumeErrors(cwd: string, agent: string): Promise<{ launch: string; resume: string }> {
+	const tools = loadExtensionTools(cwd, { hasUI: false }) as unknown as Map<
+		string,
+		{ execute(...args: unknown[]): Promise<unknown> }
+	>;
+	const sessionFile = join(cwd, `${agent}-child.jsonl`);
+	writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "child", cwd })}\n`);
+	await writeSubagentLaunchMetadataEntryForTest(sessionFile, {
+		version: 1,
+		timestamp: new Date().toISOString(),
+		name: "child",
+		agent,
+		mode: "background",
+		sessionMode: "lineage-only",
+		parentClosePolicy: "terminate",
+		async: true,
+		denyTools: [],
+		noContextFiles: false,
+		noSession: false,
+		agentConfigDir: cwd,
+		cwd,
+		boundarySystemPrompt: false,
+	});
+	const ctx = { cwd, hasUI: false, sessionManager: { getSessionId: () => "agents-tool", getSessionFile: () => "" } };
+	const errorOf = async (run: () => Promise<unknown>) => {
+		try {
+			return `no error: ${JSON.stringify(await run())}`;
+		} catch (error) {
+			return String(error);
+		}
+	};
+	const child = { name: "child", title: "Child", task: "Probe.", agent };
+	const launchTool = tools.get("subagent");
+	const resumeTool = tools.get("subagent_resume");
+	assert.ok(launchTool && resumeTool, "the launch and resume tools are registered");
+	return {
+		launch: await errorOf(() => launchTool.execute("c1", { children: [child] }, undefined, undefined, ctx)),
+		resume: await errorOf(() => resumeTool.execute("c2", { sessionFile, task: "Go on." }, undefined, undefined, ctx)),
+	};
 }
 
 function describedAs(index: number): string {
@@ -276,23 +327,42 @@ describe("subagent_agents tool", () => {
 		// visible-to itself is invalid, so no caller may see the file.
 		writeAgent(agentsDir, "unreadable", "name: unreadable\ndescription: Unreadable\nvisible-to: all, root");
 		writeAgent(agentsDir, "granted", "name: granted\ndescription: Granted\ntimeout: 0");
+		// An unterminated header is read to the end of the file: its visible-to still holds.
+		writeFileSync(join(agentsDir, "open-root.md"), "---\nname: open-root\ndescription: Open\nvisible-to: root\n\nBody.");
 		writeAgent(agentsDir, "worker", "name: worker\ndescription: Works");
 		process.env.PI_SUBAGENT_AGENT = "coordinator";
 		process.env.PI_SUBAGENT_SPAWNABLE = "true";
 		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
 		const call = loadAgentsTool(cwd);
-		const hidden = /root-only|unreadable/;
+		const hidden = /root-only|unreadable|open-root/;
 		assert.match(await call({}), /^2 agents that you may launch \(1 malformed\)\. /);
 		assert.doesNotMatch(await call({ name: "root-only" }), hidden);
 		assert.doesNotMatch(await call({ name: "unreadable" }), hidden);
 		assert.doesNotMatch(await call({ name: "root-onyl" }), hidden);
 		assert.doesNotMatch(await call({ query: "root only unreadable granted worker" }), hidden);
 		assert.match(await call({ name: "granted" }), /^Agent 'granted' is malformed in .*granted\.md: .*timeout/);
+		// Launch and resume check the grant before they name the file or its parse error (review b1 g3).
+		for (const agent of ["root-only", "unreadable", "open-root"]) {
+			const errors = await launchAndResumeErrors(cwd, agent);
+			for (const [path, text] of Object.entries(errors)) {
+				assert.doesNotMatch(text, /malformed|\.md|timeout/, `${agent} ${path}: ${text}`);
+				assert.match(text, /policy/, `${agent} ${path} is refused by the spawn policy: ${text}`);
+				assert.doesNotMatch(text, /^no error/, `${agent} ${path} is refused`);
+			}
+		}
+		const granted = await launchAndResumeErrors(cwd, "granted");
+		assert.match(granted.launch, /Agent "granted" is malformed in .*granted\.md: .*timeout/);
+		assert.match(granted.resume, /Agent "granted" is malformed in .*granted\.md: .*timeout/);
 		// The root session may see the root-only file, with its parse error.
 		delete process.env.PI_SUBAGENT_AGENT;
 		delete process.env.PI_SUBAGENT_SPAWNABLE;
 		delete process.env.PI_SUBAGENT_SPAWN_BUDGET;
 		assert.match(await loadAgentsTool(cwd)({ name: "root-only" }), /^Agent 'root-only' is malformed in /);
+		const root = await launchAndResumeErrors(cwd, "root-only");
+		assert.match(root.launch, /Agent "root-only" is malformed in .*root-only\.md: .*timeout/);
+		assert.match(root.resume, /Agent "root-only" is malformed in .*root-only\.md: .*timeout/);
+		const open = await launchAndResumeErrors(cwd, "open-root");
+		assert.match(open.launch, /Agent "open-root" is malformed in .*open-root\.md: /);
 	});
 
 	it("answers only when the session may launch (review 3)", async () => {
