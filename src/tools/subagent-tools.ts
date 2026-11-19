@@ -27,7 +27,7 @@ import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-c
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
-import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
+import { formatSubagentBatchLines, formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
 import { renderLaunchReply } from "./launch-reply.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
@@ -469,7 +469,7 @@ export function registerSubagentCoreTools(
 					component.setText(`\n${formatSubagentBatchLines(result, context.args, options, theme).join("\n")}`);
 					return component;
 				}
-				if (details?.status !== "completed" && details?.status !== "failed" && details?.status !== "cancelled") {
+				if (!isFinishedStatus(details?.status)) {
 					return new Text("", 0, 0);
 				}
 				return renderSubagentCompletionText(

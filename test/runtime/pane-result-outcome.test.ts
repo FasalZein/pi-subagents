@@ -21,8 +21,9 @@ let savedMux: string | undefined;
 /**
  * T08a review P1, reverse direction: the shell's exit status never turns the child's own error
  * record into a success. The poll sees the shell's zero status first; the child's error record
- * lands before the watcher reads exit records. The watcher must decide the run failed, publish
- * nothing, and give both carriers the same failure text.
+ * lands before the watcher reads exit records. The watcher must decide the run failed and, since
+ * T09 (D14: an error end goes through the assembler too), publish a failed record whose rendering
+ * both carriers show.
  */
 describe("pane result outcome", () => {
 	beforeEach(() => {
@@ -73,10 +74,11 @@ describe("pane result outcome", () => {
 
 		assert.equal(result.errorMessage, "provider quota exhausted");
 		assert.notEqual(result.exitCode, 0);
-		assert.equal(result.resultText, undefined, "a failed run is not published as a result");
-		assert.equal(store.read(reservation.runId), undefined);
+		assert.equal(store.read(reservation.runId)?.outcome, "failed");
+		assert.equal(store.read(reservation.runId)?.exit.error, "provider quota exhausted");
+		assert.match(result.resultText ?? "", /^Late error · scout · failed · /);
 		const message = messageText(result, running);
-		assert.match(message, /provider quota exhausted/);
-		assert.match(await waitText(result, running), /provider quota exhausted/);
+		assert.equal(message, result.resultText);
+		assert.equal(await waitText(result, running), message);
 	});
 });

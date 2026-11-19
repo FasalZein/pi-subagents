@@ -128,6 +128,7 @@ function getCompletedResultDetails(completed: CompletedSubagentResult): Record<s
 		contextWindow: completed.contextWindow,
 		sessionFile: completed.sessionFile,
 		...(completed.resultRunId ? { runId: completed.resultRunId } : {}),
+		...(completed.resultOutcome ? { outcome: completed.resultOutcome } : {}),
 		...(completed.reportFile ? { reportFile: completed.reportFile } : {}),
 		...(completed.deliveryId ? { deliveryId: completed.deliveryId } : {}),
 		...getTimeoutResultDetails(completed),
@@ -147,12 +148,14 @@ function deliverSubagentPing(
 	const sessionRef = result.sessionFile
 		? `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`
 		: "";
+	// D14: a published ping is a blocked record and carries the same rendering as every other end.
+	const content =
+		result.resultText ??
+		`Sub-agent "${ping.name}" needs help (${formatElapsed(result.elapsed)}).\n\n${ping.message}${sessionRef}`;
 	outstandingWork.delivery(running.id, () => pi.sendMessage(
 		{
 			customType: "subagent_ping",
-			content:
-				`Sub-agent "${ping.name}" needs help (${formatElapsed(result.elapsed)}).\n\n` +
-				`${ping.message}${sessionRef}`,
+			content,
 			display: true,
 			details: {
 				id: running.id,
@@ -168,6 +171,9 @@ function deliverSubagentPing(
 				outputTokens: result.outputTokens,
 				sessionFile: result.sessionFile,
 				message: ping.message,
+				...(result.resultRunId ? { runId: result.resultRunId } : {}),
+				...(result.resultOutcome ? { outcome: result.resultOutcome } : {}),
+				...(result.reportFile ? { reportFile: result.reportFile } : {}),
 			} as SubagentPingMessageDetails,
 		},
 		{ triggerTurn: true, deliverAs: "steer" },
@@ -225,6 +231,10 @@ function getNormalCompletionContent(
 	formatElapsed: (elapsed: number) => string,
 	sessionRef: string,
 ): string {
+	// D7: a stopped run is cancelled whatever its exit code; it is never filed as completed.
+	if (completed.status === "cancelled") {
+		return `Sub-agent "${completed.name}" was cancelled (${formatElapsed(completed.elapsed)}).\n\n${completed.summary}${sessionRef}`;
+	}
 	if (completed.exitCode !== 0) {
 		return `Sub-agent "${completed.name}" failed (exit ${completed.exitCode}).\n\n${completed.summary}${sessionRef}`;
 	}
