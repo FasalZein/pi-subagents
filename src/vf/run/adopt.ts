@@ -1,4 +1,4 @@
-import { outstandingWork } from "../../runtime/outstanding-work.ts";
+import { deliverRunEnd } from "../../runtime/delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveArtifactProjectRoot } from "../../artifact-storage.ts";
 import { runningSubagents, moduleAbortController } from "../../runtime/state.ts";
@@ -290,7 +290,9 @@ function deliverVerifiedRunResult(
 	triggerTurn: boolean,
 ): void {
 	const selection = manifest.result?.selection ?? null;
-	outstandingWork.delivery(manifest.runId.slice(-8), () => pi.sendMessage(
+	deliverRunEnd(
+		pi,
+		manifest.runId.slice(-8),
 		{
 			customType: "subagent_result",
 			// D14 and D18: the renderer's capped text; the delivery id stays in the details.
@@ -317,8 +319,8 @@ function deliverVerifiedRunResult(
 				errorMessage: result.errorMessage,
 			},
 		},
-		{ triggerTurn, deliverAs: "steer" },
-	));
+		{ triggerTurn },
+	);
 }
 
 /**

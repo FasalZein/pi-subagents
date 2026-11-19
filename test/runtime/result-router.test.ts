@@ -384,25 +384,25 @@ describe("result router", () => {
 		assert.doesNotMatch(sent[0].message.content, /provider stack trace/);
 	});
 
-	it("uses next-turn delivery only for a live parent and steers auto-exit parents", () => {
+	it("steers a result that ends while the stop flag is set, in live and auto-exit parents (D15: no parking)", () => {
 		const savedAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
 		try {
 			delete process.env.PI_SUBAGENT_AUTO_EXIT;
-			const nextTurnSent: Array<{ message: any; options: any }> = [];
-			const nextTurnRunning = makeRunning({ id: "live-parent-child" });
-			setRunningSubagentForTest(nextTurnRunning);
+			const liveSent: Array<{ message: any; options: any }> = [];
+			const liveRunning = makeRunning({ id: "live-parent-child" });
+			setRunningSubagentForTest(liveRunning);
 			requestSubagentBatchStop();
 			routeSubagentOutcome({
 				pi: {
 					sendMessage(message: any, options: any) {
-						nextTurnSent.push({ message, options });
+						liveSent.push({ message, options });
 					},
 				},
-				running: nextTurnRunning,
+				running: liveRunning,
 				result: makeResult(),
 				updateWidget: () => {},
 			});
-			assert.equal(nextTurnSent[0]?.options.deliverAs, "nextTurn");
+			assert.deepEqual(liveSent[0]?.options, { triggerTurn: true, deliverAs: "steer" });
 
 			resetSubagentStateForTest();
 			process.env.PI_SUBAGENT_AUTO_EXIT = "1";

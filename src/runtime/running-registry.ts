@@ -1,4 +1,4 @@
-import { outstandingWork } from "./outstanding-work.ts";
+import { deliverRunEnd } from "./delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, routeSubagentOutcome } from "./result-router.ts";
@@ -248,33 +248,30 @@ export function wireSubagentSteerBack(
 			releaseSpawnWidthSlot(running);
 			runningSubagents.delete(running.id);
 			updateWidget();
-			outstandingWork.delivery(running.id, () => pi.sendMessage(
-				{
-					customType: "subagent_result",
-					// D14: a watcher error is a failed end with the one rendering.
-					content: resultTextOf({
-						id: running.id,
-						name: running.name,
-						agent: running.agent,
-						task: running.task,
-						summary: "",
-						summarySource: "runtime",
-						sessionFile: running.noSession ? undefined : running.sessionFile,
-						exitCode: 1,
-						elapsed: (Date.now() - running.startTime) / 1000,
-						errorMessage: `watcher error: ${err?.message ?? String(err)}`,
-					}),
-					display: true,
-					details: {
-						id: running.id,
-						name: running.name,
-						task: running.task,
-						deliveryState: running.deliveryState,
-						parentClosePolicy: running.parentClosePolicy,
-						error: err?.message,
-					},
+			deliverRunEnd(pi, running.id, {
+				customType: "subagent_result",
+				// D14: a watcher error is a failed end with the one rendering.
+				content: resultTextOf({
+					id: running.id,
+					name: running.name,
+					agent: running.agent,
+					task: running.task,
+					summary: "",
+					summarySource: "runtime",
+					sessionFile: running.noSession ? undefined : running.sessionFile,
+					exitCode: 1,
+					elapsed: (Date.now() - running.startTime) / 1000,
+					errorMessage: `watcher error: ${err?.message ?? String(err)}`,
+				}),
+				display: true,
+				details: {
+					id: running.id,
+					name: running.name,
+					task: running.task,
+					deliveryState: running.deliveryState,
+					parentClosePolicy: running.parentClosePolicy,
+					error: err?.message,
 				},
-				{ triggerTurn: true, deliverAs: "steer" },
-			));
+			});
 		});
 }

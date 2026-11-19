@@ -148,7 +148,7 @@ test("awaited children and manual-close children count, foreign adopted observat
 	} finally { await h.stop(); }
 });
 
-test("a report parked for the operator's next prompt releases its lease on the settle that follows", async () => {
+test("a report steered while the stop flag is set keeps its lease until a settled turn carried it", async () => {
 	const h = await harness();
 	const savedAutoExit = process.env.PI_SUBAGENT_AUTO_EXIT;
 	delete process.env.PI_SUBAGENT_AUTO_EXIT;
@@ -160,8 +160,11 @@ test("a report parked for the operator's next prompt releases its lease on the s
 		requestSubagentBatchStop();
 		wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 		await new Promise<void>((resolve) => setImmediate(resolve));
-		assert.equal(h.deliveries.at(-1)?.deliverAs, "nextTurn");
+		assert.equal(h.deliveries.at(-1)?.deliverAs, "steer");
 		assert.equal(runningSubagents.size, 0);
+		await h.emit("agent_settled");
+		assert.equal(h.counts.at(-1), 1, "a settle before the message entered a request keeps the report outstanding");
+		await h.emit("context", { messages: h.messages.map((m) => ({ ...m, role: "custom" })) });
 		await h.emit("agent_settled");
 		assert.equal(h.counts.at(-1), 0);
 	} finally {
