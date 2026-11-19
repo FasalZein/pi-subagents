@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { adoptVerifiedRuns } from "../../src/vf/run/adopt.ts";
@@ -255,4 +255,29 @@ describe("verified fan-out winner on adoption", () => {
 		// Back to test support's temporary root: deleting it would send later suites to ~/.pi/history.
 		process.env.PI_ARTIFACT_PROJECT_ROOT = ORIGINAL_ENV.PI_ARTIFACT_PROJECT_ROOT;
 	});
+
+	it("creates generation folders 0700 and report and record files 0600 under umask 0022, also for a retry", () => {
+		const previous = process.umask(0o022);
+		try {
+			const dir = runDir();
+			const first = { ...manifest("first generation report", true), resultGeneration: 1 } as VerifiedRunManifest;
+			const retried = { ...manifest("second generation report", true), resultGeneration: 2 } as VerifiedRunManifest;
+			verifiedRunToSubagentResult(first, dir, { name: "vf-run", task: "t" }, Date.now());
+			verifiedRunToSubagentResult(retried, dir, { name: "vf-run", task: "t" }, Date.now());
+			const mode = (path: string) => (statSync(path).mode & 0o777).toString(8);
+			const results = join(dir, "result");
+			assert.equal(mode(results), "700", "the result folder is private");
+			assert.deepStrictEqual(readdirSync(results).sort(), ["g1", "g2"]);
+			for (const generation of ["g1", "g2"]) {
+				const folder = join(results, generation);
+				assert.equal(mode(folder), "700", `${generation} is private`);
+				for (const name of readdirSync(folder)) {
+					assert.equal(mode(join(folder, name)), "600", `${generation}/${name} is private`);
+				}
+			}
+		} finally {
+			process.umask(previous);
+		}
+	});
 });
+
