@@ -35,13 +35,15 @@ export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): RoutedSubagentOutcome {
 	const { pi, running, result, updateWidget } = options;
 	clearSubagentShutdownTimer(running);
+	// D15: a run end that a wait owns enters the queue held for that wait; the wait's reply takes it.
+	const heldByWait = running.resultOwner?.kind === "wait";
 	if (result.ping) {
 		runningSubagents.delete(running.id);
 		updateWidget();
-		if (running.allowSteerDelivery === false) {
+		if (running.allowSteerDelivery === false && !heldByWait) {
 			return { kind: "ping", delivered: false };
 		}
-		deliverSubagentPing(pi, running, result);
+		deliverSubagentPing(pi, running, result, heldByWait);
 		return { kind: "ping", delivered: true };
 	}
 	const completed =
@@ -51,6 +53,10 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 	releaseSpawnWidthSlot(running);
 	runningSubagents.delete(running.id);
 	updateWidget();
+	if (heldByWait) {
+		queueCompletedRunEnd(pi, completed, true);
+		return { kind: "completion", completed };
+	}
 	if (running.allowSteerDelivery === false) {
 		return { kind: "completion", completed };
 	}
@@ -67,15 +73,23 @@ export function deliverCompletedSubagentResult(
 	if (completed.deliveryState !== "detached" || completed.deliveredTo) {
 		return completed;
 	}
-
-	completed.deliveredTo = "steer";
-	deliverRunEnd(pi, completed.id, {
-		customType: "subagent_result",
-		content: resultTextOf(completed),
-		display: true,
-		details: getCompletedResultDetails(completed),
-	});
+	queueCompletedRunEnd(pi, completed, false);
 	return completed;
+}
+
+function queueCompletedRunEnd(pi: ParentMessageSink, completed: CompletedSubagentResult, heldByWait: boolean): void {
+	completed.deliveredTo = "steer";
+	deliverRunEnd(
+		pi,
+		completed.id,
+		{
+			customType: "subagent_result",
+			content: resultTextOf(completed),
+			display: true,
+			details: getCompletedResultDetails(completed),
+		},
+		{ heldByWait },
+	);
 }
 
 function getCompletedResultDetails(completed: CompletedSubagentResult): Record<string, unknown> {
@@ -106,7 +120,12 @@ function getCompletedResultDetails(completed: CompletedSubagentResult): Record<s
 	};
 }
 
-function deliverSubagentPing(pi: ParentMessageSink, running: RunningSubagent, result: SubagentResult): void {
+function deliverSubagentPing(
+	pi: ParentMessageSink,
+	running: RunningSubagent,
+	result: SubagentResult,
+	heldByWait: boolean,
+): void {
 	const ping = result.ping;
 	if (!ping) return;
 	// D14: a ping is a blocked record and carries the same rendering as every other end.
@@ -132,6 +151,8 @@ function deliverSubagentPing(pi: ParentMessageSink, running: RunningSubagent, re
 			...(result.resultRunId ? { runId: result.resultRunId } : {}),
 			...(result.resultOutcome ? { outcome: result.resultOutcome } : {}),
 			...(result.reportFile ? { reportFile: result.reportFile } : {}),
-		} as SubagentPingMessageDetails,
-	});
+			} as SubagentPingMessageDetails,
+		},
+		{ heldByWait },
+	);
 }

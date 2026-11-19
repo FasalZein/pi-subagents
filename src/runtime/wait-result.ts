@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CompletedSubagentResult, DeliveryState, RunningSubagent, SubagentResult, WaitParams } from "../types.ts";
+import { queuedRunEnd } from "./delivery-queue.ts";
 import type { WaitRuntime } from "./wait.ts";
 import { getTimeoutResultDetails } from "./timeout-budget.ts";
 import { resultTextOf } from "./unpublished-result.ts";
@@ -83,6 +84,20 @@ function releaseSubagentWaitOwnership(runtime: WaitRuntime, running: RunningSuba
 
 export async function waitForSubagentResult(params: WaitParams, runtime: WaitRuntime, signal?: AbortSignal) {
 	const match = runtime.findTrackedSubagent(params.id);
+	// A run end that is queued without a cached result (an early ping) is taken like any other.
+	const queued = !match.cached && !match.running ? queuedRunEnd(params.id) : undefined;
+	if (queued) {
+		if (signal?.aborted) {
+			return getSubagentWaitErrorResult(`Waiting for sub-agent "${params.id}" was interrupted.`, "interrupted", {
+				id: params.id,
+			});
+		}
+		const status = queued.customType === "subagent_ping" ? "pinged" : queued.details.status;
+		return {
+			content: [{ type: "text", text: queued.content }],
+			details: { ...queued.details, status, deliveryState: "awaited" as const },
+		};
+	}
 	if (match.error || (!match.cached && !match.running)) {
 		return getSubagentWaitErrorResult(match.error ?? `No subagent matches "${params.id}".`, "not_found", {
 			id: params.id,
@@ -90,6 +105,12 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 
 	const cached = match.cached;
+	if (cached && signal?.aborted) {
+		// R4: an aborted wait takes nothing; a queued result stays in the queue.
+		return getSubagentWaitErrorResult(`Waiting for sub-agent "${cached.name}" was interrupted.`, "interrupted", {
+			id: cached.id,
+		});
+	}
 	if (cached) {
 		if (cached.deliveryState !== "detached" && !cached.deliveredTo) {
 			return getSubagentWaitErrorResult(
@@ -113,6 +134,16 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 	if (!running.completionPromise) {
 		return getSubagentWaitErrorResult(`Sub-agent "${running.name}" is missing completion tracking.`, "not_found", {
+			id: running.id,
+		});
+	}
+
+	// R4: a wait that starts aborted takes nothing, so the run end still goes out as a message.
+	if (signal?.aborted) {
+		await runtime.stopRunningSubagent(running);
+		runtime.runningSubagents.delete(running.id);
+		runtime.updateWidget();
+		return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 			id: running.id,
 		});
 	}
@@ -143,14 +174,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		}
 
 		if (signal) {
-			if (signal.aborted) {
-				await runtime.stopRunningSubagent(running);
-				runtime.runningSubagents.delete(running.id);
-				runtime.updateWidget();
-				return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
-					id: running.id,
-				});
-			}
 			races.push(
 				new Promise((resolve) => {
 					const onAbort = () => resolve({ kind: "interrupted" as const });
@@ -182,6 +205,9 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 
 		releaseSubagentWaitOwnership(runtime, running, ownerId);
 		if (outcome.kind === "interrupted") {
+			// Interim limit (T26 owns the fix): D16 says Esc leaves the run running, but an aborted wait
+			// still stops it, and since T23 a launch of an async:false agent gets the abort signal too.
+			// The stopped run's end is delivered as a message. Revisit when T26 lands.
 			await runtime.stopRunningSubagent(running);
 			runtime.runningSubagents.delete(running.id);
 			runtime.updateWidget();

@@ -3,6 +3,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
+import { settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { parseRunId, type RunId } from "../runtime/result-record.ts";
@@ -182,6 +183,7 @@ export function registerSubagentResumeTool(
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
+				settleWaitReply([running.id], [result], signal);
 				const prefix = [isRenderedResult(result) ? "" : warning, dropped].filter(Boolean).join("\n\n");
 				if (!prefix) return result;
 				return {

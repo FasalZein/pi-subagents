@@ -23,6 +23,7 @@ import {
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
+import { settleWaitReply } from "../runtime/delivery-queue.ts";
 import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
@@ -328,10 +329,6 @@ function resultText(result: ToolResult): string {
 		.join("\n\n");
 }
 
-function getToolWaitSignal(running: RunningSubagent, signal: AbortSignal | undefined): AbortSignal | undefined {
-	return running.async === false ? undefined : signal;
-}
-
 export function registerSubagentCoreTools(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
@@ -414,7 +411,12 @@ export function registerSubagentCoreTools(
 				}
 				runtime.startWidgetRefresh();
 				const results = await Promise.all(
-					launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))),
+					launched.map((running) => runtime.getLaunchedSubagentResult(running, signal)),
+				);
+				settleWaitReply(
+					launched.map((running) => running.id),
+					results,
+					signal,
 				);
 				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
 				// with its own warnings (a published rendering already holds them).

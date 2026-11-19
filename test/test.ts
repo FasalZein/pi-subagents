@@ -68,6 +68,8 @@ import "./agents/verified-field-split.test.ts";
 import "./agents/enabled-toggle.test.ts";
 import "./spawn/policy.test.ts";
 import "./runtime/launch-results.test.ts";
+import "./runtime/launch-waits-queue.test.ts";
+import "./runtime/launch-wait-e2e.test.ts";
 import "./runtime/result-router.test.ts";
 import "./runtime/result-assembler.test.ts";
 import "./runtime/result-render.test.ts";
