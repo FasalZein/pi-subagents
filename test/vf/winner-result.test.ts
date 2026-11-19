@@ -1,14 +1,12 @@
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { RECORD_FILE } from "../../src/runtime/result-files.ts";
-import type { ResultRecord } from "../../src/runtime/result-record.ts";
 import { adoptVerifiedRuns } from "../../src/vf/run/adopt.ts";
 import { waitForVerifiedRunResult } from "../../src/vf/run/client.ts";
 import { verifiedRunsBaseDir } from "../../src/vf/run/launch.ts";
 import type { VerifiedRunManifest } from "../../src/vf/run/types.ts";
 import { readVerifiedRunManifest, writeVerifiedRunManifest } from "../../src/vf/run/types.ts";
-import { verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
+import { verifiedRunNotice, verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
 import {
 	assert,
 	createTestDir,
@@ -112,26 +110,31 @@ describe("verified fan-out winner result", () => {
 		assert.match(result.resultText, /verifier: winner not applied/);
 	});
 
-	it("switches the run's record and report to the newer generation after a retry", () => {
+	it("makes a retry's newer generation the run's current record and report", () => {
 		const dir = runDir();
-		const first = verifiedRunToSubagentResult(
-			manifest("first generation report", true),
-			dir,
-			{ name: "vf-run", task: "t" },
-			Date.now(),
-		);
-		const second = verifiedRunToSubagentResult(
-			manifest("second generation report", true),
-			dir,
-			{ name: "vf-run", task: "t" },
-			Date.now(),
-		);
+		// A real retry follows a failed verification: generation 1 fails, generation 2 has the winner.
+		const failed = { ...manifest("unused", true), resultGeneration: 1 } as VerifiedRunManifest;
+		failed.result = { ...failed.result!, ok: false, selection: null, apply: null, failure: { code: "verifier-error", message: "generation 1 verifier failure" } } as never;
+		const retried = { ...manifest("second generation report", true), resultGeneration: 2 } as VerifiedRunManifest;
+		const first = verifiedRunToSubagentResult(failed, dir, { name: "vf-run", task: "t" }, Date.now());
+		const second = verifiedRunToSubagentResult(retried, dir, { name: "vf-run", task: "t" }, Date.now());
 		assert.notEqual(first.reportFile, second.reportFile);
-		const record = JSON.parse(readFileSync(join(dir, "result", RECORD_FILE), "utf8")) as ResultRecord;
-		assert.ok(record.report.saved);
-		assert.equal(record.report.saved && record.report.path, second.reportFile);
+		const current = verifiedRunNotice(retried, dir, { name: "vf-run", task: "t" }, Date.now(), "notice");
+		assert.equal(current.reportFile, second.reportFile);
 		assert.match(readFileSync(second.reportFile ?? "", "utf8"), /^second generation report/);
-		assert.match(record.summary, /second generation report/);
+		assert.equal(current.resultOutcome, "done");
+	});
+
+	it("keeps generation 2 current when a generation 1 publication arrives after it", () => {
+		const dir = runDir();
+		const failed = { ...manifest("unused", true), resultGeneration: 1 } as VerifiedRunManifest;
+		failed.result = { ...failed.result!, ok: false, selection: null, apply: null, failure: { code: "verifier-error", message: "generation 1 verifier failure" } } as never;
+		const winner = { ...manifest("generation 2 winner report", true), resultGeneration: 2 } as VerifiedRunManifest;
+		const second = verifiedRunToSubagentResult(winner, dir, { name: "vf-run", task: "t" }, Date.now());
+		verifiedRunToSubagentResult(failed, dir, { name: "vf-run", task: "t" }, Date.now());
+		const current = verifiedRunNotice(winner, dir, { name: "vf-run", task: "t" }, Date.now(), "notice");
+		assert.equal(current.reportFile, second.reportFile, "the current result stays generation 2");
+		assert.match(readFileSync(current.reportFile ?? "", "utf8"), /^generation 2 winner report/);
 	});
 
 	it("returns the capped winner with its metadata from a direct wait", async () => {
@@ -191,6 +194,10 @@ describe("verified fan-out winner on adoption", () => {
 		const longReport = `${"Adopted winner line.\n".repeat(1_000)}END-OF-ADOPTED`;
 		assert.ok(longReport.length >= 20_000);
 		finished.result!.selection!.winnerReport = longReport;
+		// Delayed adoption: the run ended ten minutes ago, one minute after it started.
+		const ended = Date.now() - 600_000;
+		finished.createdAt = new Date(ended - 60_000).toISOString();
+		finished.result!.finishedAt = new Date(ended).toISOString();
 		writeVerifiedRunManifest(dir, finished);
 
 		const messages: Array<{ content: string; details: Record<string, unknown> }> = [];
@@ -215,6 +222,12 @@ describe("verified fan-out winner on adoption", () => {
 		assert.equal(again.find((entry) => entry.runDir === dir)?.action, "delivered");
 		const winners = messages.slice(1);
 		assert.equal(winners.length, 2);
+		// A replay of the same generation is the same delivery: same id, same report file, same text.
+		assert.equal(winners[0].details.deliveryId, winners[1].details.deliveryId);
+		assert.equal(winners[0].details.reportFile, winners[1].details.reportFile);
+		assert.equal(winners[0].content, winners[1].content);
+		// D13: the end and elapsed time are the run's, not the adoption's.
+		assert.ok(Math.abs((winners[0].details.elapsed as number) - 60) < 2, `elapsed ${winners[0].details.elapsed}`);
 		for (const message of winners) {
 			assert.ok(message.content.length <= TEXT_LIMIT, `text has ${message.content.length} characters`);
 			assert.match(message.content, /verifier: winner (staged|not applied)/);

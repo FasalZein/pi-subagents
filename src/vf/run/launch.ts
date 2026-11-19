@@ -319,6 +319,7 @@ export async function launchVerifiedFanOut(
 					sessionId: parentSessionId,
 					sessionFile: ctx.sessionManager.getSessionFile?.() ?? null,
 					cwd: ctx.cwd,
+					warnings: ctx.resultWarnings ?? [],
 				},
 			}),
 		);
@@ -337,6 +338,8 @@ interface VerifiedOrigin {
 	sessionId: string | null;
 	sessionFile: string | null | undefined;
 	cwd: string;
+	/** Launch warnings (D22 and others); the bounded rendering repeats them inside its frame. */
+	warnings: readonly string[];
 }
 
 /** Poll the durable manifest; resolve ONE SubagentResult for the whole fan-out. */
@@ -381,7 +384,8 @@ function deliverOnce(
 	startTime: number,
 	origin: VerifiedOrigin,
 ): SubagentResult {
-	const result = verifiedRunToSubagentResult(manifest, runDir, params, startTime, origin.cwd);
+	const target = { parentCwd: origin.cwd, warnings: origin.warnings };
+	const result = verifiedRunToSubagentResult(manifest, runDir, params, startTime, target);
 	const sessionId = origin.sessionId ?? manifest.request.parentSessionId;
 	if (!sessionId) return result;
 	const lease = acquireVerifiedRunDeliveryLease(runDir, {
@@ -395,7 +399,7 @@ function deliverOnce(
 			params,
 			startTime,
 			`[llm-as-a-verifier ${manifest.runId}: run complete; its report was already delivered — report and ranking in ${runDir}]`,
-			origin.cwd,
+			target,
 		);
 	}
 	result.deliveryId = lease.deliveryId;

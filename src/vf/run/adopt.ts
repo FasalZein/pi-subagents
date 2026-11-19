@@ -111,7 +111,7 @@ export async function adoptVerifiedRuns(
 				});
 				continue;
 			}
-			const result = verifiedRunToSubagentResult(manifest, runDir, logicalChild(manifest), runStart(manifest), cwd);
+			const result = verifiedRunToSubagentResult(manifest, runDir, logicalChild(manifest), runStart(manifest), { parentCwd: cwd });
 			const confirmed = await deliverWithReceipt(pi, manifest, result, runDir, {
 				sessionId: options.sessionId ?? "",
 				deliveryId: lease.deliveryId,
@@ -213,10 +213,10 @@ function registerAdoptedWatcher(
 						running.startTime,
 						`[llm-as-a-verifier ${manifest.runId}: this session stopped watching; ` +
 							`the detached run continues and its report stays with the run (${runDir})]`,
-						cwd,
+						{ parentCwd: cwd },
 					);
 				}
-				const result = verifiedRunToSubagentResult(final, runDir, logicalChild(manifest), running.startTime, cwd);
+				const result = verifiedRunToSubagentResult(final, runDir, logicalChild(manifest), running.startTime, { parentCwd: cwd });
 				if (authorizedRecipientIds(final).includes(options.sessionId ?? "")) {
 					const sessionId = options.sessionId ?? "";
 					const lease = acquireVerifiedRunDeliveryLease(runDir, {
