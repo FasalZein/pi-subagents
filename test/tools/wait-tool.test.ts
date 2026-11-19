@@ -3,6 +3,7 @@ import { type AssistantMessage, fauxAssistantMessage, fauxProvider, fauxToolCall
 import {
 	type AgentSession,
 	createAgentSession,
+	createCodemodeExtension,
 	DefaultResourceLoader,
 	type ExtensionFactory,
 	ModelRuntime,
@@ -89,7 +90,7 @@ function textOf(content: unknown): string {
 }
 
 /** A scripted model: each prompt text maps to the tool calls of one reply; anything else ends the turn. */
-async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
+async function startParent(plan: Record<string, ToolCall[]>, options: { codemode?: boolean } = {}): Promise<Parent> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
 	const faux = fauxProvider();
@@ -118,7 +119,7 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root,
 		agentDir,
-		extensionFactories: [extension],
+		extensionFactories: options.codemode ? [extension, createCodemodeExtension({ mode: "on" })] : [extension],
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
@@ -131,7 +132,7 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 		modelRuntime,
 		model: faux.getModel(),
 		resourceLoader,
-		settingsManager: SettingsManager.inMemory({}),
+		settingsManager: SettingsManager.inMemory(options.codemode ? { defaultTools: ["+codemode"] } : {}),
 		sessionManager: SessionManager.create(root, join(root, "sessions")),
 	});
 	// An interactive parent: a headless one awaits every launch, so no run would still be running.
@@ -295,6 +296,34 @@ describe("T24: subagent_wait in a real Pi session", () => {
 			assert.equal(parent.resultMessages(), 0, "the returned result sends no message");
 			parent.finish("child-two", "CHILD-TWO-REPORT");
 			await until(() => parent.resultMessages() === 1, "child 2 reports by message");
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("check 6: a codemode script receives the wait's result records as objects", async () => {
+		const script = [
+			'const r = await tools.subagent_wait({ ids: ["id-child-one", "id-child-two"] });',
+			'return typeof r === "object" ? `OBJECT ${r.status} ${r.results.map((x) => x.record.id).join(",")} ${r.results[0].record.agent}` : `TEXT ${r}`;',
+		].join("\n");
+		const parent = await startParent(
+			{ delegate: LAUNCH, join: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
+			{ codemode: true },
+		);
+		try {
+			await launchBoth(parent);
+			const run = parent.session.prompt("join");
+			await until(() => isRunEndHeld("id-child-two"), "the script's wait holds the runs");
+			parent.finish("child-one", "CHILD-ONE-REPORT");
+			parent.finish("child-two", "CHILD-TWO-REPORT");
+			await run;
+			await parent.session.waitForIdle();
+			const scriptResult = parent.session.messages.find(
+				(message) => message.role === "toolResult" && message.toolName === "codemode",
+			);
+			assert.ok(scriptResult, "the script ran");
+			assert.match(textOf(scriptResult.content), /OBJECT complete id-child-one,id-child-two worker-a/);
+			assert.equal(parent.resultMessages(), 0, "the script's returned wait delivered both");
 		} finally {
 			await parent.dispose();
 		}
