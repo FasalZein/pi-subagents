@@ -23,6 +23,7 @@ import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-ta
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
 import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
 import { registerSubagentDoneTool } from "./completion-call.ts";
+import { createCompletionNudge } from "./completion-nudge.ts";
 import { filterToolNames, getDeniedToolNames, shouldRegisterSubagentDone } from "./child-tool-policy.ts";
 
 const TOOL_BOUNDARY_RECOVERY_NUDGE = "continue";
@@ -267,6 +268,8 @@ export default function (pi: ExtensionAPI) {
 		let toolExecutionsThisTurn = 0;
 		let terminatingToolExecutionsThisTurn = 0;
 		let terminatingSubagentLaunchesThisTurn = 0;
+		const completionNudge = createCompletionNudge(pi);
+		pi.on("session_start", (_event, ctx) => completionNudge.markRunStart(ctx));
 
 		const AUTO_EXIT_DISABLED_MSG = "Auto-exit disabled — close manually or /auto-exit to re-enable";
 		// Single owner of the disabled latch and the operator-facing status/toast.
@@ -445,6 +448,8 @@ export default function (pi: ExtensionAPI) {
 			providerErrorRecovery.cancelPendingRecovery(true);
 			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
+			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
+			if (completionNudge.nudgeOnce(ctx)) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});
