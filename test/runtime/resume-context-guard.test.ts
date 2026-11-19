@@ -4,7 +4,14 @@ import { describe, it } from "node:test";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { SUBAGENT_COMPLETION_ENTRY } from "../../src/tools/context-reminders.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
-import { assert, createTestDir, existsSync, writeExecutable, writeFileSync } from "../support/index.ts";
+import {
+	assert,
+	createTestDir,
+	existsSync,
+	useLegacyAgentDefinition,
+	writeExecutable,
+	writeFileSync,
+} from "../support/index.ts";
 
 const SPAWN_GRANT_VARS = [
 	"PI_SUBAGENT_SPAWNABLE",
@@ -133,10 +140,11 @@ describe("context-exhausted resume guard", () => {
 		process.env.PI_SUBAGENT_PI_COMMAND = bin;
 		try {
 			const sessionFile = writeExhaustedSession(dir, "overlay-child.jsonl");
+			const agent = useLegacyAgentDefinition();
 
 			// The overlay controller passes the operator's override for its own attempt (D8).
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", operatorOverride: true }, createResumeRuntime() as any),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent, operatorOverride: true }, createResumeRuntime() as any),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
@@ -167,11 +175,12 @@ describe("context-exhausted resume guard", () => {
 				})}\n`,
 			);
 			const tool = registerResumeTool(createResumeRuntime());
+			const agent = useLegacyAgentDefinition();
 
 			// Without an explicit mode this session has no launch metadata, so the
 			// resume falls back to interactive and would open a real mux pane.
 			const result = await withoutAmbientSpawnGrant(() =>
-				tool.execute("call-2", { sessionFile, mode: "background" }, undefined, undefined, parentToolCtx(dir, { hasUI: true })),
+				tool.execute("call-2", { sessionFile, mode: "background", agent }, undefined, undefined, parentToolCtx(dir, { hasUI: true })),
 			);
 
 			assert.equal(result.details.status, "started");
