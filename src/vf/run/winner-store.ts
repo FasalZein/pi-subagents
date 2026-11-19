@@ -96,6 +96,9 @@ export function publishGeneration(runDir: string, generation: number, result: As
 	} catch (error) {
 		rmSync(temp, { recursive: true, force: true });
 		const code = (error as { code?: unknown } | null)?.code;
-		return { ...result.record, report: { saved: false, error: typeof code === "string" ? code : "the report could not be written" } };
+		return {
+			...result.record,
+			report: { saved: false, error: typeof code === "string" ? code : "the report could not be written" },
+		};
 	}
 }

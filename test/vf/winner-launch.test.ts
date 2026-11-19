@@ -19,7 +19,13 @@ import { gitRun as run, setupVerifiedRunFixture } from "../support/verified-runs
  */
 
 const dirs: string[] = [];
-const ENV_KEYS = ["PI_SUBAGENT_PI_COMMAND", "PI_SUBAGENT_VF_MOCK_VERIFIER", "TEST_CAPTURE_DIR", "TEST_MARKER_MAP", "PI_ARTIFACT_PROJECT_ROOT"];
+const ENV_KEYS = [
+	"PI_SUBAGENT_PI_COMMAND",
+	"PI_SUBAGENT_VF_MOCK_VERIFIER",
+	"TEST_CAPTURE_DIR",
+	"TEST_MARKER_MAP",
+	"PI_ARTIFACT_PROJECT_ROOT",
+];
 
 afterEach(() => {
 	resetSubagentStateForTest();
@@ -38,7 +44,10 @@ describe("verified fan-out launch reply", () => {
 			"---\ndescription: vf test agent\nllm-as-a-verifier: true\nallow-model-override: false\n---\nAgent body.\n",
 		);
 		// The verifier profile names a placeholder; the mock verifier backend never calls it.
-		writeFileSync(join(repo, ".pi", "agents", "verifiers", "default.md"), "---\nmodel: placeholder/verifier\nenv: |\n  OPENAI_BASE_URL=http://127.0.0.1:9\n---\n");
+		writeFileSync(
+			join(repo, ".pi", "agents", "verifiers", "default.md"),
+			"---\nmodel: placeholder/verifier\nenv: |\n  OPENAI_BASE_URL=http://127.0.0.1:9\n---\n",
+		);
 		run(repo, "add", "-A");
 		run(repo, "commit", "-q", "-m", "agent definition");
 		const artifactRoot = createTestDir();
@@ -59,7 +68,11 @@ describe("verified fan-out launch reply", () => {
 			},
 		};
 		const tools = new Map<string, any>();
-		const pi = { registerTool: (def: any) => tools.set(def.name, def), getThinkingLevel: () => "low", sendMessage() {} };
+		const pi = {
+			registerTool: (def: any) => tools.set(def.name, def),
+			getThinkingLevel: () => "low",
+			sendMessage() {},
+		};
 		const runtime = {
 			loadAgentDefaults: (agent: string, cwd: string) => loadAgentDefaults(agent, undefined, cwd, resolveSubagentCwd),
 			resolveEffectiveSessionMode: () => "lineage-only",
@@ -69,11 +82,18 @@ describe("verified fan-out launch reply", () => {
 			wireSubagentSteerBack,
 		} as unknown as SubagentToolRuntime;
 		registerSubagentCoreTools(pi as never, () => true, runtime);
-		const params = { children: [{ name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker", thinking: "high", async: false }] };
+		const params = {
+			children: [
+				{ name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker", thinking: "high", async: false },
+			],
+		};
 		const result = await tools.get("subagent").execute("c1", params, undefined, undefined, ctx);
 		const text = (result.content[0] as { text: string }).text;
 		assert.match(text, /verifier: winner/, "the waited reply carries the winner");
-		assert.match(text, /warning: agent 'vf-worker' sets allow-model-override: false; thinking 'high' from the call ignored/);
+		assert.match(
+			text,
+			/warning: agent 'vf-worker' sets allow-model-override: false; thinking 'high' from the call ignored/,
+		);
 		assert.match(text, /verifier: winner (staged|not applied)/, "the winner fact stays beside the warning");
 	});
 });

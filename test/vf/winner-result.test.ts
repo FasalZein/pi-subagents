@@ -114,7 +114,13 @@ describe("verified fan-out winner result", () => {
 		const dir = runDir();
 		// A real retry follows a failed verification: generation 1 fails, generation 2 has the winner.
 		const failed = { ...manifest("unused", true), resultGeneration: 1 } as VerifiedRunManifest;
-		failed.result = { ...failed.result!, ok: false, selection: null, apply: null, failure: { code: "verifier-error", message: "generation 1 verifier failure" } } as never;
+		failed.result = {
+			...failed.result!,
+			ok: false,
+			selection: null,
+			apply: null,
+			failure: { code: "verifier-error", message: "generation 1 verifier failure" },
+		} as never;
 		const retried = { ...manifest("second generation report", true), resultGeneration: 2 } as VerifiedRunManifest;
 		const first = verifiedRunToSubagentResult(failed, dir, { name: "vf-run", task: "t" }, Date.now());
 		const second = verifiedRunToSubagentResult(retried, dir, { name: "vf-run", task: "t" }, Date.now());
@@ -128,7 +134,13 @@ describe("verified fan-out winner result", () => {
 	it("keeps generation 2 current when a generation 1 publication arrives after it", () => {
 		const dir = runDir();
 		const failed = { ...manifest("unused", true), resultGeneration: 1 } as VerifiedRunManifest;
-		failed.result = { ...failed.result!, ok: false, selection: null, apply: null, failure: { code: "verifier-error", message: "generation 1 verifier failure" } } as never;
+		failed.result = {
+			...failed.result!,
+			ok: false,
+			selection: null,
+			apply: null,
+			failure: { code: "verifier-error", message: "generation 1 verifier failure" },
+		} as never;
 		const winner = { ...manifest("generation 2 winner report", true), resultGeneration: 2 } as VerifiedRunManifest;
 		const second = verifiedRunToSubagentResult(winner, dir, { name: "vf-run", task: "t" }, Date.now());
 		verifiedRunToSubagentResult(failed, dir, { name: "vf-run", task: "t" }, Date.now());

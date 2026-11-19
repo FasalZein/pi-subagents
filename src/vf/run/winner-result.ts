@@ -87,7 +87,7 @@ function reportEntries(report: string): SessionEntry[] {
 }
 
 /** The receiving parent: its working directory for the report locator, and its launch warnings. */
-export interface VerifiedRenderTarget {
+interface VerifiedRenderTarget {
 	parentCwd?: string;
 	warnings?: readonly string[];
 }
@@ -175,7 +175,12 @@ export function verifiedRunNotice(
 		}).record,
 		report: { saved: false, error: "the run continues; its report is published with the run when it ends" },
 	};
-	const rendered = renderVerified({ ...record, summary: cutText(notice, SUMMARY_MAX_CHARS) }, manifest, target, undefined);
+	const rendered = renderVerified(
+		{ ...record, summary: cutText(notice, SUMMARY_MAX_CHARS) },
+		manifest,
+		target,
+		undefined,
+	);
 	return {
 		name: params.name,
 		task: params.task,
