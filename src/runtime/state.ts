@@ -1,4 +1,5 @@
 import { outstandingWork } from "./outstanding-work.ts";
+import { resetDeliveryQueue } from "./delivery-queue.ts";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { getSubagentTerminalStopReason } from "../session/session.ts";
 import type { CompletedSubagentResult, RunningSubagent, SubagentCompletionStatus, SubagentResult } from "../types.ts";
@@ -162,6 +163,7 @@ export function resetRuntimeStateForTest(resetAmbient: () => void): void {
 	}
 	runningSubagents.clear();
 	outstandingWork.reset();
+	resetDeliveryQueue();
 	completedSubagentResults.clear();
 	resetSpawnWidthForTest();
 	resetLaunchCountForTest();

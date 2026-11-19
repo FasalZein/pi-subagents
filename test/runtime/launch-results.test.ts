@@ -105,7 +105,7 @@ describe("subagent launch result delivery", () => {
 		assert.equal(sent[0].options.deliverAs, "steer");
 	});
 
-	it("defers same-turn detached async completion delivery until the next user turn", async () => {
+	it("steers a same-turn detached async completion in a terminating batch instead of parking it for the next prompt", async () => {
 		const sent: Array<{ message: any; options: any }> = [];
 		const running = {
 			id: "child-deferred-steer",
@@ -142,53 +142,10 @@ describe("subagent launch result delivery", () => {
 
 		assert.equal(asyncResult.terminate, true);
 		assert.equal(sent.length, 1);
-		assert.equal(sent[0].options.deliverAs, "nextTurn");
-		assert.equal(getCompletedSubagentResultForTest(running.id)?.deliveredTo, "steer");
-	});
-
-	it("steers a same-turn detached async completion in an auto-exit session so it is read before exit", async () => {
-		// An auto-exit child has no next human prompt to carry a `nextTurn`
-		// message, and Pi does not count that queue as pending, so auto-exit
-		// would close the session with the report unread.
-		process.env.PI_SUBAGENT_AUTO_EXIT = "1";
-		const sent: Array<{ message: any; options: any }> = [];
-		const running = {
-			id: "child-auto-exit-steer",
-			name: "Async child",
-			task: "Start work",
-			mode: "background" as const,
-			executionState: "running" as const,
-			deliveryState: "detached" as const,
-			parentClosePolicy: "terminate" as const,
-			blocking: false,
-			async: true,
-			startTime: Date.now(),
-			sessionFile: "/tmp/child-auto-exit-steer.jsonl",
-		};
-
-		setRunningSubagentForTest(running as any);
-		const asyncResult = (await getLaunchedSubagentResultForTest(running as any)) as any;
-		routeDetachedSubagentCompletionForTest(
-			{
-				sendMessage(message: any, options: any) {
-					sent.push({ message, options });
-				},
-			},
-			running as any,
-			{
-				name: running.name,
-				task: running.task,
-				summary: "Async done",
-				sessionFile: running.sessionFile,
-				exitCode: 0,
-				elapsed: 1,
-			},
-		);
-
-		assert.equal(asyncResult.terminate, true);
-		assert.equal(sent.length, 1);
+		// D15: Pi drains queued steers after a terminating batch, so the result reaches the next request.
 		assert.equal(sent[0].options.deliverAs, "steer");
 		assert.equal(sent[0].options.triggerTurn, true);
+		assert.equal(getCompletedSubagentResultForTest(running.id)?.deliveredTo, "steer");
 	});
 
 	it("awaits async children when the current subagent batch has a sync child", async () => {

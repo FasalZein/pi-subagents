@@ -404,7 +404,8 @@ describe("fork session launch behavior", () => {
 		);
 
 		assert.equal(sent.length, 1);
-		assert.equal(sent[0].options.deliverAs, "nextTurn");
+		// D15: no delivery waits for the next prompt; Pi's steer queue carries it to the next turn boundary.
+		assert.equal(sent[0].options.deliverAs, "steer");
 		assert.equal((sent[0].message.details as any).id, running.id);
 		assert.equal((sent[0].message.details as any).deliveryState, "detached");
 		assert.equal((sent[0].message.details as any).parentClosePolicy, "terminate");
