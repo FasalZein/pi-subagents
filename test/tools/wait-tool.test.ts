@@ -13,10 +13,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
+import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
+import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { isRunEndHeld } from "../../src/runtime/wait-holds.ts";
+import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -108,7 +111,10 @@ function textOf(content: unknown): string {
 }
 
 /** A scripted model: each prompt text maps to the tool calls of one reply; anything else ends the turn. */
-async function startParent(plan: Record<string, ToolCall[]>, options: { codemode?: boolean } = {}): Promise<Parent> {
+async function startParent(
+	plan: Record<string, ToolCall[]>,
+	options: { codemode?: boolean; workCounts?: number[] } = {},
+): Promise<Parent> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
 	const faux = fauxProvider();
@@ -143,6 +149,16 @@ async function startParent(plan: Record<string, ToolCall[]>, options: { codemode
 		registerDeliveryQueue(pi);
 		registerSubagentCoreTools(pi, () => true, launchRuntime(children));
 		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
+		const counts = options.workCounts;
+		if (counts) {
+			// A capturing work reporter (D30): records each published count of outstanding work.
+			const reporting = registerOutstandingWorkReporting(pi, async () => ({
+				publish: async (count) => void counts.push(count),
+				stop: async () => {},
+			}));
+			pi.on("session_start", (_event, ctx) => reporting.start(ctx));
+			pi.on("session_shutdown", () => reporting.stop());
+		}
 		pi.registerTool({
 			name: "gate",
 			label: "Gate",
@@ -510,6 +526,86 @@ describe("T24: subagent_wait in a real Pi session", () => {
 			assert.equal(pendingRunEndCount(), 0, "nothing of child 1 is left in the queue");
 			parent.finish("child-two", "CHILD-TWO-REPORT");
 			await until(() => parent.resultMessages() === 1, "child 2 keeps running and reports by message");
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("T26 fix round 1 (P1): Esc during a wait gives back one queued and one held end as one no-turn message; no lease leaks", async () => {
+		const script = [
+			"await tools.gate({});",
+			'await tools.subagent_wait({ ids: ["id-child-one", "id-child-two", "id-child-three"] });',
+		].join("\n");
+		const launchThree = fauxToolCall(
+			"subagent",
+			{
+				children: ["one", "two", "three"].map((n) => ({ name: `child-${n}`, task: n, title: n, agent: "worker-a" })),
+			},
+			{ id: "launch-3" },
+		);
+		const workCounts: number[] = [];
+		const parent = await startParent(
+			{ delegate: [launchThree], join: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
+			{ codemode: true, workCounts },
+		);
+		try {
+			await parent.session.prompt("delegate");
+			await parent.session.waitForIdle();
+			const run = parent.session.prompt("join");
+			await until(() => parent.session.isStreaming, "the script runs");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			// A: queued before the wait starts.
+			parent.finish("child-one", "CHILD-ONE-REPORT");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			parent.releaseGate();
+			await until(() => isRunEndHeld("id-child-two"), "the wait holds child 2");
+			// B: ends during the wait; C keeps running.
+			parent.finish("child-two", "CHILD-TWO-REPORT");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			const requestsBefore = parent.requests.length;
+			await parent.session.abort();
+			await run;
+			await parent.session.waitForIdle();
+			const messages = parent.session.messages.filter(
+				(message) => message.role === "custom" && message.customType === "subagent_result",
+			);
+			assert.deepEqual(
+				messages.map((message) => runEndIds(message).sort()),
+				[["id-child-one", "id-child-two"]],
+				"both ends the wait took leave as one message",
+			);
+			assert.equal(parent.requests.length, requestsBefore, "the given-back message starts no turn");
+			assert.equal(outstandingWork.count, 1, "only the running child 3 still counts");
+			parent.finish("child-three", "CHILD-THREE-REPORT");
+			await until(() => parent.requests.length === requestsBefore + 1, "child 3's end starts a turn");
+			await parent.session.waitForIdle();
+			assert.equal(outstandingWork.count, 0, "every committed result ended its lease");
+			assert.equal(workCounts.at(-1), 0, "the reporter's last published count is zero");
+			assert.equal(pendingRunEndCount(), 0);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("T26 fix round 1 (P1): a held end given back on Esc commits with no message_end and still ends its work lease", async () => {
+		const workCounts: number[] = [];
+		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { ids: BOTH })] }, { workCounts });
+		try {
+			await launchBoth(parent);
+			const run = parent.session.prompt("join");
+			await until(() => isRunEndHeld("id-child-two"), "the wait holds both");
+			parent.finish("child-one", "CHILD-ONE-REPORT");
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			await parent.session.abort();
+			await run;
+			await parent.session.waitForIdle();
+			assert.equal(parent.resultMessages(), 1, "child 1 is given back as a message");
+			assert.equal(outstandingWork.count, 1, "child 1's lease ended; running child 2 counts");
+			parent.finish("child-two", "CHILD-TWO-REPORT");
+			await until(() => parent.resultMessages() === 2, "child 2 reports by message");
+			await parent.session.waitForIdle();
+			assert.equal(outstandingWork.count, 0);
+			assert.equal(workCounts.at(-1), 0, "the reporter's last published count is zero");
 		} finally {
 			await parent.dispose();
 		}

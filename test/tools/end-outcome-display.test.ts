@@ -225,7 +225,6 @@ function interruptedWait(running: RunningSubagent) {
 			{ id: running.id },
 			{
 				findTrackedSubagent: () => ({ running: { ...running, completionPromise: new Promise(() => {}) } }),
-				stopRunningSubagent: async () => {},
 				runningSubagents: new Map(),
 				updateWidget() {},
 			} as never,

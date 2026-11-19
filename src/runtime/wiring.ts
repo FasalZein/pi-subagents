@@ -201,7 +201,6 @@ function getWaitRuntime(): WaitRuntime {
 		cacheCompletedSubagentResult,
 		updateWidget,
 		deliverCompletedSubagentResultViaSteer,
-		stopRunningSubagent: (running) => stopRunningSubagentWithDeps(running, closeRunningSurface),
 		closeSurface,
 	};
 }

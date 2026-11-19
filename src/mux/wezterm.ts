@@ -14,16 +14,18 @@ function createWezTermSurface(name: string): string {
 	return paneId;
 }
 
+const WEZTERM_SPLIT_FLAG: Record<SurfaceSplitDirection, string> = {
+	left: "--left",
+	right: "--right",
+	up: "--top",
+	down: "--bottom",
+};
+
 function createWezTermSplit(name: string, direction: SurfaceSplitDirection, fromSurface?: string): string {
-	const args = ["cli", "split-pane"];
-	if (direction === "left") args.push("--left");
-	else if (direction === "right") args.push("--right");
-	else if (direction === "up") args.push("--top");
-	else args.push("--bottom");
-	args.push("--cwd", process.cwd());
+	const args = ["cli", "split-pane", WEZTERM_SPLIT_FLAG[direction], "--cwd", process.cwd()];
 	if (fromSurface) args.push("--pane-id", fromSurface);
 	const paneId = execFileSync("wezterm", args, { encoding: "utf8" }).trim();
-	if (!paneId || !/^\d+$/.test(paneId)) {
+	if (!/^\d+$/.test(paneId)) {
 		throw new Error(`Unexpected wezterm split-pane output: ${paneId || "(empty)"}`);
 	}
 	try {

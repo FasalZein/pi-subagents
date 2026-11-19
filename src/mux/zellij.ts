@@ -55,8 +55,8 @@ function createZellijSplit(name: string, direction: SurfaceSplitDirection, fromS
 		paneOut = zellijActionSync(args);
 	}
 
-	const paneId = paneOut.match(/(?:terminal_)?(\d+)/)?.[1] ?? "";
-	if (!paneId || !/^\d+$/.test(paneId)) {
+	const paneId = paneOut.match(/(?:terminal_)?(\d+)/)?.[1];
+	if (!paneId) {
 		throw new Error(`Unexpected zellij pane id: ${paneOut.trim() || "(empty)"}`);
 	}
 

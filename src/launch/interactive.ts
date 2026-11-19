@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle, isSetTabTitleToolEnabled } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { discardReservation, sessionResultStore } from "../runtime/result-files.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
 import { closeSurface, createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
@@ -62,13 +62,14 @@ async function startInteractiveSubagent(
 ): Promise<RunningSubagent> {
 	const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
 	const reservation = store.reserve();
-	undo.add(() => discardReservation(reservation));
+	undo.add(() => store.discard(reservation));
 	const id = reservation.runId;
 	const launch = await coordinateSubagentLaunch(params, ctx, {
 		mode: "interactive",
 		undo,
 	});
 	const { prepared, sessionMode, noSession, directTask } = launch;
+	store.noteLaunch(reservation, noSession ? undefined : prepared.subagentSessionFile);
 	traceSubagentLaunch("interactive.prepared", {
 		id,
 		name: params.name,

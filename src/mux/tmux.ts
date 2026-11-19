@@ -139,10 +139,16 @@ function moveTmuxPaneToWindow(pane: string, name: string): void {
 	} catch {}
 }
 
+/** -h splits side by side, -v stacks; -b puts the new pane before (left of or above) the target. */
+const TMUX_SPLIT_FLAGS: Record<SurfaceSplitDirection, string[]> = {
+	left: ["-h", "-b"],
+	right: ["-h"],
+	up: ["-v", "-b"],
+	down: ["-v"],
+};
+
 function createTmuxSplit(_name: string, direction: SurfaceSplitDirection, fromSurface?: string): string {
-	const args = ["split-window", "-d"];
-	args.push(direction === "left" || direction === "right" ? "-h" : "-v");
-	if (direction === "left" || direction === "up") args.push("-b");
+	const args = ["split-window", "-d", ...TMUX_SPLIT_FLAGS[direction]];
 	if (fromSurface) args.push("-t", fromSurface);
 	args.push("-P", "-F", "#{pane_id}");
 
