@@ -36,6 +36,13 @@ function clearMuxRuntimeEnv(): void {
 	delete process.env.HERDR_PANE_ID;
 	delete process.env.HERDR_TAB_ID;
 	delete process.env.HERDR_WORKSPACE_ID;
+	// Rex and herdr-core markers of the host make detection pick those backends first (spec D29).
+	delete process.env.REX_SESSION;
+	delete process.env.REX_BLOCK;
+	delete process.env.REX_BIN_DIR;
+	delete process.env.HC_TERMINAL_ID;
+	delete process.env.HC_TERMINAL_SOCKET;
+	delete process.env.HC_SCOPE;
 	delete process.env.PI_SUBAGENT_MUX;
 	delete process.env.PI_SUBAGENT_HERDR_PLACEMENT;
 	delete process.env.PI_SUBAGENT_HERDR_MIN_COLUMNS;
@@ -131,6 +138,8 @@ function useFakeHerdr(): { dir: string; logFile: string } {
 	process.env.PATH = dir;
 	// Detection needs herdr's own pane variable (spec D29).
 	process.env.HERDR_PANE_ID = "w1:p1";
+	// Pinned: an unpinned run inside Rex or the Herdr app could open a pane in the real terminal.
+	process.env.PI_SUBAGENT_MUX = "herdr";
 	return { dir, logFile };
 }
 
@@ -463,6 +472,61 @@ describe("Herdr interactive launch parity", () => {
 		const capsule = readLaunchCapsule(launchScript);
 		assert.equal(capsule.overrides.PI_SUBAGENT_SURFACE, "w1:p2");
 	});
+
+	// A run inside Rex or the Herdr app inherits that backend's markers, and detection prefers both to
+	// Herdr (spec D29). The fake Herdr must still win, so no test can open a pane in the real terminal.
+	for (const host of ["rex", "herdr-core"] as const) {
+		it(`launches through the fake Herdr when the host has ${host} markers and a ${host} binary`, async () => {
+			const hostDir = createTestDir();
+			const hostLog = join(hostDir, "host-backend.log");
+			writeFileSync(hostLog, "");
+			const binDir = join(hostDir, "bin");
+			mkdirSync(binDir);
+			const answer = host === "rex" ? '{"api_revision":16}' : '{"address":"hc:host"}';
+			const probe = host === "rex" ? "whoami" : "get";
+			writeExecutable(
+				binDir,
+				host === "rex" ? "rex" : "hc",
+				`#!/bin/sh\nprintf '%s\\n' "$*" >> "${hostLog}"\n[ "$1" = ${probe} ] && printf '%s\\n' '${answer}' && exit 0\nexit 1\n`,
+			);
+			if (host === "rex") {
+				process.env.REX_SESSION = "host-session";
+				process.env.REX_BLOCK = "host-block";
+				process.env.REX_BIN_DIR = binDir;
+			} else {
+				process.env.HC_TERMINAL_ID = "host-terminal";
+				process.env.HC_TERMINAL_SOCKET = join(hostDir, "hc.sock");
+			}
+			const { dir, logFile } = useFakeHerdr();
+			// rex resolves through REX_BIN_DIR; hc must be on PATH, as herdr-core is on the host PATH.
+			if (host === "herdr-core") process.env.PATH = `${dir}:${binDir}`;
+			const cwd = createTestDir();
+			process.env.PI_ARTIFACT_PROJECT_ROOT = join(cwd, "artifacts");
+			mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+			writeFileSync(
+				join(cwd, ".pi", "agents", "host-child.md"),
+				["---", "name: host-child", "auto-exit: true", "---", "Launch beside competing backends."].join("\n"),
+			);
+			const parentSession = writeParentSession(cwd);
+
+			const running = await launchInteractiveSubagent(
+				{ name: "host-child", title: "Host child", task: "Check backend isolation.", agent: "host-child" },
+				{
+					cwd,
+					sessionManager: {
+						getSessionFile: () => parentSession,
+						getSessionId: () => "parent-session-id",
+						getLeafId: () => "asst-001",
+					},
+				},
+				{ getContextWindow: () => undefined, getShellReadyDelayMs: () => 0 },
+			);
+
+			assert.equal(readFileSync(hostLog, "utf8"), "", `the ${host} binary is never called`);
+			assert.equal(running.surface, "w1:p2");
+			assert.match(readFileSync(logFile, "utf8"), /pane split w1:p1/);
+		});
+	}
 
 	it("launches interactive Herdr children with resolved capability, model, and lifecycle facts", async () => {
 		const { logFile } = useFakeHerdr();

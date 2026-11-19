@@ -1,7 +1,7 @@
-import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
+import type { ParsedSpawnEnv } from "../spawn/policy.ts";
 import { type AgentDetailContext, renderAgentDetail } from "./agent-detail.ts";
 import { type AgentListEntry, type ResolveSubagentSessionMode, toAgentListEntry } from "./agent-list.ts";
-import type { AgentCatalog, MalformedAgentFile } from "./definitions.ts";
+import { type AgentCatalog, type MalformedAgentFile, malformedFileSpawnPolicy } from "./definitions.ts";
 import { selectIndexTargets } from "./index-section.ts";
 
 /** One agent the caller may launch: a parsed definition, or a file that failed to parse (D24). */
@@ -45,18 +45,7 @@ export function selectLaunchableAgents(
 			effective?.kind === "malformed" &&
 			effective.file === file &&
 			file.name !== spawnEnv.callerAgent &&
-			resolveSpawnPolicy({
-				callerAgent: spawnEnv.callerAgent,
-				targetAgent: file.name,
-				callerBudget: spawnEnv.callerBudget,
-				callerSpawnable: spawnEnv.callerSpawnable,
-				targetSpawning: false,
-				targetSpawnDepth: undefined,
-				targetSpawnWidth: undefined,
-				targetVisibleTo: file.visibleTo,
-				envDepthCeiling: spawnEnv.envDepthCeiling,
-				envWidthCeiling: spawnEnv.envWidthCeiling,
-			}).allowed
+			malformedFileSpawnPolicy(file, spawnEnv).allowed
 		);
 	});
 	return [

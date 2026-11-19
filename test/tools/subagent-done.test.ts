@@ -797,4 +797,26 @@ describe("subagent-done.ts", () => {
 			}
 		});
 	});
+	// Each load with a session path adds a process exit listener (src/session/delete-on-exit.ts). The test
+	// support export drops it, so suites that load the fixture many times leave no listener behind.
+	describe("test support fixture", () => {
+		it("leaves no process exit listener after a load with a session path", () => {
+			const dir = createTestDir();
+			const before = process.listenerCount("exit");
+			process.env.PI_SUBAGENT_SESSION = join(dir, "child.jsonl");
+			try {
+				subagentDoneExtension({
+					getAllTools: () => [],
+					getActiveTools: () => [],
+					setActiveTools: () => {},
+					registerTool: () => {},
+					registerCommand: () => {},
+					on: () => {},
+				} as any);
+				assert.equal(process.listenerCount("exit"), before);
+			} finally {
+				delete process.env.PI_SUBAGENT_SESSION;
+			}
+		});
+	});
 });

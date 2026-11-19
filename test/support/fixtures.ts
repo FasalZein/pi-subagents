@@ -1,10 +1,20 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getEntries } from "../../src/session/session.ts";
 
+const testDirs: string[] = [];
+// Registered at module load, not per test: a test that drops its own exit listeners must not drop this one.
+// At exit, not after each test: suites share directories across the tests of a describe.
+process.once("exit", () => {
+	for (const dir of testDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A temporary directory, removed when the test process exits. */
 export function createTestDir(): string {
-	return mkdtempSync(join(tmpdir(), "subagents-test-"));
+	const dir = mkdtempSync(join(tmpdir(), "subagents-test-"));
+	testDirs.push(dir);
+	return dir;
 }
 
 export function createSessionFile(dir: string, entries: object[]): string {

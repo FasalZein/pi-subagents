@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AssembledResult } from "../../runtime/result-assembler.ts";
-import { RECORD_FILE, readResultRecord } from "../../runtime/result-files.ts";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, RECORD_FILE, readResultRecord } from "../../runtime/result-files.ts";
 import type { ResultRecord } from "../../runtime/result-record.ts";
 
 /**
@@ -53,7 +53,7 @@ export function latestVerifiedRecord(runDir: string): ResultRecord | undefined {
 }
 
 function writeFlushed(path: string, text: string): void {
-	const fd = openSync(path, "wx");
+	const fd = openSync(path, "wx", PRIVATE_FILE_MODE);
 	try {
 		writeFileSync(fd, text);
 		fsyncSync(fd);
@@ -78,8 +78,8 @@ export function publishGeneration(runDir: string, generation: number, result: As
 	if (committed) return committed;
 	const temp = `${folder}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
 	try {
-		mkdirSync(resultsRoot(runDir), { recursive: true });
-		mkdirSync(temp);
+		mkdirSync(resultsRoot(runDir), { recursive: true, mode: PRIVATE_DIR_MODE });
+		mkdirSync(temp, { mode: PRIVATE_DIR_MODE });
 		const record: ResultRecord = { ...result.record, report: { saved: true, path: join(folder, REPORT_FILE) } };
 		writeFlushed(join(temp, REPORT_FILE), result.report);
 		writeFlushed(join(temp, RECORD_FILE), JSON.stringify(record));

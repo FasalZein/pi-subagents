@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PRIVATE_DIR_MODE } from "../../runtime/result-files.ts";
 import { isPidAlive } from "../supervisor/manifest.ts";
 import { resolveSupervisorRuntime } from "../supervisor/spawn.ts";
 import { defaultVerifierCachePath } from "../verifier/bridge.ts";
@@ -62,7 +63,7 @@ export function startVerifiedRun(options: {
 }): StartedVerifiedRun {
 	const runDir = verifiedRunDirFor(options.baseDir, options.runId);
 	const paths = verifiedRunFilePaths(runDir);
-	mkdirSync(paths.runDir, { recursive: true });
+	mkdirSync(paths.runDir, { recursive: true, mode: PRIVATE_DIR_MODE });
 	const leaseId = newVerifiedRunLeaseId();
 	const now = new Date().toISOString();
 	writeVerifiedRunManifest(runDir, {

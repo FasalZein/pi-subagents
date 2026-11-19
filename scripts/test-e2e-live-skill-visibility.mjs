@@ -15,6 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 
 const liveModel = process.env.PI_SUBAGENT_LIVE_MODEL;
 if (!liveModel) {
@@ -201,6 +202,8 @@ try {
 	// run from inside a subagent: inherited spawn grants, timeouts, and
 	// denied tools would otherwise reshape the launch under test.
 	const parentEnv = { ...process.env };
+	// Dropping PI_SUBAGENT_ENV_DENY must not release the names it protects.
+	for (const key of namesDeniedByParentEnv(parentEnv)) delete parentEnv[key];
 	for (const key of Object.keys(parentEnv)) {
 		if (key.startsWith("PI_SUBAGENT_") || key === "PI_DENY_TOOLS") {
 			delete parentEnv[key];

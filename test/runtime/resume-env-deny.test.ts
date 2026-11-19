@@ -53,6 +53,8 @@ cat > '${stdinLog}'
 		process.env.PI_SUBAGENT_ENV_DENY = "RESUME_TEST_GLOBAL_DENY";
 		const originalAgentDeny = process.env.RESUME_TEST_AGENT_DENY;
 		process.env.RESUME_TEST_AGENT_DENY = "agent-denied";
+		const originalGlobalDeny = process.env.RESUME_TEST_GLOBAL_DENY;
+		process.env.RESUME_TEST_GLOBAL_DENY = "global-denied";
 		const originalKeep = process.env.RESUME_TEST_KEEP;
 		process.env.RESUME_TEST_KEEP = "kept";
 		try {
@@ -136,6 +138,8 @@ cat > '${stdinLog}'
 			else process.env.PI_SUBAGENT_ENV_DENY = originalDeny;
 			if (originalAgentDeny === undefined) delete process.env.RESUME_TEST_AGENT_DENY;
 			else process.env.RESUME_TEST_AGENT_DENY = originalAgentDeny;
+			if (originalGlobalDeny === undefined) delete process.env.RESUME_TEST_GLOBAL_DENY;
+			else process.env.RESUME_TEST_GLOBAL_DENY = originalGlobalDeny;
 			if (originalKeep === undefined) delete process.env.RESUME_TEST_KEEP;
 			else process.env.RESUME_TEST_KEEP = originalKeep;
 			rmSync(dir, { recursive: true, force: true });
@@ -228,6 +232,7 @@ esac
 		const originalMux = process.env.PI_SUBAGENT_MUX;
 		const originalTmux = process.env.TMUX;
 		const originalKeep = process.env.RESUME_TEST_KEEP;
+		const originalAgentDeny = process.env.RESUME_TEST_AGENT_DENY;
 		process.env.PATH = `${binDir}:${originalPath ?? ""}`;
 		process.env.PI_SUBAGENT_MUX = "tmux";
 		process.env.TMUX = "fake-tmux-socket";
@@ -235,6 +240,7 @@ esac
 		const originalCapsuleDir = process.env.PI_SUBAGENT_ENV_CAPSULE_DIR;
 		process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = capsuleRoot;
 		process.env.RESUME_TEST_KEEP = "kept";
+		process.env.RESUME_TEST_AGENT_DENY = "agent-denied";
 
 		try {
 			const sessionFile = join(dir, "child.jsonl");
@@ -302,6 +308,8 @@ esac
 			else process.env.TMUX = originalTmux;
 			if (originalKeep === undefined) delete process.env.RESUME_TEST_KEEP;
 			else process.env.RESUME_TEST_KEEP = originalKeep;
+			if (originalAgentDeny === undefined) delete process.env.RESUME_TEST_AGENT_DENY;
+			else process.env.RESUME_TEST_AGENT_DENY = originalAgentDeny;
 			if (originalCapsuleDir === undefined) delete process.env.PI_SUBAGENT_ENV_CAPSULE_DIR;
 			else process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = originalCapsuleDir;
 			delete process.env.FAKE_TMUX_LOG;

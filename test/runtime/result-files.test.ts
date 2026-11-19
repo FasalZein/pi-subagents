@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
@@ -272,4 +272,23 @@ describe("result files (D13)", () => {
 		assert.ok(text.includes("kept summary"));
 		chmodSync(folderOf(reservation), 0o700);
 	});
+
+	it("creates run folders 0700 and report and record files 0600 under umask 0022", () => {
+		const previous = process.umask(0o022);
+		try {
+			const dir = resultsDir();
+			const reservation = reserveRunId(dir);
+			const folder = folderOf(reservation);
+			publishResult(reservation, runResult(reservation.runId, "first"));
+			publishResult(reservation, runResult(reservation.runId, "second", 99_000));
+			const mode = (path: string) => (statSync(path).mode & 0o777).toString(8);
+			assert.equal(mode(dir), "700", "the results folder is private");
+			assert.equal(mode(folder), "700", "the run folder is private");
+			for (const name of readdirSync(folder)) assert.equal(mode(join(folder, name)), "600", `${name} is private`);
+			assert.deepStrictEqual(readdirSync(folder).sort(), [RECORD_FILE, "report-1.md", "report-2.md"]);
+		} finally {
+			process.umask(previous);
+		}
+	});
 });
+
