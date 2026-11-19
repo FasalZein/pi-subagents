@@ -19,6 +19,7 @@ import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/
 import { closeSurfaceAsync } from "../mux/io.ts";
 import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
+import { getEntryCount } from "../session/session.ts";
 import { getDoneSentinelFile } from "../session/session-files.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
 import {
@@ -155,6 +156,8 @@ export async function restartSubagentForTimeoutWrapUp(
 	const launch = await getWrapUpLaunchParts(running, signal);
 	throwIfAborted(signal);
 	clearSubagentExitSidecar(running.sessionFile);
+	// D12: a nudge of the interrupted process does not mark the replacement's report.
+	running.processEntryCount = getEntryCount(running.sessionFile);
 	running.autoExit = true;
 	running.surfaceClosePromise = undefined;
 	running.timeoutKillFailed = undefined;

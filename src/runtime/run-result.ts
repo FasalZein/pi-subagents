@@ -191,7 +191,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 		end: runEnd,
 		entries,
 		launchEntryCount,
-		nudgeEntryIndex: findNudgeEntryIndex(entries, launchEntryCount),
+		nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
 		acceptedCall: options.acceptedCall,
 		contextUsage: options.contextUsage,
 		resume: resumeFact(running, runEnd, options.contextWarned),

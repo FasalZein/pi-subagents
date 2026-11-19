@@ -151,6 +151,8 @@ export interface RunningSubagent {
 	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
 	/** True after the interrupted generation has been replaced by the continuation. */
 	timeoutWrapUpMode?: boolean;
+	/** Session entries before the current child process: a time-limit wrap-up restart sets it (D12 nudge boundary). */
+	processEntryCount?: number;
 	/** Fixed hard deadline for the budget that triggered the wrap-up. */
 	timeoutWrapUpDeadlineAt?: number;
 	/** Last time the child's session file grew, for the idle budget. */

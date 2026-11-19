@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
@@ -13,9 +13,9 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
+import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { getSubagentExitSidecarPath } from "../../src/session/exit-sidecar.ts";
-import { COMPLETION_NUDGE_MESSAGE } from "../../src/tools/completion-nudge.ts";
 import { PI_SUBAGENT_TIMEOUT_WRAP_UP } from "../../src/tools/timeout-reminders.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -23,9 +23,11 @@ import {
 	assert,
 	createTestDir,
 	describe,
+	isCompletionNudge,
 	it,
 	resetSubagentStateForTest,
 	subagentDoneExtension,
+	writeExecutable,
 } from "../support/index.ts";
 
 // D11 and D12 end to end: a real Pi session with a faux provider runs the child extension; the exit
@@ -86,10 +88,14 @@ async function runChild(options: {
 	defaultTools?: string[];
 	/** D7: run as the report-only wrap-up continuation. */
 	wrapUp?: boolean;
+	/** Continue this session file in a new child process, as a time-limit restart does. */
+	sessionFile?: string;
 }): Promise<ChildRun> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
-	const sessionManager = SessionManager.create(root, join(root, "sessions"));
+	const sessionManager = options.sessionFile
+		? SessionManager.open(options.sessionFile, join(root, "sessions"))
+		: SessionManager.create(root, join(root, "sessions"));
 	const sessionFile = sessionManager.getSessionFile()!;
 	process.env.PI_SUBAGENT_SESSION = sessionFile;
 	if (options.autoExit) process.env.PI_SUBAGENT_AUTO_EXIT = "1";
@@ -292,7 +298,12 @@ function nudgeCount(sessionFile: string): number {
 		.split("\n")
 		.filter(Boolean)
 		.map((line) => JSON.parse(line))
-		.filter((entry) => entry.message?.role === "user" && JSON.stringify(entry.message.content).includes(COMPLETION_NUDGE_MESSAGE))
+		.filter((entry) => entry.message?.role === "user")
+		.filter((entry) => {
+			const content = entry.message.content;
+			const text = typeof content === "string" ? content : content.map((block: { text?: string }) => block.text ?? "").join("");
+			return isCompletionNudge(text);
+		})
 		.length;
 }
 
@@ -318,6 +329,7 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 			replies: [fauxAssistantMessage(longReport), fauxAssistantMessage("ok"), fauxAssistantMessage("never sent")],
 		});
 		assert.equal(nudgeCount(run.sessionFile), 1, "exactly one nudge");
+		assert.match(readFileSync(run.sessionFile, "utf8"), /Make only the call\./, "a run with a report is asked for the call alone");
 		assert.equal(run.unusedReplies, 1, "the child exits after its answer to the nudge");
 		assert.ok(run.shutdownRequests >= 1, "the child requests its exit");
 		const { record, report } = await watchAndPublish(run.sessionFile);
@@ -371,23 +383,111 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 		assert.equal(nudgeCount(run.sessionFile), 0);
 	});
 
-	it("a child in report-only wrap-up gets no nudge; its result is untyped and timed out on the original deadline", async () => {
-		const run = await runChild({
+	it("a child in report-only wrap-up gets no nudge; after a time-limit restart its report wins over the nudged first process", async () => {
+		// The first process writes A, gets the nudge, and the soft deadline interrupts its answer.
+		const first = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [
+				fauxAssistantMessage("Report A from the first process."),
+				fauxAssistantMessage([], { stopReason: "aborted" }),
+			],
+		});
+		assert.equal(nudgeCount(first.sessionFile), 1, "the first process was nudged");
+		// The real restart, with a stub Pi command; then the replacement runs on the same session.
+		const dir = createTestDir();
+		const savedPiCommand = process.env.PI_SUBAGENT_PI_COMMAND;
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(dir, "stub-pi", "#!/usr/bin/env bash\ncat > /dev/null\n");
+		const timeoutWrapUp = { kind: "timeout" as const, seconds: 600, threshold: 80 };
+		const startTime = Date.now() - 480_000;
+		const running = {
+			name: "worker",
+			agent: "scout",
+			mode: "background",
+			parentClosePolicy: "terminate",
+			startTime,
+			sessionFile: first.sessionFile,
+			timeoutBudget: { timeoutSeconds: 600 },
+			timeoutWarnThreshold: 80,
+			timeoutWrapUp,
+			timeoutWrapUpDeadlineAt: startTime + 600_000,
+			launchMetadata: {
+				version: 1,
+				timestamp: new Date().toISOString(),
+				name: "worker",
+				agent: "scout",
+				mode: "background",
+				sessionMode: "fresh",
+				autoExit: true,
+				parentClosePolicy: "terminate",
+				async: true,
+				denyTools: [],
+				spawnBudget: 0,
+				spawnableAgents: false,
+				noContextFiles: false,
+				noSession: false,
+				cwd: dir,
+				timeout: 600,
+				timeoutWarnThreshold: "80%",
+			},
+		} as unknown as RunningSubagent;
+		try {
+			await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+			await once(running.childProcess!, "exit");
+		} finally {
+			if (savedPiCommand === undefined) delete process.env.PI_SUBAGENT_PI_COMMAND;
+			else process.env.PI_SUBAGENT_PI_COMMAND = savedPiCommand;
+		}
+		running.timeoutWrapUpMode = true; // as the watcher sets it after the restart
+		const replacement = await runChild({
 			autoExit: true,
 			wrapUp: true,
+			sessionFile: first.sessionFile,
 			prompts: ["wrap up"],
-			replies: [fauxAssistantMessage("Wrap-up report."), fauxAssistantMessage("never sent")],
+			replies: [fauxAssistantMessage("Report B from the wrap-up."), fauxAssistantMessage("never sent")],
 		});
-		assert.equal(nudgeCount(run.sessionFile), 0);
-		assert.equal(run.unusedReplies, 1);
-		const deadline = { kind: "timeout" as const, seconds: 600, threshold: 0.8 };
-		const { record, report } = await watchAndPublish(run.sessionFile, {
-			timeoutWrapUp: deadline,
+		assert.equal(nudgeCount(first.sessionFile), 1, "the replacement gets no nudge");
+		assert.equal(replacement.unusedReplies, 1);
+		const { record, report } = await watchAndPublish(first.sessionFile, {
+			startTime,
+			timeoutWrapUp,
 			timeoutWrapUpMode: true,
-		});
+			timeoutWrapUpDeadlineAt: startTime + 600_000,
+			processEntryCount: running.processEntryCount,
+		} as Partial<RunningSubagent>);
 		assert.equal(record.typed, false);
 		assert.equal(record.outcome, "timed_out");
-		assert.deepEqual(record.timeLimit, { kind: "timeout", seconds: 600, wrapUp: true });
-		assert.equal(report, "Wrap-up report.");
+		assert.deepEqual(record.timeLimit, { kind: "timeout", seconds: 600, wrapUp: true }, "the original deadline");
+		assert.equal(report, "Report B from the wrap-up.");
+	});
+
+	it("after a person took over during the nudge answer, a manual close publishes the last text", async () => {
+		const run = await runChild({
+			autoExit: true,
+			pane: true,
+			prompts: ["task", "operator: fix the second finding"],
+			replies: [
+				fauxAssistantMessage("Report A."),
+				afterKeyPress(fauxAssistantMessage("ok")),
+				fauxAssistantMessage("Report B, corrected for the operator."),
+			],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 1);
+		assert.equal(run.exitBeforeClose, null, "the person owns the pane");
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, false);
+		assert.equal(report, "Report B, corrected for the operator.");
+	});
+
+	it("an autonomous pane child that answers the nudge with \"ok\" still publishes the report before the nudge", async () => {
+		const run = await runChild({
+			autoExit: true,
+			pane: true,
+			prompts: ["task"],
+			replies: [fauxAssistantMessage("Report A."), fauxAssistantMessage("ok")],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 1);
+		const { report } = await watchAndPublish(run.sessionFile);
+		assert.equal(report, "Report A.");
 	});
 });

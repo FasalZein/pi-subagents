@@ -23,7 +23,7 @@ import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-ta
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
 import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
 import { registerSubagentDoneTool } from "./completion-call.ts";
-import { createCompletionNudge } from "./completion-nudge.ts";
+import { createCompletionNudge, hasAssistantText } from "./completion-nudge.ts";
 import { filterToolNames, getDeniedToolNames, shouldRegisterSubagentDone } from "./child-tool-policy.ts";
 
 const TOOL_BOUNDARY_RECOVERY_NUDGE = "continue";
@@ -281,6 +281,7 @@ export default function (pi: ExtensionAPI) {
 			const started = takeover.markTakenOver();
 			suppressCallerPingExit(callerPingState);
 			if (!started) return;
+			completionNudge.markTakenOver();
 			if (!isInteractive) return;
 			ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, AUTO_EXIT_DISABLED_MSG);
 			ctx.ui.notify(AUTO_EXIT_DISABLED_MSG, "warning");
@@ -448,7 +449,7 @@ export default function (pi: ExtensionAPI) {
 			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
 			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
-			if (completionNudge.nudgeOnce()) return;
+			if (completionNudge.nudgeOnce(hasAssistantText(messages))) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});

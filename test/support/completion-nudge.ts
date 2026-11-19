@@ -1,4 +1,4 @@
-import { COMPLETION_NUDGE_MESSAGE } from "../../src/tools/completion-nudge.ts";
+import { COMPLETION_NUDGE_AFTER_REPORT, COMPLETION_NUDGE_WITHOUT_REPORT } from "../../src/tools/completion-nudge.ts";
 
 /** D12: the agent_end of the model run that answered the completion nudge with plain text and no call. */
 export const NUDGE_ANSWERED_WITHOUT_CALL = { messages: [{ role: "assistant", stopReason: "stop" }] };
@@ -8,5 +8,5 @@ export const NUDGE_ANSWERED_WITHOUT_CALL = { messages: [{ role: "assistant", sto
  * replay NUDGE_ANSWERED_WITHOUT_CALL, so a suite about another behaviour still reaches the exit.
  */
 export function isCompletionNudge(message: unknown): boolean {
-	return message === COMPLETION_NUDGE_MESSAGE;
+	return message === COMPLETION_NUDGE_AFTER_REPORT || message === COMPLETION_NUDGE_WITHOUT_REPORT;
 }
