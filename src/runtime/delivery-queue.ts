@@ -288,14 +288,15 @@ export function queuedRunEndIds(): string[] {
  */
 export function settleWaitReply(ids: readonly string[], reported: readonly string[], signal?: AbortSignal): void {
 	const returned = new Set(reported);
+	const aborted = signal?.aborted;
 	const givenBack: string[] = [];
 	for (const id of ids) {
-		if (!signal?.aborted && returned.has(id)) {
+		if (!aborted && returned.has(id)) {
 			deliveryQueue.take(id);
 			outstandingWork.release(id);
 		} else givenBack.push(id);
 	}
-	if (signal?.aborted) deliveryQueue.giveBack(givenBack);
+	if (aborted) deliveryQueue.giveBack(givenBack);
 	else deliveryQueue.unhold(givenBack);
 }
 
