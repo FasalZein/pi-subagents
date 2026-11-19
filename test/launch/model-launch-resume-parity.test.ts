@@ -41,7 +41,7 @@ const PARENT = { provider: "synthetic-a", id: "base" };
 type Outcome = { modelRef?: string; refusal?: string };
 
 function refusalOf(text: string): Outcome {
-	const match = text.match(/(Model '|Unknown model override ')[^]*?subagent_agents/);
+	const match = text.match(/(Model '|Unknown model override ')[\s\S]*?subagent_agents/);
 	if (!match) throw new Error(`Expected a D22 refusal, got: ${text}`);
 	return { refusal: match[0] };
 }
@@ -54,10 +54,16 @@ function emptyResult(name: string) {
 async function launchThroughTool(dir: string, model: string | undefined): Promise<Outcome & { sessionFile?: string }> {
 	const tools = new Map<string, any>();
 	let launched: { modelRef?: string; sessionFile: string } | undefined;
-	const launch = async (params: SubagentParamsInput, ctx: Parameters<SubagentToolRuntime["launchBackgroundSubagent"]>[1]) => {
+	const launch = async (
+		params: SubagentParamsInput,
+		ctx: Parameters<SubagentToolRuntime["launchBackgroundSubagent"]>[1],
+	) => {
 		const prepared = await prepareSubagentLaunch(params, ctx);
 		const sessionFile = join(dir, `child-${Date.now()}-${Math.random()}.jsonl`);
-		writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`);
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: "s", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+		);
 		writeSubagentLaunchMetadataEntry(sessionFile, {
 			...buildPersistedSubagentLaunchMetadata(prepared, params, "background", "lineage-only", false),
 			cwd: dir,
@@ -97,19 +103,21 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 		runtime,
 	);
 	try {
-		const result = await tools.get("subagent").execute(
-			"call-1",
-			{ children: [{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) }] },
-			undefined,
-			undefined,
-			{
-				hasUI: false,
-				cwd: dir,
-				model: PARENT,
-				modelRegistry,
-				sessionManager: { getSessionFile: () => join(dir, "parent.jsonl"), getSessionId: () => "parent" },
-			},
-		);
+		const result = await tools
+			.get("subagent")
+			.execute(
+				"call-1",
+				{ children: [{ agent: "picker", name: "picker-1", title: "Pick", task: "t", ...(model ? { model } : {}) }] },
+				undefined,
+				undefined,
+				{
+					hasUI: false,
+					cwd: dir,
+					model: PARENT,
+					modelRegistry,
+					sessionManager: { getSessionFile: () => join(dir, "parent.jsonl"), getSessionId: () => "parent" },
+				},
+			);
 		if (!launched) return refusalOf(result.content[0].text);
 		return launched;
 	} catch (error) {
@@ -160,7 +168,10 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 	} catch (error) {
 		return refusalOf((error as Error).message);
 	} finally {
-		for (const [key, value] of [["PI_SUBAGENT_PI_COMMAND", original.command], ["ARGS_FILE", original.args]] as const) {
+		for (const [key, value] of [
+			["PI_SUBAGENT_PI_COMMAND", original.command],
+			["ARGS_FILE", original.args],
+		] as const) {
 			if (value == null) delete process.env[key];
 			else process.env[key] = value;
 		}
@@ -174,7 +185,13 @@ function writeAgent(frontmatter: string): string {
 	return dir;
 }
 
-const CASES: Array<{ title: string; frontmatter: string; first?: string; model: string; expected: Outcome["modelRef"] | "refused" }> = [
+const CASES: Array<{
+	title: string;
+	frontmatter: string;
+	first?: string;
+	model: string;
+	expected: Outcome["modelRef"] | "refused";
+}> = [
 	{
 		title: "an unqualified id takes the agent default provider, not an exact id under another provider",
 		frontmatter: "model: synthetic-a/base\nallowed-models: synthetic-a/mini-v2, synthetic-b/mini",

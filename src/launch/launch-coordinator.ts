@@ -12,8 +12,8 @@ import type { SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
-import type { LaunchUndo } from "./launch-undo.ts";
 import { freezeLaunchBlueprint, type LaunchRuntimeOverrides, resolveForcedChildCwd } from "./launch-overrides.ts";
+import type { LaunchUndo } from "./launch-undo.ts";
 import { resolveSubagentNoSession } from "./policy.ts";
 import {
 	buildPersistedSubagentLaunchMetadata,
@@ -79,7 +79,8 @@ export async function coordinateSubagentLaunch(
 	);
 	const systemPrompt = getCoordinatedSystemPrompt(prepared);
 	const agentEnv = parseEnvString(prepared.agentDefs?.env);
-	const resolveHerdrPolicy = options.mode === "interactive" ? currentMuxAdapter()?.resolveHerdrPlacementPolicy : undefined;
+	const resolveHerdrPolicy =
+		options.mode === "interactive" ? currentMuxAdapter()?.resolveHerdrPlacementPolicy : undefined;
 	const herdrPlacementPolicy = resolveHerdrPolicy?.(
 		agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT,
 	);

@@ -18,10 +18,7 @@ export function assistantText(text: string) {
 export function messageText(result: SubagentResult, running: RunningSubagent): string {
 	const sent: Array<{ content: string }> = [];
 	const completed = buildCompletedSubagentResult(running, result);
-	deliverCompletedSubagentResult(
-		{ sendMessage: (message) => sent.push(message as { content: string }) },
-		completed,
-	);
+	deliverCompletedSubagentResult({ sendMessage: (message) => sent.push(message as { content: string }) }, completed);
 	assert.equal(sent.length, 1);
 	return sent[0].content;
 }

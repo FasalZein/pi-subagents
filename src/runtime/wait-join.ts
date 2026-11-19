@@ -45,9 +45,7 @@ export type JoinOutcome =
  * An ended run: queued (the wait takes it, D15) or already delivered (a lookup, D16, which changes
  * no state: no queue take, no release).
  */
-type Target =
-	| { kind: "active"; running: RunningSubagent }
-	| { kind: "ended"; result: JoinedResult; lookup: boolean };
+type Target = { kind: "active"; running: RunningSubagent } | { kind: "ended"; result: JoinedResult; lookup: boolean };
 
 /** This parent session's results, for the record of an ended run and for a lookup's rendering. */
 interface SessionResults {

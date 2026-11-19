@@ -1,4 +1,3 @@
-import { testResultsDir } from "../support/result-fixtures.ts";
 import { mkdirSync, readdirSync } from "node:fs";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import {
@@ -12,6 +11,7 @@ import {
 	writeFileSync,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
+import { testResultsDir } from "../support/result-fixtures.ts";
 import "../support/ambient-spawn-grant.ts";
 
 // Fake herdr: logs every call; answers the availability probes and one tab or split surface.
@@ -79,7 +79,12 @@ describe("subagent_resume mux detection", () => {
 			boundarySystemPrompt: false,
 		});
 		const running = await resumeSubagentSession(
-			{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Detection probe." },
+			{
+				resultsDir: testResultsDir(),
+				parent: { parentCwd: process.cwd(), warnings: [] },
+				sessionFile,
+				task: "Detection probe.",
+			},
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,

@@ -150,8 +150,25 @@ describe("headless results through the assembler (T07)", () => {
 
 	it("does not report unrelated tool output for a run that stops at a tool call with no text", async () => {
 		const { running, result } = await finishHeadless([
-			{ type: "message", id: "a1", message: { role: "assistant", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } }] } },
-			{ type: "message", id: "r1", message: { role: "toolResult", toolCallId: "t1", toolName: "bash", isError: false, content: [{ type: "text", text: TOOL_OUTPUT }] } },
+			{
+				type: "message",
+				id: "a1",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "ls" } }],
+				},
+			},
+			{
+				type: "message",
+				id: "r1",
+				message: {
+					role: "toolResult",
+					toolCallId: "t1",
+					toolName: "bash",
+					isError: false,
+					content: [{ type: "text", text: TOOL_OUTPUT }],
+				},
+			},
 		]);
 		const text = messageText(result, running);
 		assert.ok(!text.includes(TOOL_OUTPUT), text);

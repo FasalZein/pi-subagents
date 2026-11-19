@@ -623,7 +623,15 @@ describe("Herdr interactive launch parity", () => {
 		assert.equal(metadata?.skills, "review");
 		assert.equal(metadata?.injectSkills, "review");
 		assert.deepEqual(metadata?.extensions, []);
-		assert.deepEqual(metadata?.denyTools, ["subagent", "subagent_resume", "subagent_kill", "subagent_agents", "subagent_wait", "grep", "set_tab_title"]);
+		assert.deepEqual(metadata?.denyTools, [
+			"subagent",
+			"subagent_resume",
+			"subagent_kill",
+			"subagent_agents",
+			"subagent_wait",
+			"grep",
+			"set_tab_title",
+		]);
 		assert.equal(metadata?.noContextFiles, true);
 		assert.equal(metadata?.inheritAppendSystem, false);
 
@@ -636,7 +644,10 @@ describe("Herdr interactive launch parity", () => {
 		const launchScript = readHerdrRunScript(log);
 		const capsule = readLaunchCapsule(launchScript);
 		assert.equal(capsule.overrides.PI_SUBAGENT_AUTO_EXIT, "1");
-		assert.equal(capsule.overrides.PI_DENY_TOOLS, "subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title");
+		assert.equal(
+			capsule.overrides.PI_DENY_TOOLS,
+			"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title",
+		);
 		assert.equal(capsule.overrides.PI_SUBAGENT_EXTENSIONS, "");
 		const modelIndex = capsule.args.indexOf("--model");
 		assert.notEqual(modelIndex, -1);
@@ -654,7 +665,10 @@ describe("Herdr interactive launch parity", () => {
 		assert.equal(capsule.args[toolsIndex + 1], "read,grep,caller_ping,subagent_done");
 		const excludeIndex = capsule.args.indexOf("--exclude-tools");
 		assert.notEqual(excludeIndex, -1);
-		assert.equal(capsule.args[excludeIndex + 1], "subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title");
+		assert.equal(
+			capsule.args[excludeIndex + 1],
+			"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title",
+		);
 		const skillIndex = capsule.args.indexOf("--skill");
 		assert.notEqual(skillIndex, -1);
 		assert.equal(capsule.args[skillIndex + 1], skillFile);

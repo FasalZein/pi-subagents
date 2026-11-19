@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach } from "node:test";
+import { fileURLToPath } from "node:url";
 import { namesDeniedByParentEnv } from "../../src/launch/child-env.ts";
 
 export const TRACKED_ENV_KEYS = [
@@ -76,7 +76,8 @@ export const TRACKED_ENV_KEYS = [
 export function dropInheritedSubagentEnv(env: NodeJS.ProcessEnv): void {
 	for (const key of namesDeniedByParentEnv(env)) delete env[key];
 	for (const key of Object.keys(env)) {
-		if ((key.startsWith("PI_SUBAGENT_") && !key.startsWith("PI_SUBAGENT_LIVE_")) || key === "PI_DENY_TOOLS") delete env[key];
+		if ((key.startsWith("PI_SUBAGENT_") && !key.startsWith("PI_SUBAGENT_LIVE_")) || key === "PI_DENY_TOOLS")
+			delete env[key];
 	}
 }
 dropInheritedSubagentEnv(process.env);
@@ -133,7 +134,6 @@ export function restoreTrackedEnv(): void {
 beforeEach(() => {
 	clearIsolatedSubagentEnv();
 });
-
 
 afterEach(() => {
 	restoreTrackedEnv();

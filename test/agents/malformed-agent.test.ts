@@ -83,7 +83,10 @@ async function withCwd<T>(cwd: string, run: () => Promise<T>): Promise<T> {
 }
 
 function launch(agent: string) {
-	return { name: "subagent", arguments: { children: [{ agent, name: `${agent}-1`, title: agent, task: "Do the work" }] } };
+	return {
+		name: "subagent",
+		arguments: { children: [{ agent, name: `${agent}-1`, title: agent, task: "Do the work" }] },
+	};
 }
 
 describe("malformed agent files (D24)", () => {

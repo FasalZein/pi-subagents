@@ -3,8 +3,16 @@ import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts"
 import type { SessionEntry } from "../../src/session/session.ts";
 import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../../src/tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
-import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 import { assert, describe, it } from "../support/index.ts";
+import {
+	assistant,
+	facts,
+	sessionHeader,
+	syntheticReport,
+	toolCall,
+	toolResult,
+	user,
+} from "../support/result-fixtures.ts";
 
 const DONE = SUBAGENT_DONE_TOOL_NAME;
 
@@ -174,7 +182,11 @@ describe("result assembler: typed and untyped", () => {
 
 	it("a call carries its data", () => {
 		const { record } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { count: 2 } }, "c1"), toolResult(DONE, "c1", "ok")]),
+			facts([
+				sessionHeader(),
+				toolCall(DONE, { outcome: "done", summary: "s", data: { count: 2 } }, "c1"),
+				toolResult(DONE, "c1", "ok"),
+			]),
 		);
 		assert.deepEqual(record.data, { count: 2 });
 	});
@@ -233,7 +245,11 @@ describe("result assembler: report source (D12)", () => {
 
 	it("a typed call with no assistant text gives the summary plus the no-report line", () => {
 		const { record, report } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "All good." }, "c1"), toolResult(DONE, "c1", "ok")]),
+			facts([
+				sessionHeader(),
+				toolCall(DONE, { outcome: "done", summary: "All good." }, "c1"),
+				toolResult(DONE, "c1", "ok"),
+			]),
 		);
 		assert.equal(record.summary, "All good.");
 		assert.equal(report, `All good.\n\n${NO_REPORT_LINE}`);
@@ -263,7 +279,11 @@ describe("result assembler: report source (D12)", () => {
 
 	it("text in the same message before the call counts", () => {
 		const { report } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s" }, "c1", "inline report"), toolResult(DONE, "c1", "ok")]),
+			facts([
+				sessionHeader(),
+				toolCall(DONE, { outcome: "done", summary: "s" }, "c1", "inline report"),
+				toolResult(DONE, "c1", "ok"),
+			]),
 		);
 		assert.equal(report, "inline report");
 	});
@@ -299,7 +319,9 @@ describe("result assembler: completion facts (D12, D14)", () => {
 	});
 
 	it("a nested completion call that succeeded types the result", () => {
-		const nested = [{ id: "k1/1", name: DONE, status: "ok" as const, arguments: { outcome: "partial", summary: "Half." } }];
+		const nested = [
+			{ id: "k1/1", name: DONE, status: "ok" as const, arguments: { outcome: "partial", summary: "Half." } },
+		];
 		const { record, report } = assembleResult(
 			facts([
 				sessionHeader(),
@@ -334,7 +356,9 @@ describe("result assembler: completion facts (D12, D14)", () => {
 		sessionHeader(),
 		assistant("I need a decision."),
 		toolCall("codemode", { code: "await tools.caller_ping(...)" }, "k1"),
-		toolResult("codemode", "k1", "script done", false, [{ id: "k1/1", name: PING, status: "ok", argumentsBytes: 9_015 }]),
+		toolResult("codemode", "k1", "script done", false, [
+			{ id: "k1/1", name: PING, status: "ok", argumentsBytes: 9_015 },
+		]),
 	];
 
 	it("a nested ping whose arguments Pi omitted keeps its accepted message as a typed blocked report", () => {
@@ -364,7 +388,9 @@ describe("result assembler: completion facts (D12, D14)", () => {
 	});
 
 	it("an accepted payload of another call does not type a call whose arguments Pi omitted", () => {
-		const { record } = assembleResult(facts(omittedPing(), { acceptedCall: { toolCallId: "k9/1", args: { message: "other" } } }));
+		const { record } = assembleResult(
+			facts(omittedPing(), { acceptedCall: { toolCallId: "k9/1", args: { message: "other" } } }),
+		);
 		assert.equal(record.typed, false);
 	});
 });
@@ -378,7 +404,9 @@ describe("result assembler: end precedence (D7, D12)", () => {
 	];
 
 	it("a requested stop is cancelled and untyped, whatever the child wrote", () => {
-		const { record, report } = assembleResult(facts(calledPartial(), { end: { kind: "cancelled", reason: "stopped" } }));
+		const { record, report } = assembleResult(
+			facts(calledPartial(), { end: { kind: "cancelled", reason: "stopped" } }),
+		);
 		assert.equal(record.outcome, "cancelled");
 		assert.equal(record.typed, false);
 		assert.equal(report, "Report before the stop.");
@@ -483,7 +511,11 @@ describe("result assembler: report text is kept whole", () => {
 		assert.equal(typed.report, `${long}\n\nbody`);
 		const ping = "  indented question\n";
 		const pinged = assembleResult(
-			facts([sessionHeader(), toolCall(CALLER_PING_TOOL_NAME, { message: ping }, "p1"), toolResult(CALLER_PING_TOOL_NAME, "p1", "ok")]),
+			facts([
+				sessionHeader(),
+				toolCall(CALLER_PING_TOOL_NAME, { message: ping }, "p1"),
+				toolResult(CALLER_PING_TOOL_NAME, "p1", "ok"),
+			]),
 		);
 		assert.equal(pinged.report, ping);
 		assert.equal(pinged.record.summary, ping);
@@ -502,4 +534,3 @@ describe("result assembler: session path (D14)", () => {
 		assert.ok(!report.includes(sessionFile), report);
 	});
 });
-

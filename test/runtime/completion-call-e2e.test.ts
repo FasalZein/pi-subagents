@@ -13,8 +13,8 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
-import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
+import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import { getSubagentExitSidecarPath } from "../../src/session/exit-sidecar.ts";
 import { PI_SUBAGENT_TIMEOUT_WRAP_UP } from "../../src/tools/timeout-reminders.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
@@ -372,10 +372,10 @@ function nudgeCount(sessionFile: string): number {
 		.filter((entry) => entry.message?.role === "user")
 		.filter((entry) => {
 			const content = entry.message.content;
-			const text = typeof content === "string" ? content : content.map((block: { text?: string }) => block.text ?? "").join("");
+			const text =
+				typeof content === "string" ? content : content.map((block: { text?: string }) => block.text ?? "").join("");
 			return isCompletionNudge(text);
-		})
-		.length;
+		}).length;
 }
 
 /** Ends each model run that started from the given text with one more extension-sent prompt. */
@@ -391,16 +391,22 @@ function extraModelRuns(count: number): ExtensionFactory {
 }
 
 describe("one completion nudge, then an untyped result (D12)", () => {
-	const longReport = Array.from({ length: 80 }, (_, i) => `Finding ${i + 1}: the module behaves as documented.`).join("\n");
+	const longReport = Array.from({ length: 80 }, (_, i) => `Finding ${i + 1}: the module behaves as documented.`).join(
+		"\n",
+	);
 
-	it("a long report, the nudge, then \"ok\": one nudge, an untyped done record, the report file holds the long report", async () => {
+	it('a long report, the nudge, then "ok": one nudge, an untyped done record, the report file holds the long report', async () => {
 		const run = await runChild({
 			autoExit: true,
 			prompts: ["task"],
 			replies: [fauxAssistantMessage(longReport), fauxAssistantMessage("ok"), fauxAssistantMessage("never sent")],
 		});
 		assert.equal(nudgeCount(run.sessionFile), 1, "exactly one nudge");
-		assert.match(readFileSync(run.sessionFile, "utf8"), /Make only the call\./, "a run with a report is asked for the call alone");
+		assert.match(
+			readFileSync(run.sessionFile, "utf8"),
+			/Make only the call\./,
+			"a run with a report is asked for the call alone",
+		);
 		assert.equal(run.unusedReplies, 1, "the child exits after its answer to the nudge");
 		assert.ok(run.shutdownRequests >= 1, "the child requests its exit");
 		const { record, report } = await watchAndPublish(run.sessionFile);
@@ -549,7 +555,7 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 		assert.equal(report, "Report B, corrected for the operator.");
 	});
 
-	it("an autonomous pane child that answers the nudge with \"ok\" still publishes the report before the nudge", async () => {
+	it('an autonomous pane child that answers the nudge with "ok" still publishes the report before the nudge', async () => {
 		const run = await runChild({
 			autoExit: true,
 			pane: true,

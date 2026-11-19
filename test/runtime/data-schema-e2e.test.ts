@@ -277,7 +277,10 @@ async function launchAndRunChild(
 	await parent.session.prompt("delegate");
 	await parent.session.waitForIdle();
 	const params = parent.launches.get("diff-reviewer");
-	assert.ok(params?.dataSchemaFile, `the launch hands the child a schema file: ${parent.toolReplies("subagent")[0]?.text}`);
+	assert.ok(
+		params?.dataSchemaFile,
+		`the launch hands the child a schema file: ${parent.toolReplies("subagent")[0]?.text}`,
+	);
 	assert.deepEqual(JSON.parse(readFileSync(params.dataSchemaFile, "utf8")), VERDICT_SCHEMA);
 	const launchReply = parent.toolReplies("subagent")[0]!;
 	assert.doesNotMatch(launchReply.text, /additionalProperties|approve/, "the launch reply does not echo the schema");
@@ -452,7 +455,9 @@ describe("T64: object and array arguments sent as JSON strings, end to end", () 
 	const launchAsStrings = (replies: FauxResponseStep[]) =>
 		launchAndRunChild(replies, {
 			delegate: [fauxToolCall("subagent", { children: JSON.stringify(children) } as ToolArgs, { id: "launch-1" })],
-			join: [fauxToolCall("subagent_wait", { ids: JSON.stringify(["id-diff-reviewer"]) } as ToolArgs, { id: "wait-1" })],
+			join: [
+				fauxToolCall("subagent_wait", { ids: JSON.stringify(["id-diff-reviewer"]) } as ToolArgs, { id: "wait-1" }),
+			],
 		});
 
 	const doneWith = (args: Record<string, unknown>, id: string) =>

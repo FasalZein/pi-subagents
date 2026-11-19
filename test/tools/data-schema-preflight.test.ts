@@ -61,6 +61,7 @@ const referenceCases: [string, unknown, "accept" | RegExp][] = [
 		{ $defs: { unused: { $ref: "https://example.com/x.json" } } },
 		/outside URL \(https:\/\/example\.com\/x\.json\)/,
 	],
+	// biome-ignore lint/suspicious/noThenProperty: "then" is the JSON Schema keyword under test.
 	["an outside $ref in a lone then", { then: { $ref: "http://example.com/t.json" } }, /outside URL/],
 	["an outside $ref in an inactive else", { if: true, else: { $ref: "http://example.com/e.json" } }, /outside URL/],
 	[

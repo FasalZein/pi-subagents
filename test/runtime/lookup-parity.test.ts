@@ -76,7 +76,9 @@ async function deliverAndLookUp(spec: Case) {
 		exitCode: 0,
 		operatorClosed: false,
 		stopped: false,
-		exitSignal: spec.end.timedOut ? undefined : { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } },
+		exitSignal: spec.end.timedOut
+			? undefined
+			: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } },
 		contextUsage: { contextTokens: 1234, contextWindow: 100_000 },
 		...spec.end,
 	};

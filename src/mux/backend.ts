@@ -1,6 +1,6 @@
-import type { MuxBackend } from "./core.ts";
 import type { PaneIdentityPolicy } from "../launch/child-env.ts";
 import type { WorkReporter, WorkReporterSession } from "../runtime/work-reporting.ts";
+import type { MuxBackend } from "./core.ts";
 import type { HerdrPlacementContext, HerdrPlacementPolicy } from "./herdr-surfaces.ts";
 import type { PollResult } from "./poll.ts";
 import type { ZellijPlacementContext } from "./zellij-placement.ts";

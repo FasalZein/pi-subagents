@@ -13,8 +13,8 @@ import {
 	type VerifierFooter,
 } from "../../src/runtime/result-render.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
-import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult } from "../support/result-fixtures.ts";
 import { assert, describe, it } from "../support/index.ts";
+import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult } from "../support/result-fixtures.ts";
 
 const HOME = homedir();
 const CWD = "/tmp/parent-work";
@@ -37,7 +37,11 @@ function recordFor(reportLength: number, typed: boolean, report: ReportStorage):
 		facts(entries, {
 			sessionFile: SESSION_FILE,
 			acceptedCall: typed
-				? { toolCallId: "c1", args: { outcome: "partial", summary: text.slice(0, 1_500) }, dataError: "data/n: must be string" }
+				? {
+						toolCallId: "c1",
+						args: { outcome: "partial", summary: text.slice(0, 1_500) },
+						dataError: "data/n: must be string",
+					}
 				: undefined,
 			contextUsage: { tokens: 91_000, window: 100_000 },
 			resume: { resumable: false, reason: "no-session child: its temporary session file was deleted" },
@@ -56,7 +60,10 @@ function renderedSummary(text: string): string {
 }
 
 describe("result renderer: G1.3 bounded text", () => {
-	const savedReport: ReportStorage = { saved: true, path: join(HOME, ".pi/artifacts/pi-subagents/results/r-0001/report-1.md") };
+	const savedReport: ReportStorage = {
+		saved: true,
+		path: join(HOME, ".pi/artifacts/pi-subagents/results/r-0001/report-1.md"),
+	};
 	for (const length of [400, 3_572, 4_964, 29_993]) {
 		for (const typed of [true, false]) {
 			it(`a ${length}-character ${typed ? "typed" : "untyped"} report renders within the limits`, () => {
@@ -106,7 +113,13 @@ describe("result renderer: G1.3 bounded text", () => {
 			const path = `/${"p/".repeat(pathLength)}`.slice(0, pathLength - 3) + ".md";
 			for (const reportLength of [1, 1_499, 1_500, 1_501, 29_993]) {
 				const record = recordFor(reportLength, reportLength % 2 === 0, { saved: true, path });
-				const text = renderResult(record, { cwd: CWD, homeDir: HOME, warnings: WARNINGS, verifierFooter: VERIFIER_FOOTER, showContextUsage: true });
+				const text = renderResult(record, {
+					cwd: CWD,
+					homeDir: HOME,
+					warnings: WARNINGS,
+					verifierFooter: VERIFIER_FOOTER,
+					showContextUsage: true,
+				});
 				assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `path ${pathLength}, report ${reportLength}: ${text.length}`);
 				assert.ok(text.includes(`report: ${path}`), "the whole locator stays");
 			}
@@ -121,7 +134,14 @@ describe("result renderer: G1.3 bounded text", () => {
 	});
 
 	it("each outcome word appears in the header", () => {
-		const words = { done: "done", partial: "partial", blocked: "blocked", failed: "failed", timed_out: "timed out", cancelled: "cancelled" } as const;
+		const words = {
+			done: "done",
+			partial: "partial",
+			blocked: "blocked",
+			failed: "failed",
+			timed_out: "timed out",
+			cancelled: "cancelled",
+		} as const;
 		const base = recordFor(400, false, { saved: true, path: "/tmp/r.md" });
 		for (const [outcome, word] of Object.entries(words)) {
 			const text = renderResult({ ...base, outcome: outcome as ResultRecord["outcome"] }, { cwd: CWD, homeDir: HOME });
@@ -141,7 +161,11 @@ describe("result renderer: report locator (D14)", () => {
 		it(label, () => {
 			const locator = shortestReadLocator(path, cwd, HOME);
 			assert.equal(resolveToCwd(locator, cwd), path, "Pi's read tool resolves it back");
-			const all = [path, `~/${path.slice(HOME.length + 1)}`, ...(path.startsWith(`${cwd}/`) ? [path.slice(cwd.length + 1)] : [])];
+			const all = [
+				path,
+				`~/${path.slice(HOME.length + 1)}`,
+				...(path.startsWith(`${cwd}/`) ? [path.slice(cwd.length + 1)] : []),
+			];
 			for (const form of all) {
 				if (resolveToCwd(form, cwd) === path) assert.ok(locator.length <= form.length, `${locator} vs ${form}`);
 			}
@@ -180,7 +204,13 @@ describe("result renderer: frame budget (D14)", () => {
 	const unsaved = () => ({ ...recordFor(1_500, true, { saved: false, error: saveError }), summary: "s".repeat(1_500) });
 
 	it("a failed report write with every required field keeps the frame within 400", () => {
-		const options = { cwd: CWD, homeDir: HOME, warnings: WARNINGS, verifierFooter: VERIFIER_FOOTER, showContextUsage: true };
+		const options = {
+			cwd: CWD,
+			homeDir: HOME,
+			warnings: WARNINGS,
+			verifierFooter: VERIFIER_FOOTER,
+			showContextUsage: true,
+		};
 		const text = renderResult(unsaved(), options);
 		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
 		assert.ok(text.includes("s".repeat(1_500)), "the whole summary stays");
@@ -193,11 +223,22 @@ describe("result renderer: frame budget (D14)", () => {
 
 	it("a verifier text over 1,900 characters keeps the frame and the total within their caps", () => {
 		const detail = `provenance ${"p".repeat(1_950)}`;
-		for (const report of [{ saved: false as const, error: saveError }, { saved: true as const, path: "/tmp/r.md" }]) {
+		for (const report of [
+			{ saved: false as const, error: saveError },
+			{ saved: true as const, path: "/tmp/r.md" },
+		]) {
 			const record = { ...recordFor(1_500, true, report), summary: "s".repeat(1_500) };
-			const text = renderResult(record, { cwd: CWD, homeDir: HOME, verifierFooter: { winner: "not applied", detail }, showContextUsage: true });
+			const text = renderResult(record, {
+				cwd: CWD,
+				homeDir: HOME,
+				verifierFooter: { winner: "not applied", detail },
+				showContextUsage: true,
+			});
 			assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
-			assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
+			assert.ok(
+				frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS,
+				`frame ${frameLength(text, "s".repeat(1_500))}`,
+			);
 			assert.ok(text.includes("\nverifier: winner not applied: provenance "), "the not-applied fact stays (D18)");
 			assert.ok(text.includes("\ncontext: 91000/100000 tokens"));
 		}
@@ -212,4 +253,3 @@ describe("result renderer: frame budget (D14)", () => {
 		assert.ok(!text.includes(SESSION_FILE), text);
 	});
 });
-
