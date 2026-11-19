@@ -104,12 +104,12 @@ export function getSubagentTerminalStopReason(summary: string): string | null {
 	return match?.[1]?.trim() || null;
 }
 
-export interface SubagentOutput {
+interface SubagentOutput {
 	summary: string;
 	summarySource: SubagentSummarySource;
 }
 
-export interface AssistantContextSnapshot {
+interface AssistantContextSnapshot {
 	contextTokens: number;
 	provider?: string;
 	model?: string;

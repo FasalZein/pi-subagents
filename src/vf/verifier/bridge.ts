@@ -33,7 +33,7 @@ export function verifierBridgeBaseEnv(base: NodeJS.ProcessEnv = process.env): No
  */
 
 /** Exit codes the runner contract defines (see runner.py). */
-export const RUNNER_EXIT_CODES = {
+const RUNNER_EXIT_CODES = {
 	ok: 0,
 	malformed: 2,
 	credentials: 3,
@@ -43,7 +43,7 @@ export const RUNNER_EXIT_CODES = {
 	capability: 6,
 } as const;
 
-export type VerifierBridgeErrorKind =
+type VerifierBridgeErrorKind =
 	| "malformed-request"
 	| "credentials"
 	| "criteria"
@@ -96,7 +96,7 @@ export interface MockVerifierConfig {
 	stripLogprobs?: boolean;
 }
 
-export interface VerifierSelectRequest {
+interface VerifierSelectRequest {
 	problem: string;
 	candidates: string[];
 	/** Absolute path to the criteria file. */
@@ -146,7 +146,7 @@ export interface VerifierSelectResponse {
 	elapsedMs: number;
 }
 
-export interface PreviewCriteriaResponse {
+interface PreviewCriteriaResponse {
 	ok: true;
 	kind: "preview";
 	criteriaPath: string;
@@ -156,7 +156,7 @@ export interface PreviewCriteriaResponse {
 
 /** Preflight capability probe (ticket 06): one real scoring call that the
  * backend must answer with discriminating A-T score-token logprobs. */
-export interface VerifierProbeRequest {
+interface VerifierProbeRequest {
 	/** Plain library model id (provider prefix / `:thinking` already stripped). */
 	model: string;
 	thinking?: string | null;
@@ -168,7 +168,7 @@ export interface VerifierProbeRequest {
 	mockVerifier?: MockVerifierConfig | null;
 }
 
-export interface VerifierProbeResponse {
+interface VerifierProbeResponse {
 	ok: true;
 	kind: "probe";
 	model: string;

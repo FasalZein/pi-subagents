@@ -30,7 +30,7 @@ type Timer = ReturnType<typeof setTimeout>;
 
 export type ErrorExitPayload = { type: "error"; errorMessage: string; stopReason: string; outputTokens: number };
 
-export interface ProviderErrorRecoveryRuntime {
+interface ProviderErrorRecoveryRuntime {
 	sendUserMessage(message: string): void;
 	/** End the run as failed; the owner decides whether the child exits (D11). */
 	endWithError(ctx: ExtensionContext, payload: ErrorExitPayload): void;
@@ -45,7 +45,7 @@ export interface ProviderErrorRecoveryRuntime {
 	clearRecoveryCountdown(ctx: ExtensionContext): void;
 }
 
-export interface ProviderErrorRecoveryOptions {
+interface ProviderErrorRecoveryOptions {
 	/**
 	 * Quiet windows for consecutive completed-on-error failures. Pi may still be
 	 * doing its own provider retry after an error event, and Pi reports idle while

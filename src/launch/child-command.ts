@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { buildHeadlessParentEnvSnapshot } from "./child-env.ts";
 
-export interface PiInvocation {
+interface PiInvocation {
 	command: string;
 	args: string[];
 }

@@ -22,7 +22,7 @@ import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 
-export interface ResumeToolRuntime extends ResumeServiceRuntime {
+interface ResumeToolRuntime extends ResumeServiceRuntime {
 	wireSubagentSteerBack(pi: ExtensionAPI, running: RunningSubagent, promise: Promise<SubagentResult>): void;
 	getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal): Promise<AgentToolResult<unknown>>;
 }

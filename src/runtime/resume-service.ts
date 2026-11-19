@@ -86,7 +86,7 @@ export interface ResumeServiceRuntime {
 	};
 }
 
-export interface ResumeSessionInput {
+interface ResumeSessionInput {
 	sessionFile: string;
 	/** The parent session's results folder; the resume reserves its run id there (D13). */
 	resultsDir: string;

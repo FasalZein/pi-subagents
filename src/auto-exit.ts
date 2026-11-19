@@ -70,7 +70,7 @@ export function findLatestAssistantError(messages: any[] | undefined): SubagentE
 	return null;
 }
 
-export type InputStreamingBehavior = "steer" | "followUp" | undefined;
+type InputStreamingBehavior = "steer" | "followUp" | undefined;
 
 export function shouldMarkUserTookOver(agentStarted: boolean, streamingBehavior?: InputStreamingBehavior): boolean {
 	return agentStarted || streamingBehavior === "steer" || streamingBehavior === "followUp";

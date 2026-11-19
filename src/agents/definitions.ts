@@ -436,7 +436,7 @@ function parseVisibleTo(raw: string | undefined): string[] {
 	return names;
 }
 
-export type ResolveAgentCwd = (cwdHint: string | null, baseCwd: string) => string;
+type ResolveAgentCwd = (cwdHint: string | null, baseCwd: string) => string;
 
 export function getEffectiveAgentDefinitions(
 	baseCwd = process.cwd(),

@@ -15,7 +15,7 @@ export interface ExpiredTimeoutBudget {
 	seconds: number;
 }
 
-export interface DueTimeoutWrapUp extends ExpiredTimeoutBudget {
+interface DueTimeoutWrapUp extends ExpiredTimeoutBudget {
 	/** Percentage of the hard budget at which work is interrupted for reporting. */
 	threshold: number;
 }

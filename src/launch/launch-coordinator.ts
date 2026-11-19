@@ -29,7 +29,7 @@ interface CoordinatedSystemPrompt {
 	text: string;
 }
 
-export interface CoordinatedSubagentLaunch {
+interface CoordinatedSubagentLaunch {
 	prepared: PreparedSubagentLaunch;
 	/** Internal runtime-only overrides (forcedCwd/launchEnv) carried by this launch. */
 	runtimeOverrides: LaunchRuntimeOverrides;

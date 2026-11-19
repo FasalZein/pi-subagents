@@ -38,7 +38,7 @@ import type { RunningSubagent, SubagentResult } from "../../types.ts";
 	const adoptedRunDirs = new Set<string>();
 	const noticedRunDirs = new Set<string>();
 
-export interface AdoptedRunOutcome {
+interface AdoptedRunOutcome {
 	runDir: string;
 	runId: string;
 	action:

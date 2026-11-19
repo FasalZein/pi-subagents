@@ -15,14 +15,14 @@ import { parseCommandWords } from "../../launch/child-command.ts";
  * look for bun or a new-enough node on PATH, or take an explicit override.
  */
 
-export class SupervisorRuntimeError extends Error {
+class SupervisorRuntimeError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "SupervisorRuntimeError";
 	}
 }
 
-export interface SupervisorRuntime {
+interface SupervisorRuntime {
 	command: string;
 	/** Args before the entry script path (none for node/bun). */
 	preArgs: string[];

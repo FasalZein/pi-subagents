@@ -16,7 +16,7 @@ import {
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 import { isRunEndHeld, runDeliveryState } from "./wait-holds.ts";
 
-export interface RunningRegistryRuntime {
+interface RunningRegistryRuntime {
 	updateWidget(): void;
 	waitForSubagentResult(params: { id: string }, signal?: AbortSignal): Promise<unknown>;
 	asSubagentToolResult(result: unknown): any;

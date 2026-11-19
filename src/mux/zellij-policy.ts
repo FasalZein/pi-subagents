@@ -26,7 +26,7 @@ export interface ZellijPlacementContext {
 	policy?: ZellijPlacementPolicy;
 }
 
-export type ZellijFirstPlacementPlan =
+type ZellijFirstPlacementPlan =
 	| {
 			mode: "split";
 			parentPaneId: number;

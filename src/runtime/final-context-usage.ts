@@ -5,7 +5,7 @@ import { findLatestAssistantContextSnapshot, getNewEntries } from "../session/se
 import { endedUnderContextPressure } from "../session/completion-reason.ts";
 import type { RunningSubagent } from "../types.ts";
 
-export interface FinalContextUsage {
+interface FinalContextUsage {
 	contextTokens?: number;
 	contextWindow?: number;
 	/** True when the child's exit was owned by its context-warning policy. */

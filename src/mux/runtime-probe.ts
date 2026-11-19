@@ -1,6 +1,6 @@
 import { execFileSync, execSync } from "node:child_process";
 
-export interface MuxRuntimeProbeOptions {
+interface MuxRuntimeProbeOptions {
 	getPath?: () => string;
 	commandExists?: (command: string) => boolean;
 }

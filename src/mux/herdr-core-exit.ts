@@ -13,7 +13,7 @@ const SUBSCRIBE_READY_TIMEOUT_MS = 10_000;
  * Exit facts of a finished terminal: the finished event data and the same fields of `hc get --json`.
  * hc's Terminal schema declares exit_code and signal as int32 or null.
  */
-export interface TerminalExitFacts {
+interface TerminalExitFacts {
 	exit_code: number | null;
 	signal: number | null;
 	reason: string | null;

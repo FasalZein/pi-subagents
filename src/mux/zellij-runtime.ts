@@ -16,7 +16,7 @@ interface ZellijPaneIdentity {
 	pane_command?: string;
 	title?: string;
 }
-export interface ZellijSessionIdentity {
+interface ZellijSessionIdentity {
 	name: string;
 	panes: ZellijPaneIdentity[];
 }

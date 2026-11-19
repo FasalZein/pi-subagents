@@ -7,7 +7,7 @@ import { DRAFT_7_META_SCHEMA, DRAFT_2020_12_META_SCHEMA } from "./json-schema-me
 export const DATA_MAX_CHARS = 32_000;
 
 /** D12: a refusal and a data error name at most this many violations. */
-export const MAX_VIOLATIONS = 10;
+const MAX_VIOLATIONS = 10;
 
 /**
  * Internal parent-to-child protocol: the path of the launch schema file. Every child environment sets
@@ -53,7 +53,7 @@ function schemaPath(pointer: string): string {
 }
 
 /** At most MAX_VIOLATIONS lines of path and message, and how many more there were. */
-export function formatViolations(errors: readonly ValidationError[], path = formatPath): string {
+function formatViolations(errors: readonly ValidationError[], path = formatPath): string {
 	const lines = errors.slice(0, MAX_VIOLATIONS).map((error) => `- ${path(error.path)}: ${error.message}`);
 	if (errors.length > MAX_VIOLATIONS) lines.push(`- and ${errors.length - MAX_VIOLATIONS} more`);
 	return lines.join("\n");
@@ -186,7 +186,7 @@ export function readLaunchDataSchema(env: NodeJS.ProcessEnv = process.env): Data
 }
 
 /** What the completion call does with its data (D12). */
-export type DataVerdict = { kind: "accept" } | { kind: "data_error"; error: string };
+type DataVerdict = { kind: "accept" } | { kind: "data_error"; error: string };
 
 /**
  * D12 for one child: data over the size limit is refused every time with a hint; data that fails

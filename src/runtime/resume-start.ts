@@ -29,7 +29,7 @@ export function setAsidePreviousExitRecord(sessionFile: string, undo: LaunchUndo
 	return () => rmSync(aside, { force: true });
 }
 
-export interface ResumedChildStart {
+interface ResumedChildStart {
 	running: RunningSubagent;
 	sessionFile: string;
 	mode: "interactive" | "background";

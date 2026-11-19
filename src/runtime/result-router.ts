@@ -14,7 +14,7 @@ import { resultTextOf } from "./unpublished-result.ts";
 
 type ParentMessageSink = Pick<ExtensionAPI, "sendMessage">;
 
-export interface RouteSubagentOutcomeOptions {
+interface RouteSubagentOutcomeOptions {
 	pi: ParentMessageSink;
 	running: RunningSubagent;
 	result: SubagentResult;
@@ -31,7 +31,7 @@ interface RoutedPingOutcome {
 	delivered: boolean;
 }
 
-export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
+type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 
 /**
  * D5: the run's one terminal transition, for a watched end, a watcher failure and a verified

@@ -37,7 +37,7 @@ export interface BackgroundWatchRuntime {
 
 type ProcessProbe = Pick<NodeJS.Process, "platform" | "kill">;
 
-export interface BackgroundWatchOptions {
+interface BackgroundWatchOptions {
 	/** Grace before a timeout kill escalates to SIGKILL. Injectable for tests. */
 	timeoutKillEscalationMs?: number;
 	processProbe?: ProcessProbe;

@@ -114,7 +114,7 @@ function findLikelyBuiltinTypo(tool: string): string | null {
 	return bestDistance === 1 ? best : null;
 }
 
-export interface SubagentToolsWarning {
+interface SubagentToolsWarning {
 	name: string;
 	suggestion: string;
 	message: string;

@@ -43,7 +43,7 @@ export interface BackgroundLaunchRuntime {
 	getContextWindow(modelRef: string | undefined): number | undefined;
 }
 
-export interface BackgroundLaunchPlan {
+interface BackgroundLaunchPlan {
 	launch: Awaited<ReturnType<typeof coordinateSubagentLaunch>>;
 	/** Complete child argv after the executable. */
 	args: string[];

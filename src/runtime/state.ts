@@ -103,7 +103,7 @@ function initializeModuleReloadState(): AbortController {
 	return controller;
 }
 
-export type SubagentToolResult = AgentToolResult<unknown> & {
+type SubagentToolResult = AgentToolResult<unknown> & {
 	terminate?: true;
 };
 

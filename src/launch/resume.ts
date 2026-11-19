@@ -12,7 +12,7 @@ import type { ParentClosePolicy } from "../types.ts";
 export type ResumeMode = "interactive" | "background";
 type ResumeModeSource = "explicit" | "metadata" | "fallback";
 
-export interface ResumeLaunchMetadata {
+interface ResumeLaunchMetadata {
 	mode: ResumeMode;
 	modeSource: ResumeModeSource;
 	agent?: string;

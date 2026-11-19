@@ -34,7 +34,7 @@ export interface AgentListEntry {
 	visibleTo: string[];
 }
 
-export interface AgentListOptions {
+interface AgentListOptions {
 	callerAgent: string | null;
 	callerSpawnable: string[] | true;
 }

@@ -39,7 +39,7 @@ interface ChildCapabilityPlan {
 	skillLaunchPlan: SkillLaunchPlan;
 }
 
-export interface ChildLaunchPlan {
+interface ChildLaunchPlan {
 	agentDefs: AgentDefaults | null;
 	effectiveModel?: string;
 	effectiveThinking?: string;
@@ -50,7 +50,7 @@ export interface ChildLaunchPlan {
 	capability: ChildCapabilityPlan;
 }
 
-export interface ChildLaunchPlanOptions {
+interface ChildLaunchPlanOptions {
 	params: SubagentParamsInput;
 	agentDefs: AgentDefaults | null;
 	parentCwd: string;
@@ -179,7 +179,7 @@ export interface AgentModelConfig {
  * its one registry ref; an ambiguous or unknown one stays as written. The
  * thinking field applies when the model carries no level suffix.
  */
-export function resolveAgentDefaultRef(
+function resolveAgentDefaultRef(
 	config: AgentModelConfig,
 	modelRegistry: ModelRegistryLike | undefined,
 ): string | undefined {
@@ -208,7 +208,7 @@ export function resolveImplicitModelGrant(
 	return defaultRef ? buildModelRef(defaultRef, effectiveThinking) : inheritedModelRef;
 }
 
-export interface CallModelRequest {
+interface CallModelRequest {
 	/** The model of the launch or resume call. */
 	model: string;
 	/** The thinking parameter of the call. */

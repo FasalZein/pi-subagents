@@ -14,7 +14,7 @@ import {
 	writeSubagentModelStateEntries,
 } from "./session-files.ts";
 
-export interface ChildSessionSeedOptions {
+interface ChildSessionSeedOptions {
 	sessionName?: string;
 	activeLeafId?: string | null;
 }

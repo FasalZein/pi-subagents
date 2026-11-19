@@ -35,7 +35,7 @@ import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import type { RunningSubagent } from "../types.ts";
 import { addResultWarning } from "./run-result.ts";
 
-export interface TimeoutWrapUpRuntime {
+interface TimeoutWrapUpRuntime {
 	getShellReadyDelayMs(): number;
 }
 

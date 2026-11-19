@@ -22,7 +22,7 @@ export class WorktreeError extends Error {
 }
 
 /** Clean-source gate result: the repo root and the recorded base commit. */
-export interface WorktreePreflight {
+interface WorktreePreflight {
 	repoRoot: string;
 	baseCommit: string;
 }
@@ -264,7 +264,7 @@ export function snapshotCandidateWorktree(worktree: CandidateWorktree, message?:
  * already captured everything retained (ignored files such as node_modules
  * are deliberately not kept).
  */
-export function removeCandidateWorktree(worktree: CandidateWorktree): void {
+function removeCandidateWorktree(worktree: CandidateWorktree): void {
 	if (existsSync(worktree.path)) {
 		const removed = gitOk(["worktree", "remove", "--force", worktree.path], worktree.repoRoot);
 		if (!removed && existsSync(worktree.path)) {

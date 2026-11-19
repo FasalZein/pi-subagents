@@ -12,7 +12,7 @@ export const RESULT_TEXT_MAX_CHARS = 1900;
 const NAME_MAX_CHARS = 60;
 const FACT_MAX_CHARS = 160;
 
-export interface RenderOptions {
+interface RenderOptions {
 	/** The parent's working directory, for the relative report locator. */
 	cwd: string;
 	homeDir: string;

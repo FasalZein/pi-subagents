@@ -31,7 +31,7 @@ export const NO_SESSION_RESUME_REASON =
 	"a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
 
 /** D13 with the context-warning policy: a no-session run that stopped early keeps both reasons. */
-export const NO_SESSION_CONTEXT_PRESSURE_RESUME_REASON =
+const NO_SESSION_CONTEXT_PRESSURE_RESUME_REASON =
 	"stopped early by its context-warning policy, and a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
 
 /**
@@ -57,7 +57,7 @@ export function addResultWarning(running: RunningSubagent, warning: string): voi
 	}
 }
 
-export interface PublishedResult {
+interface PublishedResult {
 	record: ResultRecord;
 	/** The parent's text (D14); the message path and the wait path both show it. */
 	text: string;

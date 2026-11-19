@@ -31,12 +31,12 @@ export interface ParsedSpawnEnv {
 	callerSpawnable: string[] | true;
 }
 
-export interface PersistedSpawnGrant {
+interface PersistedSpawnGrant {
 	spawnableAgents?: string[] | true;
 	spawnBudget?: number | null;
 }
 
-export interface ResumeSpawnEnv {
+interface ResumeSpawnEnv {
 	PI_SUBAGENT_SPAWN_BUDGET: string;
 	PI_SUBAGENT_SPAWNABLE: string;
 	PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE: string;

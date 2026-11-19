@@ -19,7 +19,7 @@ type TaskExpansionPlaceholder = {
 	prefix?: string;
 };
 
-export interface SubagentTaskExpansionOptions {
+interface SubagentTaskExpansionOptions {
 	enabled: boolean;
 	cwd: string;
 }

@@ -43,7 +43,7 @@ export function verifiedRunDirFor(baseDir: string, runId: string): string {
 	return join(resolveVerifiedRunsRoot(baseDir), runId);
 }
 
-export interface StartedVerifiedRun {
+interface StartedVerifiedRun {
 	runId: string;
 	runDir: string;
 	leaseId: string;
@@ -181,7 +181,7 @@ export function retryVerifiedRunVerification(
 	return { runId: manifest.runId, runDir, leaseId, manifestPath: paths.manifest };
 }
 
-export interface VerifiedRunSnapshot {
+interface VerifiedRunSnapshot {
 	manifest: VerifiedRunManifest;
 	supervisorAlive: boolean;
 	delivered: boolean;
