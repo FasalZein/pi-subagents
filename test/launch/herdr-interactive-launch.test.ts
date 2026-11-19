@@ -604,6 +604,8 @@ describe("Herdr interactive launch parity", () => {
 		assert.match(taskArtifact, /Review skill body token\./);
 		assert.match(taskArtifact, /Complete your task autonomously\./);
 		assert.match(taskArtifact, /FINAL assistant message should summarize what you accomplished\./);
+		// D12: an auto-exit pane child's brief asks for the completion call and states the limit.
+		assert.match(taskArtifact, /call subagent_done with outcome .* at most 1,500 characters/);
 		assert.doesNotMatch(taskArtifact, /set_tab_title/);
 	});
 
