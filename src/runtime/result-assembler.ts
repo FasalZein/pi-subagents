@@ -334,15 +334,19 @@ interface Body {
 	artifacts: string[];
 }
 
-/** The call's recorded arguments, else the accepted payload of the same call from the session or the exit record. */
+/**
+ * The arguments the child's tool executed, from the session or the exit record, else the call's
+ * transcript arguments. T64: the transcript keeps the model's raw arguments, so they are parsed as the
+ * child's prepareArguments did; Pi's coercion after that step is visible only in the executed ones.
+ */
 function callArgs(
 	call: CompletionCall,
 	recorded: ReadonlyMap<string, Record<string, unknown>>,
 	accepted: RunFacts["acceptedCall"],
 ): Record<string, unknown> | undefined {
-	const args = call.args ?? recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
-	// T64: the transcript keeps the model's raw arguments; parse them as the child's tool did.
-	return parseJsonFields(args, COMPLETION_JSON_FIELDS);
+	const executed = recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
+	if (executed) return executed;
+	return call.args && (parseJsonFields(call.args, COMPLETION_JSON_FIELDS) as Record<string, unknown>);
 }
 
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */

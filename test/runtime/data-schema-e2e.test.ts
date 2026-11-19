@@ -266,15 +266,18 @@ function launchWith(schema: unknown) {
 	];
 }
 
-async function launchAndRunChild(replies: FauxResponseStep[]) {
-	const parent = await startParent({
+async function launchAndRunChild(
+	replies: FauxResponseStep[],
+	calls = {
 		delegate: launchWith(VERDICT_SCHEMA),
 		join: [fauxToolCall("subagent_wait", { ids: ["id-diff-reviewer"] }, { id: "wait-1" })],
-	});
+	},
+) {
+	const parent = await startParent(calls);
 	await parent.session.prompt("delegate");
 	await parent.session.waitForIdle();
 	const params = parent.launches.get("diff-reviewer");
-	assert.ok(params?.dataSchemaFile, "the launch hands the child a schema file");
+	assert.ok(params?.dataSchemaFile, `the launch hands the child a schema file: ${parent.toolReplies("subagent")[0]?.text}`);
 	assert.deepEqual(JSON.parse(readFileSync(params.dataSchemaFile, "utf8")), VERDICT_SCHEMA);
 	const launchReply = parent.toolReplies("subagent")[0]!;
 	assert.doesNotMatch(launchReply.text, /additionalProperties|approve/, "the launch reply does not echo the schema");
@@ -436,36 +439,21 @@ describe("T37: data checked against a launch schema, end to end", () => {
 // T64: Claude-family models send object and array arguments as JSON strings. A string that parses as
 // a JSON object or array is that value; any other string stays a string and is checked as one.
 describe("T64: object and array arguments sent as JSON strings, end to end", () => {
-	async function launchAsStrings(replies: FauxResponseStep[]) {
-		const children = [
-			{
-				name: "diff-reviewer",
-				task: "Review the change.",
-				title: "Review the change",
-				agent: "reviewer",
-				schema: JSON.stringify(VERDICT_SCHEMA),
-			},
-		];
-		const parent = await startParent({
+	// The model's raw arguments: children, each child's schema and the wait ids as JSON strings.
+	const children = [
+		{
+			name: "diff-reviewer",
+			task: "Review the change.",
+			title: "Review the change",
+			agent: "reviewer",
+			schema: JSON.stringify(VERDICT_SCHEMA),
+		},
+	];
+	const launchAsStrings = (replies: FauxResponseStep[]) =>
+		launchAndRunChild(replies, {
 			delegate: [fauxToolCall("subagent", { children: JSON.stringify(children) } as ToolArgs, { id: "launch-1" })],
 			join: [fauxToolCall("subagent_wait", { ids: JSON.stringify(["id-diff-reviewer"]) } as ToolArgs, { id: "wait-1" })],
 		});
-		await parent.session.prompt("delegate");
-		await parent.session.waitForIdle();
-		const params = parent.launches.get("diff-reviewer");
-		assert.ok(params?.dataSchemaFile, `the launch started the child: ${parent.toolReplies("subagent")[0]?.text}`);
-		assert.deepEqual(JSON.parse(readFileSync(params.dataSchemaFile, "utf8")), VERDICT_SCHEMA);
-		const child = await runChild({ [DATA_SCHEMA_ENV]: params.dataSchemaFile }, replies);
-		const run = parent.session.prompt("join");
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		parent.finishFromChild("diff-reviewer", child.sessionFile);
-		await run;
-		await parent.session.waitForIdle();
-		const wait = parent.toolReplies("subagent_wait")[0]!;
-		const results = (wait.details.results ?? []) as { record: Record<string, unknown> | null }[];
-		assert.equal(results.length, 1, `the wait joined the run by its id: ${wait.text}`);
-		return { parent, child, record: results[0]!.record! };
-	}
 
 	const doneWith = (args: Record<string, unknown>, id: string) =>
 		fauxAssistantMessage(

@@ -6,7 +6,7 @@ import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agen
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
 import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
 import { parseDataSchema } from "./data-schema.ts";
-import { parseLaunchJsonFields } from "./json-string-args.ts";
+import { asPrepareArguments, parseJsonContainer, parseLaunchJsonFields } from "./json-string-args.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
 	enforceAgentFrontmatter,
@@ -356,7 +356,7 @@ export function registerSubagentCoreTools(
 			label: "Subagent",
 			description: "Start one or more child agents, each named with its task in the children list.",
 			parameters: SubagentParams,
-			prepareArguments: (args) => parseLaunchJsonFields(args) as never,
+			prepareArguments: asPrepareArguments(parseLaunchJsonFields),
 			outputSchema: SubagentLaunchOutput,
 			execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
 				const children = params.children.map((child) => stripInternalLaunchOverrides(child as SubagentParamsInput));
@@ -535,7 +535,9 @@ export function registerSubagentCoreTools(
 			},
 			renderCall(args, theme, context) {
 				const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-				const children = Array.isArray(args.children) ? args.children : [];
+				// T64: Pi renders the raw arguments, where children may be a JSON string.
+				const parsed = parseJsonContainer(args.children);
+				const children: Partial<SubagentParamsInput>[] = Array.isArray(parsed) ? parsed : [];
 				const lines = [
 					`▸ ${theme.fg("toolTitle", theme.bold("Spawn"))} ${theme.fg("toolTitle", theme.bold(`${children.length} agents`))}`,
 					"",

@@ -13,27 +13,38 @@ export function parseJsonContainer(value: unknown): unknown {
 	}
 }
 
-/** The arguments with each named field parsed by parseJsonContainer; the same object when no field changed. */
-export function parseJsonFields<T>(args: T, fields: readonly string[]): T {
-	if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
-	const record = args as Record<string, unknown>;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The arguments with each named field parsed by parseJsonContainer; the same value when no field changed. */
+export function parseJsonFields(args: unknown, fields: readonly string[]): unknown {
+	if (!isRecord(args)) return args;
 	let changed: Record<string, unknown> | undefined;
 	for (const field of fields) {
-		const parsed = parseJsonContainer(record[field]);
-		if (parsed !== record[field]) {
-			changed ??= { ...record };
+		const parsed = parseJsonContainer(args[field]);
+		if (parsed !== args[field]) {
+			changed ??= { ...args };
 			changed[field] = parsed;
 		}
 	}
-	return (changed ?? args) as T;
+	return changed ?? args;
 }
 
-/** T64: subagent arguments with children, and each child's schema, parsed when sent as a JSON string. */
-export function parseLaunchJsonFields<T>(args: T): T {
+/** T64: launch arguments with children, and each child's schema, parsed when sent as a JSON string. */
+export function parseLaunchJsonFields(args: unknown): unknown {
 	const parsed = parseJsonFields(args, ["children"]);
-	const children = (parsed as { children?: unknown } | null)?.children;
+	const children = isRecord(parsed) ? parsed.children : undefined;
 	if (!Array.isArray(children)) return parsed;
 	const parsedChildren = children.map((child) => parseJsonFields(child, ["schema"]));
 	if (parsedChildren.every((child, i) => child === children[i])) return parsed;
-	return { ...(parsed as object), children: parsedChildren } as T;
+	return { ...(parsed as Record<string, unknown>), children: parsedChildren };
+}
+
+/**
+ * A Pi prepareArguments hook from a parser. The one assertion: Pi validates the returned value against
+ * the tool's parameters right after this hook, so the hook does not need to prove the type itself.
+ */
+export function asPrepareArguments<T>(parse: (args: unknown) => unknown): (args: unknown) => T {
+	return (args) => parse(args) as T;
 }

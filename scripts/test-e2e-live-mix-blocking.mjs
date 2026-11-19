@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { installLiveTestCleanup } from "./live-test-cleanup.mjs";
 import { acquireLiveWindowLock, LIVE_TEST_MODEL, requireLiveWindowOptIn } from "./live-test-guard.mjs";
 import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
+import { getLaunchCallChildren as launchChildren } from "../src/runtime/batch-classifier.ts";
 
 const piBin = process.env.PI_E2E_PI_BIN ?? "pi";
 
@@ -339,7 +340,7 @@ try {
 					(part) =>
 						part.type === "toolCall" &&
 						part.name === "subagent" &&
-						(part.arguments?.children ?? []).some((child) => child?.name === "mix-blocking-child"),
+						launchChildren(part.arguments).some((child) => child?.name === "mix-blocking-child"),
 				),
 		);
 		const blockingResultEvent = parent.events.find(

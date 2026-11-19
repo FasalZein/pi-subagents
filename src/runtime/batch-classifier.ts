@@ -1,5 +1,6 @@
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { resolveSubagentBlocking } from "../launch/policy.ts";
+import { parseJsonContainer } from "../tools/json-string-args.ts";
 import {
 	PI_SUBAGENTS_INTERNAL_TOOL_NAMES,
 	SUBAGENT_LAUNCH_TOOL_NAMES,
@@ -48,7 +49,8 @@ type SubagentChildLike = {
 
 /** D21: the launch tool's input is only its children list; each entry is one launch. */
 export function getLaunchCallChildren(args: unknown): SubagentChildLike[] {
-	const children = (args as { children?: unknown } | null | undefined)?.children;
+	// T64: message_end passes the raw arguments; parse a JSON-string list as the launch tool's prepareArguments does.
+	const children = parseJsonContainer((args as { children?: unknown } | null | undefined)?.children);
 	if (!Array.isArray(children)) return [];
 	return children.filter((c): c is SubagentChildLike => !!c && typeof c === "object");
 }
