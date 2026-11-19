@@ -3,7 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
-import { ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
+import { ResultOutcomeSchema, ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
+import { type RecentRun, recentRuns, renderRecentRuns } from "../runtime/run-lookup.ts";
 import { type JoinOutcome, joinRuns } from "../runtime/wait-join.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_WAIT_TOOL_NAME } from "./tool-names.ts";
@@ -22,6 +23,12 @@ const SubagentWaitParams = Type.Object({
 	timeout: Type.Optional(
 		Type.Number({ minimum: 0, description: "Time limit in seconds; pending runs then report by message." }),
 	),
+	recent: Type.Optional(
+		Type.Boolean({
+			description:
+				"true: return at once one line per ended run of this session (the last 20, newest first); ids, mode and timeout are ignored. Look up an older run by its run id.",
+		}),
+	),
 });
 
 /** D16: what a codemode script gets instead of the text: the records and the pending ids. */
@@ -31,6 +38,7 @@ export const SubagentWaitOutput = Type.Object({
 		Type.Literal("timeout"),
 		Type.Literal("empty"),
 		Type.Literal("interrupted"),
+		Type.Literal("recent"),
 	]),
 	results: Type.Array(
 		Type.Object({
@@ -42,6 +50,17 @@ export const SubagentWaitOutput = Type.Object({
 	),
 	pending: Type.Array(Type.String()),
 	missing: Type.Array(Type.Object({ id: Type.String(), error: Type.String() })),
+	/** D16: the recent list, only with the recent parameter; never full results. */
+	recent: Type.Optional(
+		Type.Array(
+			Type.Object({
+				runId: Type.String(),
+				name: Type.String(),
+				outcome: ResultOutcomeSchema,
+				endedAt: Type.Number(),
+			}),
+		),
+	),
 });
 export type SubagentWaitStructured = Static<typeof SubagentWaitOutput>;
 
@@ -69,6 +88,16 @@ function toStructured(outcome: JoinOutcome): SubagentWaitStructured {
 	};
 }
 
+/** D16: the recent list changes no state: no queue take, no release. */
+function recentReply(runs: RecentRun[]) {
+	const structured: SubagentWaitStructured = { status: "recent", results: [], pending: [], missing: [], recent: runs };
+	return {
+		content: [{ type: "text" as const, text: renderRecentRuns(runs) }],
+		details: structured,
+		structuredContent: structured as unknown as JsonValue,
+	};
+}
+
 export function registerSubagentWaitTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
@@ -84,7 +113,8 @@ export function registerSubagentWaitTool(
 		execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_WAIT_TOOL_NAME));
 			const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
-			const outcome = await joinRuns(params, signal, store);
+			if (params.recent === true) return recentReply(recentRuns(store));
+			const outcome = await joinRuns(params, signal, { store, cwd: ctx.cwd });
 			const structured = toStructured(outcome);
 			return {
 				content: [{ type: "text" as const, text: replyText(outcome) }],
