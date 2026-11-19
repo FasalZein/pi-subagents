@@ -583,7 +583,9 @@ Once the operator interrupts (Escape) or sends input to the child, auto-exit is 
 
 Manual-lifecycle children get a `subagent_done` tool. The child writes its final assistant message, calls `subagent_done`, and Pi returns that final message to the parent.
 
-Pi hides `subagent_done` for `auto-exit: true` agents. If you want an interactive child that only the operator can close, add `subagent_done` to `deny-tools`.
+Every child that can end by itself has `subagent_done` unless its agent lists `subagent_done` in `deny-tools`. If you want an interactive child that only the operator can close, add `subagent_done` to `deny-tools`.
+
+An auto-exit child that is about to exit without calling `subagent_done` or `caller_ping` gets one nudge per run (launch or resume) to make the call. If it still makes no call, it exits and the parent builds an untyped result; the report keeps the text the child wrote before the nudge. After a person takes over the pane, the report is the last text instead. A child in time-limit wrap-up, or one with `subagent_done` denied, gets no nudge.
 
 ### `caller_ping`
 

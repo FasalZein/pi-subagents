@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
+import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
 import { assembleResult, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
@@ -176,6 +177,8 @@ interface PublishOptions {
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
 	const target = running.resultTarget;
 	if (!target) return undefined;
+	const entries = existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [];
+	const launchEntryCount = running.launchEntryCount ?? 0;
 	const assemble = (runEnd: RunEnd) => assembleResult({
 		runId: target.reservation.runId,
 		name: running.name,
@@ -186,8 +189,9 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 		startedAt: running.startTime,
 		endedAt: Date.now(),
 		end: runEnd,
-		entries: existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [],
-		launchEntryCount: running.launchEntryCount ?? 0,
+		entries,
+		launchEntryCount,
+		nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
 		acceptedCall: options.acceptedCall,
 		contextUsage: options.contextUsage,
 		resume: resumeFact(running, runEnd, options.contextWarned),
