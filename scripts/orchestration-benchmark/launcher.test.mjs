@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, test } from "node:test";
-import { classifyAttempt, observe } from "./attempt.mjs";
+import { classifyAttempt, keepEvidence, observe } from "./attempt.mjs";
 import { acquireClaim, holdsClaim, releaseClaim } from "./claim.mjs";
 import { answerParser } from "./record.mjs";
 import { assertPrivateCheckout, checkoutState } from "./run-state.mjs";
@@ -789,6 +789,35 @@ test("[T59a] run folders bind run ids to launch names: record.json first, else t
 		]);
 		// v2.9.2 writes no run folder.
 		assert.deepEqual(readRunFolders(join(root, "sessions"), sessions), []);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+
+test("[T59a] a kept attempt copy holds session files and run folder records only", () => {
+	const root = mkdtempSync(join(tmpdir(), "bench-keep-"));
+	try {
+		const files = {
+			"sessions/p.jsonl": "{}",
+			"artifacts/x/s/results/ab12cd34/record.json": "{}",
+			"artifacts/x/s/results/ab12cd34/launch.json": "{}",
+			"artifacts/x/s/results/ab12cd34/report-1.md": "report",
+			"home/.pi/agent/auth.json": "secret",
+			"home/.pi/agent/settings.json": "{}",
+			"workspace/review/auth.md": "x",
+		};
+		for (const [path, text] of Object.entries(files)) {
+			mkdirSync(join(root, "src", path, ".."), { recursive: true });
+			writeFileSync(join(root, "src", path), text);
+		}
+		keepEvidence(join(root, "src"), join(root, "kept"));
+		const kept = Object.keys(files).filter((path) => existsSync(join(root, "kept", path)));
+		assert.deepEqual(kept, [
+			"sessions/p.jsonl",
+			"artifacts/x/s/results/ab12cd34/record.json",
+			"artifacts/x/s/results/ab12cd34/launch.json",
+		]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

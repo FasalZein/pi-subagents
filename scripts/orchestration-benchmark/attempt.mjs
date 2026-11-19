@@ -3,8 +3,14 @@
  * private tmux server that gets its prompt after startup, then a classified
  * result built from the session evidence. The root is removed on every exit path.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import {
+	cpSync,
+	existsSync,
+	readdirSync,
+	readFileSync,
+	statSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	answerParser,
@@ -365,6 +371,22 @@ function sanitize(result) {
 	};
 }
 
+// Files a kept copy holds: session files and the run folders' record and launch
+// files. Credentials, settings and the workspace stay out.
+const KEPT_FILES = /(\.jsonl|^record\.json|^launch\.json)$/;
+
+/**
+ * Copy the evidence of an attempt before cleanup (launcher --keep-sessions), so
+ * the delivery accounting can be checked by hand against the sessions.
+ */
+export function keepEvidence(root, dest) {
+	cpSync(root, dest, {
+		recursive: true,
+		filter: (source) =>
+			!statSync(source).isFile() || KEPT_FILES.test(basename(source)),
+	});
+}
+
 /** @returns {Promise<object>} a sanitized attempt result */
 export async function runAttempt({
 	cli,
@@ -374,11 +396,13 @@ export async function runAttempt({
 	deadlineMs,
 	loginMarginMs,
 	probePath,
+	keepDir = null,
 }) {
 	const root = createAttemptRoot();
 	const socket = socketPath(root);
 	const cleanup = () => {
 		stopServer(socket);
+		if (keepDir) keepEvidence(root, join(keepDir, `attempt-${attempt}`));
 		removeAttemptRoot(root);
 	};
 	const unregister = cleanups.add(cleanup);

@@ -3,7 +3,7 @@
  * Orchestration benchmark launcher: runs one sample and writes one JSON record.
  *
  *   PI_SUBAGENT_LIVE_MODEL=<provider/model:thinking> node scripts/orchestration-benchmark.mjs \\
- *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>] [--plan]
+ *     --checkout <detached clean worktree> --scenario <name> --rep <n> [--thinking <level>] [--set <name>] [--plan] [--keep-sessions]
  *
  * --plan prints the sample's full key and file name as one JSON line and runs nothing;
  * the gate runner (orchestration-benchmark-gate.mjs) plans its queue with it.
@@ -137,6 +137,7 @@ function parseCli() {
 			thinking: { type: "string" },
 			set: { type: "string" },
 			plan: { type: "boolean" },
+			"keep-sessions": { type: "boolean" },
 		},
 	});
 	const live = process.env.PI_SUBAGENT_LIVE_MODEL?.trim();
@@ -175,6 +176,7 @@ function parseCli() {
 		thinking,
 		outDir,
 		plan: values.plan === true,
+		keepSessions: values["keep-sessions"] === true,
 	};
 }
 
@@ -329,6 +331,10 @@ async function main() {
 			deadlineMs: SCENARIO_DEADLINE_MS,
 			loginMarginMs: LOGIN_MARGIN_MS,
 			probePath: join(BENCH_DIR, "load-probe.ts"),
+			// --keep-sessions: session files and run folders next to the record, for a hand check.
+			keepDir: cli.keepSessions
+				? join(cli.outDir, "sessions", sampleFileName(key).replace(/\.json$/, ""))
+				: null,
 		});
 		attempts.push(result);
 		if (result.kind !== "provider-error") break;

@@ -5,6 +5,8 @@ import {
 	answerMatches,
 	answerParser,
 	canonicalJson,
+	childEnded,
+	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
 	parentToolCalls,
@@ -422,5 +424,50 @@ test("[T59a] calls nested in a codemode script count as parent tool calls", () =
 		}),
 		"wrong-delegation",
 	);
+});
+
+
+test("[T59a] a candidate child ends with an accepted subagent_done call; its summary is its result", () => {
+	// Shape of a real candidate child session (T54 run-m1): the last assistant message stops
+	// for the subagent_done call, the extension records the accepted call, then shuts down.
+	const contract = review.childResults["bench-review-auth"];
+	const session = (summary, text = "") => [
+		{ type: "session", cwd: "/w" },
+		{ type: "custom", customType: "pi-subagents_launch_metadata", data: { name: "review-auth" } },
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [{ type: "toolCall", id: "r1", name: "read", arguments: { path: "review/auth.md" } }],
+			},
+		},
+		{ type: "message", message: { role: "toolResult", toolCallId: "r1", toolName: "read", isError: false, content: [] } },
+		{
+			type: "message",
+			message: {
+				role: "assistant",
+				stopReason: "toolUse",
+				content: [
+					{ type: "text", text },
+					{ type: "toolCall", id: "d1", name: "subagent_done", arguments: { outcome: "done", summary } },
+				],
+			},
+		},
+		{
+			type: "custom",
+			customType: "pi-subagent-accepted-call",
+			data: { toolCallId: "d1", tool: "subagent_done", args: { outcome: "done", summary }, autonomous: true },
+		},
+		{ type: "custom", customType: "pi-subagent-completion", data: { reason: "normal" } },
+		{ type: "message", message: { role: "toolResult", toolCallId: "d1", toolName: "subagent_done", content: [] } },
+	];
+	assert.equal(childEnded(session("auth: approve-4417")), true);
+	assert.deepEqual(childFulfils(session("auth: approve-4417"), contract, "/w"), { read: true, returned: true });
+	assert.deepEqual(childFulfils(session("verdict sent", "auth: approve-4417"), contract, "/w"), { read: true, returned: true });
+	assert.deepEqual(childFulfils(session("auth: reject-1"), contract, "/w"), { read: true, returned: false });
+	// Without the accepted call (v2.9.2 writes none), a toolUse stop is no end.
+	const unaccepted = session("auth: approve-4417").filter((e) => e.customType !== "pi-subagent-accepted-call");
+	assert.equal(childEnded(unaccepted), false);
 });
 

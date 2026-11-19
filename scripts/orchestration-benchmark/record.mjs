@@ -385,7 +385,27 @@ export function containsToken(text, token) {
 /** True when the child's own last reply ended its turn normally. */
 export function childEnded(events) {
 	const own = events.slice(Math.max(0, launchBoundary(events)) + 1);
-	return assistantMessages(own).at(-1)?.stopReason === "stop";
+	return (
+		assistantMessages(own).at(-1)?.stopReason === "stop" ||
+		acceptedCompletion(own) !== null
+	);
+}
+
+// Candidate (T59a): an auto-exit child ends with a subagent_done call that the
+// extension accepted and recorded; cf6dbf4 writes no such entry.
+const ACCEPTED_CALL = "pi-subagent-accepted-call";
+const COMPLETION_TOOL = "subagent_done";
+
+/** The accepted completion call of the child's own entries, or null. */
+function acceptedCompletion(own) {
+	return (
+		own.findLast(
+			(e) =>
+				e?.type === "custom" &&
+				e.customType === ACCEPTED_CALL &&
+				e.data?.tool === COMPLETION_TOOL,
+		) ?? null
+	);
 }
 
 // macOS names a temporary folder with or without its /private prefix.
@@ -462,13 +482,22 @@ export function childFulfils(events, contract, workDir) {
 			.map((part) => resolveReadPath(part.arguments?.path, cwd)),
 	);
 	const last = assistantMessages(own).at(-1);
+	const accepted = acceptedCompletion(own);
+	// A candidate child's result is the text of its last message plus its summary.
+	const completed =
+		accepted !== null &&
+		holdsResult(
+			`${textOf(last?.content ?? [])}\n${accepted.data?.args?.summary ?? ""}`,
+			contract,
+		);
 	return {
 		read: contract.reads.every((file) =>
 			readFiles.includes(resolveReadPath(file, workDir)),
 		),
 		returned:
-			last?.stopReason === "stop" &&
-			holdsResult(textOf(last.content), contract),
+			(last?.stopReason === "stop" &&
+				holdsResult(textOf(last.content), contract)) ||
+			completed,
 	};
 }
 
