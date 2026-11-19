@@ -18,6 +18,8 @@ interface RunEndMessage {
  */
 class DeliveryQueue {
 	private pending = new Map<string, RunEndMessage>();
+	/** Run ends that a running wait holds, with the sink to use when an aborted wait gives them back. */
+	private held = new Map<string, Pick<ExtensionAPI, "sendMessage">>();
 	/** Only a registered session has boundary events; an unregistered host gets the message at once. */
 	private registered = false;
 	private busy = false;
@@ -44,8 +46,34 @@ class DeliveryQueue {
 		pi.on("session_shutdown", () => {
 			// A closed or replaced session gets no more deliveries (D15); results stay in their files.
 			this.pending.clear();
+			this.held.clear();
 			this.busy = false;
 		});
+	}
+
+	/**
+	 * A run end that a wait holds: queued like every run end, but not sent at once. The wait's reply
+	 * takes it, an aborted wait releases it, and a boundary that comes first hands it over.
+	 */
+	hold(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage): void {
+		this.pending.set(message.details.id, message);
+		this.held.set(message.details.id, pi);
+	}
+
+	/** An aborted wait gives a held run end back: it leaves now when nothing else will send it. */
+	release(id: string): void {
+		const pi = this.held.get(id);
+		this.held.delete(id);
+		const message = this.pending.get(id);
+		if (!pi || !message) return;
+		if (!this.registered) {
+			this.pending.delete(id);
+			pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+		} else if (!this.busy) this.send(message, true);
+	}
+
+	queued(id: string): RunEndMessage | undefined {
+		return this.pending.get(id);
 	}
 
 	deliver(pi: Pick<ExtensionAPI, "sendMessage">, message: RunEndMessage, triggerTurn: boolean): void {
@@ -66,12 +94,16 @@ class DeliveryQueue {
 	private commit(message: unknown): void {
 		if (!message || typeof message !== "object" || !("role" in message) || message.role !== "custom") return;
 		const details = (message as { details?: { id?: unknown } }).details;
-		if (typeof details?.id === "string") this.pending.delete(details.id);
+		if (typeof details?.id === "string") {
+			this.pending.delete(details.id);
+			this.held.delete(details.id);
+		}
 	}
 
-	/** A wait took this run end: it leaves the queue, so no boundary hands it over again. */
+	/** A wait reply carried this run end to its caller: no boundary hands it over again. */
 	take(id: string): void {
 		this.pending.delete(id);
+		this.held.delete(id);
 	}
 
 	get size(): number {
@@ -80,6 +112,7 @@ class DeliveryQueue {
 
 	reset(): void {
 		this.pending.clear();
+		this.held.clear();
 		this.registered = false;
 		this.busy = false;
 		this.pi = undefined;
@@ -98,14 +131,36 @@ export function pendingRunEndCount(): number {
 	return deliveryQueue.size;
 }
 
+/** A queued run end not yet committed, for a wait that starts after it was queued (an early ping). */
+export function queuedRunEnd(id: string): (RunEndMessage & { details: Record<string, unknown> }) | undefined {
+	return deliveryQueue.queued(id) as (RunEndMessage & { details: Record<string, unknown> }) | undefined;
+}
+
 /**
- * D15: a wait that returns a run end takes it from the queue; the wait reply delivers it. A copy
- * that Pi already holds in its steer queue may still be committed: that duplicate is capped like
- * every copy, and the run is released once by id here.
+ * D15 and R4, the one hand-over rule for waits: a run end stays in the queue until the reply of
+ * the call that waited for it is returned. A returned reply delivers the results it holds: they
+ * leave the queue and their lease ends once by id. An aborted call's reply may never reach the
+ * model (codemode discards it), so every result it holds stays queued and is handed over as a
+ * message; when Pi commits the reply anyway, the second copy is capped like every copy.
  */
-export function takeQueuedRunEnd(id: string): void {
-	deliveryQueue.take(id);
-	outstandingWork.release(id);
+export function settleWaitReply(
+	ids: readonly string[],
+	replies: readonly { details?: unknown }[],
+	signal?: AbortSignal,
+): void {
+	// A wait error (interrupted, timed out) carries an error and no result.
+	const returned = new Set(
+		replies.flatMap((reply) => {
+			const details = reply.details as { id?: unknown; error?: unknown } | undefined;
+			return typeof details?.id === "string" && !details.error ? [details.id] : [];
+		}),
+	);
+	for (const id of ids) {
+		if (!signal?.aborted && returned.has(id)) {
+			deliveryQueue.take(id);
+			outstandingWork.release(id);
+		} else deliveryQueue.release(id);
+	}
 }
 
 /** Forget the session-scoped queue (test isolation and runtime reset). */
@@ -121,9 +176,10 @@ export function deliverRunEnd(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	id: string,
 	message: Omit<RunEndMessage, "details"> & { details: object },
-	options: { triggerTurn?: boolean } = {},
+	options: { triggerTurn?: boolean; heldByWait?: boolean } = {},
 ): void {
+	const full = { ...message, details: { ...message.details, id } };
 	outstandingWork.delivery(id, () =>
-		deliveryQueue.deliver(pi, { ...message, details: { ...message.details, id } }, options.triggerTurn ?? true),
+		options.heldByWait ? deliveryQueue.hold(pi, full) : deliveryQueue.deliver(pi, full, options.triggerTurn ?? true),
 	);
 }

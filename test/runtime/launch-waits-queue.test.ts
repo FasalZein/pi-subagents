@@ -26,10 +26,7 @@ const REPORT_TAIL = "REPORT-TAIL-MARKER";
 /** A 20,000-character report whose tail must never enter the parent. */
 const LONG_REPORT = `REPORT-HEAD ${"x".repeat(20_000 - 12 - REPORT_TAIL.length - 1)} ${REPORT_TAIL}`;
 
-interface Sent {
-	message: { customType: string; content: string; details: { id: string } };
-	options: unknown;
-}
+type Sent = { customType: string; content: string; details: { id: string } };
 
 function mockParent() {
 	const sent: Sent[] = [];
@@ -41,8 +38,8 @@ function mockParent() {
 			return definition;
 		},
 		getThinkingLevel: () => "low",
-		sendMessage(message: Sent["message"], options: unknown) {
-			sent.push({ message, options });
+		sendMessage(message: Sent) {
+			sent.push(message);
 		},
 		on(name: string, handler: (event: any, ctx: any) => void) {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -169,10 +166,10 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const one = children.find((child) => child.id === "id-child-one");
 		assert.match(one?.report ?? "", /REPORT-HEAD/, "the tool result holds child 1's result");
 		assert.ok((one?.report ?? "").length <= COPY_CAP, `tool-result copy is ${one?.report?.length} chars`);
-		const copies = parent.sent.filter((entry) => entry.message.details.id === "id-child-one");
+		const copies = parent.sent.filter((entry) => entry.details.id === "id-child-one");
 		assert.deepEqual(copies, [], "the queued result was taken by the wait, so no message carries it");
-		for (const entry of parent.sent) assert.ok(entry.message.content.length <= COPY_CAP);
-		for (const copy of [text, ...parent.sent.map((entry) => entry.message.content)]) {
+		for (const entry of parent.sent) assert.ok(entry.content.length <= COPY_CAP);
+		for (const copy of [text, ...parent.sent.map((entry) => entry.content)]) {
 			assert.ok(!copy.includes(REPORT_TAIL), "the 20,000-character report never enters the parent");
 		}
 		assert.equal(pendingRunEndCount(), 0);
@@ -193,10 +190,10 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const end = endOf(running.name, "LATE REPORT");
 		resolveCompletion(end);
 		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
-		const messages = parent.sent.filter((entry) => entry.message.details.id === running.id);
+		const messages = parent.sent.filter((entry) => entry.details.id === running.id);
 		assert.equal(messages.length, 1, "the result is delivered as a message");
-		assert.equal(messages[0].message.customType, "subagent_result");
-		assert.match(messages[0].message.content, /LATE REPORT/);
+		assert.equal(messages[0].customType, "subagent_result");
+		assert.match(messages[0].content, /LATE REPORT/);
 	});
 
 	it("replay 7c: the wait for a child of an async:false agent receives the abort signal", async () => {
@@ -241,7 +238,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 			counts.length = 0;
 			const waited = await waitForSubagentForTest({ id: running.id });
 			const waitCopy = waited.content[0].text as string;
-			const message = parent.sent[0].message;
+			const message = parent.sent[0];
 			// Pi commits the copy it already held and the next request carries it.
 			parent.fire("message_end", { message: { role: "custom", ...message } });
 			outstandingWork.consume([{ role: "custom", ...message }]);

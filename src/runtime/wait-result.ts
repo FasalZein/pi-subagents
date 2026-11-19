@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CompletedSubagentResult, DeliveryState, RunningSubagent, SubagentResult, WaitParams } from "../types.ts";
-import { takeQueuedRunEnd } from "./delivery-queue.ts";
+import { queuedRunEnd } from "./delivery-queue.ts";
 import type { WaitRuntime } from "./wait.ts";
 import { getTimeoutResultDetails } from "./timeout-budget.ts";
 import { resultTextOf } from "./unpublished-result.ts";
@@ -84,6 +84,20 @@ function releaseSubagentWaitOwnership(runtime: WaitRuntime, running: RunningSuba
 
 export async function waitForSubagentResult(params: WaitParams, runtime: WaitRuntime, signal?: AbortSignal) {
 	const match = runtime.findTrackedSubagent(params.id);
+	// A run end that is queued without a cached result (an early ping) is taken like any other.
+	const queued = !match.cached && !match.running ? queuedRunEnd(params.id) : undefined;
+	if (queued) {
+		if (signal?.aborted) {
+			return getSubagentWaitErrorResult(`Waiting for sub-agent "${params.id}" was interrupted.`, "interrupted", {
+				id: params.id,
+			});
+		}
+		const status = queued.customType === "subagent_ping" ? "pinged" : queued.details.status;
+		return {
+			content: [{ type: "text", text: queued.content }],
+			details: { ...queued.details, status, deliveryState: "awaited" as const },
+		};
+	}
 	if (match.error || (!match.cached && !match.running)) {
 		return getSubagentWaitErrorResult(match.error ?? `No subagent matches "${params.id}".`, "not_found", {
 			id: params.id,
@@ -107,7 +121,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		}
 		cached.deliveryState = "awaited";
 		cached.deliveredTo = "wait";
-		takeQueuedRunEnd(cached.id);
 		return getSubagentWaitSuccessResult(cached);
 	}
 
@@ -187,12 +200,14 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 			}
 			completed.deliveryState = "awaited";
 			completed.deliveredTo = "wait";
-			takeQueuedRunEnd(completed.id);
 			return getSubagentWaitSuccessResult(completed);
 		}
 
 		releaseSubagentWaitOwnership(runtime, running, ownerId);
 		if (outcome.kind === "interrupted") {
+			// Interim limit (T26 owns the fix): D16 says Esc leaves the run running, but an aborted wait
+			// still stops it, and since T23 a launch of an async:false agent gets the abort signal too.
+			// The stopped run's end is delivered as a message. Revisit when T26 lands.
 			await runtime.stopRunningSubagent(running);
 			runtime.runningSubagents.delete(running.id);
 			runtime.updateWidget();
