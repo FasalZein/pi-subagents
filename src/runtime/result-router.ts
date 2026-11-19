@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, SubagentPingMessageDetails, SubagentResult } from "../types.ts";
-import { deliverRunEnd } from "./delivery-queue.ts";
+import { deliverRunEnd, isParentDeliveryClosed } from "./delivery-queue.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
-import { isRunEndHeld } from "./wait-holds.ts";
+import { isRunEndHeld, runDeliveryState } from "./wait-holds.ts";
 import {
 	buildCompletedSubagentResult,
 	cacheCompletedSubagentResult,
@@ -38,20 +38,20 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 	running.phase = "ended";
 	clearSubagentShutdownTimer(running);
 	// D15: a run end that a wait owns enters the queue held for that wait; the wait's reply takes it.
-	const heldByWait = running.resultOwner?.kind === "wait" || isRunEndHeld(running.id);
+	const heldByWait = isRunEndHeld(running.id);
+	const parentClosed = isParentDeliveryClosed(running);
 	if (result.ping) {
 		runningSubagents.delete(running.id);
 		updateWidget();
-		if (running.allowSteerDelivery === false && !heldByWait) {
+		if (parentClosed && !heldByWait) {
 			return { kind: "ping", delivered: false };
 		}
 		deliverSubagentPing(pi, running, result, heldByWait);
 		return { kind: "ping", delivered: true };
 	}
-	const completed =
-		running.allowSteerDelivery === false && !running.resultOwner
-			? buildCompletedSubagentResult(running, result)
-			: cacheCompletedSubagentResult(running, result);
+	const completed = parentClosed
+		? buildCompletedSubagentResult(running, result)
+		: cacheCompletedSubagentResult(running, result);
 	releaseSpawnWidthSlot(running);
 	runningSubagents.delete(running.id);
 	updateWidget();
@@ -59,7 +59,7 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 		queueCompletedRunEnd(pi, completed, true);
 		return { kind: "completion", completed };
 	}
-	if (running.allowSteerDelivery === false) {
+	if (parentClosed) {
 		return { kind: "completion", completed };
 	}
 	return {
@@ -142,7 +142,7 @@ function deliverSubagentPing(
 			task: running.task,
 			agent: running.agent,
 			mode: running.mode,
-			deliveryState: running.deliveryState,
+			deliveryState: runDeliveryState(running),
 			parentClosePolicy: running.parentClosePolicy,
 			blocking: running.blocking,
 			async: running.async ?? !running.blocking,

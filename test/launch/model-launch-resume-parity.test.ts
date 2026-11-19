@@ -71,7 +71,6 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 			agent: params.agent,
 			mode: "background",
 			phase: "running",
-			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			startTime: Date.now(),
 			sessionFile,

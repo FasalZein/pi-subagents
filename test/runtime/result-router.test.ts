@@ -1,5 +1,6 @@
 import { deliverCompletedSubagentResult, routeSubagentOutcome } from "../../src/runtime/result-router.ts";
 import { buildCompletedSubagentResult, requestSubagentBatchStop } from "../../src/runtime/state.ts";
+import { claimRunEnd } from "../../src/runtime/wait-holds.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
@@ -18,7 +19,6 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		task: "Report result",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -220,7 +220,9 @@ describe("result router", () => {
 			},
 		};
 
-		const awaited = buildCompletedSubagentResult(makeRunning({ deliveryState: "awaited" }), makeResult());
+		const awaitedRun = makeRunning();
+		claimRunEnd(awaitedRun);
+		const awaited = buildCompletedSubagentResult(awaitedRun, makeResult());
 		const deliveredAwaited = deliverCompletedSubagentResult(pi, awaited);
 		assert.equal(deliveredAwaited, awaited);
 		assert.equal(sent.length, 0);

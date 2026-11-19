@@ -40,7 +40,6 @@ function makeRunning(params: SubagentParamsInput, mode: "background" | "interact
 		agent: params.agent,
 		mode,
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: params.blocking,
 		async: params.async,

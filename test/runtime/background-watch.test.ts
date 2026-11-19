@@ -14,7 +14,6 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess): RunningSu
 		task: "Report context",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

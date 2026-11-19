@@ -138,7 +138,6 @@ export interface RunningSubagent {
 	mode: "interactive" | "background";
 	/** D5: the one phase of this run; the outcome comes at "ended". */
 	phase: RunPhase;
-	deliveryState: DeliveryState;
 	parentClosePolicy: ParentClosePolicy;
 	blocking?: boolean;
 	async?: boolean;
@@ -165,7 +164,6 @@ export interface RunningSubagent {
 	timeoutKillTimer?: ReturnType<typeof setTimeout>;
 	/** Set when closing a pane child's surface failed, so the kill may not have taken. */
 	timeoutKillFailed?: boolean;
-	resultOwner?: { kind: CompletedDelivery; ownerId: string };
 	/** Extension entries this start dropped because they do not resolve; the reply names them (D10). */
 	droppedExtensions?: readonly string[];
 	completionPromise?: Promise<SubagentResult>;
@@ -198,7 +196,6 @@ export interface RunningSubagent {
 	lastSessionSize?: number;
 	pendingToolCount?: number;
 	abortController?: AbortController;
-	allowSteerDelivery?: boolean;
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
 	/** The pane launcher's process id, read before the watcher removes its marker; it exits after Pi. */

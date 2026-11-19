@@ -13,6 +13,7 @@ import {
 	runningSubagents,
 } from "./state.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
+import { runDeliveryState } from "./wait-holds.ts";
 
 export interface RunningRegistryRuntime {
 	updateWidget(): void;
@@ -143,7 +144,7 @@ export function getStartedSubagentDetails(
 		noSession: running.noSession,
 		status: "started" as const,
 		mode: running.mode,
-		deliveryState: running.deliveryState,
+		deliveryState: runDeliveryState(running),
 		parentClosePolicy: running.parentClosePolicy,
 		async: running.async !== false,
 		autoExit: running.autoExit,
@@ -282,7 +283,7 @@ export function wireSubagentSteerBack(
 					elapsed: failed.elapsed,
 					// The durable session target only; an ephemeral session is never exposed.
 					sessionFile: failed.sessionFile,
-					deliveryState: running.deliveryState,
+					deliveryState: runDeliveryState(running),
 					parentClosePolicy: running.parentClosePolicy,
 					errorMessage: error,
 					error: err?.message,

@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { pendingRunEndCount, queuedRunEndIds, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
+import { runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
@@ -60,6 +61,11 @@ interface Harness {
 	requests: string[];
 	toolResults(name: string): { text: string; details: Record<string, unknown>; isError: boolean }[];
 	dispose(): Promise<void>;
+}
+
+/** A launch that waits claims its run's end (D15); the run record carries no delivery state. */
+function isClaimed(run: RunningSubagent | undefined): boolean {
+	return run !== undefined && runDeliveryState(run) === "awaited";
 }
 
 function textOf(content: unknown): string {
@@ -163,7 +169,6 @@ async function startParent(
 				modelRef: CHILD_MODEL,
 				mode: "background",
 				phase: "running",
-				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				blocking: params.agent === "worker-wait",
 				async: params.agent !== "worker-wait",
@@ -358,7 +363,7 @@ describe("T28: structured launch replies", () => {
 		);
 		try {
 			const run = harness.session.prompt("go");
-			await until(() => harness.runs.get("child-wait")?.resultOwner?.kind === "wait", "the launch owns the wait");
+			await until(() => isClaimed(harness.runs.get("child-wait")), "the launch owns the wait");
 			harness.finishWithCall("child-wait", "WAITED-SUMMARY");
 			await run;
 			await harness.session.waitForIdle();
@@ -432,7 +437,7 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 		});
 		try {
 			const run = harness.session.prompt("go");
-			await until(() => harness.runs.get("child-wait")?.resultOwner?.kind === "wait", "the launch owns the wait");
+			await until(() => isClaimed(harness.runs.get("child-wait")), "the launch owns the wait");
 			await harness.session.abort();
 			await run;
 			const value = structured[0] as { children: ScriptChild[] } | undefined;

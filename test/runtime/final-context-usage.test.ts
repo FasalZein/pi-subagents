@@ -19,7 +19,6 @@ function makeRunning(sessionFile: string): RunningSubagent {
 		task: "Do the work",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

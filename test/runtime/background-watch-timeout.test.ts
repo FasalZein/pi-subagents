@@ -129,7 +129,6 @@ function makeRunning(
 		task: "Loop forever",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

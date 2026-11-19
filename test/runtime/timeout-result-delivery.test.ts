@@ -10,7 +10,6 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		task: "Loop forever",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

@@ -63,7 +63,6 @@ function blockingRunning(name: string): RunningSubagent {
 		agent: "worker-a",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: true,
 		async: false,

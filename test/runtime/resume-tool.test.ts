@@ -944,7 +944,6 @@ describe("subagent_resume same-session guard", () => {
 			agent: "magician",
 			sessionFile,
 			mode: "interactive",
-			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			blocking: false,
 			async: true,

@@ -9,7 +9,6 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		task: "test task",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: false,
 		async: true,

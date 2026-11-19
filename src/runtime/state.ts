@@ -1,6 +1,6 @@
 import { outstandingWork } from "./outstanding-work.ts";
 import { resetDeliveryQueue } from "./delivery-queue.ts";
-import { resetRunEndHolds } from "./wait-holds.ts";
+import { resetRunEndHolds, runDeliveryState } from "./wait-holds.ts";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { getSubagentTerminalStopReason } from "../session/session.ts";
 import type { CompletedSubagentResult, RunningSubagent, SubagentCompletionStatus, SubagentResult } from "../types.ts";
@@ -57,7 +57,7 @@ export function buildCompletedSubagentResult(
 		agent: running.agent,
 		mode: running.mode,
 		status: getSubagentCompletionStatus(result, running),
-		deliveryState: running.deliveryState,
+		deliveryState: runDeliveryState(running),
 		parentClosePolicy: running.parentClosePolicy,
 		async: running.async !== false,
 		autoExit: running.autoExit,

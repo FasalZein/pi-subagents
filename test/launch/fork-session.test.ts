@@ -1,3 +1,4 @@
+import { claimRunEnd, runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import {
 	ASSISTANT_MSG,
 	afterEach,
@@ -369,7 +370,6 @@ describe("fork session launch behavior", () => {
 			task: "Do the work",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			startTime: Date.now(),
@@ -458,7 +458,6 @@ describe("fork session launch behavior", () => {
 			task: "Finish before returning",
 			mode: "interactive" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: true,
 			startTime: Date.now(),
@@ -518,7 +517,6 @@ describe("fork session launch behavior", () => {
 			task: "Keep running",
 			mode: "interactive" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			async: true,
@@ -532,7 +530,6 @@ describe("fork session launch behavior", () => {
 			task: "Keep running",
 			mode: "interactive" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: false,
 			async: true,
@@ -546,7 +543,6 @@ describe("fork session launch behavior", () => {
 			task: "Gate the parent",
 			mode: "interactive" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			blocking: true,
 			async: false,
@@ -619,16 +615,16 @@ describe("fork session launch behavior", () => {
 			name: "Detached child",
 			agent: "scout",
 			task: "Keep running",
-			deliveryState: "detached" as const,
 		});
-		setRunningSubagentForTest({
+		const awaitedChild = {
 			...base,
 			id: "child-widget-2",
 			name: "Awaited child",
 			agent: "researcher",
 			task: "Wait here",
-			deliveryState: "awaited" as const,
-		});
+		};
+		setRunningSubagentForTest(awaitedChild);
+		claimRunEnd(awaitedChild);
 		const widget = renderSubagentWidgetForTest().join("\n");
 		assert.match(widget, /Detached child \[scout\]/);
 		assert.match(widget, /Awaited child \[researcher\]/);
@@ -647,7 +643,6 @@ describe("fork session launch behavior", () => {
 			task: "Wait for me",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-1.jsonl",
@@ -668,7 +663,7 @@ describe("fork session launch behavior", () => {
 		});
 
 		const waitPromise = waitForSubagentForTest({ id: running.name });
-		assert.equal(running.deliveryState, "awaited");
+		assert.equal(runDeliveryState(running), "awaited");
 
 		resolveCompletion({
 			name: running.name,
@@ -696,7 +691,6 @@ describe("fork session launch behavior", () => {
 			task: "Need help",
 			mode: "interactive" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-ping.jsonl",
@@ -728,7 +722,6 @@ describe("fork session launch behavior", () => {
 			task: "Wait twice",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-repeat.jsonl",

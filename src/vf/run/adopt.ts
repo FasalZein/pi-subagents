@@ -179,7 +179,6 @@ function registerAdoptedWatcher(
 		agent: manifest.request.agent,
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "continue",
 		blocking: false,
 		async: true,

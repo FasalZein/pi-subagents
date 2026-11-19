@@ -49,7 +49,6 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent> = 
 		task: "Sweep the repo",
 		mode: "interactive",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

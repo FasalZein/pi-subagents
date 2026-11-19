@@ -27,7 +27,6 @@ function makeRunning(id: string): RunningSubagent {
 		agent: "worker",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

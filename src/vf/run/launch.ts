@@ -124,7 +124,7 @@ export async function launchVerifiedFanOut(
 	params: SubagentParamsInput,
 	agentDefs: AgentDefaults,
 	ctx: SubagentLaunchContext,
-	options: { signal?: AbortSignal; awaited?: boolean; slots?: SpawnSlotLease } = {},
+	options: { signal?: AbortSignal; slots?: SpawnSlotLease } = {},
 ): Promise<VerifiedFanOutLaunch> {
 	let fanout: ReturnType<typeof resolveVerifiedFanOutLaunch>;
 	let verifier: ReturnType<typeof resolveVerifierModel>;
@@ -295,7 +295,6 @@ export async function launchVerifiedFanOut(
 			agent: params.agent,
 			mode: "background",
 			phase: "running",
-			deliveryState: options.awaited ? "awaited" : "detached",
 			parentClosePolicy: "continue",
 			blocking: params.blocking ?? false,
 			async: params.async ?? !(params.blocking ?? false),

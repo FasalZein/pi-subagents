@@ -67,7 +67,6 @@ function child(id: string): RunningSubagent {
 		task: "test",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		sessionFile: "child.jsonl",

@@ -57,7 +57,6 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		agent: "scout",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

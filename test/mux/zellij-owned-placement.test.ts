@@ -290,7 +290,6 @@ fi
 			task: "Exit abruptly",
 			mode: "interactive",
 			phase: "running",
-			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			startTime: Date.now(),
 			sessionFile,

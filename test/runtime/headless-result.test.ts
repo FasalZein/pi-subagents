@@ -38,7 +38,6 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess, options: T
 		agent: "scout",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

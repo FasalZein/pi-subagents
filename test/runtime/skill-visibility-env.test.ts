@@ -163,7 +163,6 @@ describe("skill visibility env on resume and timeout wrap-up", () => {
 				agent: "scout",
 				mode: "background",
 				phase: "running",
-				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				async: true,
 				autoExit: false,

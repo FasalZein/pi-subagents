@@ -17,7 +17,6 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		task: "work",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		startTime: 1_000_000,
 		sessionFile: "/tmp/does-not-exist.jsonl",

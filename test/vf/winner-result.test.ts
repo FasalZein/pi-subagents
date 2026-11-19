@@ -167,7 +167,6 @@ describe("verified fan-out winner result", () => {
 			task: "t",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "continue" as const,
 			startTime: Date.now(),
 			sessionFile: "",

@@ -44,7 +44,6 @@ function startPaneRun(
 		agent: "scout",
 		mode: "interactive",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

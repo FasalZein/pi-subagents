@@ -163,7 +163,6 @@ async function watchAndPublish(sessionFile: string, runningFields: Partial<Runni
 		agent: "scout",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

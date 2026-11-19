@@ -61,7 +61,6 @@ function launchRuntime(children: {
 				agent: "worker-a",
 				mode: "background",
 				phase: "running",
-				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				blocking: true,
 				async: false,

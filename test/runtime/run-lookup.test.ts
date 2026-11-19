@@ -77,7 +77,6 @@ function startRun(session: ReturnType<typeof parentSession>, name: string, deliv
 		agent: "worker-a",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: false,
 		async: true,

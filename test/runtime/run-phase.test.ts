@@ -49,7 +49,6 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent>): 
 		task: "Finish the sweep",
 		mode: "background",
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { markSessionFileForDeletionOnExit } from "../session/delete-on-exit.ts";
 import { getInteractiveProcessFile, isProcessGone } from "../session/interactive-process.ts";
 import type { CompletedSubagentResult, ParentClosePolicy, ParentShutdownAction, RunningSubagent } from "../types.ts";
+import { closeParentDelivery } from "./delivery-queue.ts";
 import { clearSubagentShutdownTimer } from "./state.ts";
+import { dropRunEndClaim } from "./wait-holds.ts";
 
 export type ShutdownSubagentsOptions = {
 	escalationMs?: number;
@@ -125,9 +127,8 @@ export async function shutdownSubagentsForParentExit(
 
 	for (const agent of runtime.runningSubagents.values()) {
 		clearSubagentShutdownTimer(agent);
-		agent.allowSteerDelivery = false;
-		agent.resultOwner = undefined;
-		agent.deliveryState = "detached";
+		closeParentDelivery(agent);
+		dropRunEndClaim(agent);
 
 		if (agent.parentClosePolicy === "continue") {
 			// D13, orderly detach: a no-session child gets no result; its file goes after it exits.

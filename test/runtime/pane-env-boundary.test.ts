@@ -440,7 +440,6 @@ for (const backend of BACKENDS)
 					agent: "scout",
 					mode: "interactive",
 					phase: "running",
-					deliveryState: "detached",
 					parentClosePolicy: "terminate",
 					async: true,
 					autoExit: false,

@@ -1,3 +1,4 @@
+import { isRunEndHeld, runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import {
 	afterEach,
 	assert,
@@ -23,7 +24,6 @@ describe("subagent wait behavior", () => {
 			task: result.task,
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			reportContextUsage: result.reportContextUsage,
 			startTime: Date.now(),
@@ -148,7 +148,6 @@ describe("subagent wait behavior", () => {
 			task: "Too late",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-2.jsonl",
@@ -192,7 +191,6 @@ describe("subagent wait behavior", () => {
 			task: "Still running",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-3.jsonl",
@@ -220,7 +218,7 @@ describe("subagent wait behavior", () => {
 
 		assert.equal((waited.details as any).status, "pending");
 		assert.equal((waited.details as any).deliveryState, "detached");
-		assert.equal(running.deliveryState, "detached");
+		assert.equal(runDeliveryState(running), "detached");
 
 		resolveCompletion({
 			name: running.name,
@@ -250,7 +248,6 @@ describe("subagent wait behavior", () => {
 			task: "Miss the deadline",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-timeout-error.jsonl",
@@ -275,8 +272,8 @@ describe("subagent wait behavior", () => {
 			timeout: 0.01,
 		});
 		assert.equal((waited.details as any).error, "timeout");
-		assert.equal(running.deliveryState, "detached");
-		assert.equal((running as any).resultOwner, undefined);
+		assert.equal(runDeliveryState(running), "detached");
+		assert.equal(isRunEndHeld(running.id), false);
 
 		resolveCompletion({
 			name: running.name,
@@ -305,7 +302,6 @@ describe("subagent wait behavior", () => {
 			task: "Resume detached delivery",
 			mode: "background" as const,
 			phase: "running" as const,
-			deliveryState: "detached" as const,
 			parentClosePolicy: "terminate" as const,
 			startTime: Date.now(),
 			sessionFile: "/tmp/child-wait-interrupt-1.jsonl",
@@ -327,13 +323,13 @@ describe("subagent wait behavior", () => {
 
 		const abort = new AbortController();
 		const waitPromise = waitForSubagentForTest({ id: running.id }, abort.signal);
-		assert.equal(running.deliveryState, "awaited");
+		assert.equal(runDeliveryState(running), "awaited");
 
 		abort.abort();
 		const waited = await waitPromise;
 		assert.equal((waited.details as any).error, "interrupted");
-		assert.equal(running.deliveryState, "detached");
-		assert.equal((running as any).resultOwner, undefined);
+		assert.equal(runDeliveryState(running), "detached");
+		assert.equal(isRunEndHeld(running.id), false);
 
 		resolveCompletion({
 			name: running.name,

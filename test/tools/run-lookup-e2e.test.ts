@@ -128,7 +128,6 @@ async function startParent(options: { unwritableResults?: boolean } = {}): Promi
 				agent: "worker-a",
 				mode: "background",
 				phase: "running",
-				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				blocking: false,
 				async: true,

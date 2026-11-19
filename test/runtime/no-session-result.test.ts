@@ -45,7 +45,6 @@ function makeNoSessionRun(
 		agent: "scout",
 		mode,
 		phase: "running",
-		deliveryState: "detached",
 		parentClosePolicy,
 		async: true,
 		noSession: true,
