@@ -416,6 +416,7 @@ async function watchInteractiveGeneration(
 				task,
 				summary: `Subagent error: ${errorMessage}`,
 				summarySource: "runtime",
+				sessionFile: running.noSession ? undefined : sessionFile,
 				exitCode: 1,
 				elapsed: Math.floor((Date.now() - startTime) / 1000),
 				outputTokens: 0,

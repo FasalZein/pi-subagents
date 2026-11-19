@@ -12,10 +12,13 @@ import type { RunningSubagent } from "../../src/types.ts";
 import {
 	childSessionFile,
 	endWatchedChild,
+	failWatcher,
 	type Parent,
 	recordingReply,
 	startParent,
+	waitFor,
 } from "../support/delivery-parent.ts";
+import { registerSubagentMessageRenderers } from "../../src/tools/message-renderers.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 
 // T22 at the extension boundary (D15, D30): a real Pi parent session, three children that end
@@ -100,6 +103,49 @@ function runEndEntries(file: string): SessionEntry[] {
 const REPORTER_SESSION: WorkReporterSession = { mode: "tui", sessionManager: { getSessionFile: () => "parent.jsonl" } };
 
 describe("one message per turn boundary (T22, D15, D30)", () => {
+	it("a watcher error message keeps its session target and failed outcome: overlay row and failed header", async () => {
+		const parent = await startParent({
+			replies: (p) => [fauxAssistantMessage("Nothing to do."), recordingReply(p, "Read the result.")],
+		});
+		try {
+			await parent.prompt("hello");
+			const runId = failWatcher(parent, "child-broken");
+			await waitFor(() => parent.requests.length === 1, "the turn that the result starts");
+			const [message] = runEndEntries(parent.sessionFile());
+			const details = message?.details as Record<string, unknown> | undefined;
+			assert.equal(details?.id, runId);
+			assert.equal(details?.outcome, "failed");
+			assert.match(String(details?.sessionFile), /child\.jsonl$/);
+			const renderers = new Map<string, (...args: any[]) => any>();
+			registerSubagentMessageRenderers(
+				{ registerMessageRenderer: (n: string, r: any) => renderers.set(n, r) } as any,
+				(s) => `${s}s`,
+			);
+			const plain = { fg: (_: string, t: string) => t, bg: (_: string, t: string) => t, bold: (t: string) => t };
+			const lines: string[] = renderers.get("subagent_result")!(
+				message,
+				{ expanded: false, outputPad: 0 },
+				plain,
+			).render(80);
+			assert.ok(
+				lines.some((line) => /^✗ child-broken .*failed/.test(line.trim())),
+				JSON.stringify(lines),
+			);
+			const overlayCtx = {
+				cwd: createTestDir(),
+				sessionManager: { getSessionFile: () => parent.sessionFile() },
+			} as never;
+			for (const when of ["before reload", "after reload"]) {
+				if (when === "after reload") completedSubagentResults.clear();
+				const row = (await buildCompletedItems(overlayCtx)).find((item) => item.id === runId);
+				assert.equal(row?.status, "failed", `${when}: failed row`);
+				assert.equal(row?.canResume, true, `${when}: resumable`);
+			}
+		} finally {
+			await parent.dispose();
+		}
+	});
+
 	it("three children that end during one tool batch leave as one message; the count holds 3 until it is committed", async () => {
 		let countWhenEnded: number | undefined;
 		const counts: number[] = [];
