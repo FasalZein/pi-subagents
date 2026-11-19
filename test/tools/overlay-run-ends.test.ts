@@ -79,7 +79,7 @@ describe("overlay rows from run-end messages (T22)", () => {
 		);
 	});
 
-	it("an ephemeral run never offers resume", async () => {
+	it("an ephemeral run is a row without resume, before and after reload, grouped too", async () => {
 		const dir = createTestDir();
 		completedSubagentResults.set("ephemeral", {
 			id: "ephemeral",
@@ -90,21 +90,103 @@ describe("overlay rows from run-end messages (T22)", () => {
 			elapsed: 1,
 			status: "completed",
 		} as CompletedSubagentResult);
-		// The session file holds its message too, without a session file of its own.
+		const group = groupRunEnds([
+			{
+				customType: "subagent_result",
+				content: "e",
+				display: true,
+				details: { id: "ephemeral", name: "ephemeral", status: "completed" } as any,
+			},
+			{
+				customType: "subagent_result",
+				content: "g",
+				display: true,
+				details: { id: "grouped-eph", name: "grouped-eph", status: "completed" } as any,
+			},
+		]);
+		const file = sessionWith(dir, [group]);
+		const before = await buildCompletedItems(overlayCtx(file));
+		assert.deepEqual(
+			before.map((item) => [item.id, item.canResume]),
+			[
+				["ephemeral", false],
+				["grouped-eph", false],
+			],
+		);
+		// A reload keeps only the session file.
+		completedSubagentResults.clear();
+		const after = await buildCompletedItems(overlayCtx(file));
+		assert.deepEqual(
+			after.map((item) => [item.id, item.canResume]),
+			[
+				["ephemeral", false],
+				["grouped-eph", false],
+			],
+		);
+	});
+
+	it("one session with a ping, then a resume that finishes: the newest run is the row before and after reload", async () => {
+		const dir = createTestDir();
+		const session = join(dir, "child.jsonl");
 		const file = sessionWith(dir, [
+			{
+				customType: "subagent_ping",
+				content: "help",
+				details: { id: "run-1", name: "child", message: "help", sessionFile: session },
+			},
 			{
 				customType: "subagent_result",
 				content: "done",
-				details: { id: "ephemeral", name: "ephemeral", status: "completed" },
+				details: {
+					id: "run-2",
+					name: "child",
+					status: "completed",
+					outcome: "done",
+					exitCode: 0,
+					sessionFile: session,
+				},
+			},
+		]);
+		completedSubagentResults.set("run-2", {
+			id: "run-2",
+			name: "child",
+			task: "t",
+			summary: "done",
+			exitCode: 0,
+			elapsed: 1,
+			status: "completed",
+			sessionFile: session,
+		} as CompletedSubagentResult);
+		const rows = async () => (await buildCompletedItems(overlayCtx(file))).map((item) => [item.id, item.status]);
+		assert.deepEqual(await rows(), [["run-2", undefined]]);
+		completedSubagentResults.clear();
+		assert.deepEqual(await rows(), [["run-2", undefined]]);
+	});
+
+	it("reads the summary line of a current result and of a legacy message after reload", async () => {
+		const dir = createTestDir();
+		const file = sessionWith(dir, [
+			{
+				customType: "subagent_result",
+				content: "current · scout · done · 1s · typed\nThe current summary.\n\nSecond paragraph.\nrun: r-cur",
+				details: {
+					id: "r-cur",
+					name: "current",
+					status: "completed",
+					runId: "r-cur",
+					sessionFile: join(dir, "c.jsonl"),
+				},
+			},
+			{
+				customType: "subagent_result",
+				content: "legacy header\n\nThe legacy summary.\n\nSession: /tmp/x.jsonl",
+				details: { id: "r-old", name: "legacy", status: "completed", sessionFile: join(dir, "l.jsonl") },
 			},
 		]);
 		const items = await buildCompletedItems(overlayCtx(file));
-		assert.equal(items.length, 1);
-		assert.equal(items[0]?.canResume, false);
-		completedSubagentResults.clear();
-		assert.equal(
-			(await buildCompletedItems(overlayCtx(file))).some((item) => item.canResume),
-			false,
+		assert.deepEqual(
+			items.map((item) => item.activity),
+			["The current summary.", "The legacy summary."],
 		);
 	});
 });

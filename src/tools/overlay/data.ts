@@ -1,6 +1,5 @@
 import { type AgentDefaults, loadAgentDefaults } from "../../agents/definitions.ts";
 import { completedSubagentResults, runningSubagents } from "../../runtime/state.ts";
-import { type RunEndEntry, runEnds } from "../../runtime/run-end-message.ts";
 import { stopRunningSubagent } from "../../runtime/wiring.ts";
 import { getEntries } from "../../session/session.ts";
 import {
@@ -15,6 +14,7 @@ import type {
 	SessionMessageLike,
 	SessionUsage,
 } from "../../types.ts";
+import { newestRunsBySession, recoverResultDetails, recoverSummary } from "./recovered-runs.ts";
 import { compactCount, firstLine, formatElapsed, formatElapsedSeconds } from "./render-helpers.ts";
 import type { DetailSection, OverlayContext, OverlayItem } from "./render-types.ts";
 
@@ -356,69 +356,6 @@ function completedRuntimeSection(args: {
 	return { title: "Execution", fields };
 }
 
-interface RecoveredResultDetails {
-	id: string;
-	name: string;
-	agent?: string;
-	status: "completed" | "cancelled" | "failed";
-	/** The published outcome (D14), shown when it is not plain done. */
-	outcome?: string;
-	content: string;
-	exitCode?: number;
-	elapsed?: number;
-	sessionFile?: string;
-	errorMessage?: string;
-}
-
-function getEntryDetails(entry: { [key: string]: unknown }): Record<string, unknown> | undefined {
-	const direct = entry.details;
-	if (typeof direct === "object" && direct !== null) return direct as Record<string, unknown>;
-	const message = entry.message;
-	if (typeof message !== "object" || message === null) return undefined;
-	const details = (message as { details?: unknown }).details;
-	return typeof details === "object" && details !== null ? (details as Record<string, unknown>) : undefined;
-}
-
-/** Every run end a session entry carries: one per old single-result or ping message, several per group (D15). */
-function recoverResultDetails(entry: { [key: string]: unknown }): RecoveredResultDetails[] {
-	if (entry.type !== "custom_message") return [];
-	return runEnds(entry.customType, entry.content, getEntryDetails(entry)).flatMap((runEnd) => {
-		const recovered = recoverRunEnd(runEnd);
-		return recovered ? [recovered] : [];
-	});
-}
-
-function recoverRunEnd({ customType, content, details }: RunEndEntry): RecoveredResultDetails | undefined {
-	const name = typeof details.name === "string" ? details.name : undefined;
-	const id = typeof details.id === "string" ? details.id : name;
-	const rawStatus = typeof details.status === "string" ? details.status : undefined;
-	const status =
-		rawStatus === "completed" || rawStatus === "cancelled" || rawStatus === "failed"
-			? rawStatus
-			: details.exitCode === 0 || customType === "subagent_ping"
-				? "completed"
-				: "failed";
-	if (!id || !name) return undefined;
-	const outcome = typeof details.outcome === "string" ? details.outcome : customType === "subagent_ping" ? "blocked" : undefined;
-	return {
-		id,
-		name,
-		content,
-		...(outcome ? { outcome } : {}),
-		agent: typeof details.agent === "string" ? details.agent : undefined,
-		status,
-		exitCode: typeof details.exitCode === "number" ? details.exitCode : undefined,
-		elapsed: typeof details.elapsed === "number" ? details.elapsed : undefined,
-		sessionFile: typeof details.sessionFile === "string" ? details.sessionFile : undefined,
-		errorMessage: typeof details.errorMessage === "string" ? details.errorMessage : undefined,
-	};
-}
-
-function recoverSummary(content: string): string {
-	const [, afterHeader = content] = content.split(/\n\n/, 2);
-	return firstLine(afterHeader.replace(/\n\nSession:[\s\S]*$/, ""), 90) || "completed";
-}
-
 /** Outcomes that the status icon does not already say (D14): blocked, partial, timed out. */
 function shownOutcomeOf(outcome: string | undefined): string | undefined {
 	return outcome && !["done", "failed", "cancelled"].includes(outcome) ? outcome.replace("_", " ") : undefined;
@@ -490,6 +427,7 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 
 	for (const [dedupeKey, r] of latestCompleted) {
 		seen.add(dedupeKey);
+		seen.add(r.id);
 
 		const visual = statusVisuals(r.status);
 		const shownOutcome = shownOutcomeOf(r.resultOutcome);
@@ -538,21 +476,17 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 	if (sf) {
 		try {
 			const entries = getEntries(sf) as Array<{ [key: string]: unknown }>;
-			for (const recovered of entries.flatMap(recoverResultDetails)) {
-				if (
-					!recovered?.sessionFile ||
-					seen.has(recovered.sessionFile) ||
-					runningSessionFiles.has(recovered.sessionFile)
-				)
-					continue;
-				seen.add(recovered.sessionFile);
+			for (const [key, recovered] of newestRunsBySession(entries.flatMap(recoverResultDetails))) {
+				if (seen.has(key) || seen.has(recovered.id)) continue;
+				if (recovered.sessionFile && runningSessionFiles.has(recovered.sessionFile)) continue;
+				seen.add(key);
 				const visual = statusVisuals(recovered.status);
 				const summary = recovered.errorMessage
 					? `error: ${firstLine(recovered.errorMessage, 80)}`
-					: recoverSummary(recovered.content);
+					: recoverSummary(recovered.content, recovered.published);
 				const shownOutcome = shownOutcomeOf(recovered.outcome);
 				const sessionStats = readCompletedSessionStats(recovered.sessionFile);
-				const meta = safeMeta(recovered.sessionFile);
+				const meta = recovered.sessionFile ? safeMeta(recovered.sessionFile) : undefined;
 				const defs = recovered.agent ? safeDefs(recovered.agent, ctx.cwd) : null;
 				const sections = buildSections(defs, meta);
 				sections.push(
@@ -581,7 +515,8 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 					activity: summary,
 					detailSections: sections,
 					canKill: false,
-					canResume: true,
+					// An ephemeral run has no session to resume.
+					canResume: Boolean(recovered.sessionFile),
 					sessionFile: recovered.sessionFile,
 				});
 			}
