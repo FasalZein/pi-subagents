@@ -82,7 +82,7 @@ function threeChildrenTool(parent: () => Parent, onEnded: () => void): Extension
 interface SessionEntry {
 	type?: string;
 	customType?: string;
-	details?: { ids?: string[]; results?: unknown[] };
+	details?: { results?: Array<{ details?: { id?: string } }> };
 }
 
 function sessionEntries(file: string): SessionEntry[] {
@@ -181,7 +181,8 @@ describe("one message per turn boundary (T22, D15, D30)", () => {
 			const messages = runEndEntries(parent.sessionFile());
 			assert.equal(messages.length, 1, `run-end messages: ${JSON.stringify(messages.map((m) => m.details))}`);
 			assert.equal(messages[0]?.customType, "subagent_result");
-			assert.deepEqual([...(messages[0]?.details?.ids ?? [])].sort(), [done, failed, blocked].sort());
+			const memberIds = (messages[0]?.details?.results ?? []).map((member) => member.details?.id);
+			assert.deepEqual(memberIds.sort(), [done, failed, blocked].sort());
 			assert.equal(messages[0]?.details?.results?.length, 3);
 
 			// The next request carries each run once.

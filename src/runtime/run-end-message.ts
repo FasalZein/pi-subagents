@@ -21,7 +21,6 @@ export interface RunEndEntry {
 }
 
 interface GroupedRunEndDetails {
-	ids: string[];
 	results: RunEndEntry[];
 }
 
@@ -43,7 +42,6 @@ export function groupRunEnds(messages: readonly RunEndMessage[]): RunEndMessage 
 		content: messages.map((message) => message.content).join(RESULT_SEPARATOR),
 		display: true,
 		details: {
-			ids: messages.map((message) => message.details.id),
 			results: messages.map((message) => ({
 				customType: message.customType,
 				content: message.content,

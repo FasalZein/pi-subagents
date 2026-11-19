@@ -12,7 +12,7 @@ import {
 import { getLaunchedSubagentResult, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { settleWaitReply } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
-import { groupRunEnds, type RunEndMessage } from "../../src/runtime/run-end-message.ts";
+import { groupRunEnds, type RunEndMessage, runEndIds } from "../../src/runtime/run-end-message.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 
 function child(id: string): RunningSubagent {
@@ -146,7 +146,7 @@ test("a committed grouped message releases each run it carries; a running run wh
 		settleWaitReply([third.id], [], aborted.signal);
 		assert.equal(outstandingWork.count, 3, "two queued results and one running run");
 		const group = groupRunEnds(h.messages as RunEndMessage[]);
-		assert.deepEqual((group.details as { ids?: string[] }).ids, [first.id, second.id]);
+		assert.deepEqual(runEndIds({ ...group, role: "custom" }), [first.id, second.id]);
 		await h.emit("message_end", { message: { ...group, role: "custom" } });
 		assert.equal(outstandingWork.count, 1, "the running run still counts");
 		assert.equal(h.counts.at(-1), 1);
