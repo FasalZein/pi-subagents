@@ -78,6 +78,7 @@ import "./tools/wait-tool.test.ts";
 import "./tools/run-lookup-e2e.test.ts";
 import "./runtime/wait-join.test.ts";
 import "./runtime/run-lookup.test.ts";
+import "./runtime/continue-child-lookup.test.ts";
 import "./runtime/result-router.test.ts";
 import "./runtime/result-assembler.test.ts";
 import "./runtime/result-render.test.ts";
