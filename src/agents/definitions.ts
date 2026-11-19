@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { type ParsedSpawnEnv, parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import { normalizeVerifierModelRef } from "../vf/model-ref.ts";
 
 export interface AgentDefaults {
@@ -516,7 +517,26 @@ export function loadAgentDefaults(
 	const resolvedBaseCwd = resolveAgentCwd(cwdHint ?? null, baseCwd);
 	const entry = loadAgentCatalog(resolvedBaseCwd).lookup(agentName);
 	if (entry?.kind === "malformed") {
+		// The grant comes first: only a caller that may launch the agent learns its file and parse error.
+		const policy = malformedFileSpawnPolicy(entry.file, parseSpawnEnv(process.env));
+		if (!policy.allowed) throw new Error(`Error: ${policy.reason ?? "Spawn policy denied this target."}`);
 		throw new Error(`Agent "${agentName}" is malformed in ${entry.file.path}: ${entry.file.error}`);
 	}
 	return entry?.definition ?? null;
+}
+
+/** The spawn policy for a malformed file: its stated visibility, no spawning of its own. */
+export function malformedFileSpawnPolicy(file: MalformedAgentFile, spawnEnv: ParsedSpawnEnv): SpawnPolicyResult {
+	return resolveSpawnPolicy({
+		callerAgent: spawnEnv.callerAgent,
+		targetAgent: file.name,
+		callerBudget: spawnEnv.callerBudget,
+		callerSpawnable: spawnEnv.callerSpawnable,
+		targetSpawning: false,
+		targetSpawnDepth: undefined,
+		targetSpawnWidth: undefined,
+		targetVisibleTo: file.visibleTo,
+		envDepthCeiling: spawnEnv.envDepthCeiling,
+		envWidthCeiling: spawnEnv.envWidthCeiling,
+	});
 }

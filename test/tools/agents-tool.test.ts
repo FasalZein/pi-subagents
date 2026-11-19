@@ -342,7 +342,8 @@ describe("subagent_agents tool", () => {
 		for (const agent of ["root-only", "unreadable"]) {
 			const errors = await launchAndResumeErrors(cwd, agent);
 			for (const [path, text] of Object.entries(errors)) {
-				assert.doesNotMatch(text, /malformed|\.md|timeout|visible-to/, `${agent} ${path}: ${text}`);
+				assert.doesNotMatch(text, /malformed|\.md|timeout/, `${agent} ${path}: ${text}`);
+				assert.match(text, /policy/, `${agent} ${path} is refused by the spawn policy: ${text}`);
 				assert.doesNotMatch(text, /^no error/, `${agent} ${path} is refused`);
 			}
 		}
