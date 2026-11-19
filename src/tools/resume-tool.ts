@@ -117,8 +117,7 @@ export function registerSubagentResumeTool(
 			),
 			mode: Type.Optional(
 				Type.Union([Type.Literal("background"), Type.Literal("interactive")], {
-					description:
-						"Resume mode used only when the session has no launch metadata; saved metadata always wins.",
+					description: "Resume mode used only when the session has no launch metadata; saved metadata always wins.",
 				}),
 			),
 		}),
