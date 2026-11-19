@@ -23,7 +23,7 @@ export class ApplyError extends Error {
 	}
 }
 
-export interface AppliedWinner {
+interface AppliedWinner {
 	applied: boolean;
 	/** Staged tree hash after a successful apply (equals the winner tree). */
 	treeHash: string;

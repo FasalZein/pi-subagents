@@ -1,6 +1,6 @@
 import { isFishShell, shellEscape } from "../mux.ts";
 
-export interface InteractiveSentinelShellCommands {
+interface InteractiveSentinelShellCommands {
 	/** Runs when the pane shell exits before the pi command can write its own sentinel. */
 	exitTrap: string;
 	/** Runs immediately after the pi command exits and records that command's status. */

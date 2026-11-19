@@ -16,7 +16,7 @@ import { disposeEnvCapsule, writeEnvCapsule } from "./env-capsule.ts";
 import { buildInteractiveSentinelShellCommands } from "./interactive-sentinel.ts";
 import { buildShellChangeDirectoryPrefix } from "./resume.ts";
 
-export interface InteractiveShellCommandInput {
+interface InteractiveShellCommandInput {
 	cwd?: string;
 	/** Raw pi argv (unescaped); the capsule carries it as structured data. */
 	piArgs: string[];
@@ -31,7 +31,7 @@ export interface InteractiveShellCommandInput {
 	paneIdentity: PaneIdentityPolicy | undefined;
 }
 
-export interface InteractiveShellCommand {
+interface InteractiveShellCommand {
 	/** The string typed or staged into the child pane. Paths only — never env data. */
 	command: string;
 	/** The same launch for a direct-program session: shell command and launcher argv. */

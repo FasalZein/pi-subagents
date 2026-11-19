@@ -39,7 +39,7 @@ export const PRIVATE_FILE_MODE = 0o600;
 const MAX_RESERVE_ATTEMPTS = 16;
 
 /** D13: an eight-hex-digit id, the width the launch paths drew before. */
-export function drawRunId(): RunId {
+function drawRunId(): RunId {
 	return parseRunId(randomBytes(4).toString("hex"));
 }
 
@@ -106,15 +106,15 @@ function discardReservation(reservation: Reservation): void {
  * D16: the capped rendering of one report revision, next to its report. It is written before the
  * record commits that revision, so a lookup replays the delivered text, display facts included.
  */
-export function renderingPathFor(reportPath: string): string {
+function renderingPathFor(reportPath: string): string {
 	return reportPath.replace(/\.md$/, ".rendering.txt");
 }
 
 /** Renders a published record into the parent's text (D14); the publisher stores the result. */
-export type RenderPublished = (record: ResultRecord) => string;
+type RenderPublished = (record: ResultRecord) => string;
 
 /** Low-level file steps, replaceable in tests to fail one step. */
-export interface ResultFileIo {
+interface ResultFileIo {
 	rename(from: string, to: string): void;
 }
 

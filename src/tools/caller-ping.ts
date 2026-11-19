@@ -7,9 +7,9 @@ import { CALLER_PING_TOOL_NAME } from "./tool-names.ts";
 // one response, so a ping arms a hard backstop: the sidecar is already durable
 // on disk, and exiting 0 lets the parent deliver the ping instead of watching a
 // looping child run forever.
-export const CALLER_PING_FORCED_EXIT_DELAY_MS = 750;
+const CALLER_PING_FORCED_EXIT_DELAY_MS = 750;
 
-export interface CallerPingState {
+interface CallerPingState {
 	count: number;
 	exitTimer: ReturnType<typeof setTimeout> | undefined;
 	// An operator takeover suppresses the ping kill; /auto-exit clears the
@@ -22,7 +22,7 @@ export function createCallerPingState(): CallerPingState {
 	return { count: 0, exitTimer: undefined, exitSuppressed: false, outcomeDurable: false };
 }
 
-export function armCallerPingExit(state: CallerPingState) {
+function armCallerPingExit(state: CallerPingState) {
 	state.exitTimer ??= setTimeout(() => {
 		state.exitTimer = undefined;
 		// Re-check at fire time: an operator who took over during the
@@ -53,7 +53,7 @@ export function rearmCallerPingExitAfterReenable(state: CallerPingState) {
 	}
 }
 
-export interface CallerPingDeps {
+interface CallerPingDeps {
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => "accepted" | "owned" | "no-session";
 	requestShutdown: (ctx: { shutdown: () => void }) => void;
 	getOutputTokens: () => number;

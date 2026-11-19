@@ -31,14 +31,14 @@ export function getPackagedCriteriaDir(): string {
 }
 
 /** Criteria-file locations a bare name is tried in, project first. */
-export function getVerifierCriteriaDirs(baseCwd: string): { project: string; global: string } {
+function getVerifierCriteriaDirs(baseCwd: string): { project: string; global: string } {
 	return {
 		project: join(baseCwd, ".pi", "agents", "criteria"),
 		global: join(getAgentConfigDir(), "agents", "criteria"),
 	};
 }
 
-export interface ResolvedVerifierCriteria {
+interface ResolvedVerifierCriteria {
 	kind: "builtin" | "path";
 	/** Built-in rubric name, when kind is "builtin". */
 	name?: BuiltinVerifierCriteriaName;
@@ -139,13 +139,13 @@ export function resolveVerifierCandidateCount(
 }
 
 /** The three verified-fan-out sibling fields as parsed from a definition. */
-export interface VerifiedFanOutFrontmatter {
+interface VerifiedFanOutFrontmatter {
 	llmAsVerifierCandidates?: number;
 	llmAsVerifierModel?: string;
 	llmAsVerifierCriteria?: string;
 }
 
-export interface ResolvedVerifiedFanOut {
+interface ResolvedVerifiedFanOut {
 	/** Number of candidates to fan out to. */
 	candidates: number;
 	/** Canonical verifier model override ref, or null to use the default profile. */

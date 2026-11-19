@@ -99,7 +99,7 @@ function resolveSubagentTimeoutBudget(source: SubagentTimeoutSource | null | und
  * Anything carrying the timeout frontmatter: an agent definition at launch, or
  * persisted launch metadata when a session is resumed.
  */
-export type SubagentTimeoutSource = Pick<
+type SubagentTimeoutSource = Pick<
 	AgentDefaults,
 	"timeout" | "idleTimeout" | "timeoutWarnThreshold" | "onTimeout"
 >;

@@ -8,7 +8,7 @@ import type { LibraryReasoningEffort } from "./model-ref.ts";
 // Re-exported for callers of the profile module; the ref grammar itself lives
 // in model-ref.ts so agent-definition parsing can validate refs without a
 // config-dir cycle back into definitions.
-export { normalizeVerifierModelRef, LIBRARY_REASONING_EFFORTS } from "./model-ref.ts";
+export { normalizeVerifierModelRef } from "./model-ref.ts";
 
 /**
  * Verifier profiles (`agents/verifiers/<name>.md`).
@@ -19,7 +19,7 @@ export { normalizeVerifierModelRef, LIBRARY_REASONING_EFFORTS } from "./model-re
  * spawning, session-mode, or cwd fields.
  */
 
-export type VerifierProfileSource = "project" | "global";
+type VerifierProfileSource = "project" | "global";
 
 export class VerifierProfileError extends Error {
 	constructor(message: string) {
@@ -28,7 +28,7 @@ export class VerifierProfileError extends Error {
 	}
 }
 
-export interface VerifierProfile {
+interface VerifierProfile {
 	name: string;
 	source: VerifierProfileSource;
 	/** File the profile was read from. */
@@ -43,13 +43,13 @@ export interface VerifierProfile {
 
 /** Everything a launch needs to run the verifier: model, effort, and the
  * complete set of library env vars — exactly one backend door. */
-export interface ResolvedVerifierModel {
+interface ResolvedVerifierModel {
 	model: string;
 	thinking: LibraryReasoningEffort | null;
 	env: Record<string, string>;
 }
 
-export function getVerifierProfileDirs(baseCwd: string): { project: string; global: string } {
+function getVerifierProfileDirs(baseCwd: string): { project: string; global: string } {
 	return {
 		project: join(baseCwd, ".pi", "agents", "verifiers"),
 		global: join(getAgentConfigDir(), "agents", "verifiers"),

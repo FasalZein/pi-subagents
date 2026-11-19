@@ -45,7 +45,7 @@ export interface ForkReadyEventData {
 	childContextWindow: number;
 }
 
-export interface ForkPayload {
+interface ForkPayload {
 	childSessionFile: string;
 	parentSessionFile: string;
 	childContextWindow: number;
@@ -55,7 +55,7 @@ export interface ForkPayload {
 	stashedSummaryPending?: boolean;
 }
 
-export interface StashedSummaryCandidate {
+interface StashedSummaryCandidate {
 	id: string;
 	text: string;
 	pending: true;

@@ -29,7 +29,7 @@ export class VerifierRuntimeError extends Error {
 	}
 }
 
-export interface VerifierRuntimeInfo {
+interface VerifierRuntimeInfo {
 	/** Root holding the versioned venv + marker. */
 	root: string;
 	/** The venv directory (`<root>/venv`). */
@@ -50,7 +50,7 @@ interface Marker {
 	createdAt: string;
 }
 
-export function getVerifierVenvRoot(): string {
+function getVerifierVenvRoot(): string {
 	if (process.env.PI_SUBAGENT_LLM_VERIFIER_VENV?.trim()) {
 		return process.env.PI_SUBAGENT_LLM_VERIFIER_VENV.trim();
 	}

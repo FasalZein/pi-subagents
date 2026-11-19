@@ -14,13 +14,13 @@ export const SUBAGENT_CONTEXT_PRESSURE_FAILURE_REASON = "context-pressure-failur
 
 const DEFAULT_CONTEXT_WARN_STEP = 5;
 
-export interface SubagentContextUsage {
+interface SubagentContextUsage {
 	tokens: number;
 	contextWindow: number;
 	percent: number;
 }
 
-export interface SelectedContextReminder {
+interface SelectedContextReminder {
 	threshold: number;
 	message: string;
 	sentThresholds: number[];
@@ -144,7 +144,7 @@ export function selectContextReminder(
 	};
 }
 
-export interface SubagentContextReminderState {
+interface SubagentContextReminderState {
 	/**
 	 * True while the child is holding the last warning, the only one that tells
 	 * it to stop taking new actions. Earlier stages ask it to wind down and do

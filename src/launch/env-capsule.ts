@@ -13,7 +13,7 @@ import { basename, dirname, join } from "node:path";
  * - consumed exactly once: the launcher unlinks it before spawning the child
  * - stale capsules whose pane never ran are removed by an age sweep on write
  */
-export interface EnvCapsule {
+interface EnvCapsule {
 	command: string;
 	args: string[];
 	cwd?: string;

@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
  * an O_EXCL claim file.
  */
 
-export const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 1;
 
 export type SupervisorRunState = "running" | "completed" | "failed" | "cancelled";
 
@@ -93,14 +93,14 @@ export interface DeliveryClaim {
 	digest: string;
 }
 
-export class ManifestError extends Error {
+class ManifestError extends Error {
 	constructor(message: string) {
 		super(message);
 		this.name = "ManifestError";
 	}
 }
 
-export interface RunFilePaths {
+interface RunFilePaths {
 	runDir: string;
 	manifest: string;
 	stdout: string;
@@ -207,7 +207,7 @@ export function updateManifest(
 	return manifest;
 }
 
-export function digestResult(result: SupervisorRunResult | null): string {
+function digestResult(result: SupervisorRunResult | null): string {
 	return createHash("sha256").update(JSON.stringify(result ?? null)).digest("hex");
 }
 

@@ -5,7 +5,7 @@ import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
 import { OUTCOME_WORDS, RESULT_TEXT_MAX_CHARS, renderResult } from "./result-render.ts";
 
 /** D16: the recent list names at most this many ended runs; an older run is found by its run id. */
-export const RECENT_RUNS_LIMIT = 20;
+const RECENT_RUNS_LIMIT = 20;
 
 /** A name keeps this many characters in a recent line, so 20 lines stay within the cap. */
 const RECENT_NAME_MAX_CHARS = 40;

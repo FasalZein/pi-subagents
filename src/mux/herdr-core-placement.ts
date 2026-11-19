@@ -2,7 +2,7 @@ import { execFileAsync } from "./core.ts";
 import { HC_COMMAND } from "./herdr-core-exit.ts";
 
 /** The Herdr app's CLI (herdr-app 0.1.16 on the live checks of 2026-11-18). */
-export const HERDR_APP_COMMAND = "herdr-app";
+const HERDR_APP_COMMAND = "herdr-app";
 /** The hc label that puts a terminal into a tab of that Herdr app space (live check L5). */
 const SPACE_LABEL_KEY = "herdr.space";
 /**

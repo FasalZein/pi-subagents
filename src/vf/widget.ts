@@ -19,7 +19,7 @@ export interface VerifiedCandidateDisplay {
 	exitSignal: string | null;
 }
 
-export interface VerifiedRunDisplay {
+interface VerifiedRunDisplay {
 	runId: string;
 	state: VerifiedRunManifest["state"];
 	candidateCount: number;

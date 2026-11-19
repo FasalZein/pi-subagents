@@ -7,9 +7,9 @@ import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
 import { getSubagentWaitSuccessResult } from "./wait-result.ts";
 
-export type WaitMode = "all" | "any";
+type WaitMode = "all" | "any";
 
-export interface JoinParams {
+interface JoinParams {
 	/** Run ids or names; none means every run of this parent that is running or queued. */
 	ids?: readonly string[];
 	mode?: WaitMode;
@@ -50,7 +50,7 @@ type Target =
 	| { kind: "ended"; result: JoinedResult; lookup: boolean };
 
 /** This parent session's results, for the record of an ended run and for a lookup's rendering. */
-export interface SessionResults {
+interface SessionResults {
 	store: ResultStore;
 	/** The parent's working directory, for the report locator of a rendered record. */
 	cwd: string;

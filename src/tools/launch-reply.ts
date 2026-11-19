@@ -13,7 +13,7 @@ const WAITED_RETURN_LINE = "This call waited for its children; each report follo
 const PARTLY_WAITED_RETURN_LINE = "Each report of a finished child follows below.";
 
 /** One line per started child: agent, name, run id, the model ref that runs, pane or headless (D23). */
-export function renderLaunchChildLine(child: LaunchedChild): string {
+function renderLaunchChildLine(child: LaunchedChild): string {
 	const where = child.mode === "interactive" ? "pane" : "headless";
 	return `- ${child.name} (agent ${child.agent ?? "unknown"}): run ${child.id}, model ${child.modelRef ?? "not set"}, ${where}`;
 }

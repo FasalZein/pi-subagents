@@ -8,13 +8,13 @@ import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
  * D12: session entry the child appends just before its missing-call nudge. The parent reads its
  * index as the report boundary: text before the nudge wins over text after it.
  */
-export const SUBAGENT_COMPLETION_NUDGE_ENTRY = "pi-subagent-completion-nudge";
+const SUBAGENT_COMPLETION_NUDGE_ENTRY = "pi-subagent-completion-nudge";
 
 /**
  * D11/D12: session entry the child appends when a person takes over the pane after the nudge. The
  * nudge then no longer marks the last autonomous report: the parent publishes the last text.
  */
-export const SUBAGENT_TAKEOVER_AFTER_NUDGE_ENTRY = "pi-subagent-takeover-after-nudge";
+const SUBAGENT_TAKEOVER_AFTER_NUDGE_ENTRY = "pi-subagent-takeover-after-nudge";
 
 const CALL_FIELDS =
 	`outcome (done, partial or blocked), a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of the files you wrote, and optional data`;

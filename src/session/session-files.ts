@@ -423,7 +423,7 @@ export function resolveEffectiveSessionMode(
 	return "lineage-only";
 }
 
-export type ResolveSubagentNoSession = (agentDefs: AgentDefaults | null) => boolean;
+type ResolveSubagentNoSession = (agentDefs: AgentDefaults | null) => boolean;
 
 export function resolveTaskSessionMode(
 	agentDefs: AgentDefaults | null,

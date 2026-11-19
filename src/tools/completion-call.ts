@@ -33,7 +33,7 @@ export function createOversizeRefusal(tool: string, field: string) {
  */
 export const SUBAGENT_ACCEPTED_CALL_ENTRY = "pi-subagent-accepted-call";
 
-export interface AcceptedCallEntry {
+interface AcceptedCallEntry {
 	toolCallId: string;
 	tool: string;
 	args: Record<string, unknown>;
@@ -99,7 +99,7 @@ function isTypedCall(args: Record<string, unknown>): boolean {
 	);
 }
 
-export interface SubagentDoneDeps {
+interface SubagentDoneDeps {
 	isTakenOver(): boolean;
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => unknown;
 	requestShutdown: (ctx: { shutdown: () => void }) => void;

@@ -7,7 +7,7 @@ import {
 } from "./context-reminders.ts";
 import type { FinalContextSnapshot } from "./final-context-snapshot.ts";
 
-export interface ExitSignalWriterDeps {
+interface ExitSignalWriterDeps {
 	pi: Pick<ExtensionAPI, "appendEntry">;
 	getFinalContextUsage(): FinalContextSnapshot | undefined;
 	hasDeliveredFinalWarning(): boolean;

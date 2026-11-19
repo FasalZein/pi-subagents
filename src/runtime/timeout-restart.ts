@@ -1,12 +1,12 @@
 import type { RunningSubagent } from "../types.ts";
 import { checkSubagentTimeout, getSubagentHardDeadlineAt, type ExpiredTimeoutBudget } from "./timeout-budget.ts";
 
-export type TimeoutRestartOutcome =
+type TimeoutRestartOutcome =
 	| { kind: "started" }
 	| { kind: "cancelled" }
 	| { kind: "timedOut"; expiry: ExpiredTimeoutBudget };
 
-export interface TimeoutRestartRuntime {
+interface TimeoutRestartRuntime {
 	restart(running: RunningSubagent, signal: AbortSignal): Promise<void>;
 	stopStarted(running: RunningSubagent): Promise<void>;
 }

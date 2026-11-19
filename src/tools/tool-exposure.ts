@@ -5,7 +5,7 @@ import { CODEMODE_TOOL_NAME, TOOL_SEARCH_TOOL_NAME } from "./tool-names.ts";
  * How the management tools (wait, resume, stop, agents) are declared (D21).
  * Deferred tools cost no declaration until codemode or tool search asks for them.
  */
-export type ManagementToolExposure = "deferred" | "direct";
+type ManagementToolExposure = "deferred" | "direct";
 
 export interface ManagementToolGrant {
 	/**
@@ -16,14 +16,14 @@ export interface ManagementToolGrant {
 }
 
 /** Deferred when codemode or tool search is active, direct otherwise. */
-export function selectManagementToolExposure(activeTools: readonly string[]): ManagementToolExposure {
+function selectManagementToolExposure(activeTools: readonly string[]): ManagementToolExposure {
 	return activeTools.includes(CODEMODE_TOOL_NAME) || activeTools.includes(TOOL_SEARCH_TOOL_NAME)
 		? "deferred"
 		: "direct";
 }
 
 /** The tool names that tool_search calls on this branch loaded (its result details name them). */
-export function searchLoadedToolNames(branch: readonly SessionEntry[]): Set<string> {
+function searchLoadedToolNames(branch: readonly SessionEntry[]): Set<string> {
 	const loaded = new Set<string>();
 	for (const entry of branch) {
 		if (entry.type !== "message" || entry.message.role !== "toolResult") continue;

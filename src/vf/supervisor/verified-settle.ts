@@ -16,7 +16,7 @@ import type { VerifiedCandidateRuntime, VerifiedRunManifest, VerifiedRunSelectio
  * structured run failure — a winner is never fabricated.
  */
 
-export interface SettledCandidate {
+interface SettledCandidate {
 	spec: VerifiedRunManifest["request"]["candidates"][number];
 	runtime: VerifiedCandidateRuntime;
 	/** Exit-0 process (or adopted-with-report) that produced a session. */
@@ -141,7 +141,7 @@ export function writeTraceArtifacts(runDir: string, settled: SettledCandidate[])
 	return paths;
 }
 
-export interface SelectionOutcome {
+interface SelectionOutcome {
 	selection: VerifiedRunSelection;
 	response: VerifierSelectResponse;
 }

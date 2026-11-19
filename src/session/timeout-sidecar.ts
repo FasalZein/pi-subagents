@@ -14,7 +14,7 @@ import type { SubagentTimeoutBudget, SubagentTimeoutKind } from "../types.ts";
  * session rather than inside it. A resume leaves it in force until the resumed
  * run ends (D8): a clean end removes it, a new timeout replaces it.
  */
-export interface SubagentTimeoutVerdict {
+interface SubagentTimeoutVerdict {
 	kind: SubagentTimeoutKind;
 	/** True when the agent's `on-timeout` policy refuses a resume. */
 	blocksResume: boolean;

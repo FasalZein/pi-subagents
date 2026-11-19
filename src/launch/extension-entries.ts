@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { CONFIG_DIR_NAME, DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 /** The extension list a child starts with, and the entries dropped from it because they do not resolve (D10). */
-export interface ExtensionEntryCheck<Kept extends string[] | undefined = string[]> {
+interface ExtensionEntryCheck<Kept extends string[] | undefined = string[]> {
 	kept: Kept;
 	dropped: string[];
 }

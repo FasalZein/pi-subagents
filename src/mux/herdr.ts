@@ -2,7 +2,7 @@ import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
-export type HerdrServerStatus = {
+type HerdrServerStatus = {
 	status?: string;
 	running: boolean;
 	compatible: boolean;
@@ -30,14 +30,14 @@ export type HerdrPaneRect = {
 	focused?: boolean;
 };
 
-export type HerdrPaneLayout = {
+type HerdrPaneLayout = {
 	area: Omit<HerdrPaneRect, "paneId" | "focused">;
 	panes: HerdrPaneRect[];
 	tabId?: string;
 	workspaceId?: string;
 };
 
-export type HerdrTab = {
+type HerdrTab = {
 	tabId: string;
 	workspaceId?: string;
 	label?: string;
@@ -45,7 +45,7 @@ export type HerdrTab = {
 	paneCount?: number;
 };
 
-export type HerdrWorkspace = {
+type HerdrWorkspace = {
 	workspaceId: string;
 	activeTabId?: string;
 	label?: string;
@@ -54,7 +54,7 @@ export type HerdrWorkspace = {
 	paneCount?: number;
 };
 
-export type HerdrCreatedTabSurface = {
+type HerdrCreatedTabSurface = {
 	tab: HerdrTab;
 	pane: HerdrPane;
 };

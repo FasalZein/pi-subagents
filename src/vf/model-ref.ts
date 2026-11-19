@@ -10,7 +10,7 @@
 export const LIBRARY_REASONING_EFFORTS = ["off", "low", "high", "max"] as const;
 export type LibraryReasoningEffort = (typeof LIBRARY_REASONING_EFFORTS)[number];
 
-export const EFFORT_ALIASES: Record<string, LibraryReasoningEffort> = {
+const EFFORT_ALIASES: Record<string, LibraryReasoningEffort> = {
 	off: "off",
 	disabled: "off",
 	none: "off",
@@ -26,7 +26,7 @@ class VerifierModelError extends Error {
 	}
 }
 
-export interface NormalizedVerifierModelRef {
+interface NormalizedVerifierModelRef {
 	/** Provider prefix as written (`deepseek` in `deepseek/deepseek-v4-flash`), if any. */
 	provider: string | null;
 	/** Plain library model id: provider prefix and `:thinking` suffix stripped. */

@@ -1,13 +1,13 @@
 export const PI_SUBAGENT_APPEND_SYSTEM_PROMPT = "PI_SUBAGENT_APPEND_SYSTEM_PROMPT";
 
-export interface AppendSystemInheritanceInput {
+interface AppendSystemInheritanceInput {
 	inheritAppendSystem: boolean;
 	systemPromptMode?: "append" | "replace";
 	systemPrompt?: string;
 	boundarySystemPrompt?: string;
 }
 
-export interface AppendSystemInheritancePlan {
+interface AppendSystemInheritancePlan {
 	promptArgs: string[];
 	env: Record<string, string>;
 }

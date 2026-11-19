@@ -7,7 +7,7 @@ import { execFileAsync } from "./core.ts";
 import { APP_CHECK_TIMEOUT_MS } from "./herdr-core.ts";
 
 /** Rex API revisions that the live checks of 2026-11-18 ran on (D28, live-rex-pane-checks.md). */
-export const REX_TESTED_API_REVISIONS: readonly number[] = [16];
+const REX_TESTED_API_REVISIONS: readonly number[] = [16];
 /** rex capture has no line limit and returns all scrollback; at most this many bytes are kept (D28). */
 export const REX_CAPTURE_MAX_BYTES = 256 * 1024;
 

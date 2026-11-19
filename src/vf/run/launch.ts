@@ -67,7 +67,7 @@ function denyCandidateSpawning(env: Record<string, string>): void {
 	env.PI_DENY_TOOLS = [...denied].join(",");
 }
 
-export interface VerifiedFanOutLaunch {
+interface VerifiedFanOutLaunch {
 	running: RunningSubagent;
 	runId: string;
 	runDir: string;

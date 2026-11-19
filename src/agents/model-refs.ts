@@ -69,7 +69,7 @@ export function assertModelAllowed(
 /** Most candidates a refusal names (D22); the rest is counted, not listed. */
 const MAX_REFUSAL_CANDIDATES = 8;
 
-export interface ModelChoiceRequest {
+interface ModelChoiceRequest {
 	/** The model from the call: an exact ref, `provider/fragment` or a bare fragment, with an optional `:thinking`. */
 	requested: string;
 	/** The thinking parameter of the call. A `:thinking` suffix on `requested` wins over it. */
@@ -90,7 +90,7 @@ export interface ModelChoiceRequest {
 	agentName?: string;
 }
 
-export interface ModelChoice {
+interface ModelChoice {
 	/** `provider/id` without thinking. */
 	model: string;
 	thinking: string | undefined;

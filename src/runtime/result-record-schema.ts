@@ -64,7 +64,7 @@ const ResultFieldsSchema = Type.Object({
 });
 
 export const ResultRecordSchema = Type.Intersect([ResultTypingSchema, ResultFieldsSchema]);
-export type ResultRecordJson = Static<typeof ResultRecordSchema>;
+type ResultRecordJson = Static<typeof ResultRecordSchema>;
 
 /** Compile check: a ResultRecord is a ResultRecordJson (the schema is never narrower than the type). */
 export function recordAsJson(record: ResultRecord): ResultRecordJson {

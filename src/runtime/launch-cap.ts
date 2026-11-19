@@ -5,7 +5,7 @@
  * lives on globalThis under a registered symbol: a reload keeps it, a new process starts at 0, and
  * a session start that replaces the session (new, resume, fork) installs a fresh count.
  */
-export const DEFAULT_LAUNCH_CAP = 64;
+const DEFAULT_LAUNCH_CAP = 64;
 export const LAUNCH_CAP_ENV = "PI_SUBAGENT_LAUNCH_CAP";
 
 const LAUNCH_COUNT_KEY = Symbol.for("pi-subagents/launch-cap-count");
@@ -38,7 +38,7 @@ export function resetLaunchCountForSessionStart(reason: SessionStartReason): voi
 	globalState()[LAUNCH_COUNT_KEY] = { started: 0, reserved: 0 } satisfies LaunchCount;
 }
 
-export function getLaunchCap(env: Record<string, string | undefined> = process.env): number {
+function getLaunchCap(env: Record<string, string | undefined> = process.env): number {
 	const raw = env[LAUNCH_CAP_ENV]?.trim();
 	if (raw === undefined || !/^\d+$/.test(raw)) return DEFAULT_LAUNCH_CAP;
 	const parsed = Number(raw);
@@ -58,7 +58,7 @@ export function getLaunchCountUsed(): number {
  * no-op. A lease keeps the count of the session it was taken in, so a lease that ends after a
  * session start cannot change the new session's count.
  */
-export class LaunchCapLease {
+class LaunchCapLease {
 	readonly #count: LaunchCount;
 	#held: number;
 

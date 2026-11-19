@@ -12,27 +12,27 @@
 import { getEntries, type SessionEntry } from "../session/session.ts";
 
 export const DEFAULT_TRACE_BLOCK_LIMIT = 4096;
-export const DEFAULT_TRACE_TOTAL_BUDGET = 24_000;
+const DEFAULT_TRACE_TOTAL_BUDGET = 24_000;
 
-export const EMPTY_TRACE_SENTINEL = "(no trajectory data)";
+const EMPTY_TRACE_SENTINEL = "(no trajectory data)";
 
-export type TraceBlockKind = "text" | "command" | "output" | "image";
+type TraceBlockKind = "text" | "command" | "output" | "image";
 
-export interface TraceBlock {
+interface TraceBlock {
 	kind: TraceBlockKind;
 	text: string;
 	originalChars: number;
 	capped: boolean;
 }
 
-export interface TraceBudgetCap {
+interface TraceBudgetCap {
 	totalBudget: number;
 	originalChars: number;
 	finalChars: number;
 	omittedChars: number;
 }
 
-export interface FlattenedTrace {
+interface FlattenedTrace {
 	text: string;
 	blocks: TraceBlock[];
 	blockLimit: number;
@@ -302,7 +302,7 @@ function applyTotalBudget(text: string, budget: number): { text: string; cap: Tr
 	};
 }
 
-export function flattenEntriesToTrace(entries: SessionEntry[], options: FlattenTraceOptions = {}): FlattenedTrace {
+function flattenEntriesToTrace(entries: SessionEntry[], options: FlattenTraceOptions = {}): FlattenedTrace {
 	const blockLimit = options.blockLimit ?? DEFAULT_TRACE_BLOCK_LIMIT;
 	const totalBudget = options.totalBudget ?? DEFAULT_TRACE_TOTAL_BUDGET;
 	const path = walkActiveBranch(entries, options.activeLeafId);
