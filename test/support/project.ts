@@ -128,9 +128,11 @@ export {
 } from "../../src/subagents.ts";
 export {
 	default as subagentDoneExtension,
+	isMissingOptionalDependencyForTest,
+} from "../../src/tools/subagent-done.ts";
+export {
 	filterToolNames,
 	getDeniedToolNames,
 	installDeniedToolGuards,
-	isMissingOptionalDependencyForTest,
 	shouldRegisterSubagentDone,
-} from "../../src/tools/subagent-done.ts";
+} from "../../src/tools/child-tool-policy.ts";
