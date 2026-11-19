@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
+import { assembleResult } from "../../src/runtime/result-assembler.ts";
+import { parseRunId, type ResumeFacts } from "../../src/runtime/result-record.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { runningSubagents } from "../../src/runtime/state.ts";
 import { getSubagentExitSidecarPath } from "../../src/session/exit-sidecar.ts";
@@ -17,7 +19,7 @@ import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import "../support/ambient-spawn-grant.ts";
 import { assert, createTestDir, existsSync, writeExecutable, writeFileSync } from "../support/index.ts";
-import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
+import { assistant, facts, parentToolCtx, sessionHeader, testResultsDir } from "../support/result-fixtures.ts";
 
 /** Runs with the fake Pi command set, then restores it; the ambient spawn grant hook clears the grant. */
 async function withFakePi<T>(bin: string, run: () => Promise<T>): Promise<T> {
@@ -136,9 +138,13 @@ describe("resume by run id (D8)", () => {
 			writeSubagentTimeoutSidecar(sessionFile, { kind: "timeout", blocksResume: false });
 			const ctx = parentToolCtx(dir, { hasUI: true });
 			const resultsDir = getSessionResultsDir(dir, ctx.sessionManager.getSessionId());
-			const writeRecord = (runId: string, record: object) => {
+			// A complete D13 record: the store reads only records whose identity and shape are valid.
+			const writeRecord = (runId: string, fields: { sessionFile?: string; resume: ResumeFacts }) => {
+				const overrides = { runId: parseRunId(runId), ...fields };
+				const assembled = assembleResult(facts([sessionHeader(), assistant("earlier")], overrides)).record;
+				const record = { ...assembled, sessionFile: fields.sessionFile, report: { saved: false, error: "fixture" } };
 				mkdirSync(join(resultsDir, runId), { recursive: true });
-				writeFileSync(join(resultsDir, runId, "record.json"), JSON.stringify({ runId, endedAt: 1, ...record }));
+				writeFileSync(join(resultsDir, runId, "record.json"), JSON.stringify(record));
 			};
 			writeRecord("aaaa0001", { sessionFile, resume: { resumable: true } });
 			writeRecord("aaaa0002", {
