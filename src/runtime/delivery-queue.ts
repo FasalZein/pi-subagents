@@ -1,18 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { outstandingWork } from "./outstanding-work.ts";
-
-interface RunEndMessage {
-	customType: "subagent_result" | "subagent_ping";
-	content: string;
-	display: true;
-	details: { id: string };
-}
+import { groupRunEnds, type RunEndMessage, runEndIds } from "./run-end-message.ts";
 
 /**
  * D15: the one owner of run-end delivery to the parent. A result stays in this queue until the
  * parent session commits its message (Pi emits message_end for it). Pi's own steer queue is
  * editable: Alt+Up or Esc can clear it, so a result enters it only at a turn boundary, right
- * before Pi polls it, and one at a time while it is empty. A result that the boundary did not
+ * before Pi polls it, and only while it is empty. All results queued at one boundary leave as one
+ * message (D15). A result that the boundary did not
  * commit is handed over again at the next boundary, or at once when the parent is idle. Delivery
  * is at least once; no result waits for the person's next prompt.
  */
@@ -36,12 +31,11 @@ class DeliveryQueue {
 			const stop = (event.message as { stopReason?: string }).stopReason;
 			// An aborted or failed turn polls no steer; the settle step hands the result over.
 			if (stop === "aborted" || stop === "error" || ctx.hasPendingMessages()) return;
-			const [next] = this.pending.values();
-			if (next) this.send(next, true);
+			this.sendPending();
 		});
 		pi.on("agent_settled", () => {
 			this.busy = false;
-			for (const message of this.pending.values()) this.send(message, true);
+			this.sendPending();
 		});
 		pi.on("session_shutdown", () => {
 			// A closed or replaced session gets no more deliveries (D15); results stay in their files.
@@ -91,12 +85,17 @@ class DeliveryQueue {
 		this.pi?.sendMessage(message, { triggerTurn, deliverAs: "steer" });
 	}
 
+	/** One boundary hands every queued result over as one message. */
+	private sendPending(): void {
+		if (this.pending.size === 0) return;
+		this.pi?.sendMessage<object>(groupRunEnds([...this.pending.values()]), { triggerTurn: true, deliverAs: "steer" });
+	}
+
+	/** A committed message delivers every run end it carries, grouped or single. */
 	private commit(message: unknown): void {
-		if (!message || typeof message !== "object" || !("role" in message) || message.role !== "custom") return;
-		const details = (message as { details?: { id?: unknown } }).details;
-		if (typeof details?.id === "string") {
-			this.pending.delete(details.id);
-			this.held.delete(details.id);
+		for (const id of runEndIds(message)) {
+			this.pending.delete(id);
+			this.held.delete(id);
 		}
 	}
 

@@ -3,6 +3,7 @@ import { keyHint } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { formatFinalContextUsage } from "../runtime/final-context-usage.ts";
 import { OUTCOME_WORDS } from "../runtime/result-render.ts";
+import { type RunEndEntry, runEnds } from "../runtime/run-end-message.ts";
 import type { SubagentPingMessageDetails, SubagentResultMessageDetails } from "../types.ts";
 
 type ThemeLike = Parameters<Parameters<ExtensionAPI["registerMessageRenderer"]>[1]>[2];
@@ -278,63 +279,72 @@ export function renderSubagentCompletionText(
 	return text;
 }
 
-export function registerSubagentMessageRenderers(pi: ExtensionAPI, formatElapsed: (elapsed: number) => string): void {
-	pi.registerMessageRenderer("subagent_result", (message, options, theme) => {
-		const details = message.details as SubagentResultMessageDetails | undefined;
-		if (!details) return undefined;
+type ElapsedFormatter = (elapsed: number) => string;
 
-		return {
-			invalidate() {},
-			render(width: number): string[] {
-				const failed = completionVerdict(details).tone === "failed";
-				const bgFn = failed
-					? (text: string) => theme.bg("toolErrorBg", text)
-					: (text: string) => theme.bg("toolSuccessBg", text);
-				const result = {
-					content: [
-						{
-							type: "text" as const,
-							text: typeof message.content === "string" ? message.content : "",
-						},
-					],
-					details,
-				};
-				const box = new Box(options.outputPad ?? 1, 1, bgFn);
-				box.addChild(new Text(formatSubagentCompletionLines(result, options, theme, formatElapsed).join("\n"), 0, 0));
-				return ["", ...box.render(width)];
-			},
-		};
-	});
+function renderResultBox(
+	entry: RunEndEntry,
+	width: number,
+	options: RenderOptions,
+	theme: ThemeLike,
+	formatElapsed: ElapsedFormatter,
+): string[] {
+	const details = entry.details as SubagentResultMessageDetails;
+	const failed = completionVerdict(details).tone === "failed";
+	const bgFn = failed
+		? (text: string) => theme.bg("toolErrorBg", text)
+		: (text: string) => theme.bg("toolSuccessBg", text);
+	const result = { content: [{ type: "text" as const, text: entry.content }], details };
+	const box = new Box(options.outputPad ?? 1, 1, bgFn);
+	box.addChild(new Text(formatSubagentCompletionLines(result, options, theme, formatElapsed).join("\n"), 0, 0));
+	return ["", ...box.render(width)];
+}
 
-	pi.registerMessageRenderer("subagent_ping", (message, options, theme) => {
-		const details = message.details as SubagentPingMessageDetails | undefined;
-		if (!details) return undefined;
+function renderPingBox(
+	entry: RunEndEntry,
+	width: number,
+	options: RenderOptions,
+	theme: ThemeLike,
+	formatElapsed: ElapsedFormatter,
+): string[] {
+	const details = entry.details as SubagentPingMessageDetails;
+	const name = details.name ?? "subagent";
+	const elapsed = details.elapsed != null ? formatElapsed(details.elapsed) : "?";
+	const agentTag = details.agent ? theme.fg("dim", ` (${details.agent})`) : "";
+	const label = details.outcome ? OUTCOME_WORDS[details.outcome] : "needs help";
+	const header = `${theme.fg("accent", "?")} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} ${label} ${theme.fg("dim", `(${elapsed})`)}`;
+	// D14: a published ping shows its rendered record, the same text the model reads.
+	const rawMessage = details.runId ? entry.content : (details.message ?? entry.content);
+	const body = stripSessionRef(rawMessage);
+	const contentLines = [header];
 
-		return {
-			invalidate() {},
-			render(width: number): string[] {
-				const name = details.name ?? "subagent";
-				const elapsed = details.elapsed != null ? formatElapsed(details.elapsed) : "?";
-				const agentTag = details.agent ? theme.fg("dim", ` (${details.agent})`) : "";
-				const label = details.outcome ? OUTCOME_WORDS[details.outcome] : "needs help";
-				const header = `${theme.fg("accent", "?")} ${theme.fg("toolTitle", theme.bold(name))}${agentTag} ${theme.fg("dim", "—")} ${label} ${theme.fg("dim", `(${elapsed})`)}`;
-				const content = typeof message.content === "string" ? message.content : "";
-				// D14: a published ping shows its rendered record, the same text the model reads.
-				const rawMessage = details.runId ? content : (details.message ?? content);
-				const body = stripSessionRef(rawMessage);
-				const contentLines = [header];
+	appendExpandableLines(contentLines, body, options, theme, 4);
+	if (options.expanded && details.sessionFile) {
+		contentLines.push("");
+		contentLines.push(theme.fg("dim", `Session: ${details.sessionFile}`));
+		contentLines.push(theme.fg("dim", `Resume:  pi --session ${details.sessionFile}`));
+	}
 
-				appendExpandableLines(contentLines, body, options, theme, 4);
-				if (options.expanded && details.sessionFile) {
-					contentLines.push("");
-					contentLines.push(theme.fg("dim", `Session: ${details.sessionFile}`));
-					contentLines.push(theme.fg("dim", `Resume:  pi --session ${details.sessionFile}`));
-				}
+	const box = new Box(options.outputPad ?? 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+	box.addChild(new Text(contentLines.join("\n"), 0, 0));
+	return ["", ...box.render(width)];
+}
 
-				const box = new Box(options.outputPad ?? 1, 1, (text: string) => theme.bg("toolPendingBg", text));
-				box.addChild(new Text(contentLines.join("\n"), 0, 0));
-				return ["", ...box.render(width)];
-			},
-		};
-	});
+export function registerSubagentMessageRenderers(pi: ExtensionAPI, formatElapsed: ElapsedFormatter): void {
+	// D15: a grouped message carries several run ends; each keeps the box of its own kind.
+	for (const customType of ["subagent_result", "subagent_ping"] as const) {
+		pi.registerMessageRenderer(customType, (message, options, theme) => {
+			const entries = runEnds(customType, message.content, message.details);
+			if (entries.length === 0) return undefined;
+			return {
+				invalidate() {},
+				render(width: number): string[] {
+					return entries.flatMap((entry) =>
+						entry.customType === "subagent_ping"
+							? renderPingBox(entry, width, options, theme, formatElapsed)
+							: renderResultBox(entry, width, options, theme, formatElapsed),
+					);
+				},
+			};
+		});
+	}
 }

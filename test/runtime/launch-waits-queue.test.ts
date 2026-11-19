@@ -1,5 +1,6 @@
 import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
+import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -279,8 +280,8 @@ describe("T23: launches that wait use the delivery owner", () => {
 			const message = parent.sent[0];
 			// Pi commits the copy it already held and the next request carries it.
 			parent.fire("message_end", { message: { role: "custom", ...message } });
-			outstandingWork.consume([{ role: "custom", ...message }]);
-			outstandingWork.settle();
+			// The reporting hook releases what the committed message carries (work-reporting.ts).
+			outstandingWork.release(...runEndIds({ role: "custom", ...message }));
 
 			for (const copy of [waitCopy, message.content]) {
 				assert.match(copy, /REPORT-HEAD/);

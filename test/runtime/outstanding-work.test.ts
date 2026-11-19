@@ -17,7 +17,7 @@ function child(id: string): RunningSubagent {
 		deliveryState: "detached", parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
 }
 
-test("async launch publishes before yielding and keeps last result outstanding until the parent settles after reading it", async () => {
+test("async launch publishes before yielding and keeps last result outstanding until the parent commits its message", async () => {
 	resetRuntimeStateForTest(() => {});
 	const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const messages: object[] = [];
@@ -70,9 +70,8 @@ test("async launch publishes before yielding and keeps last result outstanding u
 		assert.equal(deliveries.at(-1)?.deliverAs, "steer");
 		await emit("agent_settled");
 		assert.equal(counts.at(-1), 1, "queued delivery is still work");
-		await emit("context", { messages: messages.map((m: object) => ({ ...m, role: "custom" })) });
-		assert.equal(counts.at(-1), 1, "keep the lease throughout the continuation");
-		await emit("agent_settled");
+		// D30: the run counts until the message that carries its result is committed.
+		await emit("message_end", { message: { ...messages[0], role: "custom" } });
 		assert.equal(counts.at(-1), 0);
 	} finally {
 		if (savedAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
@@ -118,7 +117,7 @@ for (const outcome of ["completed", "cancelled", "ping", "watcher-error"] as con
 			});
 			wireSubagentSteerBack(h.pi, first, result, () => {});
 			await new Promise<void>((resolve) => setImmediate(resolve));
-			await h.emit("context", { messages: h.messages.map((m) => ({ ...m, role: "custom" })) });
+			for (const m of h.messages) await h.emit("message_end", { message: { ...m, role: "custom" } });
 			await h.emit("agent_settled");
 			assert.equal(h.counts.at(-1), 1);
 			assert.ok(h.counts.slice(1).every((count) => count > 0));
@@ -148,7 +147,7 @@ test("awaited children and manual-close children count, foreign adopted observat
 	} finally { await h.stop(); }
 });
 
-test("a report steered while the stop flag is set keeps its lease until a settled turn carried it", async () => {
+test("a report steered while the stop flag is set keeps its lease until its message is committed", async () => {
 	const h = await harness();
 	try {
 		const running = child("parked");
@@ -162,8 +161,7 @@ test("a report steered while the stop flag is set keeps its lease until a settle
 		assert.equal(runningSubagents.size, 0);
 		await h.emit("agent_settled");
 		assert.equal(h.counts.at(-1), 1, "a settle before the message entered a request keeps the report outstanding");
-		await h.emit("context", { messages: h.messages.map((m) => ({ ...m, role: "custom" })) });
-		await h.emit("agent_settled");
+		await h.emit("message_end", { message: { ...h.messages[0], role: "custom" } });
 		assert.equal(h.counts.at(-1), 0);
 	} finally {
 		await h.stop();

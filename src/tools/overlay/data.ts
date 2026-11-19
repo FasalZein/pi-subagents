@@ -1,5 +1,6 @@
 import { type AgentDefaults, loadAgentDefaults } from "../../agents/definitions.ts";
 import { completedSubagentResults, runningSubagents } from "../../runtime/state.ts";
+import { type RunEndEntry, runEnds } from "../../runtime/run-end-message.ts";
 import { stopRunningSubagent } from "../../runtime/wiring.ts";
 import { getEntries } from "../../session/session.ts";
 import {
@@ -360,6 +361,9 @@ interface RecoveredResultDetails {
 	name: string;
 	agent?: string;
 	status: "completed" | "cancelled" | "failed";
+	/** The published outcome (D14), shown when it is not plain done. */
+	outcome?: string;
+	content: string;
 	exitCode?: number;
 	elapsed?: number;
 	sessionFile?: string;
@@ -375,23 +379,32 @@ function getEntryDetails(entry: { [key: string]: unknown }): Record<string, unkn
 	return typeof details === "object" && details !== null ? (details as Record<string, unknown>) : undefined;
 }
 
-function recoverResultDetails(entry: { [key: string]: unknown }): RecoveredResultDetails | undefined {
-	if (entry.type !== "custom_message" || entry.customType !== "subagent_result") return undefined;
-	const details = getEntryDetails(entry);
-	if (!details) return undefined;
+/** Every run end a session entry carries: one per old single-result or ping message, several per group (D15). */
+function recoverResultDetails(entry: { [key: string]: unknown }): RecoveredResultDetails[] {
+	if (entry.type !== "custom_message") return [];
+	return runEnds(entry.customType, entry.content, getEntryDetails(entry)).flatMap((runEnd) => {
+		const recovered = recoverRunEnd(runEnd);
+		return recovered ? [recovered] : [];
+	});
+}
+
+function recoverRunEnd({ customType, content, details }: RunEndEntry): RecoveredResultDetails | undefined {
 	const name = typeof details.name === "string" ? details.name : undefined;
 	const id = typeof details.id === "string" ? details.id : name;
 	const rawStatus = typeof details.status === "string" ? details.status : undefined;
 	const status =
 		rawStatus === "completed" || rawStatus === "cancelled" || rawStatus === "failed"
 			? rawStatus
-			: details.exitCode === 0
+			: details.exitCode === 0 || customType === "subagent_ping"
 				? "completed"
 				: "failed";
 	if (!id || !name) return undefined;
+	const outcome = typeof details.outcome === "string" ? details.outcome : customType === "subagent_ping" ? "blocked" : undefined;
 	return {
 		id,
 		name,
+		content,
+		...(outcome ? { outcome } : {}),
 		agent: typeof details.agent === "string" ? details.agent : undefined,
 		status,
 		exitCode: typeof details.exitCode === "number" ? details.exitCode : undefined,
@@ -401,10 +414,14 @@ function recoverResultDetails(entry: { [key: string]: unknown }): RecoveredResul
 	};
 }
 
-function recoverSummary(entry: { [key: string]: unknown }): string {
-	const content = typeof entry.content === "string" ? entry.content : "";
+function recoverSummary(content: string): string {
 	const [, afterHeader = content] = content.split(/\n\n/, 2);
 	return firstLine(afterHeader.replace(/\n\nSession:[\s\S]*$/, ""), 90) || "completed";
+}
+
+/** A run that exited cleanly but published blocked or partial shows that outcome (D14). */
+function shownOutcomeOf(status: string, outcome: string | undefined): string | undefined {
+	return status === "completed" && outcome && outcome !== "done" ? outcome.replace("_", " ") : undefined;
 }
 
 function statusVisuals(status: "completed" | "cancelled" | "failed") {
@@ -475,6 +492,7 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 		seen.add(dedupeKey);
 
 		const visual = statusVisuals(r.status);
+		const shownOutcome = shownOutcomeOf(r.status, r.resultOutcome);
 
 		const summary = r.errorMessage
 			? `error: ${firstLine(r.errorMessage, 40)}`
@@ -504,13 +522,14 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 			name: r.name,
 			agent: r.agent,
 			modelRef: meta?.modelRef,
-			status: r.status === "completed" ? undefined : visual.label,
-			statusColor: r.status === "completed" ? undefined : visual.color,
+			status: shownOutcome ?? (r.status === "completed" ? undefined : visual.label),
+			statusColor: shownOutcome ? "warning" : r.status === "completed" ? undefined : visual.color,
 			stats: [formatElapsedSeconds(r.elapsed), ...compactStats(sessionStats, r.outputTokens)],
 			activity: summary,
 			detailSections: sections,
 			canKill: false,
-			canResume: true,
+			// An ephemeral run has no session to resume.
+			canResume: Boolean(r.sessionFile),
 			sessionFile: r.sessionFile,
 		});
 	}
@@ -519,8 +538,7 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 	if (sf) {
 		try {
 			const entries = getEntries(sf) as Array<{ [key: string]: unknown }>;
-			for (const entry of entries) {
-				const recovered = recoverResultDetails(entry);
+			for (const recovered of entries.flatMap(recoverResultDetails)) {
 				if (
 					!recovered?.sessionFile ||
 					seen.has(recovered.sessionFile) ||
@@ -531,7 +549,8 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 				const visual = statusVisuals(recovered.status);
 				const summary = recovered.errorMessage
 					? `error: ${firstLine(recovered.errorMessage, 80)}`
-					: recoverSummary(entry);
+					: recoverSummary(recovered.content);
+				const shownOutcome = shownOutcomeOf(recovered.status, recovered.outcome);
 				const sessionStats = readCompletedSessionStats(recovered.sessionFile);
 				const meta = safeMeta(recovered.sessionFile);
 				const defs = recovered.agent ? safeDefs(recovered.agent, ctx.cwd) : null;
@@ -553,8 +572,8 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 					name: recovered.name,
 					agent: recovered.agent,
 					modelRef: meta?.modelRef,
-					status: recovered.status === "completed" ? undefined : visual.label,
-					statusColor: recovered.status === "completed" ? undefined : visual.color,
+					status: shownOutcome ?? (recovered.status === "completed" ? undefined : visual.label),
+					statusColor: shownOutcome ? "warning" : recovered.status === "completed" ? undefined : visual.color,
 					stats: [
 						...(recovered.elapsed != null ? [formatElapsedSeconds(recovered.elapsed)] : []),
 						...compactStats(sessionStats),

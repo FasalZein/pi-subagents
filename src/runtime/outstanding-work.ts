@@ -3,7 +3,6 @@ import type { RunningSubagent } from "../types.ts";
 /** Runtime-owned work: running children plus reports awaiting a settled continuation. */
 class OutstandingWork {
 	private pending = new Set<string>();
-	private consumed = new Set<string>();
 	private listener?: () => void;
 	/** Registry changes, including resume/adoption and clear, share one notification boundary. */
 	readonly running = new RunningWorkMap(() => this.listener?.());
@@ -27,46 +26,27 @@ class OutstandingWork {
 		// No consumer means no reporting state to retain (headless/non-Herdr).
 		if (!this.listener) { send(); return; }
 		this.pending.add(id);
-		this.consumed.delete(id);
 		this.listener();
 		try { send(); } catch (error) {
 			this.pending.delete(id);
-			this.consumed.delete(id);
 			this.listener?.();
 			throw error;
 		}
 	}
 
-	/** A wait returned this report: it is delivered (D15), so its lease ends now, once. */
-	release(id: string): void {
-		if (!this.pending.delete(id)) return;
-		this.consumed.delete(id);
-		this.listener?.();
-	}
-
-	/** Mark reports present at the model-context boundary, without releasing their leases yet. */
-	consume(messages: readonly unknown[]): void {
-		for (const message of messages) {
-			if (!message || typeof message !== "object" || !("role" in message) || message.role !== "custom") continue;
-			if (!("customType" in message) || !["subagent_result", "subagent_ping"].includes(String(message.customType))) continue;
-			if (!("details" in message) || !message.details || typeof message.details !== "object") continue;
-			if ("id" in message.details && typeof message.details.id === "string" && this.pending.has(message.details.id)) {
-				this.consumed.add(message.details.id);
-			}
-		}
-	}
-
-	/** Release only deliveries consumed by the just-settled parent continuation. */
-	settle(): void {
-		for (const id of this.consumed) this.pending.delete(id);
-		this.consumed.clear();
-		this.listener?.();
+	/**
+	 * A wait returned these reports or a committed message carries them: they are delivered (D15),
+	 * so each lease ends now, once by id. A second copy of a run releases nothing.
+	 */
+	release(...ids: string[]): void {
+		let released = false;
+		for (const id of ids) released = this.pending.delete(id) || released;
+		if (released) this.listener?.();
 	}
 
 	/** Discard session-scoped delivery bookkeeping at shutdown. */
 	reset(): void {
 		this.pending.clear();
-		this.consumed.clear();
 	}
 }
 
