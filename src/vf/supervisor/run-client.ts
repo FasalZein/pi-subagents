@@ -256,5 +256,7 @@ export async function cancelRun(
 	if (!manifest.lease || !isPidAlive(manifest.lease.pid)) return { outcome: "not-running", manifest };
 	requestCancel(runDir);
 	const final = await waitForRunResult(runDir, options);
-	return { outcome: "cancelled", manifest: final };
+	// Report what the supervisor recorded: a run that reached its terminal
+	// write before the cancel stays completed/failed.
+	return { outcome: final.state === "cancelled" ? "cancelled" : "already-terminal", manifest: final };
 }

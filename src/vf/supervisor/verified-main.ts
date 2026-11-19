@@ -79,6 +79,20 @@ if (manifest.lease && manifest.lease.pid !== process.pid && isPidAlive(manifest.
 	fail(`another supervisor (pid ${manifest.lease.pid}) still owns this run`, 5);
 }
 
+let cancelled = false;
+const verifyAbort = new AbortController();
+// Install the cancel handlers before the lease write publishes this pid: a
+// SIGTERM that arrives before a handler exists kills the supervisor with
+// the default action and leaves the run without a terminal write.
+process.on("SIGTERM", () => {
+	cancelled = true;
+	verifyAbort.abort();
+});
+process.on("SIGINT", () => {
+	cancelled = true;
+	verifyAbort.abort();
+});
+
 const runStartedAt = Date.now();
 manifest.lease = {
 	pid: process.pid,
@@ -251,20 +265,9 @@ function allSettled(): boolean {
 	return manifest.candidates.length > 0 && manifest.candidates.every((candidate) => candidate.settled);
 }
 
-let cancelled = false;
-const verifyAbort = new AbortController();
 let lastHeartbeat = Date.now();
 /** Traces written before a failure stay in the result's artifact list (ticket 06). */
 let preservedTraceArtifacts: string[] = [];
-
-process.on("SIGTERM", () => {
-	cancelled = true;
-	verifyAbort.abort();
-});
-process.on("SIGINT", () => {
-	cancelled = true;
-	verifyAbort.abort();
-});
 
 /** Watchdog covering every verifier call (gate + selection): cancellation,
  * lease loss, and heartbeat must be honored while the bridge runs. */
