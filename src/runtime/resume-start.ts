@@ -39,6 +39,8 @@ export interface ResumedChildStart {
 	expandedTask: string | undefined;
 	envVars: Record<string, string>;
 	invocationMetadata: PersistedSubagentLaunchMetadata | undefined;
+	/** The agent's deny-env for the resumed child (resolveResumeDenyEnv). */
+	denyEnv: string | undefined;
 	surfaceName: string;
 	taskName: string;
 	shellReadyDelayMs: number;
@@ -52,7 +54,7 @@ export async function startResumedChild(start: ResumedChildStart): Promise<void>
 }
 
 async function startBackgroundChild(start: ResumedChildStart): Promise<void> {
-	const { running, invocationMetadata } = start;
+	const { running } = start;
 	const invocation = getPiInvocation([
 		...buildResumePiArgs(start.sessionFile, "background"),
 		...start.extensionArgs,
@@ -65,7 +67,7 @@ async function startBackgroundChild(start: ResumedChildStart): Promise<void> {
 			running.parentClosePolicy === "continue"
 				? (["pipe", "ignore", "ignore"] as const)
 				: (["pipe", "pipe", "pipe"] as const),
-		env: getSubagentChildProcessEnv(invocation, start.envVars, resolveDenyEnvPatterns(invocationMetadata?.denyEnv)),
+		env: getSubagentChildProcessEnv(invocation, start.envVars, resolveDenyEnvPatterns(start.denyEnv)),
 	});
 	child.unref();
 	// A spawn error rejects through the undo before anything is written to the session.
@@ -130,7 +132,7 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 		cwd: start.resumeCwd ?? undefined,
 		piArgs,
 		envOverrides: resumeEnvVars,
-		denyEnv: invocationMetadata?.denyEnv,
+		denyEnv: start.denyEnv,
 		paneIdentity: adapter?.paneIdentity,
 		doneSentinelFile,
 		...(programSession ? { surfaceFromEnv: programSession.surfaceFromEnv } : {}),

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getEntries } from "../../src/session/session.ts";
@@ -152,3 +152,16 @@ export const TOOL_RESULT = {
 		content: [{ type: "text", text: "output here" }],
 	},
 };
+
+/**
+ * A session without launch metadata resumes only with an agent whose definition gives its deny-env
+ * (resolveResumeDenyEnv). Writes an agent without deny-env into a temporary agent dir and points
+ * PI_CODING_AGENT_DIR at it (the support env hooks restore it); returns the agent name to resume with.
+ */
+export function useLegacyAgentDefinition(): string {
+	const agentDir = createTestDir();
+	mkdirSync(join(agentDir, "agents"));
+	writeFileSync(join(agentDir, "agents", "legacy.md"), "---\nname: legacy\n---\nLegacy agent.\n");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	return "legacy";
+}

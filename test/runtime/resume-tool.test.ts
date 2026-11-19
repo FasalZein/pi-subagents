@@ -16,6 +16,7 @@ import {
 	readSubagentLaunchMetadataForTest,
 	requestSubagentBatchStopForTest,
 	resetSubagentStateForTest,
+	useLegacyAgentDefinition,
 	writeExecutable,
 	writeFileSync,
 	writeResumeTaskArtifactForTest,
@@ -134,7 +135,8 @@ describe("subagent_resume approval args", () => {
 				}) + "\n",
 			);
 
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime());
+			const agent = useLegacyAgentDefinition();
+			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent }, createResumeRuntime());
 
 			assert.equal(running.childProcess?.spawnargs.includes("--no-approve"), true);
 		} finally {
@@ -419,7 +421,8 @@ describe("subagent_resume extension parity", () => {
 				}) + "\n",
 			);
 
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime());
+			const agent = useLegacyAgentDefinition();
+			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent }, createResumeRuntime());
 
 			assert.equal(running.childProcess?.spawnargs.includes("--no-extensions"), true);
 		} finally {
