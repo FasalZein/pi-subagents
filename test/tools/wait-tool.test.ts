@@ -318,11 +318,11 @@ describe("T24: subagent_wait in a real Pi session", () => {
 			parent.finish("child-two", "CHILD-TWO-REPORT");
 			await run;
 			await parent.session.waitForIdle();
-			const scriptResult = parent.session.messages.find(
-				(message) => message.role === "toolResult" && message.toolName === "codemode",
+			const [scriptText] = parent.session.messages.flatMap((message) =>
+				message.role === "toolResult" && message.toolName === "codemode" ? [textOf(message.content)] : [],
 			);
-			assert.ok(scriptResult, "the script ran");
-			assert.match(textOf(scriptResult.content), /OBJECT complete id-child-one,id-child-two worker-a/);
+			assert.ok(scriptText, "the script ran");
+			assert.match(scriptText, /OBJECT complete id-child-one,id-child-two worker-a/);
 			assert.equal(parent.resultMessages(), 0, "the script's returned wait delivered both");
 		} finally {
 			await parent.dispose();
