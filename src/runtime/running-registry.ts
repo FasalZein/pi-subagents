@@ -2,6 +2,7 @@ import { outstandingWork } from "./outstanding-work.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, routeSubagentOutcome } from "./result-router.ts";
+import { resultTextOf } from "./unpublished-result.ts";
 import {
 	clearSubagentShutdownTimer,
 	completedSubagentResults,
@@ -257,7 +258,19 @@ export function wireSubagentSteerBack(
 			outstandingWork.delivery(running.id, () => pi.sendMessage(
 				{
 					customType: "subagent_result",
-					content: `Sub-agent "${running.name}" error: ${err?.message ?? String(err)}`,
+					// D14: a watcher error is a failed end with the one rendering.
+					content: resultTextOf({
+						id: running.id,
+						name: running.name,
+						agent: running.agent,
+						task: running.task,
+						summary: "",
+						summarySource: "runtime",
+						sessionFile: running.noSession ? undefined : running.sessionFile,
+						exitCode: 1,
+						elapsed: (Date.now() - running.startTime) / 1000,
+						errorMessage: `watcher error: ${err?.message ?? String(err)}`,
+					}),
 					display: true,
 					details: {
 						id: running.id,

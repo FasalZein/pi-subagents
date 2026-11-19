@@ -1,5 +1,5 @@
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
-import { formatSessionRef } from "../../src/runtime/final-context-usage.ts";
+import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { afterEach, assert, describe, it, resetSubagentStateForTest, setRunningSubagentForTest } from "../support/index.ts";
 
@@ -49,19 +49,20 @@ function deliver(running: RunningSubagent, result: SubagentResult): string {
 	return sent[0]?.content ?? "";
 }
 
+/**
+ * D7 and D14: a result that reached delivery without a published record still gets the one
+ * renderer's text: the time-limit facts and guidance, no session path, no raw resume command.
+ */
 describe("timeout result delivery", () => {
 	afterEach(() => resetSubagentStateForTest());
 
 	it("explains the kill instead of reporting a bare non-zero exit", () => {
-		const content = deliver(
-			makeRunning(),
-			makeResult({ timedOut: "timeout", timedOutAfter: 900 }),
-		);
+		const content = deliver(makeRunning(), makeResult({ timedOut: "timeout", timedOutAfter: 900 }));
 
-		assert.match(content, /ran out of time, so the system stopped it after 900s/);
-		assert.match(content, /It produced no output before it stopped/);
-		assert.doesNotMatch(content, /failed \(exit 143\)/);
+		assert.match(content.split("\n")[0], / · timed out · /);
+		assert.match(content, /time limit: 900s for the whole run/);
 		assert.doesNotMatch(content, /Background agent exited with code 143/);
+		assert.ok(content.length <= RESULT_TEXT_MAX_CHARS);
 	});
 
 	it("hands the parent the partial work a warned child managed to deliver", () => {
@@ -75,42 +76,39 @@ describe("timeout result delivery", () => {
 			}),
 		);
 
-		assert.match(content, /limit of 3m without output/);
-		assert.match(content, /Mapped the auth flow; the session layer is untouched\./);
-		assert.match(content, /better to finish the work yourself/);
+		assert.match(content, /time limit: 180s without output/);
+		assert.match(content, /Mapped the auth flow; the session layer is untouched./);
 	});
 
-	it("names the session but never hands out an unbounded raw resume command", () => {
+	it("names neither the session file nor a raw resume command", () => {
 		const content = deliver(makeRunning(), makeResult({ timedOut: "timeout", timedOutAfter: 900 }));
 
-		assert.match(content, /Session: \/tmp\/runaway-child\.jsonl/);
-		assert.match(content, /use the subagent_resume tool/);
-		// A raw pi run is not a tracked child and carries no budget, so offering
-		// that command here would undo the guarantee the text just made.
+		assert.doesNotMatch(content, /runaway-child\.jsonl/);
 		assert.doesNotMatch(content, /Resume: pi --session/);
 	});
 
-	it("withholds the resume command when the agent blocks resume", () => {
+	it("says the run cannot resume when the agent blocks resume", () => {
 		const content = deliver(
 			makeRunning({ timeoutBlocksResume: true }),
 			makeResult({ timedOut: "timeout", timedOutAfter: 900, timeoutBlocksResume: true }),
 		);
 
-		assert.match(content, /does not allow a resume after a limit stops it/);
+		assert.match(content, /not resumable: its agent does not allow a resume after a time limit stops it/);
 		assert.doesNotMatch(content, /Resume: pi --session/);
 	});
 
-	it("leaves an ordinary completion untouched", () => {
+	it("renders an ordinary completion as done", () => {
 		const content = deliver(
 			makeRunning(),
 			makeResult({ summary: "All done.", summarySource: "subagent", exitCode: 0, elapsed: 12 }),
 		);
 
-		assert.match(content, /completed \(12s\)/);
-		assert.doesNotMatch(content, /the system stopped it/);
+		assert.match(content.split("\n")[0], / · done · /);
+		assert.match(content, /All done\./);
+		assert.doesNotMatch(content, /time limit/);
 	});
 
-	it("explains that a completed report followed a forced warning-threshold interruption", () => {
+	it("marks a completed report after a warning-threshold interruption as a wrap-up", () => {
 		const content = deliver(
 			makeRunning(),
 			makeResult({
@@ -122,23 +120,7 @@ describe("timeout result delivery", () => {
 			}),
 		);
 
-		assert.match(content, /interrupted its active operation at 80%/i);
-		assert.match(content, /remaining time.*report/i);
-		assert.match(content, /short or partial report.*expected/i);
+		assert.match(content, /wrap-up: 100s for the whole run/);
 		assert.match(content, /Reported the committed findings/);
-		assert.doesNotMatch(content, /ran out of time/);
-	});
-});
-
-describe("session reference under a timeout", () => {
-	it("keeps the reference for a recoverable timeout", () => {
-		assert.match(
-			formatSessionRef({ sessionFile: "/tmp/child.jsonl", timeoutBlocksResume: false }),
-			/Resume: pi --session \/tmp\/child\.jsonl/,
-		);
-	});
-
-	it("drops the reference once resume is blocked", () => {
-		assert.equal(formatSessionRef({ sessionFile: "/tmp/child.jsonl", timeoutBlocksResume: true }), "");
 	});
 });

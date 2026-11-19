@@ -66,10 +66,8 @@ describe("result router", () => {
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		assert.match(content, /182K\/200K tokens \(91%\) used at finish/);
-		assert.match(content, /stopped early as instructed by its context-warning policy/);
-		assert.match(content, /not a failure/);
-		assert.match(content, /Do not resume this session/);
+		assert.match(content, /context: 182000\/200000 tokens/);
+		assert.match(content, /not resumable: stopped early by its context-warning policy/);
 		assert.match(content, /launch a fresh sub-agent/i);
 	});
 
@@ -91,8 +89,8 @@ describe("result router", () => {
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		assert.match(content, /40K\/200K tokens \(20%\) used at finish/);
-		assert.doesNotMatch(content, /Do not resume this session/);
+		assert.match(content, /context: 40000\/200000 tokens/);
+		assert.doesNotMatch(content, /not resumable/);
 	});
 
 	it("still explains an instructed stop when usage reporting is off", () => {
@@ -118,11 +116,10 @@ describe("result router", () => {
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		assert.match(content, /stopped early as instructed by its context-warning policy/);
-		assert.match(content, /Do not resume this session/);
+		assert.match(content, /not resumable: stopped early by its context-warning policy/);
 		// report-context-usage: false still hides the token counts.
-		assert.doesNotMatch(content, /182K/);
-		assert.doesNotMatch(content, /used at finish/);
+		assert.doesNotMatch(content, /182000/);
+		assert.doesNotMatch(content, /context: /);
 	});
 
 	it("warns that context is spent when a failure follows the final warning", () => {
@@ -151,11 +148,10 @@ describe("result router", () => {
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		// A provider error is a real failure, so the reassurance must not appear.
-		assert.doesNotMatch(content, /not a failure/);
-		assert.match(content, /context window is spent/);
-		// A provider error is often transient, so the cheap retry stays available.
-		assert.match(content, /Resume: pi --session/);
+		// A provider error is a real failure, and it names the error, never a raw resume command.
+		assert.match(content.split("\n")[0], / · failed · /);
+		assert.match(content, /provider overloaded/);
+		assert.doesNotMatch(content, /Resume: pi --session/);
 	});
 
 	it("explains an instructed stop even without a usable token snapshot", () => {
@@ -181,9 +177,8 @@ describe("result router", () => {
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		assert.match(content, /stopped early as instructed by its context-warning policy/);
-		assert.match(content, /Do not resume this session/);
-		assert.doesNotMatch(content, /used at finish/);
+		assert.match(content, /not resumable: stopped early by its context-warning policy/);
+		assert.doesNotMatch(content, /context: /);
 	});
 
 	it("routes detached completion through one parent-visible result", () => {
@@ -293,9 +288,8 @@ describe("result router", () => {
 			updateWidget: () => {},
 		});
 
-		assert.match(sent[0].message.content, /Sub-agent "Result child" failed \(exit 2\)/);
+		assert.match(sent[0].message.content.split("\n")[0], /^Result child · {2}· failed · /);
 		assert.match(sent[0].message.content, /Child failed/);
-		assert.doesNotMatch(sent[0].message.content, /completed \(/);
 	});
 
 	it("appends final child context usage after the session reference", () => {
@@ -318,10 +312,9 @@ describe("result router", () => {
 			updateWidget: () => {},
 		});
 
-		assert.match(
-			sent[0].message.content,
-			/Finished the delegated work\.\n\nSession: \/tmp\/result-child\.jsonl\nResume: pi --session \/tmp\/result-child\.jsonl\n\nSub-agent context: 145K\/200K tokens \(72%\) used at finish\.$/,
-		);
+		assert.match(sent[0].message.content, /Finished the delegated work\./);
+		assert.match(sent[0].message.content, /\ncontext: 145000\/200000 tokens$/);
+		assert.doesNotMatch(sent[0].message.content, /result-child\.jsonl/);
 		assert.equal(sent[0].message.details.contextTokens, 145_000);
 		assert.equal(sent[0].message.details.contextWindow, 200_000);
 	});
@@ -346,7 +339,7 @@ describe("result router", () => {
 			updateWidget: () => {},
 		});
 
-		assert.doesNotMatch(sent[0].message.content, /Sub-agent context:/);
+		assert.doesNotMatch(sent[0].message.content, /context: /);
 		assert.equal(sent[0].message.details.contextTokens, 145_000);
 		assert.equal(sent[0].message.details.contextWindow, 200_000);
 	});
@@ -373,14 +366,9 @@ describe("result router", () => {
 			updateWidget: () => {},
 		});
 
-		assert.match(sent[0].message.content, /Last output before the failure/);
-		assert.match(
-			sent[0].message.content,
-			/Sub-agent "Result child" failed after 3s \(provider\/agent error — auto-retry exhausted\)\./,
-		);
+		assert.match(sent[0].message.content.split("\n")[0], / · failed · 3\.0s · untyped$/);
 		assert.match(sent[0].message.content, /Completed the requested implementation\./);
-		assert.doesNotMatch(sent[0].message.content, /did not produce a result/);
-		assert.match(sent[0].message.content, /Sub-agent context: 145K\/200K tokens \(72%\) used at finish\.$/);
+		assert.match(sent[0].message.content, /\ncontext: 145000\/200000 tokens$/);
 	});
 
 	it("does not present runtime diagnostics as salvaged child output", () => {
@@ -404,8 +392,7 @@ describe("result router", () => {
 			updateWidget: () => {},
 		});
 
-		assert.match(sent[0].message.content, /did not produce a result/);
-		assert.doesNotMatch(sent[0].message.content, /Last output before the failure/);
+		assert.match(sent[0].message.content, /failed: Provider unavailable/);
 		assert.doesNotMatch(sent[0].message.content, /provider stack trace/);
 	});
 

@@ -3,7 +3,6 @@ import {
 	checkSubagentTimeoutWrapUp,
 	findDueTimeoutWrapUp,
 	findExpiredTimeoutBudget,
-	formatTimeoutOutcome,
 	formatTimeoutSeconds,
 	observeSubagentProgress,
 } from "../../src/runtime/timeout-budget.ts";
@@ -189,42 +188,5 @@ describe("timeout launch state", () => {
 		assert.deepEqual(resolveSubagentTimeoutState({ timeout: 60, timeoutWarnThreshold: "bogus" }), {
 			timeoutBudget: { timeoutSeconds: 60 },
 		});
-	});
-});
-
-describe("timeout outcome text", () => {
-	const base = { name: "scout", elapsed: 900, summary: "Mapped the auth flow." } as const;
-
-	it("names the spent wall-clock budget and keeps the partial work", () => {
-		const text = formatTimeoutOutcome(
-			{ ...base, timedOut: "timeout", timedOutAfter: 900 },
-			true,
-			(elapsed) => `${elapsed}s`,
-		);
-		assert.match(text, /the system stopped it after 900s/);
-		assert.match(text, /limit of 15m for the whole run/);
-		assert.match(text, /Mapped the auth flow\./);
-		assert.match(text, /smaller task/);
-	});
-
-	it("says plainly that a silent child produced nothing", () => {
-		const text = formatTimeoutOutcome(
-			{ ...base, timedOut: "idle-timeout", timedOutAfter: 180 },
-			false,
-			(elapsed) => `${elapsed}s`,
-		);
-		assert.match(text, /limit of 3m without output/);
-		assert.match(text, /It produced no output before it stopped/);
-		assert.doesNotMatch(text, /Mapped the auth flow/);
-	});
-
-	it("tells the parent resume is refused under block-resume", () => {
-		const text = formatTimeoutOutcome(
-			{ ...base, timedOut: "timeout", timedOutAfter: 900, timeoutBlocksResume: true },
-			true,
-			(elapsed) => `${elapsed}s`,
-		);
-		assert.match(text, /does not allow a resume after a limit stops it/);
-		assert.doesNotMatch(text, /A resume gets the same limit/);
 	});
 });

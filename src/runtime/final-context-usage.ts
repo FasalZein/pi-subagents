@@ -16,33 +16,6 @@ export interface FinalContextUsage {
 	errorMessage?: string;
 }
 
-/**
- * Session reference for a finished child. Nothing is shown once the run ended
- * under context pressure, or once a timeout kill the agent marked
- * `on-timeout: block-resume` refuses: the guard refuses those resumes, and a
- * path or command in model-visible text is an invitation to route around it
- * with a shell. The operator still gets the path from the structured result
- * details.
- */
-export function formatSessionRef(
-	result: FinalContextUsage & { sessionFile?: string; timedOut?: string; timeoutBlocksResume?: boolean },
-): string {
-	if (!result.sessionFile) return "";
-	if (result.contextWarned) return "";
-	if (result.timeoutBlocksResume) return "";
-	// A raw `pi --session` run is not a tracked child, so it carries no budget:
-	// handing that command to a model right after telling it a resume stays
-	// bounded would advertise the one path that reruns the runaway unbounded.
-	if (result.timedOut) {
-		return (
-			`\n\nSession: ${result.sessionFile}\n` +
-			"To continue this work, use the subagent_resume tool. It applies the same limit again. " +
-			"Do not open this file with a plain pi --session command, because that run has no limit."
-		);
-	}
-	return `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`;
-}
-
 function formatCompactTokens(tokens: number): string {
 	if (tokens >= 1_000_000) {
 		return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
@@ -89,7 +62,7 @@ export function formatFinalContextUsage(result: FinalContextUsage): string {
  * Reports the reason without the token counts that `report-context-usage:
  * false` opts out of.
  */
-export function formatContextExitNotice(result: FinalContextUsage): string {
+function formatContextExitNotice(result: FinalContextUsage): string {
 	if (!result.contextWarned || result.errorMessage) return "";
 	return `\n\nSub-agent ${CONTEXT_EXIT_NOTICE}`;
 }

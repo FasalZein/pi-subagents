@@ -5,7 +5,18 @@ import { RECORD_FILE } from "../../src/runtime/result-files.ts";
 import type { ResultRecord } from "../../src/runtime/result-record.ts";
 import type { VerifiedRunManifest } from "../../src/vf/run/types.ts";
 import { verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
-import { assert, createTestDir } from "../support/index.ts";
+import { adoptVerifiedRuns } from "../../src/vf/run/adopt.ts";
+import { waitForVerifiedRunResult } from "../../src/vf/run/client.ts";
+import { verifiedRunsBaseDir } from "../../src/vf/run/launch.ts";
+import { readVerifiedRunManifest, writeVerifiedRunManifest } from "../../src/vf/run/types.ts";
+import {
+	assert,
+	createTestDir,
+	resetSubagentStateForTest,
+	setRunningSubagentForTest,
+	waitForSubagentForTest,
+} from "../support/index.ts";
+import { buildSupervisedRun, setupVerifiedRunFixture } from "../support/verified-runs.ts";
 
 /**
  * D18 with D14: a verified fan-out winner goes through the one assembler and renderer. The text
@@ -18,6 +29,7 @@ const RUN_ID = "vf-20261119-001655-abcd";
 
 let dirs: string[] = [];
 afterEach(() => {
+	resetSubagentStateForTest();
 	for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 	dirs = [];
 });
@@ -97,5 +109,77 @@ describe("verified fan-out winner result", () => {
 		assert.equal(record.report.saved && record.report.path, second.reportFile);
 		assert.match(readFileSync(second.reportFile ?? "", "utf8"), /^second generation report/);
 		assert.match(record.summary, /second generation report/);
+	});
+
+	it("returns the capped winner with its metadata from a direct wait", async () => {
+		const dir = runDir();
+		const result = { ...verifiedRunToSubagentResult(manifest("w".repeat(20_000), true), dir, { name: "vf-run", task: "t" }, Date.now()), deliveryId: `${RUN_ID}-g1` };
+		const running = {
+			id: "vf-wait-1",
+			name: "vf-run",
+			task: "t",
+			mode: "background" as const,
+			executionState: "running" as const,
+			deliveryState: "detached" as const,
+			parentClosePolicy: "continue" as const,
+			startTime: Date.now(),
+			sessionFile: "",
+			completionPromise: Promise.resolve(result),
+		};
+		setRunningSubagentForTest(running);
+		const waited = await waitForSubagentForTest({ id: running.id });
+		const text = (waited.content[0] as { text: string }).text;
+		const details = waited.details as Record<string, unknown>;
+		assert.ok(text.length <= TEXT_LIMIT);
+		assert.match(text, /verifier: winner staged/);
+		assert.equal(details.runId, RUN_ID);
+		assert.equal(details.reportFile, result.reportFile);
+		assert.equal(details.deliveryId, `${RUN_ID}-g1`);
+	});
+});
+
+describe("verified fan-out winner on adoption", () => {
+	it("caps a 20,000-character winner on adoption and on re-adoption, and keeps the report out of a notice", async () => {
+		const { repo, fakePi, captureDir, parent } = setupVerifiedRunFixture();
+		dirs.push(parent);
+		const artifactRoot = createTestDir();
+		dirs.push(artifactRoot);
+		process.env.PI_ARTIFACT_PROJECT_ROOT = artifactRoot;
+		const { runDir: dir } = buildSupervisedRun(repo, fakePi, captureDir, [
+			{ marker: "VF-GOOD", change: "good change" },
+			{ marker: "VF-MID", change: "mid change" },
+		], { baseDir: verifiedRunsBaseDir(repo), parentSessionId: "session-origin" });
+		await waitForVerifiedRunResult(dir, { timeoutMs: 120_000 });
+		const finished = readVerifiedRunManifest(dir);
+		const longReport = `${"Adopted winner line.\n".repeat(1_000)}END-OF-ADOPTED`;
+		assert.ok(longReport.length >= 20_000);
+		finished.result!.selection!.winnerReport = longReport;
+		writeVerifiedRunManifest(dir, finished);
+
+		const messages: Array<{ content: string; details: Record<string, unknown> }> = [];
+		const sink = { sendMessage: (m: { content: string; details?: Record<string, unknown> }) => messages.push({ content: m.content, details: m.details ?? {} }) };
+		const stranger = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-stranger" });
+		assert.equal(stranger.find((entry) => entry.runDir === dir)?.action, "awaiting-origin");
+		assert.doesNotMatch(messages[0].content, /Adopted winner line/, "a notice holds no winner report");
+
+		// An unconfirmed receipt leaves the winner adoptable again; both copies are capped.
+		const first = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-origin", confirmPersisted: async () => false });
+		assert.equal(first.find((entry) => entry.runDir === dir)?.action, "unconfirmed");
+		const again = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-origin", confirmPersisted: async () => true });
+		assert.equal(again.find((entry) => entry.runDir === dir)?.action, "delivered");
+		const winners = messages.slice(1);
+		assert.equal(winners.length, 2);
+		for (const message of winners) {
+			assert.ok(message.content.length <= TEXT_LIMIT, `text has ${message.content.length} characters`);
+			assert.match(message.content, /verifier: winner (staged|not applied)/);
+			assert.doesNotMatch(message.content, /END-OF-ADOPTED/);
+			assert.equal(typeof message.details.deliveryId, "string");
+			assert.equal(message.details.verifiedRunId, finished.runId);
+			assert.equal(message.details.runId, finished.runId);
+			const reportFile = message.details.reportFile as string;
+			assert.ok(message.content.includes("report: "), "the text names the report");
+			assert.ok(readFileSync(reportFile, "utf8").startsWith(longReport), "the report keeps the whole winner report");
+		}
+		delete process.env.PI_ARTIFACT_PROJECT_ROOT;
 	});
 });
