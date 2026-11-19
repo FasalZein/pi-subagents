@@ -104,11 +104,17 @@ function getUnknownAgentError(agent: string, launchable: () => LaunchableAgent[]
 	return `Error: ${renderUnknownAgentRefusal(agent, launchable().map(nameOf))}`;
 }
 
-function getSpawnWidthError(text: string): ToolResult {
+/** A refusal before any child starts: an error result, so a codemode script call rejects. */
+function getRefusal(text: string, error: "spawn_width" | "launch_cap"): ToolResult {
 	return asSubagentToolResult({
 		content: [{ type: "text" as const, text }],
-		details: { error: "spawn_width" },
+		details: { error },
+		isError: true,
 	});
+}
+
+function getSpawnWidthError(text: string): ToolResult {
+	return getRefusal(text, "spawn_width");
 }
 
 function getBatchWidthValidationError(count: number, limit: number): ToolResult {
@@ -391,10 +397,7 @@ export function registerSubagentCoreTools(
 				// D9: the launch cap counts the same units, taken before any side effect.
 				const unlaunchedCapSlots = tryAcquireLaunchCapSlots(totalSlots);
 				if (!unlaunchedCapSlots) {
-					return asSubagentToolResult({
-						content: [{ type: "text", text: getLaunchCapError(totalSlots) }],
-						details: { error: "launch_cap" },
-					});
+					return getRefusal(getLaunchCapError(totalSlots), "launch_cap");
 				}
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
 				if (!unlaunchedSlots) {

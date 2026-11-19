@@ -578,3 +578,62 @@ describe("T28: a batch whose later child fails to launch", () => {
 		}
 	});
 });
+
+describe("g3 P1: a launch refused before any child starts", () => {
+	const ENV_KEYS = ["PI_SUBAGENT_LAUNCH_CAP", "PI_SUBAGENT_SPAWN_WIDTH"] as const;
+
+	/** Runs the second launch of a script; the first launch takes the only slot when one is given. */
+	async function refusedInScript(
+		env: Partial<Record<(typeof ENV_KEYS)[number], string>>,
+		first: unknown,
+		second: unknown,
+	) {
+		const saved = ENV_KEYS.map((key) => [key, process.env[key]] as const);
+		Object.assign(process.env, env);
+		resetSubagentStateForTest();
+		const script = [
+			first === undefined ? "" : `await tools.subagent(${JSON.stringify(first)});`,
+			`try { const r = await tools.subagent(${JSON.stringify(second)}); return "JSON " + JSON.stringify({ resolved: r }); }`,
+			'catch (e) { return "JSON " + JSON.stringify({ rejected: e.message }); }',
+		].join("\n");
+		const harness = await startParent(
+			{ go: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
+			{ codemode: true },
+		);
+		try {
+			await harness.session.prompt("go");
+			await harness.session.waitForIdle();
+			return scriptValue(harness) as { resolved?: unknown; rejected?: string };
+		} finally {
+			await harness.dispose();
+			for (const [key, value] of saved) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			resetSubagentStateForTest();
+		}
+	}
+
+	const one = { children: [child("child-one")] };
+	const two = { children: [child("child-two")] };
+
+	it("rejects the script call over the launch cap", async () => {
+		const value = await refusedInScript({ PI_SUBAGENT_LAUNCH_CAP: "1" }, one, two);
+		assert.equal(value.resolved, undefined, "the refusal is not a successful value");
+		assert.match(value.rejected ?? "", /1 of 1/);
+	});
+
+	it("rejects the script call for a batch wider than the spawn width", async () => {
+		const value = await refusedInScript({ PI_SUBAGENT_SPAWN_WIDTH: "1" }, undefined, {
+			children: [child("child-one"), child("child-two")],
+		});
+		assert.equal(value.resolved, undefined, "the refusal is not a successful value");
+		assert.match(value.rejected ?? "", /exceeds the spawn width limit of 1/);
+	});
+
+	it("rejects the script call when every spawn slot is busy", async () => {
+		const value = await refusedInScript({ PI_SUBAGENT_SPAWN_WIDTH: "1" }, one, two);
+		assert.equal(value.resolved, undefined, "the refusal is not a successful value");
+		assert.match(value.rejected ?? "", /Spawn width limit reached/);
+	});
+});
