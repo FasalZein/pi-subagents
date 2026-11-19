@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { assert, createTestDir } from "../support/index.ts";
 import {
@@ -222,6 +223,50 @@ describe("detached supervisor process (live)", () => {
 		assert.ok(existsSync(runFilePaths(started.runDir).cancelSentinel));
 		const again = await cancelRun(started.runDir);
 		assert.equal(again.outcome, "already-terminal");
+	});
+
+	it("honours a cancel that arrives right after the lease is claimed", async () => {
+		// cancelRun sends SIGTERM as soon as the manifest names a live lease
+		// pid; a supervisor without a handler yet would die on it and leave
+		// the run "running" forever.
+		const baseDir = createTestDir();
+		const started = startSupervisedRun({
+			baseDir,
+			request: processRequest("setInterval(()=>{},1000)"),
+		});
+		const deadline = Date.now() + 30_000;
+		while (!readManifest(started.runDir).lease?.pid && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 2));
+		}
+		const { outcome } = await cancelRun(started.runDir, { timeoutMs: 30_000 });
+		assert.equal(outcome, "cancelled");
+		const manifest = readManifest(started.runDir);
+		assert.equal(manifest.state, "cancelled");
+		assert.equal(manifest.body, null);
+	});
+
+	it("flushes body output to stdout.log before the terminal state, even with slow file writes", async () => {
+		// A loaded host delays the libuv threadpool that runs fs writes; this
+		// preload makes every async fs.write in the supervisor slow so an
+		// unflushed log at process exit shows up deterministically.
+		const baseDir = createTestDir();
+		const preload = join(baseDir, "slow-fs-write.mjs");
+		writeFileSync(
+			preload,
+			`import fs from "node:fs";
+const write = fs.write;
+fs.write = (...args) => { setTimeout(() => write(...args), 200); };
+`,
+		);
+		const started = startSupervisedRun({
+			baseDir,
+			request: processRequest("console.log('hello from body'); process.exit(0)"),
+			env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
+		});
+		const manifest = await waitForRunResult(started.runDir, { timeoutMs: 30_000 });
+		assert.equal(manifest.state, "completed");
+		assert.equal(readFileSync(join(started.runDir, "stdout.log"), "utf8"), "hello from body\n");
+		assert.match(readFileSync(started.supervisorLogPath, "utf8"), /finished: outcome=exit/);
 	});
 
 	it("enforces the body timeout by killing the process group", async () => {

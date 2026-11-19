@@ -77,6 +77,23 @@ if (!runDir || !leaseId) {
 	fail(`usage: ${basename(process.argv[1] ?? "main.ts")} <runDir> <leaseId>`);
 }
 
+// Install the cancel handlers before the lease (and with it this pid) is
+// published: cancelRun sends SIGTERM as soon as the manifest names a live
+// lease pid, and a SIGTERM that arrives before a handler exists takes the
+// default action and kills the supervisor without a terminal write. A
+// signal that arrives before the body runs is remembered and honoured at
+// spawn time.
+let cancelSignal: NodeJS.Signals | null = null;
+let onCancelSignal: (() => void) | null = null;
+const handleCancelSignal = (signal: NodeJS.Signals) => {
+	if (cancelSignal) return;
+	cancelSignal = signal;
+	log(`${signal} received; cancelling run`);
+	onCancelSignal?.();
+};
+process.on("SIGTERM", () => handleCancelSignal("SIGTERM"));
+process.on("SIGINT", () => handleCancelSignal("SIGINT"));
+
 let manifest: SupervisorManifest;
 try {
 	manifest = readManifest(runDir);
@@ -141,6 +158,8 @@ let stdoutBytes = 0;
 let stderrBytes = 0;
 let bodyPgid = 0;
 let lastHeartbeat = Date.now();
+/** Waits until the body's output is in stdout.log/stderr.log; set once a body is spawned. */
+let drainBodyOutput: () => Promise<void> = async () => {};
 
 const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 	let settled = false;
@@ -152,6 +171,13 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 
 	if (request.kind !== "process") {
 		fail(`unsupported request kind "${(request as { kind: string }).kind}"`);
+	}
+
+	if (cancelSignal || existsSync(paths.cancelSentinel)) {
+		cancelled = true;
+		log("cancel requested before body spawn; not starting the body");
+		settle({ kind: "cancelled" });
+		return;
 	}
 
 	const stdoutStream = createWriteStream(paths.stdout, { flags: "a" });
@@ -175,23 +201,36 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 
 	child.stdout?.on("data", (chunk: Buffer) => {
 		stdoutBytes += chunk.length;
-		stdoutStream.write(chunk);
+		if (!stdoutStream.writableEnded) stdoutStream.write(chunk);
 	});
 	child.stderr?.on("data", (chunk: Buffer) => {
 		stderrBytes += chunk.length;
-		stderrStream.write(chunk);
+		if (!stderrStream.writableEnded) stderrStream.write(chunk);
 	});
-	const closeStreams = () => {
-		stdoutStream.end();
-		stderrStream.end();
+	// 'exit' can fire before the stdio pipes are drained; 'close' fires after
+	// the last chunk was emitted. A spawn error may not emit 'close'.
+	const stdioClosed = new Promise<void>((resolve) => {
+		child.once("close", () => resolve());
+		child.once("error", () => resolve());
+	});
+	const closeStream = (stream: typeof stdoutStream) =>
+		new Promise<void>((resolve) => {
+			stream.once("close", () => resolve());
+			stream.end();
+		});
+	drainBodyOutput = async () => {
+		// Bounded wait: a backgrounded grandchild that inherited the pipes can
+		// hold them open forever after the body itself exited.
+		await Promise.race([stdioClosed, sleep(KILL_GRACE_MS)]);
+		// The terminal write and process.exit follow: the file streams must
+		// have flushed and closed first, or the logs are truncated or empty.
+		await Promise.all([closeStream(stdoutStream), closeStream(stderrStream)]);
 	};
 	child.on("error", (error) => {
 		log(`body spawn error: ${error.message}`);
-		closeStreams();
 		settle({ kind: "exit", code: null, signal: null, spawnError: error.message });
 	});
 	child.on("exit", (code, signal) => {
-		closeStreams();
 		settle({ kind: "exit", code, signal });
 	});
 
@@ -245,16 +284,14 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 		})();
 	}, TICK_MS);
 
-	const onSignal = (signal: NodeJS.Signals) => {
+	onCancelSignal = () => {
 		if (settled) return;
-		log(`${signal} received; cancelling run`);
 		cancelled = true;
 		clearInterval(timer);
 		void abortBody("cancelled");
 	};
-	process.on("SIGTERM", () => onSignal("SIGTERM"));
-	process.on("SIGINT", () => onSignal("SIGINT"));
 });
+await drainBodyOutput();
 
 // ---------------------------------------------------------------------------
 // Terminal write
@@ -281,6 +318,9 @@ const result = {
 	finishedAt,
 };
 
+// Log before the terminal write: a reader that sees the terminal state must
+// also see the complete supervisor log.
+log(`run ${manifest.runId} finished: outcome=${outcome.kind} ok=${result.ok}`);
 updateManifest(runDir, (current) => {
 	if (current.leaseId !== leaseId) fail("lease lost before terminal write", 5);
 	if (isTerminalState(current.state)) return;
@@ -288,7 +328,6 @@ updateManifest(runDir, (current) => {
 	current.result = result;
 	current.state = cancelled ? "cancelled" : result.ok ? "completed" : "failed";
 });
-log(`run ${manifest.runId} finished: outcome=${outcome.kind} ok=${result.ok}`);
 process.exit(0);
 
 function outcomeErrorMessage(outcome: BodyOutcome): string | undefined {
