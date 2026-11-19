@@ -69,6 +69,11 @@ class DeliveryQueue {
 		if (typeof details?.id === "string") this.pending.delete(details.id);
 	}
 
+	/** A wait took this run end: it leaves the queue, so no boundary hands it over again. */
+	take(id: string): void {
+		this.pending.delete(id);
+	}
+
 	get size(): number {
 		return this.pending.size;
 	}
@@ -91,6 +96,16 @@ export function registerDeliveryQueue(pi: ExtensionAPI): void {
 /** Run ends that the parent session has not committed yet. */
 export function pendingRunEndCount(): number {
 	return deliveryQueue.size;
+}
+
+/**
+ * D15: a wait that returns a run end takes it from the queue; the wait reply delivers it. A copy
+ * that Pi already holds in its steer queue may still be committed: that duplicate is capped like
+ * every copy, and the run is released once by id here.
+ */
+export function takeQueuedRunEnd(id: string): void {
+	deliveryQueue.take(id);
+	outstandingWork.release(id);
 }
 
 /** Forget the session-scoped queue (test isolation and runtime reset). */

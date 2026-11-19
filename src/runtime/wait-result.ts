@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CompletedSubagentResult, DeliveryState, RunningSubagent, SubagentResult, WaitParams } from "../types.ts";
+import { takeQueuedRunEnd } from "./delivery-queue.ts";
 import type { WaitRuntime } from "./wait.ts";
 import { getTimeoutResultDetails } from "./timeout-budget.ts";
 import { resultTextOf } from "./unpublished-result.ts";
@@ -90,6 +91,12 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 
 	const cached = match.cached;
+	if (cached && signal?.aborted) {
+		// R4: an aborted wait takes nothing; a queued result stays in the queue.
+		return getSubagentWaitErrorResult(`Waiting for sub-agent "${cached.name}" was interrupted.`, "interrupted", {
+			id: cached.id,
+		});
+	}
 	if (cached) {
 		if (cached.deliveryState !== "detached" && !cached.deliveredTo) {
 			return getSubagentWaitErrorResult(
@@ -100,6 +107,7 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		}
 		cached.deliveryState = "awaited";
 		cached.deliveredTo = "wait";
+		takeQueuedRunEnd(cached.id);
 		return getSubagentWaitSuccessResult(cached);
 	}
 
@@ -113,6 +121,16 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 	if (!running.completionPromise) {
 		return getSubagentWaitErrorResult(`Sub-agent "${running.name}" is missing completion tracking.`, "not_found", {
+			id: running.id,
+		});
+	}
+
+	// R4: a wait that starts aborted takes nothing, so the run end still goes out as a message.
+	if (signal?.aborted) {
+		await runtime.stopRunningSubagent(running);
+		runtime.runningSubagents.delete(running.id);
+		runtime.updateWidget();
+		return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 			id: running.id,
 		});
 	}
@@ -143,14 +161,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		}
 
 		if (signal) {
-			if (signal.aborted) {
-				await runtime.stopRunningSubagent(running);
-				runtime.runningSubagents.delete(running.id);
-				runtime.updateWidget();
-				return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
-					id: running.id,
-				});
-			}
 			races.push(
 				new Promise((resolve) => {
 					const onAbort = () => resolve({ kind: "interrupted" as const });
@@ -177,6 +187,7 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 			}
 			completed.deliveryState = "awaited";
 			completed.deliveredTo = "wait";
+			takeQueuedRunEnd(completed.id);
 			return getSubagentWaitSuccessResult(completed);
 		}
 

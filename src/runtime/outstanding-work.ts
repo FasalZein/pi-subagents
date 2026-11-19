@@ -37,6 +37,13 @@ class OutstandingWork {
 		}
 	}
 
+	/** A wait returned this report: it is delivered (D15), so its lease ends now, once. */
+	release(id: string): void {
+		if (!this.pending.delete(id)) return;
+		this.consumed.delete(id);
+		this.listener?.();
+	}
+
 	/** Mark reports present at the model-context boundary, without releasing their leases yet. */
 	consume(messages: readonly unknown[]): void {
 		for (const message of messages) {
