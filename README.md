@@ -533,7 +533,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses gives the refusal text as a string and starts nothing.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses gives the refusal text as a string and starts nothing. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -622,7 +622,7 @@ A result can arrive twice: once in a wait reply and once by message, for example
 - A cancelled worker keeps its slot until the worker exits.
 - A waiting script must not depend on another script. Two scripts that wait for each other hold both workers.
 - A script cannot be resumed from the middle. After a failure, recover as described above.
-- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops only the script and its wait. The children keep running and report by message.
+- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops the script and its wait, not the children. The children keep running and report by message.
 - Time and random values come from outside the script if a rerun should repeat them. Write them into the inputs.
 - Each child runs in its own Pi process, so the scripts of a child do not take the workers of the parent.
 
