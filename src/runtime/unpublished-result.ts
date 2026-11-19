@@ -16,7 +16,12 @@ import { hasRealSubagentOutput } from "./state.ts";
 const UNPUBLISHED_REPORT = "no result record was published for this run";
 
 /** A result that reached a delivery path without a rendering, with the facts a footer needs. */
-export type UnpublishedResult = SubagentResult & { id?: string; agent?: string; status?: string; reportContextUsage?: boolean };
+type UnpublishedResult = SubagentResult & {
+	id?: string;
+	agent?: string;
+	status?: string;
+	reportContextUsage?: boolean;
+};
 
 /** The end the result's fields describe, in the order the watcher decides it (D7, D12). */
 function resultEnd(result: UnpublishedResult): RunEnd {
@@ -27,9 +32,15 @@ function resultEnd(result: UnpublishedResult): RunEnd {
 	}
 	if (result.errorMessage) return { kind: "failed", error: result.errorMessage, code: result.exitCode };
 	if (result.exitCode === 0 && result.timeoutWrapUp) {
-		return { kind: "timed_out", budget: result.timeoutWrapUp.kind, seconds: result.timeoutWrapUp.seconds, wrapUp: true };
+		return {
+			kind: "timed_out",
+			budget: result.timeoutWrapUp.kind,
+			seconds: result.timeoutWrapUp.seconds,
+			wrapUp: true,
+		};
 	}
-	if (result.exitCode !== 0) return { kind: "failed", error: `exited with code ${result.exitCode}`, code: result.exitCode };
+	if (result.exitCode !== 0)
+		return { kind: "failed", error: `exited with code ${result.exitCode}`, code: result.exitCode };
 	return { kind: "exited", code: 0 };
 }
 
@@ -70,9 +81,14 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 		end: resultEnd(result),
 		entries,
 		launchEntryCount: 0,
-		contextUsage: result.contextTokens !== undefined ? { tokens: result.contextTokens, window: result.contextWindow } : undefined,
+		contextUsage:
+			result.contextTokens !== undefined ? { tokens: result.contextTokens, window: result.contextWindow } : undefined,
 		resume: resumeFacts(result),
 	});
 	const record: ResultRecord = { ...assembled.record, report: { saved: false, error: UNPUBLISHED_REPORT } };
-	return renderResult(record, { cwd: parentCwd, homeDir: homedir(), showContextUsage: result.reportContextUsage !== false });
+	return renderResult(record, {
+		cwd: parentCwd,
+		homeDir: homedir(),
+		showContextUsage: result.reportContextUsage !== false,
+	});
 }

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { assembleResult, cutText, type RunEnd } from "../../runtime/result-assembler.ts";
-import { publishResult, readResultRecord, type Reservation } from "../../runtime/result-files.ts";
+import { publishResult, type Reservation, readResultRecord } from "../../runtime/result-files.ts";
 import { parseRunId, type ResultRecord, SUMMARY_MAX_CHARS } from "../../runtime/result-record.ts";
 import { renderResult, type VerifierFooter } from "../../runtime/result-render.ts";
 import type { SessionEntry } from "../../session/session.ts";
@@ -63,7 +63,10 @@ function winnerText(manifest: VerifiedRunManifest, runDir: string): WinnerText {
 	const result = manifest.result;
 	if (!result) {
 		const error = `run ${manifest.state} without a result`;
-		return { end: { kind: "failed", error }, report: `llm-as-a-verifier run ${manifest.runId} is ${manifest.state} with no recorded result.` };
+		return {
+			end: { kind: "failed", error },
+			report: `llm-as-a-verifier run ${manifest.runId} is ${manifest.state} with no recorded result.`,
+		};
 	}
 	if (result.ok && result.selection) {
 		return {
@@ -73,12 +76,19 @@ function winnerText(manifest: VerifiedRunManifest, runDir: string): WinnerText {
 		};
 	}
 	const error = result.failure ? `${result.failure.code}: ${result.failure.message}` : "run failed";
-	return { end: { kind: "failed", error }, report: result.failure?.message ?? `llm-as-a-verifier run ${manifest.runId} failed.` };
+	return {
+		end: { kind: "failed", error },
+		report: result.failure?.message ?? `llm-as-a-verifier run ${manifest.runId} failed.`,
+	};
 }
 
 /** The report text as the one assistant message of the run, so the assembler reads it like any report. */
 function reportEntries(report: string): SessionEntry[] {
-	const entry: SessionEntry = { type: "message", id: "verified-report", message: { role: "assistant", content: [{ type: "text", text: report }] } };
+	const entry: SessionEntry = {
+		type: "message",
+		id: "verified-report",
+		message: { role: "assistant", content: [{ type: "text", text: report }] },
+	};
 	return [entry];
 }
 

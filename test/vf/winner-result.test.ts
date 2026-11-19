@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { RECORD_FILE } from "../../src/runtime/result-files.ts";
 import type { ResultRecord } from "../../src/runtime/result-record.ts";
-import type { VerifiedRunManifest } from "../../src/vf/run/types.ts";
-import { verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
 import { adoptVerifiedRuns } from "../../src/vf/run/adopt.ts";
 import { waitForVerifiedRunResult } from "../../src/vf/run/client.ts";
 import { verifiedRunsBaseDir } from "../../src/vf/run/launch.ts";
+import type { VerifiedRunManifest } from "../../src/vf/run/types.ts";
 import { readVerifiedRunManifest, writeVerifiedRunManifest } from "../../src/vf/run/types.ts";
+import { verifiedRunToSubagentResult } from "../../src/vf/run/winner-result.ts";
 import {
 	assert,
 	createTestDir,
@@ -79,12 +79,20 @@ describe("verified fan-out winner result", () => {
 		const winnerReport = `${"Winner line with findings.\n".repeat(770)}END-OF-REPORT`;
 		assert.ok(winnerReport.length >= 20_000);
 		const dir = runDir();
-		const result = verifiedRunToSubagentResult(manifest(winnerReport, true), dir, { name: "vf-run", task: "t" }, Date.now() - 5_000);
+		const result = verifiedRunToSubagentResult(
+			manifest(winnerReport, true),
+			dir,
+			{ name: "vf-run", task: "t" },
+			Date.now() - 5_000,
+		);
 		assert.ok(result.resultText.length <= TEXT_LIMIT, `text has ${result.resultText.length} characters`);
 		assert.match(result.resultText, /verifier: winner staged/);
 		assert.doesNotMatch(result.resultText, /END-OF-REPORT/);
 		assert.ok(result.reportFile, "a report file is named");
-		assert.ok(result.resultText.includes(result.reportFile) || result.resultText.includes("report: "), "the text names the report");
+		assert.ok(
+			result.resultText.includes(result.reportFile) || result.resultText.includes("report: "),
+			"the text names the report",
+		);
 		const report = readFileSync(result.reportFile, "utf8");
 		assert.ok(report.startsWith(winnerReport), "the report keeps the whole winner report");
 		assert.match(report, /git reset --hard 0123456789abcdef/);
@@ -94,15 +102,30 @@ describe("verified fan-out winner result", () => {
 	});
 
 	it("keeps the not-applied fact in the capped text", () => {
-		const result = verifiedRunToSubagentResult(manifest("x".repeat(20_000), false), runDir(), { name: "vf-run", task: "t" }, Date.now());
+		const result = verifiedRunToSubagentResult(
+			manifest("x".repeat(20_000), false),
+			runDir(),
+			{ name: "vf-run", task: "t" },
+			Date.now(),
+		);
 		assert.ok(result.resultText.length <= TEXT_LIMIT);
 		assert.match(result.resultText, /verifier: winner not applied/);
 	});
 
 	it("switches the run's record and report to the newer generation after a retry", () => {
 		const dir = runDir();
-		const first = verifiedRunToSubagentResult(manifest("first generation report", true), dir, { name: "vf-run", task: "t" }, Date.now());
-		const second = verifiedRunToSubagentResult(manifest("second generation report", true), dir, { name: "vf-run", task: "t" }, Date.now());
+		const first = verifiedRunToSubagentResult(
+			manifest("first generation report", true),
+			dir,
+			{ name: "vf-run", task: "t" },
+			Date.now(),
+		);
+		const second = verifiedRunToSubagentResult(
+			manifest("second generation report", true),
+			dir,
+			{ name: "vf-run", task: "t" },
+			Date.now(),
+		);
 		assert.notEqual(first.reportFile, second.reportFile);
 		const record = JSON.parse(readFileSync(join(dir, "result", RECORD_FILE), "utf8")) as ResultRecord;
 		assert.ok(record.report.saved);
@@ -113,7 +136,15 @@ describe("verified fan-out winner result", () => {
 
 	it("returns the capped winner with its metadata from a direct wait", async () => {
 		const dir = runDir();
-		const result = { ...verifiedRunToSubagentResult(manifest("w".repeat(20_000), true), dir, { name: "vf-run", task: "t" }, Date.now()), deliveryId: `${RUN_ID}-g1` };
+		const result = {
+			...verifiedRunToSubagentResult(
+				manifest("w".repeat(20_000), true),
+				dir,
+				{ name: "vf-run", task: "t" },
+				Date.now(),
+			),
+			deliveryId: `${RUN_ID}-g1`,
+		};
 		const running = {
 			id: "vf-wait-1",
 			name: "vf-run",
@@ -145,10 +176,16 @@ describe("verified fan-out winner on adoption", () => {
 		const artifactRoot = createTestDir();
 		dirs.push(artifactRoot);
 		process.env.PI_ARTIFACT_PROJECT_ROOT = artifactRoot;
-		const { runDir: dir } = buildSupervisedRun(repo, fakePi, captureDir, [
-			{ marker: "VF-GOOD", change: "good change" },
-			{ marker: "VF-MID", change: "mid change" },
-		], { baseDir: verifiedRunsBaseDir(repo), parentSessionId: "session-origin" });
+		const { runDir: dir } = buildSupervisedRun(
+			repo,
+			fakePi,
+			captureDir,
+			[
+				{ marker: "VF-GOOD", change: "good change" },
+				{ marker: "VF-MID", change: "mid change" },
+			],
+			{ baseDir: verifiedRunsBaseDir(repo), parentSessionId: "session-origin" },
+		);
 		await waitForVerifiedRunResult(dir, { timeoutMs: 120_000 });
 		const finished = readVerifiedRunManifest(dir);
 		const longReport = `${"Adopted winner line.\n".repeat(1_000)}END-OF-ADOPTED`;
@@ -157,15 +194,24 @@ describe("verified fan-out winner on adoption", () => {
 		writeVerifiedRunManifest(dir, finished);
 
 		const messages: Array<{ content: string; details: Record<string, unknown> }> = [];
-		const sink = { sendMessage: (m: { content: string; details?: Record<string, unknown> }) => messages.push({ content: m.content, details: m.details ?? {} }) };
+		const sink = {
+			sendMessage: (m: { content: string; details?: Record<string, unknown> }) =>
+				messages.push({ content: m.content, details: m.details ?? {} }),
+		};
 		const stranger = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-stranger" });
 		assert.equal(stranger.find((entry) => entry.runDir === dir)?.action, "awaiting-origin");
 		assert.doesNotMatch(messages[0].content, /Adopted winner line/, "a notice holds no winner report");
 
 		// An unconfirmed receipt leaves the winner adoptable again; both copies are capped.
-		const first = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-origin", confirmPersisted: async () => false });
+		const first = await adoptVerifiedRuns(sink as never, repo, {
+			sessionId: "session-origin",
+			confirmPersisted: async () => false,
+		});
 		assert.equal(first.find((entry) => entry.runDir === dir)?.action, "unconfirmed");
-		const again = await adoptVerifiedRuns(sink as never, repo, { sessionId: "session-origin", confirmPersisted: async () => true });
+		const again = await adoptVerifiedRuns(sink as never, repo, {
+			sessionId: "session-origin",
+			confirmPersisted: async () => true,
+		});
 		assert.equal(again.find((entry) => entry.runDir === dir)?.action, "delivered");
 		const winners = messages.slice(1);
 		assert.equal(winners.length, 2);
