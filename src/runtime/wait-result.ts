@@ -138,11 +138,9 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		});
 	}
 
-	// R4: a wait that starts aborted takes nothing, so the run end still goes out as a message.
+	// R4 and D16: a wait that starts aborted takes nothing and stops nothing; the run keeps running
+	// and its end goes out as a message.
 	if (signal?.aborted) {
-		await runtime.stopRunningSubagent(running);
-		runtime.runningSubagents.delete(running.id);
-		runtime.updateWidget();
 		return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 			id: running.id,
 		});
@@ -205,12 +203,8 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 
 		releaseSubagentWaitOwnership(runtime, running, ownerId);
 		if (outcome.kind === "interrupted") {
-			// Interim limit (T26 owns the fix): D16 says Esc leaves the run running, but an aborted wait
-			// still stops it, and since T23 a launch of an async:false agent gets the abort signal too.
-			// The stopped run's end is delivered as a message. Revisit when T26 lands.
-			await runtime.stopRunningSubagent(running);
-			runtime.runningSubagents.delete(running.id);
-			runtime.updateWidget();
+			// D16: Esc stops only the wait. The run keeps running and reports by message, for
+			// subagent_wait and for a launch that waits alike.
 			return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 				id: running.id,
 			});

@@ -174,6 +174,7 @@ describe("extension registration gating", () => {
 			assert.deepEqual(captured.shortcuts, ["alt+s"]);
 			assert.deepEqual([...captured.renderers].sort(), ["subagent_ping", "subagent_result"]);
 			assert.deepEqual([...captured.handlers.keys()].sort(), [
+				"agent_before_settle",
 				"agent_end",
 				"agent_settled",
 				"agent_start",

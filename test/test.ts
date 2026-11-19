@@ -31,6 +31,7 @@ import "./tools/completion-call.test.ts";
 import "./runtime/completion-call-e2e.test.ts";
 import "./runtime/delivery-e2e.test.ts";
 import "./runtime/grouped-delivery-e2e.test.ts";
+import "./runtime/settle-esc-e2e.test.ts";
 import "./runtime/delivery-queue-holds.test.ts";
 import "./tools/provider-error-recovery.test.ts";
 import "./tools/subagents-view.test.ts";
