@@ -626,7 +626,18 @@ export function loadEvidence(
 	probes,
 	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool },
 ) {
-	const bySession = new Map(probes.map((probe) => [probe.sessionFile, probe]));
+	// The first probe of a session file is its launch; a later probe of a child
+	// file is a resumed run (subagent_resume appends to the child's session file).
+	const bySession = new Map();
+	for (const probe of probes)
+		if (!bySession.has(probe.sessionFile))
+			bySession.set(probe.sessionFile, probe);
+	const childFileSet = new Set(childFiles);
+	const resumes = probes.filter(
+		(probe) =>
+			childFileSet.has(probe.sessionFile) &&
+			bySession.get(probe.sessionFile) !== probe,
+	);
 	const fromCheckout = (probe, tool) =>
 		Boolean(
 			probe?.tools.some(
@@ -645,9 +656,10 @@ export function loadEvidence(
 	].filter(Boolean);
 	// The reverse join: every probe needs its own session file of this attempt.
 	const sessionFiles = new Set([parentFile, ...childFiles]);
+	// A second probe of the parent file or of a file that is no child's is unmatched.
 	const unmatchedProbes =
 		probes.filter((probe) => !sessionFiles.has(probe.sessionFile)).length +
-		(probes.length - bySession.size);
+		(probes.length - bySession.size - resumes.length);
 	// A probe whose session file is no file of the attempt: Pi writes a session
 	// file only at the first message, so a child that never got its task has none.
 	const attemptFiles = new Set([parentFile, ...childFiles, ...otherFiles]);
@@ -660,9 +672,9 @@ export function loadEvidence(
 		unmatchedProbes,
 		unfiledProbes,
 		parentLoadedCheckout: fromCheckout(parent, parentTool),
-		childrenLoadedCheckout: children.every((child) =>
-			fromCheckout(child.probe, childTool),
-		),
+		childrenLoadedCheckout:
+			children.every((child) => fromCheckout(child.probe, childTool)) &&
+			resumes.every((probe) => fromCheckout(probe, childTool)),
 		parentModel: parent?.model ?? null,
 		parentThinking: parent?.thinking ?? null,
 		children: children.map((child) => ({
@@ -670,6 +682,11 @@ export function loadEvidence(
 			loadedCheckout: fromCheckout(child.probe, childTool),
 			model: child.probe?.model ?? null,
 			thinking: child.probe?.thinking ?? null,
+		})),
+		resumes: resumes.map((probe) => ({
+			agent: probe.agent ?? null,
+			model: probe.model ?? null,
+			thinking: probe.thinking ?? null,
 		})),
 	};
 }
