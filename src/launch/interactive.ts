@@ -243,7 +243,8 @@ async function startInteractiveSubagent(
 		surface,
 		sessionFile: prepared.subagentSessionFile,
 		doneSentinelFile,
-		piArgs,
+		// A count only: an appended system prompt travels inline in the arguments.
+		piArgCount: piArgs.length,
 		capsulePath,
 		envKeys: Object.keys(envVars).sort(),
 	});

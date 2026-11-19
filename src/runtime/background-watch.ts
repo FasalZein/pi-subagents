@@ -11,6 +11,7 @@ import {
 	isAcceptedCompletion,
 	isDeadlineEnforceable,
 	isStopRequested,
+	keepCompletionOverWrapUp,
 	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
@@ -366,14 +367,12 @@ function watchBackgroundGeneration(
 			code: number | null,
 			exitSignal: ReturnType<typeof consumeSubagentExitSignal>,
 		) => {
-			if (
-				running.phase === "soft-limit" &&
-				!signal.aborted &&
-				exitSignal?.reason !== "ping" &&
-				!keepsCompletionOverWrapUp(running, exitSignal)
-			) {
-				finish({ kind: "restart" });
-				return;
+			if (running.phase === "soft-limit" && !signal.aborted && exitSignal?.reason !== "ping") {
+				if (!keepsCompletionOverWrapUp(running, exitSignal)) {
+					finish({ kind: "restart" });
+					return;
+				}
+				keepCompletionOverWrapUp(running);
 			}
 			const elapsed = Math.floor((Date.now() - running.startTime) / 1000);
 			// D7: a stop decides the outcome, whatever the dying child wrote (a done record, a ping or

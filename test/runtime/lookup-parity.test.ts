@@ -68,15 +68,15 @@ async function deliverAndLookUp(spec: Case) {
 	const entries = [
 		sessionHeader(),
 		user("task"),
-		toolCall("subagent_done", args, "d1"),
-		toolResult("subagent_done", "d1", "ok"),
+		// A hard time limit is filed only when no accepted completion beat it (D7): no call then.
+		...(spec.end.timedOut ? [] : [toolCall("subagent_done", args, "d1"), toolResult("subagent_done", "d1", "ok")]),
 	];
 	writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 	const end: WatchedEnd = {
 		exitCode: 0,
 		operatorClosed: false,
 		stopped: false,
-		exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } },
+		exitSignal: spec.end.timedOut ? undefined : { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } },
 		contextUsage: { contextTokens: 1234, contextWindow: 100_000 },
 		...spec.end,
 	};

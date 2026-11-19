@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { assert, createTestDir, ignoreUserUvConfig } from "../support/index.ts";
+import { assert, createTestDir } from "../support/index.ts";
 import {
 	BUILTIN_VERIFIER_CRITERIA_NAMES,
 	DEFAULT_VERIFIER_CANDIDATES,
@@ -19,7 +19,6 @@ describe("verifier criteria resolution (ticket 10)", () => {
 	const dir = createTestDir();
 	let python: string | undefined;
 	const savedVenvRoot = process.env.PI_SUBAGENT_LLM_VERIFIER_VENV;
-	ignoreUserUvConfig();
 
 	before(async () => {
 		// One private venv for the real-library preview checks below.
