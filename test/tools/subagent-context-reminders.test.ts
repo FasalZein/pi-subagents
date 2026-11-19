@@ -10,7 +10,14 @@ import {
 	SUBAGENT_CONTEXT_REMINDER_ENTRY,
 	selectContextReminder,
 } from "../../src/tools/context-reminders.ts";
-import { assert, createTestDir, sleep, subagentDoneExtension } from "../support/index.ts";
+import {
+	assert,
+	createTestDir,
+	isCompletionNudge,
+	NUDGE_ANSWERED_WITHOUT_CALL,
+	sleep,
+	subagentDoneExtension,
+} from "../support/index.ts";
 
 describe("subagent context reminders", () => {
 	it("treats the configured percentage as the first of three reminders", () => {
@@ -367,6 +374,8 @@ describe("subagent context reminders", () => {
 					handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 				},
 				sendUserMessage(message: string, options: unknown) {
+					// D12: the model answers the completion nudge without a call; the child then exits.
+					if (isCompletionNudge(message)) return void emit("agent_end", NUDGE_ANSWERED_WITHOUT_CALL, ctx);
 					hasPendingMessages = true;
 					sent.push({ message, options });
 				},
@@ -487,6 +496,8 @@ describe("subagent context reminders", () => {
 					handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 				},
 				sendUserMessage(message: string, options: unknown) {
+					// D12: the model answers the completion nudge without a call; the child then exits.
+					if (isCompletionNudge(message)) return void emit("agent_end", NUDGE_ANSWERED_WITHOUT_CALL, ctx);
 					hasPendingMessages = true;
 					sent.push({ message, options });
 				},

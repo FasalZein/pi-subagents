@@ -68,11 +68,7 @@ function isAsyncSubagentLaunch(call: ToolCallLike, loadAgentDefaults: AgentDefau
 		// A `subagent` call is async-launching if ANY of its children
 		// resolves async. One async child in the batch is enough to create
 		// the race the barrier prevents.
-		const children = getLaunchCallChildren(call.arguments);
-		for (const child of children) {
-			if (isAsyncSubagentChildLaunch(child, loadAgentDefaults)) return true;
-		}
-		return false;
+		return getLaunchCallChildren(call.arguments).some((child) => isAsyncSubagentChildLaunch(child, loadAgentDefaults));
 	}
 	if (call.name === SUBAGENT_RESUME_TOOL_NAME) {
 		const input = call.arguments as { async?: unknown };

@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { assert, createTestDir } from "../support/index.ts";
 import {
@@ -28,6 +29,33 @@ function processRequest(script: string, extra: Partial<SupervisorRequest> = {}):
 		args: ["-e", script],
 		...extra,
 	};
+}
+
+/** Supervisor env whose async fs.write calls are delayed 200 ms (a loaded libuv threadpool). */
+function slowWriteEnv(baseDir: string): NodeJS.ProcessEnv {
+	const preload = join(baseDir, "slow-fs-write.mjs");
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
+const write = fs.write;
+fs.write = (...args) => { setTimeout(() => write(...args), 200); };
+`,
+	);
+	return { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` };
+}
+
+/** Body that exits 0 at once but leaves a grandchild holding its stdout for holdMs. */
+function exitsButHoldsStdout(holdMs: number): string {
+	return `require("child_process").spawn(process.execPath, ["-e", "setTimeout(()=>{}, ${holdMs})"], { stdio: ["ignore", "inherit", "ignore"] }); console.log("body done"); process.exit(0)`;
+}
+
+async function waitForLogLine(path: string, pattern: RegExp, timeoutMs = 30_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (existsSync(path) && pattern.test(readFileSync(path, "utf8"))) return;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	throw new Error(`log ${path} never matched ${pattern}`);
 }
 
 function spawnSupervisor(
@@ -222,6 +250,101 @@ describe("detached supervisor process (live)", () => {
 		assert.ok(existsSync(runFilePaths(started.runDir).cancelSentinel));
 		const again = await cancelRun(started.runDir);
 		assert.equal(again.outcome, "already-terminal");
+	});
+
+	it("honours a cancel that arrives right after the lease is claimed", async () => {
+		// cancelRun sends SIGTERM as soon as the manifest names a live lease
+		// pid; a supervisor without a handler yet would die on it and leave
+		// the run "running" forever.
+		const baseDir = createTestDir();
+		const started = startSupervisedRun({
+			baseDir,
+			request: processRequest("setInterval(()=>{},1000)"),
+		});
+		const deadline = Date.now() + 30_000;
+		while (!readManifest(started.runDir).lease?.pid && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 2));
+		}
+		const { outcome } = await cancelRun(started.runDir, { timeoutMs: 30_000 });
+		assert.equal(outcome, "cancelled");
+		assert.equal(readManifest(started.runDir).state, "cancelled");
+	});
+
+	it("does not start the body when the cancel sentinel exists before the supervisor runs", () => {
+		const baseDir = createTestDir();
+		const runDir = join(baseDir, "vf-precancel-test");
+		mkdirSync(runDir, { recursive: true });
+		const marker = join(baseDir, "body-started");
+		writeManifest(runDir, {
+			version: 1,
+			runId: "vf-precancel-test",
+			createdAt: new Date().toISOString(),
+			state: "running",
+			leaseId: "lease-precancel",
+			lease: null,
+			body: null,
+			request: processRequest(`require("fs").writeFileSync(${JSON.stringify(marker)}, "x")`),
+			result: null,
+		});
+		writeFileSync(runFilePaths(runDir).cancelSentinel, "now\n");
+		const run = spawnSupervisor([MAIN, runDir, "lease-precancel"]);
+		assert.equal(run.status, 0);
+		assert.equal(readManifest(runDir).state, "cancelled");
+		assert.equal(existsSync(marker), false, "the body must never start");
+	});
+
+	it("does not apply the body timeout after the body exited, while its output drains", async () => {
+		// Body exits 0 well before its 1500 ms deadline; a grandchild keeps
+		// stdout open for 3000 ms, so the output drain outlives the deadline.
+		const baseDir = createTestDir();
+		const started = startSupervisedRun({
+			baseDir,
+			request: processRequest(exitsButHoldsStdout(3000), { timeoutMs: 1500 }),
+		});
+		const manifest = await waitForRunResult(started.runDir, { timeoutMs: 30_000 });
+		assert.equal(manifest.state, "completed");
+		assert.equal(manifest.result?.ok, true);
+		assert.match(readFileSync(join(started.runDir, "stdout.log"), "utf8"), /body done/);
+	});
+
+	for (const ordering of ["SIGTERM only", "sentinel only", "cancelRun"] as const) {
+		it(`marks a run cancelled when the cancel lands during the output drain (${ordering})`, async () => {
+			const baseDir = createTestDir();
+			const started = startSupervisedRun({
+				baseDir,
+				request: processRequest(exitsButHoldsStdout(1500)),
+				env: slowWriteEnv(baseDir),
+			});
+			await waitForLogLine(started.supervisorLogPath, /body exited/);
+			let clientOutcome: string | undefined;
+			if (ordering === "SIGTERM only") {
+				process.kill(readManifest(started.runDir).lease?.pid ?? 0, "SIGTERM");
+			} else if (ordering === "sentinel only") {
+				writeFileSync(runFilePaths(started.runDir).cancelSentinel, "now\n");
+			} else {
+				clientOutcome = (await cancelRun(started.runDir, { timeoutMs: 30_000 })).outcome;
+			}
+			const manifest = await waitForRunResult(started.runDir, { timeoutMs: 30_000 });
+			assert.equal(manifest.state, "cancelled");
+			assert.equal(manifest.result?.error, "cancelled");
+			if (clientOutcome !== undefined) assert.equal(clientOutcome, "cancelled");
+		});
+	}
+
+	it("flushes body output to stdout.log before the terminal state, even with slow file writes", async () => {
+		// A loaded host delays the libuv threadpool that runs fs writes; this
+		// preload makes every async fs.write in the supervisor slow so an
+		// unflushed log at process exit shows up deterministically.
+		const baseDir = createTestDir();
+		const started = startSupervisedRun({
+			baseDir,
+			request: processRequest("console.log('hello from body'); process.exit(0)"),
+			env: slowWriteEnv(baseDir),
+		});
+		const manifest = await waitForRunResult(started.runDir, { timeoutMs: 30_000 });
+		assert.equal(manifest.state, "completed");
+		assert.equal(readFileSync(join(started.runDir, "stdout.log"), "utf8"), "hello from body\n");
+		assert.match(readFileSync(started.supervisorLogPath, "utf8"), /finished: outcome=exit/);
 	});
 
 	it("enforces the body timeout by killing the process group", async () => {

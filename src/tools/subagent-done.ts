@@ -23,6 +23,7 @@ import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-ta
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
 import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
 import { registerSubagentDoneTool } from "./completion-call.ts";
+import { createCompletionNudge, hasAssistantText } from "./completion-nudge.ts";
 import { filterToolNames, getDeniedToolNames, shouldRegisterSubagentDone } from "./child-tool-policy.ts";
 
 const TOOL_BOUNDARY_RECOVERY_NUDGE = "continue";
@@ -50,6 +51,7 @@ export default function (pi: ExtensionAPI) {
 	// Factory-scoped because the takeover machinery that suppresses it lives
 	// inside the `if (autoExit)` block, while caller_ping registers outside it.
 	const callerPingState = createCallerPingState();
+	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: shouldRegisterSubagentDone(denied) });
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
@@ -279,6 +281,7 @@ export default function (pi: ExtensionAPI) {
 			const started = takeover.markTakenOver();
 			suppressCallerPingExit(callerPingState);
 			if (!started) return;
+			completionNudge.markTakenOver();
 			if (!isInteractive) return;
 			ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, AUTO_EXIT_DISABLED_MSG);
 			ctx.ui.notify(AUTO_EXIT_DISABLED_MSG, "warning");
@@ -445,6 +448,8 @@ export default function (pi: ExtensionAPI) {
 			providerErrorRecovery.cancelPendingRecovery(true);
 			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
+			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
+			if (completionNudge.nudgeOnce(hasAssistantText(messages))) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			requestShutdown(ctx);
 		});
@@ -486,6 +491,7 @@ export default function (pi: ExtensionAPI) {
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
 			isTakenOver: () => takeover.tookOver,
+			onAccepted: completionNudge.markCallAccepted,
 		});
 	}
 
@@ -495,6 +501,7 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
+			onAccepted: completionNudge.markCallAccepted,
 		});
 	}
 
