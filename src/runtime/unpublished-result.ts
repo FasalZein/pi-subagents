@@ -88,11 +88,11 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 	});
 	const record: ResultRecord = { ...assembled.record, report: { saved: false, error: UNPUBLISHED_REPORT } };
 	// The same unconfirmed-kill warning the published path adds: the pane can still be running.
-	const warnings = result.timedOut && result.timeoutKillFailed ? [KILL_UNCONFIRMED_WARNING] : [];
+	const requiredWarnings = result.timedOut && result.timeoutKillFailed ? [KILL_UNCONFIRMED_WARNING] : [];
 	return renderResult(record, {
 		cwd: parentCwd,
 		homeDir: homedir(),
 		showContextUsage: result.reportContextUsage !== false,
-		warnings,
+		requiredWarnings,
 	});
 }

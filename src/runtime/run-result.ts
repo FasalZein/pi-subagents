@@ -111,16 +111,19 @@ export function isAcceptedCompletion(end: { reason: string; acceptedCall?: unkno
 
 /**
  * D7: a completion accepted while the soft interruption is under way, so before the hard deadline,
- * is the run's end. The report-only wrap-up never runs, so the run carries no wrap-up marker.
+ * is the run's end. Pure: the caller applies keepCompletionOverWrapUp when this holds.
  */
 export function keepsCompletionOverWrapUp(
 	running: RunningSubagent,
 	...ends: Array<{ reason: string; acceptedCall?: unknown } | null | undefined>
 ): boolean {
-	if (running.phase !== "soft-limit" || !ends.some(isAcceptedCompletion)) return false;
+	return running.phase === "soft-limit" && ends.some(isAcceptedCompletion);
+}
+
+/** D7: the report-only wrap-up never runs after a kept completion, so the run carries no wrap-up marker. */
+export function keepCompletionOverWrapUp(running: RunningSubagent): void {
 	running.timeoutWrapUp = undefined;
 	running.timeoutWrapUpDeadlineAt = undefined;
-	return true;
 }
 
 /** D7: the reason a stopped run's record names. */
@@ -229,7 +232,9 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 		renderResult(published, {
 			cwd: target.parentCwd,
 			homeDir: homedir(),
-			warnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING, ...target.warnings] : target.warnings,
+			warnings: target.warnings,
+			// The pane can still run: this warning keeps its place even beside a time-limit line.
+			requiredWarnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING] : [],
 			showContextUsage: running.reportContextUsage !== false,
 		});
 	const record = target.store.publish(target.reservation, assembled, render);

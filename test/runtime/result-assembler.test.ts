@@ -381,12 +381,15 @@ describe("result assembler: end precedence (D7, D12)", () => {
 		assert.equal(record.typed, false);
 	});
 
-	it("a completion before a hard time limit stays typed (D7)", () => {
+	// A completion that beat the hard deadline never reaches the assembler as timed out: the watcher
+	// files it as the child's own end (end-outcomes.test.ts). A hard timeout with a call in the
+	// transcript is a call that never ended the run, such as a taken-over pane's (review b2 g1 P1).
+	it("a hard time limit is untyped and timed out, even with a recorded call (D7)", () => {
 		const { record } = assembleResult(
 			facts(calledPartial(), { end: { kind: "timed_out", budget: "timeout", seconds: 60, wrapUp: false } }),
 		);
-		assert.equal(record.outcome, "partial");
-		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "timed_out");
+		assert.equal(record.typed, false);
 	});
 });
 

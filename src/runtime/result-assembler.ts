@@ -396,9 +396,14 @@ function untypedBody(facts: RunFacts, text: string | undefined): Body {
 	return { typing: { typed: false }, outcome, summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS), report: text, artifacts: [] };
 }
 
-/** D7 and D12: a requested stop and a report-only wrap-up decide the outcome over any call. */
+/**
+ * D7 and D12: a requested stop and a time limit decide the outcome over any call. The watchers file a
+ * hard time limit only when no accepted completion reached the exit record first (isAcceptedCompletion,
+ * keepsCompletionOverWrapUp), so a call that is still in the transcript then never ended the run: a
+ * taken-over pane records its call without an exit record and keeps running into the deadline.
+ */
 function endOverridesCall(end: RunEnd): boolean {
-	return end.kind === "cancelled" || (end.kind === "timed_out" && end.wrapUp);
+	return end.kind === "cancelled" || end.kind === "timed_out";
 }
 
 /**
