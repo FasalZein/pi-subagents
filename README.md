@@ -155,6 +155,8 @@ Pi splits `env` by line. It does not split values by comma. When you set `PI_COD
 
 Children inherit every environment variable from the parent Pi process, in every launch mode. This includes API keys and tokens that you exported before you started Pi. `deny-env` in an agent file removes names from this inheritance. You can also set `PI_SUBAGENT_ENV_DENY` in the parent environment. Both lists apply.
 
+A resume applies the `deny-env` that the session saved before its first launch, in every session mode. A session that saved none, for example a `standalone` session from an older version, takes the current `deny-env` of the agent that `subagent_resume` names. Without an agent name, or when the agent has no definition, the resume stops with an error.
+
 A pane child also gets the identity variables of its own pane, which replace the parent's. In Herdr, the child gets only `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH` and `HERDR_CONFIG_PATH` from the pane, and no parent value of these names. When the pane does not set `HERDR_ENV` or `HERDR_PANE_ID`, or `env` names one of them, the launch stops with an error before Pi starts. Other names in `env` still reach the child, denied names included.
 
 Known limit: in tmux, cmux, WezTerm and Zellij the child gets every pane variable that starts with `TMUX`, `CMUX`, `WEZTERM`, `ZELLIJ` or `HERDR`, and `TERM` and `COLORTERM`. `deny-env` does not remove such a name when only the pane or the multiplexer server has it.

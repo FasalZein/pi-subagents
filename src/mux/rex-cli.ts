@@ -48,24 +48,43 @@ const revisionByBinary = new Map<string, number>();
 
 /** The binary answers rex whoami with a tested API revision; the call is bounded like herdr-core's app check. */
 export function rexRevisionAccepted(binary: string): boolean {
-	let revision = revisionByBinary.get(binary);
-	if (revision === undefined) {
-		try {
-			const out = execFileSync(binary, ["whoami", "--json"], {
-				encoding: "utf8",
-				stdio: ["ignore", "pipe", "ignore"],
-				timeout: APP_CHECK_TIMEOUT_MS,
-				killSignal: "SIGKILL",
-			});
-			const value = (JSON.parse(out) as { api_revision?: unknown }).api_revision;
-			if (typeof value !== "number") return false;
-			revision = value;
-			revisionByBinary.set(binary, revision);
-		} catch {
-			// No answer is not cached: the server can start later.
-			return false;
-		}
+	const known = revisionByBinary.get(binary);
+	if (known !== undefined) return REX_TESTED_API_REVISIONS.includes(known);
+	try {
+		const out = execFileSync(binary, ["whoami", "--json"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: APP_CHECK_TIMEOUT_MS,
+			killSignal: "SIGKILL",
+		});
+		return acceptWhoami(binary, out);
+	} catch {
+		// No answer is not cached: the server can start later.
+		return false;
 	}
+}
+
+/** rexRevisionAccepted without blocking, for the status reporter at session start (D29, D30). */
+export async function rexRevisionAcceptedAsync(binary: string): Promise<boolean> {
+	const known = revisionByBinary.get(binary);
+	if (known !== undefined) return REX_TESTED_API_REVISIONS.includes(known);
+	try {
+		const { stdout } = await execFileAsync(binary, ["whoami", "--json"], {
+			encoding: "utf8",
+			timeout: APP_CHECK_TIMEOUT_MS,
+			killSignal: "SIGKILL",
+		});
+		return acceptWhoami(binary, stdout);
+	} catch {
+		return false;
+	}
+}
+
+/** Caches the API revision of a whoami reply and tells whether it is tested. */
+function acceptWhoami(binary: string, out: string): boolean {
+	const revision = (JSON.parse(out) as { api_revision?: unknown }).api_revision;
+	if (typeof revision !== "number") return false;
+	revisionByBinary.set(binary, revision);
 	return REX_TESTED_API_REVISIONS.includes(revision);
 }
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
-import { createTestDir, writeExecutable } from "../support/index.ts";
+import { createTestDir, recordOscOnStdout, writeExecutable } from "../support/index.ts";
 
 // Differential checks of the default reporter connection against its c8cb9af behaviour:
 // no CLI call outside an eligible TUI, only bounded asynchronous discovery, and the
@@ -51,13 +51,19 @@ const VARS = [
 	"PI_SUBAGENT_MUX",
 	"PI_SUBAGENT_NAME",
 	"PI_SUBAGENT_SURFACE",
+	"HC_TERMINAL_ID",
+	"HC_TERMINAL_SOCKET",
+	"REX_SESSION",
+	"REX_BLOCK",
+	"REX_BIN_DIR",
 ];
 
 /** Run one session start through the default connection with the given process environment. */
 async function startDefault(t: { after(fn: () => void): void }, mode: string, env: Record<string, string>) {
 	const saved = Object.fromEntries(VARS.map((name) => [name, process.env[name]]));
+	// Host markers (HC_*, REX_*) are cleared and the backend is pinned, so only the fake herdr can report.
 	for (const name of VARS) delete process.env[name];
-	Object.assign(process.env, env);
+	Object.assign(process.env, { PI_SUBAGENT_MUX: "herdr", ...env });
 	t.after(() => {
 		for (const name of VARS) {
 			if (saved[name] === undefined) delete process.env[name];
@@ -108,6 +114,42 @@ test("TUI session start discovers herdr asynchronously within the discovery time
 	assert.ok(syncMs < 500, `session start blocked for ${Math.round(syncMs)} ms`);
 	assert.ok(readyMs < DISCOVERY_TIMEOUT_MS + 1500, `discovery took ${Math.round(readyMs)} ms`);
 	assert.deepEqual(herdr.calls(), [["status", "server", "--json"]]);
+});
+
+/** A fake rex at the tested API revision: a host Rex that would accept the OSC reporter. */
+const HOST_REX = `#!/bin/sh
+[ "$1" = whoami ] && { echo '{"api_revision":16}'; exit 0; }
+exit 1
+`;
+
+test("TUI cases on a Herdr app or Rex host write no OSC record to stdout", async (t) => {
+	const dirs = tempDirs(t);
+	const hostRex = join(dirs.empty, "..", "host-rex");
+	mkdirSync(hostRex);
+	writeExecutable(hostRex, "rex", HOST_REX);
+	const host = {
+		HC_TERMINAL_ID: "t1",
+		HC_TERMINAL_SOCKET: join(hostRex, "hc.sock"),
+		REX_SESSION: "s1",
+		REX_BLOCK: "b1",
+		REX_BIN_DIR: hostRex,
+	};
+	const saved = Object.fromEntries(Object.keys(host).map((name) => [name, process.env[name]]));
+	Object.assign(process.env, host);
+	// A recording terminal stands in for stdout: no live pane, and a record never reaches the real stdout.
+	const terminal = recordOscOnStdout();
+	t.after(() => {
+		terminal.restore();
+		for (const [name, value] of Object.entries(saved)) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	});
+	const herdr = fakeHerdr(dirs.bin, 0);
+	const { stop } = await startDefault(t, "tui", { PATH: dirs.bin, HERDR_ENV: "1", HERDR_PANE_ID: "pane-7" });
+	await stop();
+	assert.deepEqual(terminal.records, []);
+	assert.equal(herdr.calls().filter((args) => args[1] === "report-metadata").length, 2);
 });
 
 test("TUI reporter publishes through HERDR_BIN_PATH when herdr is not on PATH", async (t) => {

@@ -37,6 +37,14 @@ export function seedPreparedSubagentSession(
 	const seedMode = getChildSeedMode(sessionMode, noSession);
 	const boundarySystemPrompt = shouldWriteChildContextBoundary(seedMode);
 	const storage = new ChildSessionStorage(prepared.subagentSessionFile);
+	// The header's cwd becomes the child pi's project root when it continues the session (see below).
+	const sessionCwd = forcedCwd ?? prepared.runtimePaths.effectiveCwd ?? ctx.cwd;
+	if (!seedMode && sessionMode === "standalone" && !noSession) {
+		// Without a file here, Pi would create the session at the first spawn, after the launch coordinator
+		// skipped its launch metadata, and a resume would lose the agent's deny-env. A header without a
+		// parent session keeps standalone free of lineage and lets the metadata land before the spawn.
+		storage.writeStandaloneHeader(sessionCwd, prepared.sessionTitle);
+	}
 	if (seedMode) {
 		if (!prepared.sessionFile) {
 			throw new Error(
@@ -49,7 +57,7 @@ export function seedPreparedSubagentSession(
 		// when it continues the session, so a forced-cwd child (verified
 		// fan-out candidates in their worktrees) must record where it actually
 		// runs — not the blueprint cwd the launch was resolved against.
-		storage.seed(seedMode, prepared.sessionFile, forcedCwd ?? prepared.runtimePaths.effectiveCwd ?? ctx.cwd, {
+		storage.seed(seedMode, prepared.sessionFile, sessionCwd, {
 			...(prepared.sessionTitle ? { sessionName: prepared.sessionTitle } : {}),
 			activeLeafId: ctx.sessionManager.getLeafId?.(),
 		});

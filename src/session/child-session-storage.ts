@@ -8,6 +8,7 @@ import {
 	readSubagentLaunchMetadata,
 	seedSubagentSessionFile,
 	writeChildContextBoundaryEntry,
+	writeHeaderOnlySubagentSessionFile,
 	writeSubagentExtensionEntry,
 	writeSubagentLaunchMetadataEntryWhenReady,
 	writeSubagentModelStateEntries,
@@ -32,6 +33,11 @@ export class ChildSessionStorage {
 		options?: ChildSessionSeedOptions,
 	): void {
 		seedSubagentSessionFile(mode, parentSessionFile, this.path, cwd, options);
+	}
+
+	/** A session header without a parent session: a standalone child has no lineage. */
+	writeStandaloneHeader(cwd: string, sessionName?: string): void {
+		writeHeaderOnlySubagentSessionFile(this.path, cwd, undefined, sessionName);
 	}
 
 	writeBoundary(options: ChildContextBoundaryOptions, content: string): void {

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { SUMMARY_MAX_CHARS } from "../runtime/result-record.ts";
+import { CALL_OUTCOMES, SUMMARY_MAX_CHARS } from "../runtime/result-record.ts";
+import { createDataCheck, type DataSchemaParse, readLaunchDataSchema } from "./data-schema.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
@@ -41,6 +42,8 @@ export interface AcceptedCallEntry {
 	 * another tool can get an acknowledgement turn; that later text never replaces the result.
 	 */
 	autonomous: boolean;
+	/** D12: data that failed the launch schema twice; the result is typed with this error and no data. */
+	dataError?: string;
 }
 
 export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry: AcceptedCallEntry): void {
@@ -50,14 +53,18 @@ export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry:
 const OUTCOME_DESCRIPTION = "done, partial or blocked";
 const SUMMARY_DESCRIPTION = `What you accomplished, at most ${COMPLETION_LIMIT_TEXT}`;
 const ARTIFACTS_DESCRIPTION = "Paths of the files you wrote";
-const DATA_DESCRIPTION = "Any JSON value for the caller";
+const DATA_ANY_DESCRIPTION = "Any JSON value for the caller";
 
 /**
  * D12 parameters. All optional and loose: a call without a valid outcome and a non-empty summary
  * (for example the old call with no arguments) still ends the child, untyped, so the schema must
  * not refuse it.
  */
-function buildSubagentDoneParams() {
+function buildSubagentDoneParams(launchSchema: DataSchemaParse | undefined) {
+	// D12: the child sees the launch schema where it writes data; the parent's context never holds it.
+	const DATA_DESCRIPTION = launchSchema?.ok
+		? `JSON data for the caller; it must match this JSON Schema: ${JSON.stringify(launchSchema.value.schema)}`
+		: DATA_ANY_DESCRIPTION;
 	const typebox = optionalRequire("typebox") as typeof import("typebox") | null;
 	if (typebox?.Type?.Object) {
 		const { Type } = typebox;
@@ -79,6 +86,15 @@ function buildSubagentDoneParams() {
 	};
 }
 
+/** D12: a call is typed only with a valid outcome and a non-empty summary. */
+function isTypedCall(args: Record<string, unknown>): boolean {
+	return (
+		CALL_OUTCOMES.some((outcome) => outcome === args.outcome) &&
+		typeof args.summary === "string" &&
+		args.summary.trim() !== ""
+	);
+}
+
 export interface SubagentDoneDeps {
 	isTakenOver(): boolean;
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => unknown;
@@ -93,18 +109,23 @@ export function registerSubagentDoneTool(
 	deps: SubagentDoneDeps,
 ) {
 	const refuseOversizeSummary = createOversizeRefusal(SUBAGENT_DONE_TOOL_NAME, "summary");
+	const launchSchema = readLaunchDataSchema();
+	const checkData = createDataCheck(SUBAGENT_DONE_TOOL_NAME, launchSchema);
 	pi.registerTool({
 		name: SUBAGENT_DONE_TOOL_NAME,
 		label: "Subagent Done",
 		description:
 			"When your task is complete, close this session and return your result to the caller: outcome (done, partial or blocked), " +
 			`a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of files you wrote, and optional JSON data.`,
-		parameters: buildSubagentDoneParams(),
+		parameters: buildSubagentDoneParams(launchSchema),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			refuseOversizeSummary((params as { summary?: unknown }).summary);
 			const args = params as Record<string, unknown>;
+			// D12: only a typed call carries data, so only a typed call is checked.
+			const verdict = isTypedCall(args) ? checkData(args.data) : undefined;
+			const dataError = verdict?.kind === "data_error" ? verdict.error : undefined;
 			const autonomous = !deps.isTakenOver();
-			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args, autonomous });
+			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args, autonomous, dataError });
 			deps.onAccepted();
 			if (!autonomous) {
 				// D11/D12: the result stays in this session; the pane closes only
@@ -122,7 +143,7 @@ export function registerSubagentDoneTool(
 			}
 			// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
 			deps.writeExitSignal(
-				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args } },
+				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args, dataError } },
 				{ supersede: true },
 			);
 			deps.requestShutdown(ctx);

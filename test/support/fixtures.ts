@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { getEntries } from "../../src/session/session.ts";
@@ -152,3 +152,42 @@ export const TOOL_RESULT = {
 		content: [{ type: "text", text: "output here" }],
 	},
 };
+
+/**
+ * A session without launch metadata resumes only with an agent whose definition gives its deny-env
+ * (resolveResumeDenyEnv). Writes an agent without deny-env into a temporary agent dir and points
+ * PI_CODING_AGENT_DIR at it (the support env hooks restore it); returns the agent name to resume with.
+ */
+export function useLegacyAgentDefinition(): string {
+	const agentDir = createTestDir();
+	mkdirSync(join(agentDir, "agents"));
+	writeFileSync(join(agentDir, "agents", "legacy.md"), "---\nname: legacy\n---\nLegacy agent.\n");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	return "legacy";
+}
+
+/**
+ * Makes process.stdout a recording terminal for an OSC 7501 writer: isTTY is true, each OSC 7501 record is
+ * kept from the real stdout, and every other chunk passes through, because node --test reports through the
+ * same stdout and a swallowed report drops tests from the run. Call restore() before the test ends.
+ */
+export function recordOscOnStdout(): { records: string[]; restore(): void } {
+	const stdout = process.stdout as { isTTY?: boolean; write: typeof process.stdout.write };
+	const { isTTY, write } = stdout;
+	const records: string[] = [];
+	stdout.isTTY = true;
+	stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+		if (typeof chunk === "string" && chunk.includes("\x1b]7501;")) {
+			records.push(chunk);
+			return true;
+		}
+		return (write as (...args: unknown[]) => boolean).call(stdout, chunk, ...rest);
+	}) as typeof process.stdout.write;
+	return {
+		records,
+		restore() {
+			stdout.isTTY = isTTY;
+			stdout.write = write;
+		},
+	};
+}

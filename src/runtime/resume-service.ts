@@ -57,6 +57,7 @@ import {
 import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
 import { assertResumeAllowed, reserveResumeSession, settleVerdictAfterRun } from "./resume-guards.ts";
 import { setAsidePreviousExitRecord, startResumedChild } from "./resume-start.ts";
+import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -263,6 +264,26 @@ export async function resumeSubagentSession(
 	}
 }
 
+/**
+ * The agent's deny-env for a resume. Launch metadata holds it from before the first spawn, standalone
+ * sessions included. A session without launch metadata (a standalone session launched before that) fails
+ * closed: the named agent's current definition gives the policy, and with no agent named or no definition
+ * found the resume is refused, because a variable denied only by the agent would reach the resumed child.
+ */
+function resolveResumeDenyEnv(
+	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
+	agent: string | undefined,
+	definition: { denyEnv?: string } | null,
+): string | undefined {
+	if (launchMetadata) return launchMetadata.denyEnv;
+	if (agent && definition) return definition.denyEnv;
+	throw new Error(
+		agent
+			? `Cannot resume: the session has no launch metadata, so its deny-env is unknown, and agent "${agent}" has no definition to take it from.`
+			: "Cannot resume: the session has no launch metadata, so its deny-env is unknown. Pass the agent the session was launched with.",
+	);
+}
+
 async function resumeSubagentSessionWithoutWidth(
 	input: ResumeSessionInput,
 	runtime: ResumeServiceRuntime,
@@ -313,6 +334,7 @@ async function resumeSubagentSessionWithoutWidth(
 	const targetDefs = targetAgent
 		? loadAgentDefaultsFromDefinitions(targetAgent, undefined, targetCwd, resolveSubagentCwd)
 		: null;
+	const denyEnv = resolveResumeDenyEnv(launchMetadata, targetAgent, targetDefs);
 	const callerEnv = parseSpawnEnv(process.env);
 	const targetSpawning =
 		launchMetadata?.spawnableAgents === true ? true : (launchMetadata?.spawnableAgents ?? false);
@@ -444,6 +466,8 @@ async function resumeSubagentSessionWithoutWidth(
 	}
 	resumeEnvVars.PI_SUBAGENT_NAME = invocationMetadata?.name ?? name;
 	resumeEnvVars.PI_SUBAGENT_AGENT = resumedAgent ?? "";
+	// D12: a resume names no schema; never pass on the resuming process's own or a frontmatter value.
+	resumeEnvVars[DATA_SCHEMA_ENV] = "";
 	resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
 
 	const resumedAsync = invocationMetadata?.async ?? metadata.async ?? true;
@@ -492,6 +516,7 @@ async function resumeSubagentSessionWithoutWidth(
 		expandedTask,
 		envVars: resumeEnvVars,
 		invocationMetadata,
+		denyEnv,
 		surfaceName: invocationMetadata?.sessionTitle ?? displayName,
 		taskName: name,
 		shellReadyDelayMs: runtime.getShellReadyDelayMs(),

@@ -108,7 +108,7 @@ export function getDoneSentinelFile(sessionFile: string, id: string): string {
 	return join(tmpdir(), `pi-subagent-done-${base}-${id}.txt`);
 }
 
-function writeHeaderOnlySubagentSessionFile(
+export function writeHeaderOnlySubagentSessionFile(
 	childSessionFile: string,
 	cwd = process.cwd(),
 	parentSessionFile?: string,
