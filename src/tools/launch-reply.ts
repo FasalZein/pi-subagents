@@ -18,20 +18,33 @@ export function renderLaunchChildLine(child: LaunchedChild): string {
 	return `- ${child.name} (agent ${child.agent ?? "unknown"}): run ${child.id}, model ${child.modelRef ?? "not set"}, ${where}`;
 }
 
+/** An absolute path at the start of a word; a URL's path follows ":" and is kept. */
+const ABSOLUTE_PATH = /(^|[\s'"(=])\/[^\s'"()]+/g;
+
 /**
- * The reply to a batch whose later child failed to launch (D16, D23): the failed child, then one
- * line per child that started and keeps running, by run id.
+ * A launch error without file paths: a file-system error names the child's session file (the
+ * reply text never shows one, D16), and the reason stays.
+ */
+export function launchErrorReason(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.replace(/^Error:\s*/, "").replace(ABSOLUTE_PATH, "$1<path>");
+}
+
+/**
+ * The reply to a batch whose later child failed to launch (D16, D23): the failed child, one line
+ * per child that started, by run id, then the started children's warnings and dropped extensions.
  */
 export function renderLaunchFailure(
 	failed: { position: number; name: string; agent: string; error: string },
 	total: number,
 	started: readonly LaunchedChild[],
+	notes: readonly string[],
 ): string {
-	const errorText = failed.error.replace(/^Error:\s*/, "");
 	return [
-		`Error: child ${failed.position} of ${total}, ${failed.name} (agent ${failed.agent}), failed to launch: ${errorText}`,
-		`These children started and keep running; wait for them with subagent_wait or stop them with subagent_kill by run id:`,
+		`Error: child ${failed.position} of ${total}, ${failed.name} (agent ${failed.agent}), failed to launch: ${failed.error}`,
+		"These children started; wait for them with subagent_wait or stop one that still runs with subagent_kill, by run id:",
 		...started.map(renderLaunchChildLine),
+		...notes.filter(Boolean),
 	].join("\n");
 }
 

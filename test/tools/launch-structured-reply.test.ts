@@ -17,6 +17,7 @@ import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
+import { getIgnoredModelOverrideWarning } from "../../src/tools/policy.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -72,6 +73,8 @@ async function startParent(
 	options: {
 		codemode?: boolean;
 		beforeFailure?: (harness: Harness) => Promise<void>;
+		/** The failing child's launch error; default "pane could not be created". */
+		failError?: string;
 		/** Runs before a child's launch returns, so a test can hold that launch. */
 		beforeLaunch?: (name: string) => Promise<void>;
 	} = {},
@@ -135,13 +138,20 @@ async function startParent(
 
 	const runtime: SubagentToolRuntime = {
 		// worker-wait waits by its agent definition (async: false); worker-a reports later.
-		loadAgentDefaults: (agent) => ({ spawning: true, async: agent !== "worker-wait", mode: "background" }) as never,
+		// worker-locked ignores a model override, which gives its launch a warning.
+		loadAgentDefaults: (agent) =>
+			({
+				spawning: true,
+				async: agent !== "worker-wait",
+				mode: "background",
+				...(agent === "worker-locked" ? { allowModelOverride: false } : {}),
+			}) as never,
 		resolveEffectiveSessionMode: () => "lineage-only",
 		resolveTaskSessionMode: () => "lineage-only",
 		launchBackgroundSubagent: async (params) => {
 			if (params.name === FAILING_CHILD) {
 				await options.beforeFailure?.(harness);
-				throw new Error("pane could not be created");
+				throw new Error(options.failError ?? "pane could not be created");
 			}
 			await options.beforeLaunch?.(params.name);
 			const reservation = store.reserve();
@@ -348,8 +358,7 @@ describe("T28: structured launch replies", () => {
 		);
 		try {
 			const run = harness.session.prompt("go");
-			await until(() => harness.launched("child-wait"), "the waiting child runs");
-			await new Promise((resolve) => setTimeout(resolve, 20));
+			await until(() => harness.runs.get("child-wait")?.resultOwner?.kind === "wait", "the launch owns the wait");
 			harness.finishWithCall("child-wait", "WAITED-SUMMARY");
 			await run;
 			await harness.session.waitForIdle();
@@ -406,6 +415,72 @@ describe("T28 fix round 1: a started reply does not deliver a queued result", ()
 			assert.equal(pendingRunEndCount(), 0, "the committed message delivered it");
 		} finally {
 			unsubscribe();
+			await harness.dispose();
+		}
+	});
+});
+
+describe("T28 fix round 1: launch facts and failure text", () => {
+	it("P2: an interrupted wait leaves the child started, not ended without a record", async () => {
+		const harness = await startParent({
+			go: [fauxToolCall("subagent", { children: [child("child-wait", "worker-wait")] }, { id: "launch-1" })],
+		});
+		const structured: unknown[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "tool_execution_end" && event.toolName === "subagent")
+				structured.push((event.result as { structuredContent?: unknown }).structuredContent);
+		});
+		try {
+			const run = harness.session.prompt("go");
+			await until(() => harness.runs.get("child-wait")?.resultOwner?.kind === "wait", "the launch owns the wait");
+			await harness.session.abort();
+			await run;
+			const value = structured[0] as { children: ScriptChild[] } | undefined;
+			assert.equal(value?.children[0]?.state, "started");
+			assert.equal(value?.children[0]?.runId, runOf(harness, "child-wait").id);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("P2: the failure text is state-neutral, names no session path and lists the started children's warnings and dropped extensions", async () => {
+		const sessionPath = "/tmp/t28/sessions/2026-11-19_child-three.jsonl";
+		const lockedChild = { ...child("child-one", "worker-locked"), model: "stub/other-model" };
+		const harness = await startParent(
+			{
+				go: [
+					fauxToolCall(
+						"subagent",
+						{ children: [lockedChild, child("child-two"), child(FAILING_CHILD)] },
+						{ id: "launch-1" },
+					),
+				],
+			},
+			{
+				failError: `EACCES: permission denied, open '${sessionPath}'`,
+				beforeFailure: async (h) => {
+					(runOf(h, "child-two") as { droppedExtensions?: string[] }).droppedExtensions = ["gone-extension"];
+					h.finishWithCall("child-one", "ONE-DONE-EARLY");
+				},
+			},
+		);
+		try {
+			await harness.session.prompt("go");
+			await harness.session.waitForIdle();
+			const [reply] = harness.toolResults("subagent");
+			const text = reply?.text ?? "";
+			assert.equal(reply?.isError, true);
+			assert.match(text, /failed to launch: EACCES: permission denied, open '<path>'/);
+			assert.equal(text.includes(sessionPath), false, "no session path in the text");
+			assert.equal(text.includes(".jsonl"), false);
+			assert.doesNotMatch(text, /keep running/, "an ended sibling is not said to keep running");
+			assert.match(text, /dropped missing extension: gone-extension/);
+			const warning = getIgnoredModelOverrideWarning("worker-locked", false, lockedChild);
+			assert.ok(warning, "the locked agent's model override gives a warning");
+			assert.ok(text.includes(warning), "the started child's launch warning is in the failure text");
+			const failed = (reply?.details as { failed?: { error: string } }).failed;
+			assert.equal(failed?.error.includes(sessionPath), false, "no session path in the data either");
+		} finally {
 			await harness.dispose();
 		}
 	});

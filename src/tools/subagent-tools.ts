@@ -31,7 +31,7 @@ import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../ty
 
 import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
-import { type ChildDelivery, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
+import { type ChildDelivery, launchErrorReason, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
 import {
 	asStructuredContent,
 	type FailedChild,
@@ -414,7 +414,7 @@ export function registerSubagentCoreTools(
 								position: index + 1,
 								name: entry.child.name,
 								agent: entry.child.agent,
-								error: error instanceof Error ? error.message : String(error),
+								error: launchErrorReason(error),
 							};
 							break;
 						}
@@ -436,7 +436,15 @@ export function registerSubagentCoreTools(
 					);
 					const structured: SubagentLaunchStructured = { status: "launch_failed", children: started, failed };
 					return asSubagentToolResult({
-						content: [{ type: "text", text: renderLaunchFailure(failed, prepared.length, launched) }],
+						content: [
+							{
+								type: "text",
+								text: renderLaunchFailure(failed, prepared.length, launched, [
+									...launched.map((_, index) => prepared[index].warning),
+									...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
+								]),
+							},
+						],
 						details: structured,
 						structuredContent: asStructuredContent(structured),
 						isError: true,
@@ -445,9 +453,10 @@ export function registerSubagentCoreTools(
 				const results = await Promise.all(
 					launched.map((running) => runtime.getLaunchedSubagentResult(running, signal)),
 				);
+				const reportedIds = reportedRunIds(results);
 				settleWaitReply(
 					launched.map((running) => running.id),
-					reportedRunIds(results),
+					reportedIds,
 					signal,
 				);
 				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
@@ -460,6 +469,7 @@ export function registerSubagentCoreTools(
 					return { waitError: resultText(result) };
 				});
 				const delivered = deliveries.map((delivery) => delivery !== null);
+				const reported = new Set(reportedIds);
 				const replyDetails = (result: ToolResult, index: number) => {
 					const delivery = deliveries[index];
 					const details = result.details as Record<string, unknown> | undefined;
@@ -475,8 +485,9 @@ export function registerSubagentCoreTools(
 				]);
 				const structured: SubagentLaunchStructured = {
 					status: "launched",
+					// A wait error is no evidence that the child ended; only a delivered report is.
 					children: launched.map((running, index) =>
-						launchedChildData(running, prepared[index].child.agent, delivered[index]),
+						launchedChildData(running, prepared[index].child.agent, reported.has(running.id)),
 					),
 				};
 				const structuredContent = asStructuredContent(structured);
