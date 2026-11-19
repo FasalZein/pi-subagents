@@ -1,4 +1,4 @@
-import { registerDeliveryQueue, pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
+import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -105,11 +105,10 @@ function launchRuntime(overrides: Partial<SubagentToolRuntime>): SubagentToolRun
 		watchBackgroundSubagent: async () => new Promise<SubagentResult>(() => {}),
 		watchSubagent: async () => new Promise<SubagentResult>(() => {}),
 		getWatcherSignal: (_running, controller) => controller.signal,
-		wireSubagentSteerBack: (pi, running, promise) =>
-			wireSubagentSteerBack(pi as any, running, promise, (n) => String(n), () => {}),
+		wireSubagentSteerBack: (pi, running, promise) => wireSubagentSteerBack(pi as any, running, promise, () => {}),
 		startWidgetRefresh: () => {},
 		getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
-		stopRunningSubagent: async () => {},
+		listLaunchableAgents: () => [],
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 		...overrides,
 	};
@@ -216,7 +215,13 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const abort = new AbortController();
 		await parent.tools
 			.get("subagent")
-			.execute("c", { children: [{ name: "sync-child", title: "Sync", task: "t", agent: "sync-agent" }] }, abort.signal, undefined, toolCtx);
+			.execute(
+				"c",
+				{ children: [{ name: "sync-child", title: "Sync", task: "t", agent: "sync-agent" }] },
+				abort.signal,
+				undefined,
+				toolCtx,
+			);
 		assert.equal(seen.length, 1);
 		assert.equal(seen[0], abort.signal);
 	});
