@@ -29,6 +29,7 @@ import {
 	writeVerifiedRunDeliveryReceipt,
 } from "./types.ts";
 import type { VerifiedCandidateSpec, VerifiedRunManifest, VerifiedRunRequest } from "./types.ts";
+import { verifiedRunNotice, verifiedRunToSubagentResult } from "./winner-result.ts";
 
 /**
  * Parent-side launch of a verified fan-out (ticket 07).
@@ -317,6 +318,8 @@ export async function launchVerifiedFanOut(
 				origin: {
 					sessionId: parentSessionId,
 					sessionFile: ctx.sessionManager.getSessionFile?.() ?? null,
+					cwd: ctx.cwd,
+					warnings: ctx.resultWarnings ?? [],
 				},
 			}),
 		);
@@ -330,6 +333,15 @@ export async function launchVerifiedFanOut(
 	}
 }
 
+/** The launching parent session; its working directory resolves the report locator (D14). */
+interface VerifiedOrigin {
+	sessionId: string | null;
+	sessionFile: string | null | undefined;
+	cwd: string;
+	/** Launch warnings (D22 and others); the bounded rendering repeats them inside its frame. */
+	warnings: readonly string[];
+}
+
 /** Poll the durable manifest; resolve ONE SubagentResult for the whole fan-out. */
 async function waitForVerifiedOutcome(
 	runDir: string,
@@ -339,7 +351,7 @@ async function waitForVerifiedOutcome(
 	options: {
 		signal: AbortSignal;
 		extraSlots: SpawnSlotLease;
-		origin: { sessionId: string | null; sessionFile: string | null | undefined };
+		origin: VerifiedOrigin;
 	},
 ): Promise<SubagentResult> {
 	try {
@@ -370,9 +382,10 @@ function deliverOnce(
 	runDir: string,
 	params: Pick<SubagentParamsInput, "name" | "task">,
 	startTime: number,
-	origin: { sessionId: string | null; sessionFile: string | null | undefined },
+	origin: VerifiedOrigin,
 ): SubagentResult {
-	const result = verifiedRunToSubagentResult(manifest, runDir, params, startTime);
+	const target = { parentCwd: origin.cwd, warnings: origin.warnings };
+	const result = verifiedRunToSubagentResult(manifest, runDir, params, startTime, target);
 	const sessionId = origin.sessionId ?? manifest.request.parentSessionId;
 	if (!sessionId) return result;
 	const lease = acquireVerifiedRunDeliveryLease(runDir, {
@@ -380,8 +393,14 @@ function deliverOnce(
 		expectedGeneration: verifiedRunResultGeneration(manifest),
 	});
 	if (!lease.acquired) {
-		result.summary = `[llm-as-a-verifier ${manifest.runId}: run complete; its report was already delivered — report and ranking in ${runDir}]`;
-		return result;
+		return verifiedRunNotice(
+			manifest,
+			runDir,
+			params,
+			startTime,
+			`[llm-as-a-verifier ${manifest.runId}: run complete; its report was already delivered — report and ranking in ${runDir}]`,
+			target,
+		);
 	}
 	result.deliveryId = lease.deliveryId;
 	watchOriginDeliveryPersisted(runDir, lease.deliveryId, sessionId, origin.sessionFile ?? undefined);
@@ -429,71 +448,4 @@ function watchOriginDeliveryPersisted(
 	};
 	const first = setTimeout(poll, 200);
 	first.unref?.();
-}
-
-export function verifiedRunToSubagentResult(
-	manifest: VerifiedRunManifest,
-	runDir: string,
-	params: Pick<SubagentParamsInput, "name" | "task">,
-	startTime: number,
-): SubagentResult {
-	const result = manifest.result;
-	const elapsed = (Date.now() - startTime) / 1000;
-	if (!result) {
-		return {
-			name: params.name,
-			task: params.task,
-			summary: `llm-as-a-verifier run ${manifest.runId} is ${manifest.state} with no recorded result.`,
-			exitCode: 1,
-			elapsed,
-			errorMessage: `run ${manifest.state} without a result`,
-			sessionFile: manifest.request.candidates[0]?.sessionFile,
-		};
-	}
-	if (result.ok && result.selection) {
-		const selection = result.selection;
-		const footer = verificationFooter(manifest, runDir);
-		return {
-			name: params.name,
-			task: params.task,
-			summary: `${selection.winnerReport}${footer}`,
-			summarySource: "subagent",
-			sessionFile: selection.winnerSessionFile,
-			exitCode: 0,
-			elapsed,
-			outputTokens: undefined,
-		};
-	}
-	return {
-		name: params.name,
-		task: params.task,
-		summary: result.failure?.message ?? `llm-as-a-verifier run ${manifest.runId} failed.`,
-		exitCode: 1,
-		elapsed,
-		errorMessage: result.failure ? `${result.failure.code}: ${result.failure.message}` : "run failed",
-	};
-}
-
-/**
- * Compact verification footer (ticket 08): everything needed to audit the
- * selection — N, winner id, rank, criteria, verifier token usage, artifact
- * path — plus the inspect/undo commands for the applied winner. The rank is
- * the verifier's relative preference between attempts, not a grade.
- */
-function verificationFooter(manifest: VerifiedRunManifest, runDir: string): string {
-	const selection = manifest.result!.selection!;
-	const apply = manifest.result!.apply;
-	const usage = selection.usage;
-	const applyLine = apply?.applied
-		? `winner changes staged — inspect \`git diff --staged\`; undo only if the user asks: \`git reset --hard ${manifest.request.baseCommit}\``
-		: apply
-			? `winner not applied (${apply.code}); kept on branch \`${selection.winnerBranch}\``
-			: `winner kept on branch \`${selection.winnerBranch}\``;
-	return (
-		`\n\n[llm-as-a-verifier ${manifest.runId}: winner w${selection.winnerIndex} of ` +
-		`${manifest.request.candidateCount} attempts (${selection.distinctCandidates} distinct), ` +
-		`rank ${selection.winnerScore.toFixed(3)}, criteria ${selection.criteria.join("+")}, ` +
-		`verifier ${selection.model} (${usage.calls} calls, ${usage.inputTokens} in / ${usage.outputTokens} out tokens)\n` +
-		`${applyLine}; artifacts ${runDir}]`
-	);
 }

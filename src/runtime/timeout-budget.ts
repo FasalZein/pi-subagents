@@ -196,68 +196,6 @@ export function getTimeoutResultDetails(
 	};
 }
 
-export function formatTimeoutWrapUpOutcome(
-	result: Pick<SubagentResult, "name" | "elapsed" | "summary"> & {
-		timeoutWrapUp: NonNullable<SubagentResult["timeoutWrapUp"]>;
-	},
-	formatElapsed: (elapsed: number) => string,
-): string {
-	const limit = result.timeoutWrapUp.kind === "timeout" ? "whole-run limit" : "no-output limit";
-	return (
-		`Sub-agent "${result.name}" completed its time-limit wrap-up (${formatElapsed(result.elapsed)}). ` +
-		`The parent interrupted its active operation at ${result.timeoutWrapUp.threshold}% of its ${limit} ` +
-		`so the remaining time was reserved for this report. A short or partial report is expected; check what remains unfinished.\n\n` +
-		result.summary
-	);
-}
-
-export interface TimeoutNoticeInput {
-	name: string;
-	summary: string;
-	elapsed: number;
-	timedOut: SubagentTimeoutKind;
-	timedOutAfter?: number;
-	timeoutBlocksResume?: boolean;
-	timeoutKillFailed?: boolean;
-}
-
-/**
- * What the parent reads when the runtime stopped a child on a limit.
- *
- * Without this the parent sees an ordinary non-zero exit and retries the same
- * run. The parent can also be a sub-agent that never read this project's
- * documentation, so the text says where the limit came from instead of naming
- * a field it cannot look up.
- */
-export function formatTimeoutOutcome(
-	result: TimeoutNoticeInput,
-	hasOutput: boolean,
-	formatElapsed: (elapsed: number) => string,
-): string {
-	const budget = result.timedOutAfter !== undefined ? formatTimeoutSeconds(result.timedOutAfter) : "its";
-	const headline =
-		result.timedOut === "idle-timeout"
-			? `Sub-agent "${result.name}" stopped producing output, so the system stopped it ` +
-				`after ${formatElapsed(result.elapsed)}. Its agent file sets a limit of ${budget} without output.`
-			: `Sub-agent "${result.name}" ran out of time, so the system stopped it ` +
-				`after ${formatElapsed(result.elapsed)}. Its agent file sets a limit of ${budget} for the whole run.`;
-	const body = hasOutput
-		? `Partial work from before it stopped. It is incomplete, so check it before you trust it:\n\n${result.summary}`
-		: "It produced no output before it stopped.";
-	const guidance = result.timeoutBlocksResume
-		? "This agent does not allow a resume after a limit stops it. " +
-			"Start a new sub-agent with a smaller task instead."
-		: "A sub-agent that used its whole limit once usually does it again. " +
-			"A resume gets the same limit, so it can stop at the same point. " +
-			"It is usually better to finish the work yourself, or to start a new sub-agent with a smaller task.";
-	// An unconfirmed kill must not read as a clean one: the operator may still
-	// have a live pane burning tokens.
-	const killWarning = result.timeoutKillFailed
-		? "\n\nWarning: the system could not confirm that this sub-agent stopped. " +
-			"Its pane can still be running. Check it and close it before you trust this result."
-		: "";
-	return `${headline}\n\n${body}\n\n${guidance}${killWarning}`;
-}
 import type { SessionEntry } from "../session/session.ts";
 
 /**

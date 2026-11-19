@@ -2,6 +2,7 @@ import { outstandingWork } from "./outstanding-work.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, routeSubagentOutcome } from "./result-router.ts";
+import { resultTextOf } from "./unpublished-result.ts";
 import {
 	clearSubagentShutdownTimer,
 	completedSubagentResults,
@@ -13,7 +14,6 @@ import {
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 
 export interface RunningRegistryRuntime {
-	formatElapsed(elapsed: number): string;
 	updateWidget(): void;
 	waitForSubagentResult(params: { id: string }, signal?: AbortSignal): Promise<unknown>;
 	asSubagentToolResult(result: unknown): any;
@@ -198,23 +198,20 @@ export function shouldAwaitSubagentLaunch(running: Pick<RunningSubagent, "blocki
 export function deliverCompletedSubagentResultViaSteer(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	cached: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): CompletedSubagentResult {
-	return deliverCompletedSubagentResult(pi, cached, formatElapsed);
+	return deliverCompletedSubagentResult(pi, cached);
 }
 
 export function routeDetachedSubagentCompletion(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): CompletedSubagentResult {
 	const routed = routeSubagentOutcome({
 		pi,
 		running,
 		result,
-		formatElapsed,
 		updateWidget,
 	});
 	if (routed.kind !== "completion") {
@@ -227,14 +224,12 @@ function handleDetachedSubagentOutcome(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): void {
 	routeSubagentOutcome({
 		pi,
 		running,
 		result,
-		formatElapsed,
 		updateWidget,
 	});
 }
@@ -243,12 +238,11 @@ export function wireSubagentSteerBack(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	watchPromise: Promise<SubagentResult>,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): void {
 	watchPromise
 		.then((result) => {
-			handleDetachedSubagentOutcome(pi, running, result, formatElapsed, updateWidget);
+			handleDetachedSubagentOutcome(pi, running, result, updateWidget);
 		})
 		.catch((err) => {
 			releaseSpawnWidthSlot(running);
@@ -257,7 +251,19 @@ export function wireSubagentSteerBack(
 			outstandingWork.delivery(running.id, () => pi.sendMessage(
 				{
 					customType: "subagent_result",
-					content: `Sub-agent "${running.name}" error: ${err?.message ?? String(err)}`,
+					// D14: a watcher error is a failed end with the one rendering.
+					content: resultTextOf({
+						id: running.id,
+						name: running.name,
+						agent: running.agent,
+						task: running.task,
+						summary: "",
+						summarySource: "runtime",
+						sessionFile: running.noSession ? undefined : running.sessionFile,
+						exitCode: 1,
+						elapsed: (Date.now() - running.startTime) / 1000,
+						errorMessage: `watcher error: ${err?.message ?? String(err)}`,
+					}),
 					display: true,
 					details: {
 						id: running.id,

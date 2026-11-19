@@ -1,16 +1,15 @@
 import { outstandingWork } from "./outstanding-work.ts";
 import type { CompletedSubagentResult, RunningSubagent, SubagentPingMessageDetails, SubagentResult } from "../types.ts";
-import { formatContextExitNotice, formatFinalContextUsage, formatSessionRef } from "./final-context-usage.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 import {
 	buildCompletedSubagentResult,
 	cacheCompletedSubagentResult,
 	clearSubagentShutdownTimer,
-	hasRealSubagentOutput,
 	runningSubagents,
 	stopAfterCurrentSubagentBatch,
 } from "./state.ts";
-import { formatTimeoutOutcome, formatTimeoutWrapUpOutcome, getTimeoutResultDetails } from "./timeout-budget.ts";
+import { getTimeoutResultDetails } from "./timeout-budget.ts";
+import { resultTextOf } from "./unpublished-result.ts";
 
 interface ParentMessageSink {
 	sendMessage(message: unknown, options: unknown): void;
@@ -20,7 +19,6 @@ export interface RouteSubagentOutcomeOptions {
 	pi: ParentMessageSink;
 	running: RunningSubagent;
 	result: SubagentResult;
-	formatElapsed(elapsed: number): string;
 	updateWidget(): void;
 }
 
@@ -37,7 +35,7 @@ interface RoutedPingOutcome {
 export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 
 export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): RoutedSubagentOutcome {
-	const { pi, running, result, formatElapsed, updateWidget } = options;
+	const { pi, running, result, updateWidget } = options;
 	clearSubagentShutdownTimer(running);
 	if (result.ping) {
 		runningSubagents.delete(running.id);
@@ -45,7 +43,7 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 		if (running.allowSteerDelivery === false) {
 			return { kind: "ping", delivered: false };
 		}
-		deliverSubagentPing(pi, running, result, formatElapsed);
+		deliverSubagentPing(pi, running, result);
 		return { kind: "ping", delivered: true };
 	}
 	const completed =
@@ -60,14 +58,13 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 	}
 	return {
 		kind: "completion",
-		completed: deliverCompletedSubagentResult(pi, completed, formatElapsed),
+		completed: deliverCompletedSubagentResult(pi, completed),
 	};
 }
 
 export function deliverCompletedSubagentResult(
 	pi: ParentMessageSink,
 	completed: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): CompletedSubagentResult {
 	if (completed.deliveryState !== "detached" || completed.deliveredTo) {
 		return completed;
@@ -75,12 +72,10 @@ export function deliverCompletedSubagentResult(
 
 	const deliverAs = getCompletedResultDeliveryMode();
 	completed.deliveredTo = "steer";
-	const sessionRef = formatSessionRef(completed);
-	const contextRef = getCompletedContextReference(completed);
 	outstandingWork.delivery(completed.id, () => pi.sendMessage(
 		{
 			customType: "subagent_result",
-			content: getCompletedSubagentContent(completed, formatElapsed, `${sessionRef}${contextRef}`),
+			content: resultTextOf(completed),
 			display: true,
 			details: getCompletedResultDetails(completed),
 		},
@@ -103,10 +98,6 @@ function getCompletedResultDeliveryMode(): "nextTurn" | "steer" {
 
 function isAutoExitSession(): boolean {
 	return process.env.PI_SUBAGENT_AUTO_EXIT === "1";
-}
-
-function getCompletedContextReference(completed: CompletedSubagentResult): string {
-	return completed.reportContextUsage === false ? formatContextExitNotice(completed) : formatFinalContextUsage(completed);
 }
 
 function getCompletedResultDetails(completed: CompletedSubagentResult): Record<string, unknown> {
@@ -141,17 +132,11 @@ function deliverSubagentPing(
 	pi: ParentMessageSink,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): void {
 	const ping = result.ping;
 	if (!ping) return;
-	const sessionRef = result.sessionFile
-		? `\n\nSession: ${result.sessionFile}\nResume: pi --session ${result.sessionFile}`
-		: "";
-	// D14: a published ping is a blocked record and carries the same rendering as every other end.
-	const content =
-		result.resultText ??
-		`Sub-agent "${ping.name}" needs help (${formatElapsed(result.elapsed)}).\n\n${ping.message}${sessionRef}`;
+	// D14: a ping is a blocked record and carries the same rendering as every other end.
+	const content = resultTextOf({ ...result, id: running.id, agent: running.agent });
 	outstandingWork.delivery(running.id, () => pi.sendMessage(
 		{
 			customType: "subagent_ping",
@@ -178,65 +163,4 @@ function deliverSubagentPing(
 		},
 		{ triggerTurn: true, deliverAs: "steer" },
 	));
-}
-
-function getCompletedSubagentContent(
-	completed: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
-	sessionRef: string,
-): string {
-	if (completed.resultText !== undefined) return completed.resultText;
-	// A budget kill is the dominant fact about this run: without it the parent
-	// reads an ordinary non-zero exit and retries the same runaway.
-	if (completed.timedOut) {
-		return `${formatTimeoutOutcome(
-			{ ...completed, timedOut: completed.timedOut },
-			hasRealSubagentOutput(completed),
-			formatElapsed,
-			)}${sessionRef}`;
-	}
-	if (completed.errorMessage) {
-		return getProviderErrorContent(completed, formatElapsed, sessionRef);
-	}
-	if (completed.exitCode === 0 && completed.timeoutWrapUp) {
-		return `${formatTimeoutWrapUpOutcome(
-			{ ...completed, timeoutWrapUp: completed.timeoutWrapUp },
-			formatElapsed,
-		)}${sessionRef}`;
-	}
-	return getNormalCompletionContent(completed, formatElapsed, sessionRef);
-}
-
-function getProviderErrorContent(
-	completed: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
-	sessionRef: string,
-): string {
-	const resultBody = hasRealSubagentOutput(completed)
-		? `Last output before the failure (may be incomplete — verify before trusting):\n\n${completed.summary}`
-		: completed.contextExhausted
-			? `The subagent did not produce a result, and its context window is spent. ` +
-				`A fresh subagent is usually better than resuming this session.`
-			: `The subagent did not produce a result. You can retry by spawning a new ` +
-				`subagent or resume the session with subagent_resume.`;
-	return (
-		`Sub-agent "${completed.name}" failed after ${formatElapsed(completed.elapsed)} ` +
-		`(provider/agent error — auto-retry exhausted).\n\n` +
-		`Error: ${completed.errorMessage}\n\n${resultBody}${sessionRef}`
-	);
-}
-
-function getNormalCompletionContent(
-	completed: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
-	sessionRef: string,
-): string {
-	// D7: a stopped run is cancelled whatever its exit code; it is never filed as completed.
-	if (completed.status === "cancelled") {
-		return `Sub-agent "${completed.name}" was cancelled (${formatElapsed(completed.elapsed)}).\n\n${completed.summary}${sessionRef}`;
-	}
-	if (completed.exitCode !== 0) {
-		return `Sub-agent "${completed.name}" failed (exit ${completed.exitCode}).\n\n${completed.summary}${sessionRef}`;
-	}
-	return `Sub-agent "${completed.name}" completed (${formatElapsed(completed.elapsed)}).\n\n${completed.summary}${sessionRef}`;
 }

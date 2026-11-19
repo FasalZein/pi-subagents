@@ -100,7 +100,7 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 		(r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
 		{ mayLaunch: () => true },
 	);
-	wireSubagentSteerBack(pi as never, running, watch, String, () => {});
+	wireSubagentSteerBack(pi as never, running, watch, () => {});
 	try {
 		await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
 		assert.ok(ac.signal.aborted);
@@ -146,14 +146,14 @@ describe("end outcomes (T09)", () => {
 		assert.equal(routed.error, "cancelled");
 		assert.equal(cached.status, "cancelled");
 		assert.equal(sent.length, 1);
-		assert.match(sent[0].content, /^Sub-agent "worker" was cancelled/);
+		assert.match(sent[0].content, /^worker · scout · cancelled · /);
 	});
 
 	it("files a stopped headless child that exits by signal without a record as cancelled (replay 5b)", async () => {
 		const { routed, cached, sent } = await killReplay(exitBySignal, false);
 		assert.equal(routed.error, "cancelled");
 		assert.equal(cached.status, "cancelled");
-		assert.match(sent[0].content, /^Sub-agent "worker" was cancelled/);
+		assert.match(sent[0].content, /^worker · scout · cancelled · /);
 	});
 
 	for (const [label, exitWith] of [

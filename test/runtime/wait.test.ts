@@ -46,9 +46,8 @@ describe("subagent wait behavior", () => {
 			errorMessage: "Provider unavailable",
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /Last output before the failure \(may be incomplete/);
+		assert.match(text.split("\n")[0], / · failed · /);
 		assert.match(text, /Implemented the requested fix\./);
-		assert.doesNotMatch(text, /did not produce a result/);
 	});
 
 	it("appends final child context usage to awaited results", async () => {
@@ -64,10 +63,8 @@ describe("subagent wait behavior", () => {
 			contextWindow: 200_000,
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(
-			text,
-			/Resume: pi --session \/tmp\/context-child\.jsonl\n\nSub-agent context: 145K\/200K tokens \(72%\) used at finish\.$/,
-		);
+		assert.match(text, /\ncontext: 145000\/200000 tokens$/);
+		assert.doesNotMatch(text, /Resume: pi --session/);
 		assert.equal((waited.details as any).contextTokens, 145_000);
 		assert.equal((waited.details as any).contextWindow, 200_000);
 	});
@@ -86,7 +83,7 @@ describe("subagent wait behavior", () => {
 			reportContextUsage: false,
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.doesNotMatch(text, /Sub-agent context:/);
+		assert.doesNotMatch(text, /context: /);
 		assert.equal((waited.details as any).contextTokens, 145_000);
 		assert.equal((waited.details as any).contextWindow, 200_000);
 	});
@@ -103,8 +100,7 @@ describe("subagent wait behavior", () => {
 			timeoutWrapUp: { kind: "timeout", seconds: 60, threshold: 50 },
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /completed its time-limit wrap-up/);
-		assert.match(text, /interrupted its active operation at 50% of its whole-run limit/);
+		assert.match(text, /wrap-up: 60s for the whole run/);
 		assert.match(text, /Reported the committed portion/);
 		assert.deepEqual((waited.details as any).timeoutWrapUp, {
 			kind: "timeout",
@@ -125,8 +121,8 @@ describe("subagent wait behavior", () => {
 			errorMessage: "Provider unavailable",
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /The subagent did not produce a result\./);
-		assert.doesNotMatch(text, /Last output before the failure/);
+		assert.match(text, /failed: Provider unavailable/);
+		assert.doesNotMatch(text, /Background agent exited without output/);
 	});
 
 	it("includes the child message in ping results", async () => {
@@ -140,7 +136,8 @@ describe("subagent wait behavior", () => {
 			ping: { name: "Ping child", message: "Which API version should I use?" },
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /Message from the subagent:\nWhich API version should I use\?/);
+		assert.match(text.split("\n")[0], / · blocked · /);
+		assert.match(text, /Which API version should I use\?/);
 	});
 
 	it("returns cached result when wait follows steer delivery", async () => {
@@ -367,7 +364,7 @@ describe("subagent wait behavior", () => {
 			contextWarned: true,
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /stopped early as instructed by its context-warning policy/);
+		assert.match(text, /not resumable: stopped early by its context-warning policy/);
 		// Neither the command nor the path: both let a model route around the
 		// guard with bash. The operator still gets the path from details.
 		assert.doesNotMatch(text, /Session: \/tmp\/warned-child\.jsonl/);
@@ -387,12 +384,9 @@ describe("subagent wait behavior", () => {
 			contextExhausted: true,
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.doesNotMatch(text, /not a failure/);
-		// The context is spent, but a provider error is often transient, so the
-		// parent keeps the cheap retry and is told which option is usually better.
-		assert.match(text, /context window is spent/);
-		assert.match(text, /fresh subagent is usually better/);
-		assert.match(text, /Resume: pi --session/);
+		assert.match(text, /failed: Provider unavailable/);
+		assert.doesNotMatch(text, /not resumable/);
+		assert.doesNotMatch(text, /Resume: pi --session/);
 	});
 
 	it("still offers resume for an unwarned child that failed without output", async () => {
@@ -407,6 +401,7 @@ describe("subagent wait behavior", () => {
 			errorMessage: "Provider unavailable",
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /resume the session with subagent_resume/);
+		assert.match(text, /failed: Provider unavailable/);
+		assert.doesNotMatch(text, /not resumable/);
 	});
 });

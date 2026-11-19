@@ -216,7 +216,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 }
 
 /** An unconfirmed kill must not read as a clean one: the pane can still be running. */
-const KILL_UNCONFIRMED_WARNING =
+export const KILL_UNCONFIRMED_WARNING =
 	"the system could not confirm that this sub-agent stopped; check its pane and close it before you trust this result";
 
 /** D8 with the agent's time-limit policy: why a run that a time limit stopped cannot resume. */

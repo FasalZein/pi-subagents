@@ -1,22 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { CompletedSubagentResult, DeliveryState, RunningSubagent, SubagentResult, WaitParams } from "../types.ts";
-import { formatContextExitNotice, formatFinalContextUsage, formatSessionRef } from "./final-context-usage.ts";
-import { hasRealSubagentOutput } from "./state.ts";
 import type { WaitRuntime } from "./wait.ts";
-import { formatTimeoutOutcome, formatTimeoutWrapUpOutcome, getTimeoutResultDetails } from "./timeout-budget.ts";
-import { formatElapsed } from "./wiring.ts";
+import { getTimeoutResultDetails } from "./timeout-budget.ts";
+import { resultTextOf } from "./unpublished-result.ts";
 
 function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentResult, deliveryState: DeliveryState) {
 	return {
 		content: [
 			{
 				type: "text",
-				// D14: a published ping carries the same rendering as the message path.
-				text:
-					result.resultText ??
-					`Sub-agent "${running.name}" requested help and exited. ` +
-						`Resume it with subagent_resume using sessionFile ${result.sessionFile ?? "(missing)"}.` +
-						`\n\nMessage from the subagent:\n${result.ping?.message ?? ""}`,
+				// D14: a ping carries the same rendering as the message path.
+				text: resultTextOf({ ...result, id: running.id, agent: running.agent }),
 			},
 		],
 		details: {
@@ -38,46 +32,8 @@ function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentRes
 }
 
 function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
-	const sessionRef = formatSessionRef(cached);
-	const contextRef =
-		cached.reportContextUsage === false ? formatContextExitNotice(cached) : formatFinalContextUsage(cached);
-	let text: string;
-	if (cached.resultText !== undefined) {
-		// D14: the same rendering the message path shows.
-		text = cached.resultText;
-	} else if (cached.timedOut) {
-		// A budget kill is the dominant fact about this run: without it the parent
-		// reads an ordinary non-zero exit and retries the same runaway.
-		text = `${formatTimeoutOutcome(
-			{ ...cached, timedOut: cached.timedOut },
-			hasRealSubagentOutput(cached),
-			formatElapsed,
-		)}${sessionRef}${contextRef}`;
-	} else if (cached.errorMessage) {
-		const resultBody = hasRealSubagentOutput(cached)
-			? `Last output before the failure (may be incomplete — verify before trusting):\n\n${cached.summary}`
-			: cached.contextExhausted
-				? `The subagent did not produce a result, and its context window is spent. ` +
-					`A fresh subagent is usually better than resuming this session.`
-				: `The subagent did not produce a result. You can retry by spawning a new ` +
-					`subagent or resume the session with subagent_resume.`;
-		text =
-			`Sub-agent "${cached.name}" failed after ${formatElapsed(cached.elapsed)} ` +
-			`(provider/agent error — auto-retry exhausted).\n\n` +
-			`Error: ${cached.errorMessage}\n\n${resultBody}${sessionRef}${contextRef}`;
-	} else if (cached.exitCode === 0 && cached.timeoutWrapUp) {
-		text = `${formatTimeoutWrapUpOutcome(
-			{ ...cached, timeoutWrapUp: cached.timeoutWrapUp },
-			formatElapsed,
-		)}${sessionRef}${contextRef}`;
-	} else {
-		const verb =
-			cached.status === "completed" ? "completed" : cached.status === "cancelled" ? "was cancelled" : "failed";
-		text =
-			cached.status === "completed"
-				? `Sub-agent "${cached.name}" completed (${formatElapsed(cached.elapsed)}).\n\n${cached.summary}${sessionRef}${contextRef}`
-				: `Sub-agent "${cached.name}" ${verb} (exit ${cached.exitCode}).\n\n${cached.summary}${sessionRef}${contextRef}`;
-	}
+	// D14: the same rendering the message path shows.
+	const text = resultTextOf(cached);
 	return {
 		content: [{ type: "text", text }],
 		details: {
