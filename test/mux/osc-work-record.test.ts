@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatProgramStatus } from "@earendil-works/pi-tui";
@@ -11,7 +14,7 @@ import { resetRuntimeStateForTest, runningSubagents } from "../../src/runtime/st
 import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent } from "../../src/types.ts";
-import { createTestDir } from "../support/fixtures.ts";
+import { createTestDir, recordOscOnStdout, writeExecutable } from "../support/index.ts";
 
 type Record = { state: string; msg?: string };
 
@@ -58,6 +61,8 @@ class FakeTerminal {
 const HC_ENV = { HC_TERMINAL_ID: "t7", HC_TERMINAL_SOCKET: "/tmp/hc.sock" };
 const REX_ENV = { REX_SESSION: "s1", REX_BLOCK: "block:parent" };
 const OLD_HERDR_ENV = { HERDR_ENV: "1", HERDR_PANE_ID: "p1" };
+/** The backend's launch check, passed: these tests drive the writer, not detection (herdr-core-detection.test.ts). */
+const USABLE = async () => true;
 const session = (mode = "tui") => ({ mode, sessionManager: { getSessionFile: () => "parent.jsonl" } });
 
 function child(id: string): RunningSubagent {
@@ -97,7 +102,9 @@ async function harness(backend: OscRecordBackend) {
 	// SAFETY: Lifecycle test context deliberately excludes unrelated UI/provider methods.
 	const ctx = { ...session(), isIdle: () => true } as unknown as ExtensionContext;
 	const env = backend === "herdr-core" ? HC_ENV : REX_ENV;
-	const reporting = registerOutstandingWorkReporting(pi, (c) => createOscWorkReporter(c, backend, env, terminal));
+	const reporting = registerOutstandingWorkReporting(pi, (c) =>
+		createOscWorkReporter(c, backend, USABLE, env, terminal),
+	);
 	await reporting.start(ctx);
 	return {
 		pi,
@@ -204,7 +211,7 @@ test("a message with one of two results releases that run once by id and leaves 
 
 test("only the extension's own record is cleared, never Pi's root record", async () => {
 	const terminal = new FakeTerminal();
-	const reporter = await createOscWorkReporter(session(), "herdr-core", HC_ENV, terminal);
+	const reporter = await createOscWorkReporter(session(), "herdr-core", USABLE, HC_ENV, terminal);
 	assert.ok(reporter);
 	await reporter.publish(2);
 	terminal.write(formatProgramStatus({ state: "working", app: "pi" }));
@@ -240,33 +247,61 @@ test("old herdr, other backends and non-TUI sessions write no OSC record", async
 	];
 	for (const [name, backend, env, mode] of cases) {
 		const terminal = new FakeTerminal();
-		assert.equal(await createOscWorkReporter(session(mode), backend, env, terminal), undefined, name);
+		assert.equal(await createOscWorkReporter(session(mode), backend, USABLE, env, terminal), undefined, name);
 		assert.equal(terminal.writes.length, 0, name);
 	}
 	const notTty = { isTTY: false, write: () => assert.fail("no write to a non-terminal") };
-	assert.equal(await createOscWorkReporter(session(), "rex", REX_ENV, notTty), undefined);
+	assert.equal(await createOscWorkReporter(session(), "rex", USABLE, REX_ENV, notTty), undefined);
+	for (const [backend, env] of [
+		["herdr-core", HC_ENV],
+		["rex", REX_ENV],
+	] as const) {
+		const terminal = new FakeTerminal();
+		const unusable = await createOscWorkReporter(session(), backend, async () => false, env, terminal);
+		assert.equal(unusable, undefined, `${backend} markers without a usable backend`);
+		assert.equal(terminal.writes.length, 0);
+	}
 	assert.ok(
 		await createOscWorkReporter(
 			session(),
 			"herdr-core",
+			USABLE,
 			{ ...HC_ENV, PI_SUBAGENT_MUX: "herdr-core" },
 			new FakeTerminal(),
 		),
 	);
 });
 
+/** hc whose app answers for the caller terminal, and rex at the tested API revision 16: both backends usable. */
+const ANSWERING_HC = `#!/bin/sh
+[ "$1" = get ] && { echo "{\\"address\\":\\"$2\\"}"; exit 0; }
+exit 1
+`;
+const ANSWERING_REX = `#!/bin/sh
+[ "$1" = whoami ] && { echo '{"api_revision":16}'; exit 0; }
+exit 1
+`;
+
 test("herdr-core and Rex expose the OSC writer as their status ability; with old herdr's environment both decline", async () => {
 	const saved = { ...process.env };
-	const savedTty = process.stdout.isTTY;
-	const savedWrite = process.stdout.write;
-	const sink: string[] = [];
-	// The abilities write to the real stdout; it must look like a terminal so only the environment decides,
-	// and its write goes to a sink so no record reaches the test runner's output.
-	process.stdout.isTTY = true;
-	process.stdout.write = ((chunk: string | Uint8Array) => sink.push(String(chunk)) > 0) as typeof process.stdout.write;
+	const binDir = mkdtempSync(join(tmpdir(), "osc-abilities-"));
+	writeExecutable(binDir, "hc", ANSWERING_HC);
+	writeExecutable(binDir, "rex", ANSWERING_REX);
+	// The abilities write to the real stdout; it must look like a terminal so only the environment and the
+	// fakes decide, and its records stay off the real stdout.
+	const terminal = recordOscOnStdout();
 	try {
-		for (const name of ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "REX_SESSION", "REX_BLOCK", "PI_SUBAGENT_MUX"])
+		for (const name of [
+			"HC_TERMINAL_ID",
+			"HC_TERMINAL_SOCKET",
+			"REX_SESSION",
+			"REX_BLOCK",
+			"REX_BIN_DIR",
+			"PI_SUBAGENT_MUX",
+		])
 			delete process.env[name];
+		// Only the fakes answer: no installed hc or rex is reachable.
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		Object.assign(process.env, OLD_HERDR_ENV);
 		assert.equal(await herdrCoreBackend.connectWorkReporter?.(session()), undefined);
 		assert.equal(await rexBackend.connectWorkReporter?.(session()), undefined);
@@ -278,12 +313,12 @@ test("herdr-core and Rex expose the OSC writer as their status ability; with old
 		const rex = await rexBackend.connectWorkReporter?.(session());
 		assert.ok(rex);
 		await rex.stop();
-		assert.equal(sink.length, 2, "each stop clears the extension's own record once");
+		assert.equal(terminal.records.length, 2, "each stop clears the extension's own record once");
 	} finally {
-		process.stdout.write = savedWrite;
-		process.stdout.isTTY = savedTty;
+		terminal.restore();
 		for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
 		Object.assign(process.env, saved);
+		rmSync(binDir, { recursive: true, force: true });
 	}
 });
 
@@ -333,7 +368,7 @@ test("after Pi stops and restarts its TUI, the named record is restored with the
 test("stop restores the terminal's write and writes no record after Pi's exit clear", async () => {
 	const terminal = new FakeTerminal();
 	const ownWrite = terminal.write;
-	const reporter = await createOscWorkReporter(session(), "rex", REX_ENV, terminal);
+	const reporter = await createOscWorkReporter(session(), "rex", USABLE, REX_ENV, terminal);
 	assert.ok(reporter);
 	await reporter.publish(2);
 	piStopsTui(terminal);

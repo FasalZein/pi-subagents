@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -57,7 +57,9 @@ function useFakeRex(): void {
 		mkdirSync(binDir);
 		mkdirSync(stateDir);
 		writeExecutable(binDir, "rex", FAKE_REX);
-		process.env.PATH = `${binDir}:${saved.get("PATH") ?? ""}`;
+		// No host PATH: an installed rex would win over REX_BIN_DIR and get the real calls. The fakes need node.
+		symlinkSync(process.execPath, join(binDir, "node"));
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		process.env.FAKE_TERMINAL_STATE = stateDir;
 		process.env.REX_SESSION = FAKE_REX_SESSION;
 		process.env.REX_BLOCK = FAKE_REX_PARENT;
@@ -94,6 +96,7 @@ describe("Rex detection (T48, D28, D29)", () => {
 		rmSync(join(binDir, "rex"));
 		process.env.REX_BIN_DIR = binOnly;
 		assert.equal(getMuxBackend(), "rex");
+		assert.deepEqual(readRexCalls(stateDir)[0], ["whoami", "--json"], "the REX_BIN_DIR fake answered");
 		delete process.env.REX_BIN_DIR;
 		assert.equal(rexBackend.isAvailable(), false, "no rex on PATH and no REX_BIN_DIR");
 	});

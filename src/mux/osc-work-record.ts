@@ -48,17 +48,20 @@ function insideBackend(backend: OscRecordBackend, environment: NodeJS.ProcessEnv
 
 /**
  * One writer for herdr-core and Rex (D30): the TUI parent reports its count of outstanding children
- * as its own side record on its own terminal. No probe and no process call, so session start never waits.
+ * as its own side record on its own terminal. The markers alone can be inherited from another terminal, so
+ * `usable`, the backend's bounded asynchronous launch check, decides as launch detection does (D29).
  */
 export async function createOscWorkReporter(
 	session: WorkReporterSession,
 	backend: OscRecordBackend,
+	usable: () => Promise<boolean>,
 	environment: NodeJS.ProcessEnv = process.env,
 	terminal: RecordTerminal = process.stdout,
 ): Promise<WorkReporter | undefined> {
 	const preference = environment.PI_SUBAGENT_MUX?.trim().toLowerCase();
 	if (session.mode !== "tui" || !terminal.isTTY || !insideBackend(backend, environment)) return;
 	if (preference && preference !== backend) return;
+	if (!(await usable())) return;
 	return makeRecordReporter(terminal);
 }
 

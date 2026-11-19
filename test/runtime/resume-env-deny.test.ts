@@ -1,7 +1,10 @@
 import { testResultsDir } from "../support/result-fixtures.ts";
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
+import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { readSubagentLaunchMetadataEntries } from "../../src/session/session-files.ts";
+import type { RunningSubagent } from "../../src/types.ts";
 import {
 	assert,
 	createTestDir,
@@ -405,4 +408,177 @@ esac
 			else process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = originalCapsuleDir;
 		}
 	});
+});
+
+/** A synthetic marker that only the agent's deny-env names; its value is never read or printed. */
+const AGENT_ONLY_MARKER = "STANDALONE_TEST_AGENT_DENY";
+
+const quietResult = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
+const resumeRuntime = () => ({
+	isMuxAvailable: () => true,
+	getShellReadyDelayMs: () => 0,
+	watchBackgroundSubagent: quietResult,
+	watchSubagent: quietResult,
+	getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
+	startWidgetRefresh: () => {},
+	getContextWindow: () => undefined,
+	runningSubagents: new Map<string, RunningSubagent>(),
+});
+
+type ResumeMode = "background" | "interactive";
+
+/**
+ * A standalone agent with an agent-only deny-env under a temporary agent dir, the marker set in the parent,
+ * and per-mode fakes: a headless child that records only the marker's presence, and a fake tmux pane whose
+ * capsule holds the filtered parent env. The support env hooks restore PATH, PI_CODING_AGENT_DIR and the mux keys.
+ */
+function standaloneFixture(mode: ResumeMode) {
+	const dir = createTestDir();
+	const agentDir = join(dir, "agent");
+	mkdirSync(join(agentDir, "agents"), { recursive: true });
+	writeFileSync(
+		join(agentDir, "agents", "keeper.md"),
+		`---\nname: keeper\nsession-mode: standalone\nmode: ${mode}\ndeny-env: ${AGENT_ONLY_MARKER}\n---\nKeeper body.\n`,
+	);
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	process.env[AGENT_ONLY_MARKER] = "agent-only";
+	const flagsLog = join(dir, "flags.log");
+	const binDir = join(dir, "bin");
+	mkdirSync(binDir);
+	const tmuxLog = join(dir, "tmux.log");
+	const capsuleRoot = join(dir, "capsules");
+	mkdirSync(capsuleRoot);
+	const saved = {
+		command: process.env.PI_SUBAGENT_PI_COMMAND,
+		capsules: process.env.PI_SUBAGENT_ENV_CAPSULE_DIR,
+	};
+	if (mode === "background") {
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(
+			dir,
+			"capture-pi",
+			`#!/usr/bin/env bash\ncat > /dev/null\n[ -n "\${${AGENT_ONLY_MARKER}+x}" ] && echo present > '${flagsLog}' || echo absent > '${flagsLog}'\n`,
+		);
+	} else {
+		writeExecutable(binDir, "tmux", `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> '${tmuxLog}'\ncase "$1" in new-window) printf '%%42\\n' ;; esac\n`);
+		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		process.env.TMUX = "fake-tmux-socket";
+		process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = capsuleRoot;
+	}
+	return {
+		dir,
+		/** Whether the resumed child received the marker. */
+		async markerReached(): Promise<boolean> {
+			if (mode === "background") return (await readNonEmptyFileEventually(flagsLog)).trim() === "present";
+			const capsulePath = readFileSync(tmuxLog, "utf8").match(/run-child\.mjs' '([^']+)'/)?.[1];
+			assert.ok(capsulePath, "the resume command invokes the capsule launcher");
+			return AGENT_ONLY_MARKER in JSON.parse(readFileSync(capsulePath, "utf8")).parentEnv;
+		},
+		cleanup() {
+			delete process.env[AGENT_ONLY_MARKER];
+			if (saved.command === undefined) delete process.env.PI_SUBAGENT_PI_COMMAND;
+			else process.env.PI_SUBAGENT_PI_COMMAND = saved.command;
+			if (saved.capsules === undefined) delete process.env.PI_SUBAGENT_ENV_CAPSULE_DIR;
+			else process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = saved.capsules;
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
+function writePiHeader(sessionFile: string, cwd: string): void {
+	writeFileSync(
+		sessionFile,
+		`${JSON.stringify({ type: "session", version: 3, id: "standalone", timestamp: new Date().toISOString(), cwd })}\n`,
+	);
+}
+
+describe("standalone sessions keep the agent's deny-env on resume (B3 g4)", () => {
+	for (const mode of ["background", "interactive"] as const) {
+		it(`a ${mode} launch then resume never passes a variable denied only by the agent`, async () => {
+			const fixture = standaloneFixture(mode);
+			try {
+				const parentSession = join(fixture.dir, "parent.jsonl");
+				writePiHeader(parentSession, fixture.dir);
+				const launch = await coordinateSubagentLaunch(
+					{ name: "keeper-run", title: "Keeper", task: "Keep.", agent: "keeper" },
+					{
+						cwd: fixture.dir,
+						sessionManager: { getSessionFile: () => parentSession, getSessionId: () => "parent-session-id" },
+					},
+					{ mode, undo: new LaunchUndo() },
+				);
+				assert.equal(launch.sessionMode, "standalone");
+				const sessionFile = launch.prepared.subagentSessionFile;
+				// The first spawn: Pi creates the session file when no launch step wrote one.
+				if (!existsSync(sessionFile)) writePiHeader(sessionFile, fixture.dir);
+				const header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0] ?? "");
+				assert.equal(header.parentSession, undefined, "a standalone session has no parent link");
+				await resumeSubagentSession(
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						task: "Resume probe.",
+						mode,
+					},
+					resumeRuntime(),
+				);
+				assert.equal(await fixture.markerReached(), false, "the agent-only marker must not reach the resumed child");
+			} finally {
+				fixture.cleanup();
+			}
+		});
+	}
+
+	it("an older standalone session without launch metadata takes the named agent's current deny-env", async () => {
+		const fixture = standaloneFixture("background");
+		try {
+			const sessionFile = join(fixture.dir, "legacy-standalone.jsonl");
+			writePiHeader(sessionFile, fixture.dir);
+			await resumeSubagentSession(
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					task: "Resume probe.",
+					mode: "background",
+					agent: "keeper",
+				},
+				resumeRuntime(),
+			);
+			assert.equal(await fixture.markerReached(), false);
+		} finally {
+			fixture.cleanup();
+		}
+	});
+
+	for (const [label, agent] of [
+		["no agent", undefined],
+		["an agent without a definition", "vanished"],
+	] as const) {
+		it(`an older standalone session without launch metadata and ${label} is refused`, async () => {
+			const fixture = standaloneFixture("background");
+			try {
+				const sessionFile = join(fixture.dir, "legacy-standalone.jsonl");
+				writePiHeader(sessionFile, fixture.dir);
+				await assert.rejects(
+					resumeSubagentSession(
+						{
+							resultsDir: testResultsDir(),
+							parent: { parentCwd: process.cwd(), warnings: [] },
+							sessionFile,
+							task: "Resume probe.",
+							mode: "background",
+							...(agent ? { agent } : {}),
+						},
+						resumeRuntime(),
+					),
+					/deny-env/,
+				);
+				assert.equal(existsSync(join(fixture.dir, "flags.log")), false, "no child started");
+			} finally {
+				fixture.cleanup();
+			}
+		});
+	}
 });

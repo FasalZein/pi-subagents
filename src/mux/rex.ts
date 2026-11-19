@@ -10,6 +10,7 @@ import {
 	rexCaptureAsync,
 	rexCaptureSync,
 	rexRevisionAccepted,
+	rexRevisionAcceptedAsync,
 	rexRevisionHint,
 	rexSync,
 } from "./rex-cli.ts";
@@ -141,6 +142,13 @@ function captureArgs(surface: string): string[] {
 	return ["capture", "-s", parentSession(), "-b", childBlock(surface), "--trim", "--unwrap"];
 }
 
+/** The launch check of isAvailable, asynchronous, so the status reporter follows the launch decision (D29, D30). */
+async function rexUsable(): Promise<boolean> {
+	if (!process.env.REX_SESSION || !process.env.REX_BLOCK) return false;
+	const binary = resolveRexBinary();
+	return binary !== undefined && (await rexRevisionAcceptedAsync(binary));
+}
+
 /** Rex (the rex CLI inside a Rex block), revision 16 (D28). */
 export const rexBackend: MuxBackendAdapter = {
 	id: "rex",
@@ -183,5 +191,5 @@ export const rexBackend: MuxBackendAdapter = {
 	renameCurrentTab: () => {},
 	renameWorkspace: () => {},
 	paneIdentity: REX_PANE_IDENTITY,
-	connectWorkReporter: (session) => createOscWorkReporter(session, "rex"),
+	connectWorkReporter: (session) => createOscWorkReporter(session, "rex", rexUsable),
 };
