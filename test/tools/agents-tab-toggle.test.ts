@@ -1,8 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SubagentsOverlay } from "../../src/tools/subagents-view.ts";
-import { afterEach, assert, describe, it, resetSubagentStateForTest } from "../support/index.ts";
+import { afterEach, assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
 
 const testRuntime = {
 	getShellReadyDelayMs: () => 800,
@@ -60,7 +59,7 @@ function renderText(overlay: SubagentsOverlay): string {
 }
 
 function makeAgentDir(name: string, frontmatter: string): { dir: string; agentFile: string } {
-	const dir = mkdtempSync(join(tmpdir(), `pi-subagents-${name}-`));
+	const dir = createTestDir();
 	const agentsDir = join(dir, "agents");
 	mkdirSync(agentsDir, { recursive: true });
 	const agentFile = join(agentsDir, `aaa-${name}.md`);

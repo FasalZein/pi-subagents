@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	assert,
+	createTestDir,
 	describe,
 	filterToolNames,
 	getDeniedToolNames,
@@ -303,7 +303,7 @@ describe("tool policy", () => {
 				"npm:pi-subagents",
 			]);
 			// An installed copy counts by its manifest name (T29: exact match, not a path containing pi-subagents).
-			const copy = join(mkdtempSync(join(tmpdir(), "subagents-copy-")), "pi-subagents");
+			const copy = join(createTestDir(), "pi-subagents");
 			mkdirSync(copy, { recursive: true });
 			writeFileSync(join(copy, "package.json"), JSON.stringify({ name: "pi-subagents" }));
 			assert.deepEqual(getExtensionLaunchArgsForTest([copy], "/tmp/done.ts", true), [

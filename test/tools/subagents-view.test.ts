@@ -1,5 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runningSubagents } from "../../src/runtime/state.ts";
 import { buildCompletedItems } from "../../src/tools/overlay/data.ts";
@@ -8,6 +7,7 @@ import { SubagentsOverlay } from "../../src/tools/subagents-view.ts";
 import {
 	afterEach,
 	assert,
+	createTestDir,
 	describe,
 	it,
 	resetSubagentStateForTest,
@@ -292,7 +292,7 @@ describe("subagents-view overlay", () => {
 		});
 
 		it("shows frontmatter and override model fields in running item details", () => {
-			const dir = mkdtempSync(join(tmpdir(), "subagents-overlay-"));
+			const dir = createTestDir();
 			const sessionFile = join(dir, "child.jsonl");
 			writeFileSync(
 				sessionFile,
@@ -596,7 +596,7 @@ describe("subagents-view overlay", () => {
 		});
 
 		it("reports completed context tokens as the final-message snapshot, not a cumulative sum", async () => {
-			const dir = mkdtempSync(join(tmpdir(), "subagents-completed-"));
+			const dir = createTestDir();
 			const childSession = join(dir, "child.jsonl");
 			// Two assistant turns: cumulative usageTotal would be 250k, but the
 			// context footprint is the last turn's 150k snapshot.
@@ -666,7 +666,7 @@ describe("subagents-view overlay", () => {
 		});
 
 		it("excludes inherited parent history from forked completed-session stats", async () => {
-			const dir = mkdtempSync(join(tmpdir(), "subagents-fork-completed-"));
+			const dir = createTestDir();
 			const childSession = join(dir, "forked-child.jsonl");
 			// Forked child: parent transcript is seeded BEFORE the launch marker,
 			// then the child's own activity follows. Stats must count only the
