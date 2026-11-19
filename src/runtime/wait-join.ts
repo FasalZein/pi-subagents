@@ -88,8 +88,8 @@ function snapshotEnd(id: string, sources: RecordSources, name?: string): JoinedR
 	const queuedRunId = typeof queued?.details.runId === "string" ? queued.details.runId : undefined;
 	const queuedName = typeof queued?.details.name === "string" ? queued.details.name : undefined;
 	const record = readRecord(sources.runId ?? cached?.resultRunId ?? queuedRunId, sources);
-	// Every ended run has a name in one of these; the id is the last resort, never reached in practice.
-	const ended = { runId: id, name: name ?? cached?.name ?? queuedName ?? record?.name ?? id, record };
+	// Parent-owned names first (a queued ping's sidecar name can be missing or differ); the id is the last resort.
+	const ended = { runId: id, name: name ?? cached?.name ?? record?.name ?? queuedName ?? id, record };
 	if (queued) return { ...ended, text: queued.content };
 	if (cached) {
 		const reply = getSubagentWaitSuccessResult(cached);

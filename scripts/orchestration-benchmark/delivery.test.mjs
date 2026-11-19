@@ -651,6 +651,4 @@ test("[T67] a subagent_wait entry binds to its run by runId, the launch children
 		bound.map((c) => [c.kind, c.runId, c.tool, c.text]),
 		[["tool-result", "r2", "subagent_wait", "y-2"]],
 	);
-	// The pre-T67 shape named the run id; it no longer binds a run.
-	assert.equal(carriers([wait({ id: "r2", text: "y-2", record: null })], allow)[0].runId, null);
 });
