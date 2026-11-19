@@ -72,11 +72,8 @@ async function startBackgroundChild(start: ResumedChildStart): Promise<void> {
 	child.unref();
 	// A spawn error rejects through the undo before anything is written to the session.
 	await waitForChildSpawn(child);
-	if (start.expandedTask !== undefined) {
-		child.stdin?.end(start.expandedTask);
-	} else {
-		child.stdin?.end();
-	}
+	// end(undefined) closes stdin without writing, as end() does.
+	child.stdin?.end(start.expandedTask);
 	running.childProcess = child;
 	child.stdout?.on("data", (chunk: Buffer) => {
 		running.stdoutTail = rememberTail(running.stdoutTail, chunk);
