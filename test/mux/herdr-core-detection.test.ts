@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { getMuxBackend } from "../../src/mux/core.ts";
+import { connectMuxWorkReporter, getMuxBackend } from "../../src/mux/core.ts";
 import { writeExecutable } from "../support/index.ts";
 import { FAKE_HC, FAKE_HC_CALLER, seedFakeHcCaller } from "./fake-hc.ts";
 
@@ -14,6 +14,19 @@ case "$*" in
     echo '{"status":"running","running":true,"compatible":true,"protocol":17,"version":"0.7.5"}'; exit 0 ;;
   "pane current --current")
     echo '{"id":"c","result":{"type":"pane_current","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1","cwd":"/parent","foreground_cwd":"/parent","focused":true}}}'; exit 0 ;;
+esac
+exit 1
+`;
+// Old herdr with the protocol-22 metadata endpoint (herdr-work.test.ts); it logs each call to $FAKE_TERMINAL_STATE/herdr-calls.
+const FAKE_HERDR_METADATA = `#!/bin/sh
+echo "$*" >> "$FAKE_TERMINAL_STATE/herdr-calls"
+case "$*" in
+  "status server --json")
+    echo '{"status":"running","running":true,"compatible":true,"protocol":22,"version":"0.8.0"}'; exit 0 ;;
+  "pane current --current")
+    echo '{"id":"c","result":{"type":"pane_current","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1","cwd":"/parent","foreground_cwd":"/parent","focused":true}}}'; exit 0 ;;
+  "pane report-metadata"*)
+    echo '{"result":{}}'; exit 0 ;;
 esac
 exit 1
 `;
@@ -36,8 +49,12 @@ const ENV_KEYS = [
 	"HC_TERMINAL_ID",
 	"HC_TERMINAL_SOCKET",
 	"HERDR_PANE_ID",
+	"HERDR_ENV",
+	"HERDR_BIN_PATH",
+	"HERDR_SOCKET_PATH",
 	"REX_SESSION",
 	"REX_BLOCK",
+	"REX_BIN_DIR",
 	"CMUX_SOCKET_PATH",
 	"TMUX",
 	"ZELLIJ",
@@ -61,7 +78,9 @@ describe("herdr-core detection needs the app to answer (T45, D27, D29)", () => {
 		seedFakeHcCaller(stateDir);
 		writeExecutable(binDir, "herdr", FAKE_HERDR);
 		// Both backends' markers: an herdr-core terminal's markers inherited into an old herdr pane.
-		process.env.PATH = `${binDir}:${saved.get("PATH") ?? ""}`;
+		// No host PATH: an installed hc, herdr or rex must never answer for a fake (the fakes need node and sh).
+		symlinkSync(process.execPath, join(binDir, "node"));
+		process.env.PATH = `${binDir}:/usr/bin:/bin`;
 		process.env.FAKE_TERMINAL_STATE = stateDir;
 		process.env.HC_TERMINAL_ID = FAKE_HC_CALLER;
 		process.env.HC_TERMINAL_SOCKET = join(stateDir, "hc.sock");
@@ -87,6 +106,59 @@ describe("herdr-core detection needs the app to answer (T45, D27, D29)", () => {
 		assert.equal(getMuxBackend(), "herdr");
 		assert.ok(Date.now() - started < HANG_LIMIT_MS, `detection took ${Date.now() - started} ms`);
 	});
+
+	for (const [label, markers] of [
+		["stale HC markers", {}],
+		["stale HC and Rex markers", { REX_SESSION: "s1", REX_BLOCK: "b1" }],
+		["stale Rex markers only", { REX_SESSION: "s1", REX_BLOCK: "b1", HC_TERMINAL_ID: undefined }],
+	] as const) {
+		it(`the status reporter follows launch to old herdr with ${label} and no answering app (D29, D30)`, async () => {
+			writeExecutable(binDir, "hc", SILENT_HC);
+			writeExecutable(binDir, "herdr", FAKE_HERDR_METADATA);
+			process.env.HERDR_ENV = "1";
+			for (const [key, value] of Object.entries(markers)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			assert.equal(getMuxBackend(), "herdr");
+			// A recording terminal stands in for stdout: an OSC reporter would write its record here.
+			const written: string[] = [];
+			const stdout = process.stdout as { isTTY?: boolean; write: typeof process.stdout.write };
+			const { isTTY, write } = stdout;
+			stdout.isTTY = true;
+			stdout.write = ((chunk: string | Uint8Array) => {
+				written.push(String(chunk));
+				return true;
+			}) as typeof process.stdout.write;
+			try {
+				const reporter = await connectMuxWorkReporter({
+					mode: "tui",
+					sessionManager: { getSessionFile: () => "parent.jsonl" },
+				});
+				assert.ok(reporter, "old herdr reports the count");
+				await reporter.publish(2);
+				await reporter.stop();
+			} finally {
+				stdout.isTTY = isTTY;
+				stdout.write = write;
+			}
+			assert.deepEqual(
+				written.filter((chunk) => chunk.includes("\x1b]7501;")),
+				[],
+				"no OSC 7501 record",
+			);
+			const calls = join(process.env.FAKE_TERMINAL_STATE ?? "", "herdr-calls");
+			const metadata = existsSync(calls)
+				? readFileSync(calls, "utf8")
+						.split("\n")
+						.filter((line) => line.startsWith("pane report-metadata w1:p1"))
+				: [];
+			assert.ok(
+				metadata.some((line) => /pi_subagents_work_v1=[^:]+:2:/.test(line)),
+				"old herdr metadata carries the count 2",
+			);
+		});
+	}
 
 	it("selects herdr-core over old herdr when its app answers (D29 order)", () => {
 		writeExecutable(binDir, "hc", FAKE_HC);

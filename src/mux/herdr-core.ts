@@ -65,15 +65,37 @@ function hcSync(args: string[]): string {
  */
 function appAnswers(caller: string): boolean {
 	try {
-		const terminal = JSON.parse(
+		return isTerminalReply(
 			execFileSync(HC_COMMAND, ["get", caller, "--json"], {
 				encoding: "utf8",
 				stdio: ["ignore", "pipe", "ignore"],
 				timeout: APP_CHECK_TIMEOUT_MS,
 				killSignal: "SIGKILL",
 			}),
-		) as { address?: unknown };
-		return typeof terminal.address === "string";
+		);
+	} catch {
+		return false;
+	}
+}
+
+function isTerminalReply(out: string): boolean {
+	return typeof (JSON.parse(out) as { address?: unknown }).address === "string";
+}
+
+/**
+ * The launch check of isAvailable, asynchronous, for the status reporter: session start never blocks, and
+ * the reporter follows the launch decision, so inherited HC markers do not shadow old herdr's reporter (D29, D30).
+ */
+async function herdrCoreUsable(): Promise<boolean> {
+	const caller = process.env.HC_TERMINAL_ID;
+	if (!caller || !process.env.HC_TERMINAL_SOCKET || !defaultMuxRuntimeProbe.hasCommand(HC_COMMAND)) return false;
+	try {
+		const { stdout } = await execFileAsync(HC_COMMAND, ["get", caller, "--json"], {
+			encoding: "utf8",
+			timeout: APP_CHECK_TIMEOUT_MS,
+			killSignal: "SIGKILL",
+		});
+		return isTerminalReply(stdout);
 	} catch {
 		return false;
 	}
@@ -266,7 +288,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 	// herdr-core has no workspace to rename.
 	renameWorkspace: () => {},
 	paneIdentity: HERDR_CORE_PANE_IDENTITY,
-	connectWorkReporter: (session) => createOscWorkReporter(session, "herdr-core"),
+	connectWorkReporter: (session) => createOscWorkReporter(session, "herdr-core", herdrCoreUsable),
 	openProgramSession: async (): Promise<DirectProgramSession> => ({
 		// herdr-core has no numeric pane; the caller terminal names the session.
 		target: { sessionName: callerTerminal(), parentPaneId: 0 },
