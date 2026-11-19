@@ -69,24 +69,14 @@ describe("subagent-done.ts", () => {
 	});
 
 	describe("shouldRegisterSubagentDone", () => {
-		it("hides subagent_done for auto-exit agents", () => {
-			assert.equal(shouldRegisterSubagentDone(true, []), false);
-		});
-
+		// D12: every child that can end by itself has the tool; only a deny entry removes it.
 		it("respects explicit deny lists", () => {
-			assert.equal(shouldRegisterSubagentDone(false, ["subagent_done"]), false);
+			assert.equal(shouldRegisterSubagentDone(["subagent_done"]), false);
 		});
 
-		it("keeps subagent_done for manual-close background agents", () => {
-			assert.equal(shouldRegisterSubagentDone(false, []), true);
-		});
-
-		it("hides subagent_done for manual-close interactive agents", () => {
-			assert.equal(shouldRegisterSubagentDone(false, [], true), false);
-		});
-
-		it("hides subagent_done for auto-exit interactive agents", () => {
-			assert.equal(shouldRegisterSubagentDone(true, [], true), false);
+		it("keeps subagent_done without a deny entry", () => {
+			assert.equal(shouldRegisterSubagentDone([]), true);
+			assert.equal(shouldRegisterSubagentDone(["bash"]), true);
 		});
 	});
 
@@ -115,6 +105,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -174,6 +165,7 @@ describe("subagent-done.ts", () => {
 							handlers.set(event, handler);
 						},
 						registerShortcut() {},
+						appendEntry() {},
 						registerCommand() {},
 					} as any);
 
@@ -225,6 +217,7 @@ describe("subagent-done.ts", () => {
 					handlers.set(event, handler);
 				},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 
@@ -296,6 +289,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -348,6 +342,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -419,6 +414,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -494,6 +490,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand(name: string, def: any) {
 						commands.set(name, def);
 					},
@@ -554,6 +551,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand(name: string, def: any) {
 						commands.set(name, def);
 					},
@@ -632,6 +630,7 @@ describe("subagent-done.ts", () => {
 					handlers.set(event, handler);
 				},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 
@@ -696,6 +695,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -733,6 +733,7 @@ describe("subagent-done.ts", () => {
 				},
 				on() {},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 			return tools;

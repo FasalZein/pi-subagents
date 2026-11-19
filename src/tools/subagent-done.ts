@@ -14,14 +14,16 @@ import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
 import { createPaneTakeover, requestShutdown } from "./pane-takeover.ts";
-import { isMissingOptionalDependency, optionalRequire } from "./optional-dependency.ts";
+import { isMissingOptionalDependency } from "./optional-dependency.ts";
 import {
 	ProviderErrorRecoveryController,
 	resolveProviderRecoveryDelaysMs,
 } from "./provider-error-recovery.ts";
 import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-tab-title.ts";
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
-import { SUBAGENT_DONE_TOOL_NAME, SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
+import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
+import { registerSubagentDoneTool } from "./completion-call.ts";
+import { filterToolNames, getDeniedToolNames, shouldRegisterSubagentDone } from "./child-tool-policy.ts";
 
 const TOOL_BOUNDARY_RECOVERY_NUDGE = "continue";
 const MAX_CONSECUTIVE_TOOL_BOUNDARY_ENDS = 3;
@@ -29,39 +31,9 @@ export function isMissingOptionalDependencyForTest(error: unknown, id: string): 
 	return isMissingOptionalDependency(error, id);
 }
 
-export function getDeniedToolNames(autoExit: boolean, deniedEnv = process.env.PI_DENY_TOOLS ?? ""): string[] {
-	const denied = deniedEnv
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean);
-	if (autoExit && !denied.includes(SUBAGENT_DONE_TOOL_NAME)) {
-		denied.push(SUBAGENT_DONE_TOOL_NAME);
-	}
-	return denied;
-}
-
-export function filterToolNames(toolNames: string[], deniedTools: string[]): string[] {
-	const denied = new Set(deniedTools);
-	const seen = new Set<string>();
-	return toolNames.filter((name) => {
-		if (!name || denied.has(name) || seen.has(name)) return false;
-		seen.add(name);
-		return true;
-	});
-}
-
-export function shouldRegisterSubagentDone(autoExit: boolean, deniedTools: string[], isInteractive = false): boolean {
-	if (deniedTools.includes(SUBAGENT_DONE_TOOL_NAME)) return false;
-	if (autoExit) return false;
-	if (isInteractive) return false;
-	return true;
-}
-
 type PaneUiContext = {
 	ui: { setStatus(key: string, message?: string): void; notify(message: string, tone?: string): void };
 };
-
-type ToolControlAPI = Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "setActiveTools" | "registerTool">;
 
 type WidgetThemeLike = {
 	bg(tone: string, text: string): string;
@@ -69,50 +41,10 @@ type WidgetThemeLike = {
 	fg(tone: string, text: string): string;
 };
 
-export function installDeniedToolGuards(
-	pi: ToolControlAPI,
-	autoExit: boolean,
-	onChange?: (activeTools: string[], deniedTools: string[]) => void,
-) {
-	const originalRegisterTool = pi.registerTool.bind(pi);
-	const originalSetActiveTools = pi.setActiveTools.bind(pi);
-
-	const notify = (activeTools: string[], deniedTools: string[]) => {
-		onChange?.([...activeTools].sort(), [...deniedTools]);
-	};
-
-	const applyDeniedTools = (): string[] => {
-		const deniedTools = getDeniedToolNames(autoExit);
-		const allowedTools = filterToolNames(pi.getActiveTools(), deniedTools);
-		originalSetActiveTools(allowedTools);
-		notify(allowedTools, deniedTools);
-		return allowedTools;
-	};
-
-	pi.setActiveTools = (toolNames: string[]) => {
-		const deniedTools = getDeniedToolNames(autoExit);
-		const allowedTools = filterToolNames(toolNames, deniedTools);
-		originalSetActiveTools(allowedTools);
-		notify(allowedTools, deniedTools);
-	};
-
-	pi.registerTool = (definition) => {
-		const result = originalRegisterTool(definition);
-		applyDeniedTools();
-		return result;
-	};
-
-	return { applyDeniedTools };
-}
-
 export default function (pi: ExtensionAPI) {
-	const typebox = optionalRequire("typebox") as typeof import("typebox") | null;
-	const doneParams = typebox?.Type?.Object
-		? typebox.Type.Object({})
-		: { type: "object", properties: {}, additionalProperties: false };
 	const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
 	const isInteractive = !!process.env.PI_SUBAGENT_SURFACE;
-	const denied: string[] = getDeniedToolNames(autoExit);
+	const denied: string[] = getDeniedToolNames();
 	let outputTokens = 0;
 	let finalContextUsage: FinalContextSnapshot | undefined;
 	// Factory-scoped because the takeover machinery that suppresses it lives
@@ -216,7 +148,7 @@ export default function (pi: ExtensionAPI) {
 
 	function enforceDeniedTools() {
 		try {
-			const deniedNames = getDeniedToolNames(autoExit);
+			const deniedNames = getDeniedToolNames();
 			const allowedTools = filterToolNames(pi.getActiveTools(), deniedNames);
 			pi.setActiveTools(allowedTools);
 		} catch {
@@ -553,38 +485,16 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
+			isTakenOver: () => takeover.tookOver,
 		});
 	}
 
-	if (shouldRegisterSubagentDone(autoExit, denied, isInteractive)) {
-		pi.registerTool({
-			name: SUBAGENT_DONE_TOOL_NAME,
-			label: "Subagent Done",
-			description:
-				"When your task is complete, close this session and return your last assistant message to the caller as your result.",
-			parameters: doneParams,
-			async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-				if (takeover.tookOver) {
-					// D11/D12: the result stays in this session; the pane closes only
-					// when the person closes it.
-					return {
-						content: [
-							{
-								type: "text",
-								text: "Result recorded in this session. A person took over this pane, so it stays open until they close it.",
-							},
-						],
-						details: {},
-					};
-				}
-				// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
-				writeExitSignal({ type: "done", outputTokens, acceptedCall: { toolCallId, args: params } }, { supersede: true });
-				requestShutdown(ctx);
-				return {
-					content: [{ type: "text", text: "Shutting down subagent session." }],
-					details: {},
-				};
-			},
+	if (shouldRegisterSubagentDone(denied)) {
+		registerSubagentDoneTool(pi, {
+			isTakenOver: () => takeover.tookOver,
+			writeExitSignal,
+			requestShutdown,
+			getOutputTokens: () => outputTokens,
 		});
 	}
 

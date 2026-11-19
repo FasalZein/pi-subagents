@@ -25,6 +25,8 @@ import "./tools/exit-signal.test.ts";
 import "./session/completion-reason.test.ts";
 import "./tools/subagent-done-recovery.test.ts";
 import "./tools/subagent-done-takeover.test.ts";
+import "./tools/completion-call.test.ts";
+import "./runtime/completion-call-e2e.test.ts";
 import "./tools/provider-error-recovery.test.ts";
 import "./tools/subagents-view.test.ts";
 import "./tools/agents-tab-toggle.test.ts";

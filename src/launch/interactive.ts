@@ -11,6 +11,7 @@ import { SET_TAB_TITLE_TOOL_NAME } from "../tools/tool-names.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
+import { completionCallBrief, withCompletionBrief } from "./completion-brief.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
 import { type LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { buildInteractiveShellCommand } from "./shell-command.ts";
@@ -94,12 +95,18 @@ async function startInteractiveSubagent(
 				}
 			: undefined;
 	const doneSentinelFile = getDoneSentinelFile(prepared.subagentSessionFile, id);
+	// D12: a manual pane child with subagent_done may end itself once the task is complete.
+	const completionBrief = completionCallBrief(prepared.denySet);
 	const modeHint = prepared.agentDefs?.autoExit
 		? "Complete your task autonomously."
-		: "Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
+		: completionBrief
+			? "Manual lifecycle: stay in this foreground pane and wait for the operator to interact with you. The operator can interact with you at any time. End the session yourself only with subagent_done, once the task is complete."
+			: "Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
 	const summaryInstruction = prepared.agentDefs?.autoExit
 		? "Your FINAL assistant message should summarize what you accomplished."
-		: "After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
+		: completionBrief
+			? "After writing your response, stay in this pane for operator interaction until the task is complete."
+			: "After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
 	const agentType = params.agent ?? params.name;
 	const tabTitleInstruction =
 		!isSetTabTitleToolEnabled() || prepared.denySet.has(SET_TAB_TITLE_TOOL_NAME)
@@ -112,9 +119,13 @@ async function startInteractiveSubagent(
 		enabled: prepared.agentDefs?.taskExpansion === "shell",
 		cwd: prepared.runtimePaths.effectiveCwd ?? ctx.cwd,
 	});
-	let fullTask = directTask
-		? expandedTask
-		: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}`;
+	// D12: a fork task keeps its own text first; the completion line follows it.
+	let fullTask = withCompletionBrief(
+		directTask
+			? expandedTask
+			: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}`,
+		completionBrief,
+	);
 	const skillInjection = getPreparedSkillInjection(prepared);
 	if (skillInjection) fullTask = `${skillInjection}\n\n${fullTask}`;
 
