@@ -32,7 +32,7 @@ function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentRes
 	};
 }
 
-function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
+export function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
 	// D14: the same rendering the message path shows.
 	const text = resultTextOf(cached);
 	return {

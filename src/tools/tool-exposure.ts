@@ -2,7 +2,7 @@ import type { ExtensionAPI, SessionEntry, ToolDefinition } from "@earendil-works
 import { CODEMODE_TOOL_NAME, TOOL_SEARCH_TOOL_NAME } from "./tool-names.ts";
 
 /**
- * How the management tools (resume, stop, agents; T24 adds wait) are declared (D21).
+ * How the management tools (wait, resume, stop, agents) are declared (D21).
  * Deferred tools cost no declaration until codemode or tool search asks for them.
  */
 export type ManagementToolExposure = "deferred" | "direct";

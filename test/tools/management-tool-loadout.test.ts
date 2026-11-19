@@ -19,7 +19,7 @@ import {
 	runPiPrompt,
 } from "../support/pi-session.ts";
 
-const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume"];
+const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume", "subagent_wait"];
 const SUBAGENT_TOOLS = ["subagent", ...MANAGEMENT_TOOLS];
 
 /** A workspace with one worker agent, so the extension registers its tools. */
@@ -73,7 +73,7 @@ describe("management tool declarations in a real Pi session (D21)", () => {
 		}
 	});
 
-	/** Record one no-discovery turn, which declares all four tools directly, and return its session file. */
+	/** Record one no-discovery turn, which declares all five tools directly, and return its session file. */
 	async function recordDirectTurn(dir: string, agentDir: string, sessionDir: string): Promise<string> {
 		const sessionManager = SessionManager.create(dir, sessionDir);
 		const [first] = await runPiPrompt({
@@ -82,7 +82,7 @@ describe("management tool declarations in a real Pi session (D21)", () => {
 			extensions: [subagentsExtension, ...discoveryExtensions],
 			sessionManager,
 		});
-		assert.deepEqual(subagentToolsIn(first), SUBAGENT_TOOLS, "the recorded turn declares all four tools");
+		assert.deepEqual(subagentToolsIn(first), SUBAGENT_TOOLS, "the recorded turn declares all five tools");
 		resetSubagentStateForTest();
 		const file = sessionManager.getSessionFile();
 		assert.ok(file, "the session is saved");
