@@ -6,7 +6,6 @@ import { pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import {
-	discardReservation,
 	LAUNCH_FILE,
 	ResultStore,
 	sessionResultStore,
@@ -39,8 +38,7 @@ import { assistant, facts, sessionHeader, toolCall, toolResult, user } from "../
 let sessionCounter = 0;
 
 /** A fresh parent session: its own working directory, session id and results folder. */
-function parentSession() {
-	const cwd = createTestDir();
+function parentSession(cwd = createTestDir()) {
 	const sessionId = `t25-parent-${++sessionCounter}`;
 	const ctx = { cwd, sessionManager: { getSessionId: () => sessionId } };
 	return { cwd, sessionId, ctx, resultsDir: getSessionResultsDir(cwd, sessionId) };
@@ -230,8 +228,9 @@ describe("T25: lookup by run id", () => {
 		const reservation = store.reserve();
 		store.noteLaunch(reservation, join(session.cwd, "child.jsonl"));
 		assert.ok(existsSync(join(reservation.folder!, LAUNCH_FILE)));
-		discardReservation(reservation);
+		store.discard(reservation);
 		assert.equal(existsSync(reservation.folder!), false);
+		assert.equal(store.launchSessionFile(reservation.runId), undefined, "the rollback forgets the cached note");
 	});
 });
 
@@ -246,7 +245,8 @@ describe("T25: the recent list", () => {
 			const endedAt = 1_700_000_000_000 + (i === 11 ? 10 : i) * 1_000;
 			ids.push({ runId: publishRecord(store, `run-${i}`, endedAt), endedAt });
 		}
-		const other = parentSession();
+		// Only the session id differs: the project folder is the same.
+		const other = parentSession(session.cwd);
 		publishRecord(sessionResultStore(other.resultsDir), "foreign-run", 1_800_000_000_000);
 		const before = deliveryState();
 
@@ -274,33 +274,6 @@ describe("T25: the recent list", () => {
 		);
 		assert.deepEqual(structured.results, []);
 		assert.deepEqual(deliveryState(), before, "the list changes no state");
-	});
-
-	it("check 3: after 21 sequential completions recent shows the newest 20 and the first is found by its run id", async () => {
-		resetSubagentStateForTest();
-		const session = parentSession();
-		const delivered: Delivered[] = [];
-		const runIds: string[] = [];
-		for (let i = 0; i < 21; i++) {
-			const run = startRun(session, `seq-${i}`, delivered);
-			const tool = waitTool();
-			const wait = tool.execute(`w${i}`, { ids: [run.runId] }, undefined, undefined, session.ctx);
-			await tick();
-			run.end(`REPORT ${i}`);
-			await wait;
-			runIds.push(run.runId);
-			// Distinct end times in milliseconds.
-			await new Promise((resolve) => setTimeout(resolve, 2));
-		}
-		// The script throws here: its wait replies never reach the model. The parent recovers.
-		resetSubagentStateForTest();
-		const tool = waitTool();
-		const recent = await tool.execute("r", { recent: true }, undefined, undefined, session.ctx);
-		const listed = (recent.structuredContent as SubagentWaitStructured).recent?.map((run) => run.runId);
-		assert.deepEqual(listed, runIds.slice(1).reverse());
-		const first = await tool.execute("l", { ids: [runIds[0]] }, undefined, undefined, session.ctx);
-		assert.match(first.content[0].text, /REPORT 0/);
-		assert.deepEqual(delivered, [], "every result went to its wait, none by message");
 	});
 
 	it("check 4: with an unwritable results folder, recent and lookup return the result from memory", async () => {

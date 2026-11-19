@@ -239,9 +239,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 	it("check 3: 21 sequential completions, then a throw: recent shows the newest 20, the first is found by its run id", async () => {
 		const parent = await startParent();
 		try {
-			await prompt(parent, "work", [
-				fauxToolCall("codemode", { code: sequentialScript(21) }, { id: "s1" }),
-			]);
+			await prompt(parent, "work", [fauxToolCall("codemode", { code: sequentialScript(21) }, { id: "s1" })]);
 			const [script] = parent.toolResults("codemode");
 			assert.ok(script?.isError, "the script failed");
 			assert.match(script.text, /workflow failed after its waits/);
@@ -271,9 +269,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 	it("check 4: unwritable results folder: a script waits and throws without printing; recent and lookup come from memory", async () => {
 		const parent = await startParent({ unwritableResults: true });
 		try {
-			await prompt(parent, "work", [
-				fauxToolCall("codemode", { code: sequentialScript(1) }, { id: "s1" }),
-			]);
+			await prompt(parent, "work", [fauxToolCall("codemode", { code: sequentialScript(1) }, { id: "s1" })]);
 			const [script] = parent.toolResults("codemode");
 			assert.ok(script?.isError);
 			assert.doesNotMatch(script.text, /kept in memory/, "the script output does not carry the notice");

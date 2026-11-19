@@ -3,6 +3,7 @@ import {
 	closeSync,
 	existsSync,
 	fsyncSync,
+	lstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -13,8 +14,10 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { Value } from "typebox/value";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
+import { ResultRecordSchema } from "./result-record-schema.ts";
 
 /** The commit point of one run folder (D13). */
 export const RECORD_FILE = "record.json";
@@ -92,7 +95,7 @@ export function reserveRunId(resultsDir: string, draw: () => RunId = drawRunId):
  * D6: a failed launch gives back its run folder before the id reaches any reply. Only an empty
  * folder is removed, so a folder that holds results is never lost.
  */
-export function discardReservation(reservation: Reservation): void {
+function discardReservation(reservation: Reservation): void {
 	if (reservation.folder === undefined) return;
 	// The launch note is the one file a launch writes before its id reaches a reply (D16).
 	rmSync(join(reservation.folder, LAUNCH_FILE), { force: true });
@@ -184,6 +187,14 @@ export function publishResult(
 	}
 }
 
+function isPlainFile(path: string): boolean {
+	try {
+		return lstatSync(path).isFile();
+	} catch {
+		return false;
+	}
+}
+
 function removeQuietly(path: string): void {
 	try {
 		rmSync(path, { force: true });
@@ -245,6 +256,12 @@ export class ResultStore {
 		return record;
 	}
 
+	/** D6 rollback: gives back the run folder and forgets the launch note of this process (D16). */
+	discard(reservation: Reservation): void {
+		this.launches.delete(reservation.runId);
+		discardReservation(reservation);
+	}
+
 	/**
 	 * D16: keeps the run's durable session file for a later lookup without a record. A no-session
 	 * child passes none: its temporary file is deleted, and a result never names a missing path.
@@ -256,10 +273,8 @@ export class ResultStore {
 		const sessionFile = resolve(launchedFile);
 		this.launches.set(reservation.runId, sessionFile);
 		if (reservation.folder === undefined) return;
-		const path = join(reservation.folder, LAUNCH_FILE);
-		removeQuietly(path);
 		try {
-			writeNewFile(path, JSON.stringify({ sessionFile }));
+			writeNewFile(join(reservation.folder, LAUNCH_FILE), JSON.stringify({ sessionFile }));
 		} catch {
 			// Best effort, see above.
 		}
@@ -267,12 +282,34 @@ export class ResultStore {
 
 	/** The session file a launch of this run named, from this process or the run folder (D16). */
 	launchSessionFile(runId: RunId): string | undefined {
-		const known = this.launches.get(runId);
-		if (known !== undefined) return known;
+		let sessionFile: unknown = this.launches.get(runId);
+		if (sessionFile === undefined) {
+			const parsed = this.readJson(runId, LAUNCH_FILE);
+			sessionFile = (parsed as { sessionFile?: unknown } | undefined)?.sessionFile;
+		}
+		// Either source may be stale: a session file that is gone, or never was a file, is not named.
+		return typeof sessionFile === "string" && isPlainFile(sessionFile) ? sessionFile : undefined;
+	}
+
+	/**
+	 * The file-read boundary of a run folder: only a real folder inside the results folder (no
+	 * symlink out of it) and a plain file in it are read; the result is parsed JSON or undefined.
+	 */
+	private readContained(runId: RunId, name: string): string | undefined {
+		const folder = join(this.resultsDir, runId);
 		try {
-			const parsed = JSON.parse(readFileSync(join(this.resultsDir, runId, LAUNCH_FILE), "utf8")) as unknown;
-			const sessionFile = (parsed as { sessionFile?: unknown } | null)?.sessionFile;
-			return typeof sessionFile === "string" && existsSync(sessionFile) ? sessionFile : undefined;
+			if (!lstatSync(folder).isDirectory()) return undefined;
+			const path = join(folder, name);
+			return isPlainFile(path) ? readFileSync(path, "utf8") : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private readJson(runId: RunId, name: string): unknown {
+		const text = this.readContained(runId, name);
+		try {
+			return text === undefined ? undefined : JSON.parse(text);
 		} catch {
 			return undefined;
 		}
@@ -305,21 +342,19 @@ export class ResultStore {
 	 */
 	storedRendering(record: ResultRecord): string | undefined {
 		if (!record.report.saved) return this.memoryRenderings.get(record.runId);
-		try {
-			return readFileSync(renderingPathFor(record.report.path), "utf8");
-		} catch {
-			return undefined;
-		}
+		// Read from the run's own folder by file name only: the record's path is not trusted.
+		return this.readContained(record.runId, basename(renderingPathFor(record.report.path)));
 	}
 
 	/** The newest record of a run: its committed file, else the in-memory record. */
 	read(runId: RunId): ResultRecord | undefined {
-		let stored: ResultRecord | undefined;
-		try {
-			stored = readResultRecord(join(this.resultsDir, runId));
-		} catch {
-			stored = undefined;
-		}
+		const parsed = this.readJson(runId, RECORD_FILE);
+		// Identity and shape at the boundary: a record of another run, or one without a valid end
+		// time, is not this run's record and must not break the recent list.
+		const stored =
+			Value.Check(ResultRecordSchema, parsed) && parsed.runId === runId && Number.isFinite(parsed.endedAt)
+				? (parsed as ResultRecord)
+				: undefined;
 		const inMemory = this.memory.get(runId);
 		if (!stored) return inMemory;
 		return inMemory && inMemory.endedAt > stored.endedAt ? inMemory : stored;

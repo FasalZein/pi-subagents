@@ -68,7 +68,9 @@ export function recentRuns(store: ResultStore): RecentRun[] {
 
 function recentLine(run: RecentRun): string {
 	const ended = new Date(run.endedAt).toISOString();
-	return `${run.runId} · ${cutText(run.name, RECENT_NAME_MAX_CHARS)} · ${OUTCOME_WORDS[run.outcome]} · ${ended}`;
+	// One line per run: a name from a metadata-free resume may hold line breaks.
+	const name = cutText(run.name.replace(/\s+/g, " "), RECENT_NAME_MAX_CHARS);
+	return `${run.runId} · ${name} · ${OUTCOME_WORDS[run.outcome]} · ${ended}`;
 }
 
 /** The recent list as text, within RESULT_TEXT_MAX_CHARS like every result copy. */

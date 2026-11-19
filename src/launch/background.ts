@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getSubagentDisplayTitle } from "../agents/titles.ts";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { discardReservation, sessionResultStore } from "../runtime/result-files.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
@@ -159,7 +159,7 @@ async function startBackgroundSubagent(
 ): Promise<RunningSubagent> {
 	const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
 	const reservation = store.reserve();
-	undo.add(() => discardReservation(reservation));
+	undo.add(() => store.discard(reservation));
 	const id = reservation.runId;
 	const plan = await buildBackgroundLaunchPlan(params, ctx, { undo });
 	const { launch, invocation, denyPatterns } = plan;

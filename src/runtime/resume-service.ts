@@ -5,7 +5,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
-import { discardReservation, sessionResultStore } from "./result-files.ts";
+import { sessionResultStore } from "./result-files.ts";
 import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { getLaunchCapError, tryAcquireLaunchCapSlots } from "./launch-cap.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
@@ -452,7 +452,7 @@ async function resumeSubagentSessionWithoutWidth(
 	resumeEnvVars.PI_ARTIFACT_PROJECT_ROOT = getArtifactStorageRoot();
 
 	const reservation = sessionResultStore(input.resultsDir).reserve();
-	undo.add(() => discardReservation(reservation));
+	undo.add(() => sessionResultStore(input.resultsDir).discard(reservation));
 	sessionResultStore(input.resultsDir).noteLaunch(reservation, sessionFile);
 	const running: RunningSubagent = {
 		id: reservation.runId,
