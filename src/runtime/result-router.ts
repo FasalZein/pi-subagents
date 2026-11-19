@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, SubagentPingMessageDetails, SubagentResult } from "../types.ts";
 import { deliverRunEnd } from "./delivery-queue.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
+import { isRunEndHeld } from "./wait-holds.ts";
 import {
 	buildCompletedSubagentResult,
 	cacheCompletedSubagentResult,
@@ -36,7 +37,7 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 	const { pi, running, result, updateWidget } = options;
 	clearSubagentShutdownTimer(running);
 	// D15: a run end that a wait owns enters the queue held for that wait; the wait's reply takes it.
-	const heldByWait = running.resultOwner?.kind === "wait";
+	const heldByWait = running.resultOwner?.kind === "wait" || isRunEndHeld(running.id);
 	if (result.ping) {
 		runningSubagents.delete(running.id);
 		updateWidget();

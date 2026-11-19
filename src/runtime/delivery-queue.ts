@@ -72,6 +72,10 @@ class DeliveryQueue {
 		} else if (!this.busy) this.send(message, true);
 	}
 
+	queuedIds(): string[] {
+		return [...this.pending.keys()];
+	}
+
 	queued(id: string): RunEndMessage | undefined {
 		return this.pending.get(id);
 	}
@@ -134,6 +138,11 @@ export function pendingRunEndCount(): number {
 /** A queued run end not yet committed, for a wait that starts after it was queued (an early ping). */
 export function queuedRunEnd(id: string): (RunEndMessage & { details: Record<string, unknown> }) | undefined {
 	return deliveryQueue.queued(id) as (RunEndMessage & { details: Record<string, unknown> }) | undefined;
+}
+
+/** Ids of the run ends not committed yet: the queued runs a wait with no ids takes (D16). */
+export function queuedRunEndIds(): string[] {
+	return deliveryQueue.queuedIds();
 }
 
 /**
