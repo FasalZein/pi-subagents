@@ -17,6 +17,7 @@ import { runDeliveryState } from "../../src/runtime/wait-holds.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { type JoinOutcome, joinRuns } from "../../src/runtime/wait-join.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { getIgnoredModelOverrideWarning } from "../../src/tools/policy.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -56,6 +57,8 @@ interface Harness {
 	launched(name: string): boolean;
 	/** Ends a child the way its watcher does after the child called subagent_done: a published record. */
 	finishWithCall(name: string, summary: string): void;
+	/** Ends a child the way its watcher does after the child called caller_ping. */
+	finishWithPing(name: string, message: string): void;
 	stopped: string[];
 	/** What the model read on each request that ended a turn. */
 	requests: string[];
@@ -110,22 +113,27 @@ async function startParent(
 	const stopped: string[] = [];
 	let harness!: Harness;
 
-	const finishWithCall = (name: string, summary: string) => {
+	const finishWithCall = (name: string, summary: string, ping?: string) => {
 		const running = runs.get(name);
 		if (!running) assert.fail(`no child ${name}`);
-		const args = { outcome: "done", summary };
+		const args = ping === undefined ? { outcome: "done", summary } : { message: ping };
+		const tool = ping === undefined ? "subagent_done" : "caller_ping";
 		const entries = [
 			sessionHeader(),
 			user("task"),
-			toolCall("subagent_done", args, "done-1"),
-			toolResult("subagent_done", "done-1", "Result recorded."),
+			toolCall(tool, args, "done-1"),
+			toolResult(tool, "done-1", "Result recorded."),
 		];
 		writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 		const end: WatchedEnd = {
 			exitCode: 0,
 			operatorClosed: false,
 			stopped: false,
-			exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "done-1", args } },
+			...(ping === undefined ? {} : { ping: { message: ping } }),
+			exitSignal:
+				ping === undefined
+					? { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "done-1", args } }
+					: { reason: "ping", exitCode: 0, ping: { name, message: ping } },
 			contextUsage: {},
 		};
 		const published = publishRunResult(running, end);
@@ -138,6 +146,7 @@ async function startParent(
 			sessionFile: running.sessionFile,
 			exitCode: 0,
 			elapsed: 1,
+			...(ping === undefined ? {} : { ping: { name, message: ping } }),
 			...publishedResultFields(published),
 		});
 	};
@@ -238,6 +247,7 @@ async function startParent(
 		runs,
 		launched: (name) => finish.has(name),
 		finishWithCall,
+		finishWithPing: (name, message) => finishWithCall(name, "", message),
 		stopped,
 		requests,
 		toolResults: (name) =>
@@ -635,5 +645,47 @@ describe("g3 P1: a launch refused before any child starts", () => {
 		const value = await refusedInScript({ PI_SUBAGENT_SPAWN_WIDTH: "1" }, one, two);
 		assert.equal(value.resolved, undefined, "the refusal is not a successful value");
 		assert.match(value.rejected ?? "", /Spawn width limit reached/);
+	});
+});
+
+describe("g2 P1: a launch wait for a ping that a concurrent subagent_wait took", () => {
+	it("reports the ping from its published record, not as not found", async () => {
+		let pingTaken: JoinOutcome | undefined;
+		const harness = await startParent(
+			{
+				go: [
+					fauxToolCall("subagent", {
+						children: [child("child-pinger", "worker-wait"), child("child-later", "worker-wait")],
+					}),
+				],
+			},
+			{
+				// While the second child's launch is held, the first pings and a concurrent wait takes the ping.
+				beforeLaunch: async (name) => {
+					if (name !== "child-later") return;
+					harness.finishWithPing("child-pinger", "WHICH BRANCH");
+					await new Promise((resolve) => setImmediate(resolve));
+					pingTaken = await joinRuns({ ids: [runOf(harness, "child-pinger").id] });
+				},
+			},
+		);
+		try {
+			const prompt = harness.session.prompt("go");
+			await until(() => harness.launched("child-later"), "the second launch");
+			harness.finishWithCall("child-later", "LATER DONE");
+			await prompt;
+			await harness.session.waitForIdle();
+			assert.equal(pingTaken?.status, "complete", "the concurrent wait took the ping");
+			const [reply] = harness.toolResults("subagent");
+			assert.ok(reply, "the launch tool replied");
+			assert.doesNotMatch(reply.text, /No subagent matches/);
+			assert.match(reply.text, /WHICH BRANCH/);
+			assert.match(reply.text, /LATER DONE/);
+			const children = (reply.details as { children?: { id?: string; status?: string; error?: string }[] }).children;
+			const pinger = children?.find((entry) => entry.id === runOf(harness, "child-pinger").id);
+			assert.equal(pinger?.error, undefined, "the launch wait found the run");
+		} finally {
+			await harness.dispose();
+		}
 	});
 });

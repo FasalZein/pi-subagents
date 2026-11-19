@@ -2,6 +2,7 @@ import { deliverRunEnd } from "./delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, endRun, routeSubagentOutcome } from "./result-router.ts";
+import { renderLookup } from "./run-lookup.ts";
 import { withRuntimeEnd } from "./run-result.ts";
 import { resultTextOf } from "./unpublished-result.ts";
 import {
@@ -178,11 +179,42 @@ export async function getLaunchedSubagentResult(
 ) {
 	const parentShouldWait = shouldAwaitSubagentLaunch(running);
 	if (!parentShouldWait) return getStartedSubagentResult(running);
-	const result = await runtime.waitForSubagentResult({ id: running.id }, signal);
+	const waited = (await runtime.waitForSubagentResult({ id: running.id }, signal)) as { details?: { error?: string } };
+	const result = waited.details?.error === "not_found" ? (lookUpEnded(running) ?? waited) : waited;
 	// The parent waited, so the report is already in this tool result. The
 	// coordinator-only turn stop exists for detached launches only; a stop mark
 	// here would end the turn before the model reads the report.
 	return runtime.asSubagentToolResult(result);
+}
+
+/**
+ * D16: the run already ended and another wait took its end (a ping leaves no cached result), so
+ * the launch wait finds it neither running nor cached. Its published record still answers, as a
+ * lookup copy that settles nothing again.
+ */
+function lookUpEnded(running: RunningSubagent) {
+	const target = running.resultTarget;
+	const record = target?.store.read(target.reservation.runId);
+	if (!target || !record) return undefined;
+	const status =
+		record.outcome === "cancelled"
+			? "cancelled"
+			: record.outcome === "failed" || record.outcome === "timed_out"
+				? "failed"
+				: "completed";
+	return {
+		content: [{ type: "text", text: renderLookup(target.store, record, target.parentCwd) }],
+		details: {
+			id: running.id,
+			name: running.name,
+			agent: running.agent,
+			status,
+			outcome: record.outcome,
+			runId: record.runId,
+			sessionFile: record.sessionFile,
+			lookup: true,
+		},
+	};
 }
 
 /**
