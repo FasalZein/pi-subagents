@@ -1,5 +1,6 @@
 import type { AgentDefaults } from "../../src/agents/definitions.ts";
 import { classifyAssistantMessageForMixedBatch } from "../../src/runtime/batch-classifier.ts";
+import { shouldAwaitSubagentLaunch } from "../../src/runtime/running-registry.ts";
 import { isSubagentBatchBlocking, resetSubagentBatchStopRequest } from "../../src/runtime/state.ts";
 import { assert, beforeEach, describe, it } from "../support/index.ts";
 
@@ -308,4 +309,36 @@ describe("classifyAssistantMessageForMixedBatch", () => {
 		assert.equal(effective.async, true);
 		assert.equal(effective.blocking, false);
 	});
+});
+
+// T64 review P1: Pi's prepareArguments parses a children list sent as a JSON string before the launch
+// runs, but message_end hands the classifier the raw arguments. Differential: each batch, classified
+// with native children and with the same children as a JSON string, gets the same verdict and the
+// same wait decision for an async child.
+describe("T64: children sent as a JSON string classify like native children", () => {
+	const scout = { agent: "scout", name: "scope-scout", title: "Inspect launch handling", task: "Inspect." };
+	const blocker = { agent: "blocker", name: "block-child", title: "Blocking child", task: "Block." };
+	const loader = (agent: string | undefined) => (agent === "blocker" ? blockingAgentDefs() : asyncAgentDefs());
+	const batches: [string, (children: unknown) => ToolCallLike[]][] = [
+		["async launch beside read", (children) => [call("subagent", { children }), call("read", { path: "README.md" })]],
+		["async launch alone", (children) => [call("subagent", { children })]],
+		[
+			"blocking and async children beside bash",
+			(children) => [call("subagent", { children }), call("bash", { command: "ls" })],
+		],
+	];
+	for (const [what, build] of batches) {
+		it(what, () => {
+			const children = what.startsWith("blocking") ? [blocker, scout] : [scout];
+			const verdicts = [children, JSON.stringify(children)].map((form) => {
+				resetSubagentBatchStopRequest();
+				classifyAssistantMessageForMixedBatch(message(...build(form)) as never, loader);
+				return {
+					blocking: isSubagentBatchBlocking(),
+					waits: shouldAwaitSubagentLaunch({ async: true, blocking: false }),
+				};
+			});
+			assert.deepEqual(verdicts[1], verdicts[0]);
+		});
+	}
 });

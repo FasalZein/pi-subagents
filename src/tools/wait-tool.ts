@@ -6,6 +6,7 @@ import { sessionResultStore } from "../runtime/result-files.ts";
 import { ResultOutcomeSchema, ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
 import { type RecentRun, recentRuns, renderRecentRuns } from "../runtime/run-lookup.ts";
 import { type JoinOutcome, joinRuns } from "../runtime/wait-join.ts";
+import { asPrepareArguments, parseJsonFields } from "./json-string-args.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_WAIT_TOOL_NAME } from "./tool-names.ts";
 
@@ -109,6 +110,8 @@ export function registerSubagentWaitTool(
 		label: "Wait for Subagents",
 		description: "Wait for subagent runs by id (default: all running or queued) and return their results.",
 		parameters: SubagentWaitParams,
+		// T64: ids sent as a JSON string; Pi's coercion would wrap the string as one id.
+		prepareArguments: asPrepareArguments((args) => parseJsonFields(args, ["ids"])),
 		outputSchema: SubagentWaitOutput,
 		execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_WAIT_TOOL_NAME));
