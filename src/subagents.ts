@@ -1,5 +1,5 @@
 import { registerOutstandingWorkReporting } from "./runtime/work-reporting.ts";
-import { registerDeliveryQueue } from "./runtime/delivery-queue.ts";
+import { pendingRunEndCount, registerDeliveryQueue } from "./runtime/delivery-queue.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
@@ -176,7 +176,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const startupCatalog = loadAgentCatalog();
 	if (startupCatalog.definitions.length === 0 && startupCatalog.malformedFiles.length === 0) return;
 
-	publishRunningSubagentCount(() => runningSubagents.size);
+	// A run end that waits in the delivery queue keeps an auto-exit session open like a running
+	// child: Pi's own queue does not hold it while a turn runs, so hasPendingMessages() misses it.
+	publishRunningSubagentCount(() => runningSubagents.size + pendingRunEndCount());
 	const workReporting = registerOutstandingWorkReporting(pi);
 	registerDeliveryQueue(pi);
 

@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
-import { registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
+import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { ResultStore, readResultRecord } from "../../src/runtime/result-files.ts";
 import type { RunId } from "../../src/runtime/result-record.ts";
 import {
@@ -130,7 +130,7 @@ async function endWatchedChild(parent: Parent): Promise<string> {
 function launchTool(
 	parent: () => Parent,
 	batch: "terminating" | "blocking",
-	options: { clearQueue?: boolean } = {},
+	options: { clearQueue?: boolean; onEnded?: () => void } = {},
 ): ExtensionFactory {
 	return (pi) => {
 		pi.registerTool({
@@ -143,6 +143,7 @@ function launchTool(
 				requestSubagentBatchStop();
 				await endWatchedChild(parent());
 				if (options.clearQueue) parent().clearQueue();
+				options.onEnded?.();
 				return {
 					content: [{ type: "text", text: "launched" }],
 					details: {},
@@ -276,6 +277,8 @@ describe("delivery owner at the extension boundary (D15)", () => {
 				carriesResult(parent.requests[0], parent.runIds[0]!),
 				"the first request after the tool batch carries the result message",
 			);
+			const last = parent.requests.at(-1)?.text ?? "";
+			assert.equal(last.split(`run: ${parent.runIds[0]}`).length - 1, 1, "the session committed the result once");
 		} finally {
 			await parent.dispose();
 		}
@@ -296,6 +299,24 @@ describe("delivery owner at the extension boundary (D15)", () => {
 				carriesResult(parent.requests[0], parent.runIds[0]!),
 				"the first request after the tool batch carries the result message",
 			);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("R2: a result held during a turn counts as pending until the session commits it", async () => {
+		const counts: number[] = [];
+		const parent = await startParent({
+			extensions: (p) => [launchTool(p, "blocking", { onEnded: () => counts.push(pendingRunEndCount()) })],
+			replies: (p) => [
+				fauxAssistantMessage([fauxToolCall("launch_child", {}, { id: "l1" })], { stopReason: "toolUse" }),
+				recordingReply(p, "Read the result."),
+			],
+		});
+		try {
+			await parent.prompt("delegate");
+			assert.deepEqual(counts, [1], "the ended child's result was pending while the tool batch ran");
+			assert.equal(pendingRunEndCount(), 0, "the committed result left the queue");
 		} finally {
 			await parent.dispose();
 		}

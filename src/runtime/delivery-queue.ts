@@ -69,6 +69,10 @@ class DeliveryQueue {
 		if (typeof details?.id === "string") this.pending.delete(details.id);
 	}
 
+	get size(): number {
+		return this.pending.size;
+	}
+
 	reset(): void {
 		this.pending.clear();
 		this.registered = false;
@@ -82,6 +86,11 @@ const deliveryQueue = new DeliveryQueue();
 /** Wire the queue to the parent session's boundaries; called once from extension wiring. */
 export function registerDeliveryQueue(pi: ExtensionAPI): void {
 	deliveryQueue.register(pi);
+}
+
+/** Run ends that the parent session has not committed yet. */
+export function pendingRunEndCount(): number {
+	return deliveryQueue.size;
 }
 
 /** Forget the session-scoped queue (test isolation and runtime reset). */
