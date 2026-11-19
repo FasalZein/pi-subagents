@@ -226,10 +226,10 @@ describe("launch cap (D9)", () => {
 			parent: { parentCwd: process.cwd(), warnings: [] },
 			sessionFile: join(createTestDir(), "missing.jsonl"),
 		};
-		await assert.rejects(resumeSubagentSession(input, {} as any), /Session file not found/);
+		await assert.rejects(resumeSubagentSession(input, { runningSubagents: new Map() } as any), /Session file not found/);
 		assert.equal(getLaunchCountUsed(), 0, "a resume that never starts gives its slot back");
 		tryAcquireLaunchCapSlots(1)?.commit();
-		await assert.rejects(resumeSubagentSession(input, {} as any), /Launch cap reached: .*1 of 1/);
+		await assert.rejects(resumeSubagentSession(input, { runningSubagents: new Map() } as any), /Launch cap reached: .*1 of 1/);
 	});
 
 	it("keeps the count across a real reload and starts at 0 for a new, resumed or forked session", async () => {

@@ -93,6 +93,8 @@ import "./runtime/skill-visibility-env.test.ts";
 import "./runtime/resume-placement.test.ts";
 import "./runtime/resume-context-guard.test.ts";
 import "./runtime/resume-timeout-guard.test.ts";
+import "./runtime/resume-verdict.test.ts";
+import "./runtime/resume-lifecycle.test.ts";
 import "./runtime/resume-headless-await.test.ts";
 import "./runtime/final-context-usage.test.ts";
 import "./runtime/interactive-watch-usage-source.test.ts";
