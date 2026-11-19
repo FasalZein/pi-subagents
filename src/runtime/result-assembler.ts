@@ -95,6 +95,8 @@ interface RunTranscript {
 	texts: AssistantText[];
 	/** Accepted completion payloads the child recorded in its session, by tool call id (D12). */
 	accepted: Map<string, Record<string, unknown>>;
+	/** Tool call ids of accepted calls made with no takeover: each is final for the result (D12). */
+	autonomous: Set<string>;
 	/** The last completion call that succeeded, if any. */
 	call?: CompletionCall;
 }
@@ -129,13 +131,15 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 }
 
 /** A completion call the child's tool accepted and recorded in the session (SUBAGENT_ACCEPTED_CALL_ENTRY). */
-function acceptedEntry(entry: SessionEntry): { id: string; tool: CompletionTool; args: Record<string, unknown> } | undefined {
+function acceptedEntry(
+	entry: SessionEntry,
+): { id: string; tool: CompletionTool; args: Record<string, unknown>; autonomous: boolean } | undefined {
 	const raw = entry as { type?: unknown; customType?: unknown; data?: unknown };
 	if (raw.type !== "custom" || raw.customType !== SUBAGENT_ACCEPTED_CALL_ENTRY || !isRecord(raw.data)) return undefined;
-	const { toolCallId, tool, args } = raw.data;
+	const { toolCallId, tool, args, autonomous } = raw.data;
 	const kind = completionTool(tool);
 	if (typeof toolCallId !== "string" || !kind || !isRecord(args)) return undefined;
-	return { id: toolCallId, tool: kind, args };
+	return { id: toolCallId, tool: kind, args, autonomous: autonomous === true };
 }
 
 /**
@@ -149,11 +153,13 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 	const requested = new Map<string, CompletionCall>();
 	const completed: CompletionCall[] = [];
 	const accepted = new Map<string, Record<string, unknown>>();
+	const autonomous = new Set<string>();
 	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
 		const entry = entries[i];
 		const acceptance = acceptedEntry(entry);
 		if (acceptance) {
 			accepted.set(acceptance.id, acceptance.args);
+			if (acceptance.autonomous) autonomous.add(acceptance.id);
 			const request = requested.get(acceptance.id);
 			completed.push(request ?? { tool: acceptance.tool, id: acceptance.id, at: [i, 0], args: acceptance.args });
 			continue;
@@ -181,7 +187,7 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 		(last, c) => (!last || before(last.at, c.at) ? c : last),
 		undefined,
 	);
-	return { texts, accepted, call };
+	return { texts, accepted, autonomous, call };
 }
 
 /** Cuts `text` to at most `max` characters with the cut mark, never inside a surrogate pair. */
@@ -213,12 +219,17 @@ function lastMessageText(candidates: readonly AssistantText[]): string | undefin
 
 /**
  * D12 report boundary, chosen apart from the typed flag. With a call: the last text before it, or the
- * last text of a later message (a takeover). Without a call: text before the nudge wins over text
- * after it.
+ * last text of a later message (a takeover; never after a final call). Without a call: text before the
+ * nudge wins over text after it.
  */
-function reportText(texts: readonly AssistantText[], call: CompletionCall | undefined, nudgeEntryIndex: number | undefined): string | undefined {
+function reportText(
+	texts: readonly AssistantText[],
+	call: CompletionCall | undefined,
+	final: boolean,
+	nudgeEntryIndex: number | undefined,
+): string | undefined {
 	if (call) {
-		if (textAfterCall(texts, call)) return lastMessageText(texts);
+		if (!final && textAfterCall(texts, call)) return lastMessageText(texts);
 		return lastMessageText(texts.filter((t) => before(t.at, call.at)));
 	}
 	if (nudgeEntryIndex === undefined) return lastMessageText(texts);
@@ -377,13 +388,15 @@ function endOverridesCall(end: RunEnd): boolean {
  * D14: turns the facts of one finished run into its record and report text. Pure: no file access.
  *
  * A completion call that succeeded types the result, unless a requested stop or a report-only
- * wrap-up ended the run, or assistant text in a later message (a takeover) followed the call (D7,
- * D12). The report boundary is chosen apart from the typed flag.
+ * wrap-up ended the run, or assistant text in a later message (a takeover) followed a call that a
+ * person's takeover left open (D7, D12). An autonomous call is final: later text is an
+ * acknowledgement turn. The report boundary is chosen apart from the typed flag.
  */
 export function assembleResult(facts: RunFacts): AssembledResult {
-	const { texts, accepted, call } = readTranscript(facts.entries, facts.launchEntryCount);
-	const text = reportText(texts, call, facts.nudgeEntryIndex);
-	const typing = call && !textAfterCall(texts, call) && !endOverridesCall(facts.end);
+	const { texts, accepted, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
+	const final = call !== undefined && autonomous.has(call.id);
+	const text = reportText(texts, call, final, facts.nudgeEntryIndex);
+	const typing = call && (final || !textAfterCall(texts, call)) && !endOverridesCall(facts.end);
 	const body =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
 		(typing ? typedBody(call, text, facts, accepted) : undefined) ??

@@ -205,6 +205,58 @@ describe("completion call end to end (D11, D12)", () => {
 		assert.match(report, /no report beyond the summary/);
 	});
 
+	// B1 review (subagent-done.ts:493): Pi ends the turn only when every call of the batch terminates, so an
+	// accepted call inside codemode or beside another tool gets an acknowledgement turn; the result stays typed.
+	const REPORT = "REPORT-MARKER-91 the files under src are fixed.";
+	const acknowledgement = fauxAssistantMessage("ACK-MARKER-44 Acknowledged: the session is closing.");
+
+	const codemodeDone = fauxAssistantMessage(
+		[
+			{ type: "text", text: REPORT },
+			fauxToolCall("codemode", { code: `await tools.${DONE}(${JSON.stringify(partial)});` }, { id: "cm1" }),
+		],
+		{ stopReason: "toolUse" },
+	);
+
+	it("a headless codemode completion stays typed with its pre-call report after an acknowledgement turn", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [codemodeDone, acknowledgement],
+			extensions: [createCodemodeExtension({ mode: "on" })],
+			defaultTools: ["+codemode"],
+		});
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.equal(record.summary, partial.summary);
+		assert.match(report, /REPORT-MARKER-91/);
+		assert.doesNotMatch(report, /ACK-MARKER-44/);
+	});
+
+	it("a headless direct completion beside a non-terminating tool stays typed after an acknowledgement turn", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [
+				fauxAssistantMessage(
+					[
+						{ type: "text", text: REPORT },
+						fauxToolCall("ls", { path: "." }, { id: "ls1" }),
+						fauxToolCall(DONE, partial, { id: "c1" }),
+					],
+					{ stopReason: "toolUse" },
+				),
+				acknowledgement,
+			],
+		});
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.match(report, /REPORT-MARKER-91/);
+		assert.doesNotMatch(report, /ACK-MARKER-44/);
+	});
+
 	it("a watcher that reads before Pi persists the tool result still publishes the typed record", async () => {
 		// Snapshot the session file and the exit record at the end of tool execution, before Pi
 		// writes the tool result: what a pane watcher polling at that moment reads.
