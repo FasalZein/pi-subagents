@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildPersistedSubagentLaunchMetadata, prepareSubagentLaunch } from "../../src/launch/prep.ts";
@@ -8,7 +9,6 @@ import type { RunningSubagent, SubagentParamsInput } from "../../src/types.ts";
 import {
 	assert,
 	createTestDir,
-	existsSync,
 	mkdirSync,
 	readFileSync,
 	resetSubagentStateForTest,
@@ -123,6 +123,7 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 	const argsFile = join(dir, `args-${Date.now()}-${Math.random()}.txt`);
 	const bin = writeExecutable(dir, "record-pi", `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "$ARGS_FILE"\n`);
 	const tools = new Map<string, any>();
+	const runningSubagents = new Map<string, RunningSubagent>();
 	registerSubagentResumeTool(
 		{ registerTool: (definition: any) => tools.set(definition.name, definition) } as any,
 		() => true,
@@ -134,7 +135,7 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 			getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
 			startWidgetRefresh: () => {},
 			getContextWindow: () => undefined,
-			runningSubagents: new Map(),
+			runningSubagents,
 			wireSubagentSteerBack: () => {},
 			getLaunchedSubagentResult: async () => ({ content: [{ type: "text", text: "completed" }], details: {} }),
 			modelRegistry,
@@ -151,12 +152,10 @@ async function resumeThroughTool(dir: string, sessionFile: string, model: string
 			cwd: dir,
 			sessionManager: { getSessionId: () => "parent-session" },
 		});
-		if (!existsSync(argsFile) && /error|not allowed|Unknown model/i.test(result.content?.[0]?.text ?? "")) {
-			return refusalOf(result.content[0].text);
-		}
-		for (let attempt = 0; attempt < 100 && !existsSync(argsFile); attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		}
+		const child = [...runningSubagents.values()][0]?.childProcess;
+		if (!child) return refusalOf(result.content[0].text);
+		// The shell creates the file before printf writes it: read only after the fake pi exits.
+		if (child.exitCode === null && child.signalCode === null) await once(child, "exit");
 		const args = readFileSync(argsFile, "utf8").split("\n");
 		return { modelRef: args[args.indexOf("--model") + 1] };
 	} catch (error) {
