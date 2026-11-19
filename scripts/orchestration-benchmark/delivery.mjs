@@ -48,6 +48,21 @@
 import { holdsResult, resolveReadPath, textOf } from "./record.mjs";
 
 const RESULT_MESSAGE = "subagent_result";
+// The candidate's wait and lookup tool (D15). v2.9.2 (cf6dbf4) registers no such tool.
+const WAIT_TOOL = "subagent_wait";
+
+/**
+ * The parent allowlist the harness scores with: a scenario that allows the launch
+ * tool also allows the candidate's wait tool, since waiting for a run is part of the
+ * launch contract there. v2.9.2 has no wait tool, so baseline scoring cannot change,
+ * and the scenario files (and their fixture hashes) stay as T04 froze them.
+ */
+export function withWaitTool(scenario) {
+	const list = scenario.parentToolAllowlist;
+	return list.includes(scenario.parentLoadTool) && !list.includes(WAIT_TOOL)
+		? { ...scenario, parentToolAllowlist: [...list, WAIT_TOOL] }
+		: scenario;
+}
 // Tool result states that announce a run but carry no result yet.
 const NOT_A_RESULT = new Set(["started", "running", "pending", "pinged"]);
 
@@ -188,6 +203,19 @@ export function carriers(events, parentToolAllowlist) {
 			!parentToolAllowlist.includes(m.toolName)
 		)
 			return;
+		// A wait or lookup reply (candidate subagent_wait) lists ended runs under results,
+		// each with its own id and text; pending and missing runs carry nothing.
+		if (Array.isArray(m.details?.results)) {
+			for (const member of m.details.results)
+				found.push({
+					kind: "tool-result",
+					index,
+					runId: typeof member?.id === "string" ? member.id : null,
+					tool: m.toolName,
+					text: typeof member?.text === "string" ? member.text : "",
+				});
+			return;
+		}
 		const runs = runsOf(m.details).filter(
 			(run) => !NOT_A_RESULT.has(run.status ?? m.details?.status),
 		);

@@ -73,6 +73,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { runAttempt } from "./orchestration-benchmark/attempt.mjs";
+import { withWaitTool } from "./orchestration-benchmark/delivery.mjs";
 import {
 	acquireClaim,
 	holdsClaim,
@@ -197,7 +198,7 @@ async function loadScenario(name) {
 			);
 	}
 	return {
-		...definition,
+		...withWaitTool(definition),
 		dir,
 		agentsDir: join(dir, "agents"),
 		workspaceDir: join(dir, "workspace"),

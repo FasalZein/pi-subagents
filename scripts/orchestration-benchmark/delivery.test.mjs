@@ -5,7 +5,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { carriers, deliveryAccounting, launchedRuns } from "./delivery.mjs";
+import {
+	carriers,
+	deliveryAccounting,
+	launchedRuns,
+	withWaitTool,
+} from "./delivery.mjs";
 import {
 	answerMatches,
 	answerParser,
@@ -765,5 +770,73 @@ test("[T59a] a fixture read inside a codemode script is duplicate work; a report
 		}).runs[0].outcome;
 	assert.equal(run("a.md"), "duplicate");
 	assert.equal(run("/home/.pi/artifacts/x/results/f9886ad6/report-1.md"), "clean_yield");
+});
+
+
+// A direct subagent_wait reply (candidate; shape of a real T57 run-a-m1 session): one
+// carrier per ended run it lists, with that run's own text. A lookup of a run whose
+// result already arrived is an extra copy of that run, not new work.
+const waitReply = (members, extra = {}) => ({
+	type: "message",
+	message: {
+		role: "toolResult",
+		toolName: "subagent_wait",
+		isError: false,
+		content: [{ type: "text", text: members.map(([, text]) => text).join("\n") }],
+		details: {
+			status: "complete",
+			results: members.map(([id, text]) => ({
+				id,
+				text,
+				record: { typed: true, runId: id, outcome: "done", summary: text },
+			})),
+			pending: [],
+			missing: [],
+			...extra,
+		},
+	},
+});
+const WAITING = { parentToolAllowlist: ["subagent", "subagent_wait"], parentLoadTool: "subagent" };
+
+test("[T59a] a subagent_wait reply is one carrier per run it lists; a lookup after the result message is an extra copy", () => {
+	const children = [child("a", "x-1"), child("b", "y-2")];
+	const waited = deliveryAccounting({
+		parentEvents: [LAUNCH, waitReply([["r1", "a: x-1"], ["r2", "b: y-2"]]), assistant("stop", "x-1 y-2")],
+		children,
+		answeredAt: 2,
+		scenario: WAITING,
+		workDir: WORK,
+	});
+	assert.deepEqual(
+		waited.runs.map((r) => [r.handover, r.delivered]),
+		[
+			["delivered", true],
+			["delivered", true],
+		],
+	);
+	assert.deepEqual([waited.transfers, waited.extraCopies, waited.undelivered], [2, 0, 0]);
+	const lookedUp = deliveryAccounting({
+		parentEvents: [LAUNCH, result("r1", "a: x-1"), waitReply([["r1", "a: x-1"]]), result("r2", "b: y-2"), assistant("stop", "x-1 y-2")],
+		children,
+		answeredAt: 4,
+		scenario: WAITING,
+		workDir: WORK,
+	});
+	assert.deepEqual(
+		lookedUp.runs.map((r) => r.handover),
+		["duplicate-carrier", "delivered"],
+	);
+	assert.deepEqual([lookedUp.transfers, lookedUp.extraCopies, lookedUp.undelivered], [3, 1, 0]);
+});
+
+
+test("[T59a] the harness allows the candidate's wait tool wherever the launch tool is allowed", () => {
+	assert.deepEqual(withWaitTool(SCENARIO).parentToolAllowlist, ["subagent", "subagent_wait"]);
+	assert.deepEqual(withWaitTool(recon).parentToolAllowlist, ["subagent", "subagent_wait"]);
+	// A scenario that already lists it, or does not allow the launch tool, stays as it is.
+	const listed = { parentToolAllowlist: ["codemode", "subagent", "subagent_wait"], parentLoadTool: "subagent" };
+	assert.equal(withWaitTool(listed), listed);
+	const other = { parentToolAllowlist: ["read"], parentLoadTool: "subagent" };
+	assert.equal(withWaitTool(other), other);
 });
 
