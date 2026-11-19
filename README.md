@@ -23,6 +23,8 @@ Special thanks to [@FasalZein](https://github.com/FasalZein) and [@isthatyousaf]
 
 ## Install
 
+pi-subagents requires Pi 1.5.2 or later.
+
 ```bash
 pi install git:github.com/edxeth/pi-subagents
 ```
@@ -60,7 +62,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
-The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, interactive launches fail with a setup hint.
+The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`.
 
 Normal launches use a backend-specific surface:
 
@@ -132,7 +134,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `inject-skills` | unset | Comma-separated skills to load into the child prompt before the task |
 | `no-context-files` | `false` | Skip project context-file discovery in the child, including `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md`. Pi loads these files independently of project approval. |
 | `inherit-append-system` | `false` | Let Pi load the child's applicable global or trusted-project `APPEND_SYSTEM.md` file |
-| `no-session` | `false` | Use an ephemeral child session file and delete it after completion. The report is kept in the result files, and the run cannot be resumed |
+| `no-session` | `false` | Use an ephemeral child session file and delete it after completion. When the parent watches the run to its end, the report is kept in the result files. The run cannot be resumed |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
 | `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
@@ -159,7 +161,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `visible-to` | `all` | Who may launch this agent: `all` (anyone), `root` (only the top-level session), or a comma-separated list of agent names. |
 | `async` | `true` | `false` makes the launch sync |
 | `mode` | `interactive` | `interactive` pane or `background` process |
-| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running). A `continue` child that ends after its parent exits gets no result record |
+| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running). A `continue` child that ends after its parent exits gets no result record. With `no-session: true` it also keeps no session file and no exit record |
 
 Use YAML block syntax for more than one env var:
 
@@ -184,7 +186,7 @@ A pane child also gets the identity variables of its own pane, which replace the
 | Rex | `REX_SESSION`, `REX_BLOCK` | none |
 | Herdr TUI | `HERDR_ENV`, `HERDR_PANE_ID` | `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH`, `HERDR_CONFIG_PATH` |
 
-When the surface does not set a required name, or `env` names one, the launch stops with an error before Pi starts. Other names in `env` still reach the child, denied names included. On these three backends, a name that only the multiplexer server has never reaches the child. In the Herdr app and in Rex, the child launcher builds the environment from a launch capsule, because the parent's environment does not reach the new terminal.
+When the surface does not set a required name, or `env` names one, the launch stops with an error before Pi starts. Other names in `env` still reach the child, denied names included. On every backend, the child also takes `TERM` and `COLORTERM` from its surface, also when `deny-env` names them. On these three backends, any other name that only the multiplexer server has never reaches the child. In the Herdr app and in Rex, the child launcher builds the environment from a launch capsule, because the parent's environment does not reach the new terminal.
 
 Known limit: in tmux, cmux, WezTerm and Zellij the child gets every pane variable that starts with `TMUX`, `CMUX`, `WEZTERM`, `ZELLIJ` or `HERDR`, and `TERM` and `COLORTERM`. `deny-env` does not remove such a name when only the pane or the multiplexer server has it.
 
@@ -423,7 +425,7 @@ llm-as-a-verifier-criteria: code-change
 
 1. Pi checks that the source tree is a clean Git repository. Then each attempt gets its own [git worktree](https://git-scm.com/docs/git-worktree). A worktree is a private copy of the repo. It separates the file changes of each attempt. It is not a sandbox: paths outside the repo, the network, and shared services stay shared. All attempts get the same task.
 2. When the attempts finish, the verifier LLM reads what each attempt did. It scores the attempts against the criteria file. At least two attempts must give different results. If all attempts give the same result, or the verifier cannot tell them apart, the run fails. Nothing is applied to your tree.
-3. You get one result: the report of the winning attempt, plus a short footer. If the winner changed code, the change is staged in your working tree. It is not committed. Inspect it with `git diff --staged`. If your tree changed during the run, nothing is applied, and the winner stays on a Git branch that the footer names.
+3. You get one result: the report of the winning attempt, plus a short footer. If the winner changed code, the change is staged in your working tree. It is not committed. Inspect it with `git diff --staged`. If your tree changed during the run, nothing is applied, and the winner stays on a Git branch. The report file names the branch; the footer names it too unless a launch warning takes its room.
 
 A run continues if you close or reload the parent session: a detached supervisor owns it end-to-end. The report is delivered only to the session that launched the run, or an ancestor of it — whichever starts next — and waits on disk until then. To stop a run early, kill the child with `subagent_kill` from the launching session; other sessions are refused unless you confirm the cancel yourself in the `/subagents` overlay.
 
@@ -491,10 +493,14 @@ A flag shows only where an agent differs from the common case:
 
 - `[pane]`: the child opens in a pane.
 - `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
-- `[manual]`: the pane stays open until a person closes it.
+- `[manual]`: the agent has `auto-exit` off, so the pane stays open after a normal completion. The child can still close it with `subagent_done`. For a pane that only a person closes, add `subagent_done` to `deny-tools` (see [`subagent_done`](#subagent_done)).
 - `[waits]`: the launch call waits for the result (`async: false`).
 
 An agent without a `description` is not in the index, and it stays launchable. A child with `spawning` gets the section filtered to the agents it may launch. A child that may launch nothing gets no section and no launch tools.
+
+### Find the management tools
+
+`subagent` is declared in every session that may launch. When codemode or tool search is active at the first prompt, Pi registers `subagent_wait`, `subagent_resume`, `subagent_kill`, and `subagent_agents` as deferred: they are not in the active tool list until tool search loads them, and a codemode script calls them as `tools.subagent_wait` and so on. Without codemode and tool search, Pi declares them directly.
 
 ### Look up an agent with `subagent_agents`
 
@@ -574,13 +580,15 @@ The summary has at most 1,500 characters. The header and the footer together hav
 
 Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
 
-Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand. Verified fan-out is the one exception: its supervisor delivers to the launching session or an ancestor that starts next. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
+Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand, unless the child has `no-session: true`: then Pi deletes both when the child exits, and nothing is left to resume.
+
+Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. `subagent_wait` with `recent` does not list it, and after a restart a lookup by its run id can answer `No result record`. In a codemode script, an ended verified child can carry `record: null`. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
 
 ### Delivery: at least once
 
-When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, unless you press `Esc` while the turn settles: the results of that aborted turn then enter the next request when you type.
+When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, with two exceptions. If you press `Esc` while the turn settles, the results of that aborted turn enter the next request when you type. If you press `Esc` during a `subagent_wait`, the results that the wait already held leave as one message that starts no turn. Runs that end later still start turns.
 
-Pi hands each result over once by itself and does not check whether the model read it. A copy comes only from a lookup, and every copy has the same size limit. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
+Pi hands each result over once by itself and does not check whether the model read it. A copy can come from a lookup, from an interrupted wait that gives its results back as a message, or from a verified winner that Pi adopts again because no receipt confirmed the first delivery. Every copy has the same size limit. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
 
 ### Wait, look up, and list runs with `subagent_wait`
 
@@ -611,7 +619,7 @@ After a pure async launch, the parent should get out of the way unless it has se
 
 By default, a successful async launch ends the parent turn after the current tool batch. The children keep running. Their results come back later.
 
-A parent without a durable turn cannot receive a later message, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way.
+A parent without a durable turn cannot receive a later message, so it waits for every launch instead: `pi -p`, `--mode json`, `--mode rpc`, and any session without a UI. Every `mode: background` child is a `pi -p` process, so a background child that has `spawning` always receives its children's reports as tool results and the turn continues. The stop above applies only to parents that can receive the later report. A `subagent_resume` from such a parent waits the same way. In an interactive parent started with a prompt, such as `pi "task"`, the launches of that first prompt wait too.
 
 ```bash
 PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1 pi
@@ -660,7 +668,6 @@ const SUMMARY_CHARS = 200;
 const DATA_CHARS = 300;
 
 const launch = await tools.subagent({ children: BATCH });
-if (typeof launch === "string") return `Launch refused, nothing started: ${launch}`;
 // The first output: if the script fails later, its partial output still names every run.
 text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
 
@@ -734,7 +741,7 @@ A failed script keeps its partial output, and the children that it launched keep
 
 1. Copy the run ids from the `Run ids:` line of the partial output into `RUN_IDS`. If the output has no run ids, leave the list empty.
 2. Run the script. With run ids, it returns each ended run and waits for the runs that still work. Without run ids, it waits for every run of this session that is still running or queued, and then lists the last 20 ended runs of this session, newest first. Read an older run by its run id with `subagent_wait({ ids: [id] })`.
-3. Launch only the children of the batch that have no run in the result.
+3. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry of the failed script names it or a later child. A missing entry in the result does not prove that a child never started: the recent list holds only the last 20 ended runs, and a verified run is never in it. Otherwise look for its `record.json` under `results/` in the session's artifact folder, or stop and decide.
 
 <!-- recipe: recover -->
 ```js
@@ -757,7 +764,7 @@ const recent = await tools.subagent_wait({ recent: true });
 return { runs: running.results.map(brief), pending: running.pending, recent: recent.recent };
 ```
 
-A result can arrive twice: once in a wait reply and once by message, for example after an interrupted wait. A second delivery with the same run id and the same text is a copy. A different result under the same run id replaces the earlier one: a verified run can deliver a winner after a failed attempt.
+A result can arrive twice: once in a wait reply and once by message, for example after an interrupted wait. A second delivery with the same run id is a copy, also when its text differs: an adopted verified winner can lack the launch warnings and the verifier detail of the first rendering. Only a verified retry delivers a different result under the same run id: a newer generation replaces the earlier one, and its report file path differs.
 
 ### Limits of a waiting script
 
@@ -896,7 +903,7 @@ An auto-exit child that is about to exit without calling `subagent_done` or `cal
 
 ### `caller_ping`
 
-Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume. The result is typed with outcome `blocked`. The full message is the report, and only the summary is cut to 1,500 characters. A refused ping does not use up the session's one ping.
+Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume. Only background children and auto-exit pane children get the tool; a pane child with `auto-exit` off does not. After a person takes over an auto-exit pane, `caller_ping` records the question in the session, but the pane stays open and the parent gets nothing until the person closes the pane. The result is typed with outcome `blocked`. The full message is the report, and only the summary is cut to 1,500 characters. A refused ping does not use up the session's one ping.
 
 ## Resuming child sessions
 
@@ -1152,7 +1159,7 @@ Child sessions can also get session titles like:
 
 Disable child session titles with `PI_SUBAGENT_DISABLE_SESSION_TITLES=1`.
 
-The Completed tab of the `/subagents` overlay lists the runs of this session from their published result records.
+The Completed tab of the `/subagents` overlay shows one row per child session: the newest run of that session, so a resumed session shows only its last run. A run without a session file gets its own row. Published result records come first. Results that Pi holds in memory or in older session messages fill in the sessions that have no record.
 
 ## Launching children through a wrapper
 
