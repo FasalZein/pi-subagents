@@ -257,6 +257,26 @@ describe("completion call end to end (D11, D12)", () => {
 		assert.doesNotMatch(report, /ACK-MARKER-44/);
 	});
 
+	it("runs no tool after a final codemode completion: the next tool turn is blocked and ends the loop", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [
+				codemodeDone,
+				fauxAssistantMessage([fauxToolCall("codemode", { code: "await tools.ls({});" }, { id: "cm-after" })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("A model turn after the blocked tool."),
+			],
+			extensions: [createCodemodeExtension({ mode: "on" })],
+			defaultTools: ["+codemode"],
+		});
+		assert.equal(run.unusedReplies, 1, "the blocked tool batch ends the agent loop");
+		assert.match(readFileSync(run.sessionFile, "utf8"), /accepted completion call/);
+		const { record } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, true);
+	});
+
 	it("a watcher that reads before Pi persists the tool result still publishes the typed record", async () => {
 		// Snapshot the session file and the exit record at the end of tool execution, before Pi
 		// writes the tool result: what a pane watcher polling at that moment reads.

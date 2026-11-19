@@ -68,6 +68,19 @@ export default function (pi: ExtensionAPI) {
 	// nothing here requests shutdown or writes an exit record before it closes.
 	const takeover = createPaneTakeover({ writeExitSignal });
 	const endRunWithError = takeover.endRunWithError;
+	// D12: an autonomous accepted completion call is final. Pi ends the turn only when every call of
+	// the batch terminates, so a call inside codemode or beside another tool can get one more model
+	// turn; block every later tool call there, and the blocked batch ends the agent loop.
+	let finalCallAccepted = false;
+	const onCompletionAccepted = () => {
+		completionNudge.markCallAccepted();
+		if (!takeover.tookOver) finalCallAccepted = true;
+	};
+	pi.on("tool_call", () =>
+		finalCallAccepted
+			? { block: true, terminate: true, reason: "This session ended with an accepted completion call." }
+			: undefined,
+	);
 	// Set by the auto-exit or manual branch below; raw pane keys reach it.
 	let onOperatorKeystroke: (ctx: PaneUiContext) => void = () => {};
 
@@ -491,7 +504,7 @@ export default function (pi: ExtensionAPI) {
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
 			isTakenOver: () => takeover.tookOver,
-			onAccepted: completionNudge.markCallAccepted,
+			onAccepted: onCompletionAccepted,
 		});
 	}
 
@@ -501,7 +514,7 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
-			onAccepted: completionNudge.markCallAccepted,
+			onAccepted: onCompletionAccepted,
 		});
 	}
 
