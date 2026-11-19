@@ -190,9 +190,8 @@ export async function joinRuns(
 		// Only runs that still run report later; an end another wait holds is delivered by that wait.
 		return { status, results: [], pending, missing };
 	}
-	settleWaitReply(
-		reply.map((result) => result.id),
-		reply.map((result) => ({ details: { id: result.id } })),
-	);
+	// Every returned result carries its report.
+	const returnedIds = reply.map((result) => result.id);
+	settleWaitReply(returnedIds, returnedIds);
 	return { status, results: reply, pending, missing };
 }

@@ -182,16 +182,16 @@ describe("spawn width semaphore", () => {
 			},
 		});
 
-		await assert.rejects(
-			tool.execute(
-				"call-3",
-				{ children: [child("worker-a"), child("worker-b"), child("worker-c")] },
-				undefined,
-				undefined,
-				toolContext(),
-			),
-			/launch failed/,
+		// D16 (T28): a later child's failure is an error result that names the started child, not a throw.
+		const result = await tool.execute(
+			"call-3",
+			{ children: [child("worker-a"), child("worker-b"), child("worker-c")] },
+			undefined,
+			undefined,
+			toolContext(),
 		);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0].text, /launch failed/);
 		assert.equal(launches, 2);
 		assert.equal(getLiveSlotCount(), 1);
 	});

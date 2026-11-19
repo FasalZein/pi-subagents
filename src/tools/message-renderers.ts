@@ -3,7 +3,7 @@ import { keyHint } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { formatFinalContextUsage } from "../runtime/final-context-usage.ts";
 import { OUTCOME_WORDS } from "../runtime/result-render.ts";
-import { type RunEndEntry, runEnds } from "../runtime/run-end-message.ts";
+import { isFinishedStatus, type RunEndEntry, runEnds } from "../runtime/run-end-message.ts";
 import type { SubagentPingMessageDetails, SubagentResultMessageDetails } from "../types.ts";
 
 type ThemeLike = Parameters<Parameters<ExtensionAPI["registerMessageRenderer"]>[1]>[2];
@@ -262,10 +262,6 @@ export function formatSubagentBatchLines(
 }
 
 /** A waited launch reply that holds a finished run, a waiting ping included, renders as a completion. */
-export function isFinishedStatus(status: string | undefined): boolean {
-	return status === "completed" || status === "failed" || status === "cancelled" || status === "pinged";
-}
-
 export function renderSubagentCompletionText(
 	result: AgentToolResult<unknown>,
 	options: RenderOptions,

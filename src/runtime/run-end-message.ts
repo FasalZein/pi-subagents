@@ -6,6 +6,11 @@
  */
 export type RunEndType = "subagent_result" | "subagent_ping";
 
+/** A run-end status: the reply or message that has it carries the run's finished report or ping. */
+export function isFinishedStatus(status: string | undefined): boolean {
+	return status === "completed" || status === "failed" || status === "cancelled" || status === "pinged";
+}
+
 export interface RunEndMessage {
 	customType: RunEndType;
 	content: string;
