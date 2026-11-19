@@ -5,13 +5,16 @@ import { assembleResult, NO_REPORT_LINE } from "../../src/runtime/result-assembl
 import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import {
+	ASSISTANT_MSG,
 	assert,
 	createTestDir,
 	describe,
 	it,
 	join,
+	MODEL_CHANGE,
 	mkdirSync,
 	SESSION_HEADER,
+	USER_MSG,
 	writeFileSync,
 } from "../support/index.ts";
 import { cleanupPaneChild as cleanup, loadPaneChild as loadChild } from "../support/pane-child.ts";
@@ -83,31 +86,51 @@ describe("completion call (D12)", () => {
 
 	it("the brief states the limit and the call, and asks for no call when the tool is denied", () => {
 		assert.match(completionCallBrief(new Set()), /call subagent_done with outcome .* at most 1,500 characters/);
-		assert.match(completionCallBrief(new Set()), /caller_ping message has the same 1,500 characters limit/);
+		assert.doesNotMatch(completionCallBrief(new Set()), /caller_ping/, "the brief names no tool a manual pane lacks");
 		assert.equal(completionCallBrief(new Set([DONE])), "");
 	});
 
-	it("a headless brief contains the limit; with subagent_done denied it does not ask for the call", async () => {
-		for (const deny of [undefined, DONE]) {
+	const briefCases = [
+		{ deny: undefined, fork: false },
+		{ deny: DONE, fork: false },
+		{ deny: undefined, fork: true },
+		{ deny: DONE, fork: true },
+	];
+	it("a headless brief, fork included, contains the limit; with subagent_done denied it does not ask for the call", async () => {
+		for (const { deny, fork } of briefCases) {
 			const cwd = createTestDir();
 			mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
 			const frontmatter = [
 				"---",
 				"name: worker",
 				"mode: background",
+				...(fork ? ["session-mode: fork"] : []),
 				...(deny ? [`deny-tools: ${deny}`] : []),
 				"---",
 				"Body.",
 			];
 			writeFileSync(join(cwd, ".pi", "agents", "worker.md"), frontmatter.join("\n"));
 			const parentSession = join(cwd, "parent.jsonl");
-			writeFileSync(parentSession, `${JSON.stringify(SESSION_HEADER)}\n`);
+			writeFileSync(
+				parentSession,
+				`${[SESSION_HEADER, MODEL_CHANGE, USER_MSG, ASSISTANT_MSG].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+			);
 			const plan = await buildBackgroundLaunchPlan(
 				{ name: "w", title: "W", task: "Do the work", agent: "worker" },
-				{ cwd, sessionManager: { getSessionFile: () => parentSession, getSessionId: () => "parent-session-id" } },
+				{
+					cwd,
+					sessionManager: {
+						getSessionFile: () => parentSession,
+						getSessionId: () => "parent-session-id",
+						getLeafId: () => "asst-001",
+					},
+				},
 			);
-			if (deny) assert.doesNotMatch(plan.fullTask, /subagent_done/);
-			else assert.match(plan.fullTask, /call subagent_done with outcome .* at most 1,500 characters/);
+			const label = `deny=${deny ?? "none"} fork=${fork}`;
+			assert.equal(plan.launch.directTask, fork, label);
+			if (fork) assert.ok(plan.fullTask.startsWith("Do the work"), `${label}: the fork task stays first and whole`);
+			if (deny) assert.doesNotMatch(plan.fullTask, /subagent_done/, label);
+			else assert.match(plan.fullTask, /call subagent_done with outcome .* at most 1,500 characters/, label);
 		}
 	});
 

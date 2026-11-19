@@ -13,7 +13,7 @@ import { getPiInvocation, getSubagentChildProcessEnv } from "./child-command.ts"
 import { resolveDenyEnvPatterns } from "./child-env.ts";
 import { waitForChildSpawn } from "./child-spawn.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
-import { completionCallBrief } from "./completion-brief.ts";
+import { completionCallBrief, withCompletionBrief } from "./completion-brief.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
 import { LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { PI_SUBAGENT_TIMEOUT_STARTED_AT } from "../tools/timeout-reminders.ts";
@@ -92,9 +92,11 @@ export async function buildBackgroundLaunchPlan(
 			cwd: prepared.runtimePaths.effectiveCwd ?? ctx.cwd,
 		});
 		const completionBrief = completionCallBrief(prepared.denySet);
-		fullTask = directTask
-			? expandedTask
-			: `${roleBlock}\n\n${modeHint}\n\n${expandedTask}\n\n${summaryInstruction}${completionBrief ? `\n\n${completionBrief}` : ""}`;
+		// D12: a fork task keeps its own text first; the completion line follows it.
+		fullTask = withCompletionBrief(
+			directTask ? expandedTask : `${roleBlock}\n\n${modeHint}\n\n${expandedTask}\n\n${summaryInstruction}`,
+			completionBrief,
+		);
 		const skillInjection = getPreparedSkillInjection(prepared);
 		if (skillInjection) fullTask = `${skillInjection}\n\n${fullTask}`;
 	}

@@ -133,6 +133,5 @@ export {
 export {
 	filterToolNames,
 	getDeniedToolNames,
-	installDeniedToolGuards,
 	shouldRegisterSubagentDone,
 } from "../../src/tools/child-tool-policy.ts";

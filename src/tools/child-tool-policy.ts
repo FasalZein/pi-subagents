@@ -1,4 +1,3 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
 // Child-side tool policy: which tools PI_DENY_TOOLS removes and whether subagent_done registers.
@@ -24,41 +23,4 @@ export function filterToolNames(toolNames: string[], deniedTools: string[]): str
 /** D12: auto-exit, headless and manual pane children all register it; only a deny entry removes it. */
 export function shouldRegisterSubagentDone(deniedTools: readonly string[]): boolean {
 	return !deniedTools.includes(SUBAGENT_DONE_TOOL_NAME);
-}
-
-type ToolControlAPI = Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "setActiveTools" | "registerTool">;
-
-export function installDeniedToolGuards(
-	pi: ToolControlAPI,
-	onChange?: (activeTools: string[], deniedTools: string[]) => void,
-) {
-	const originalRegisterTool = pi.registerTool.bind(pi);
-	const originalSetActiveTools = pi.setActiveTools.bind(pi);
-
-	const notify = (activeTools: string[], deniedTools: string[]) => {
-		onChange?.([...activeTools].sort(), [...deniedTools]);
-	};
-
-	const applyDeniedTools = (): string[] => {
-		const deniedTools = getDeniedToolNames();
-		const allowedTools = filterToolNames(pi.getActiveTools(), deniedTools);
-		originalSetActiveTools(allowedTools);
-		notify(allowedTools, deniedTools);
-		return allowedTools;
-	};
-
-	pi.setActiveTools = (toolNames: string[]) => {
-		const deniedTools = getDeniedToolNames();
-		const allowedTools = filterToolNames(toolNames, deniedTools);
-		originalSetActiveTools(allowedTools);
-		notify(allowedTools, deniedTools);
-	};
-
-	pi.registerTool = (definition) => {
-		const result = originalRegisterTool(definition);
-		applyDeniedTools();
-		return result;
-	};
-
-	return { applyDeniedTools };
 }

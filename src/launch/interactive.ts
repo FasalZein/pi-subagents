@@ -11,7 +11,7 @@ import { SET_TAB_TITLE_TOOL_NAME } from "../tools/tool-names.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
-import { completionCallBrief } from "./completion-brief.ts";
+import { completionCallBrief, withCompletionBrief } from "./completion-brief.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
 import { type LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { buildInteractiveShellCommand } from "./shell-command.ts";
@@ -119,9 +119,13 @@ async function startInteractiveSubagent(
 		enabled: prepared.agentDefs?.taskExpansion === "shell",
 		cwd: prepared.runtimePaths.effectiveCwd ?? ctx.cwd,
 	});
-	let fullTask = directTask
-		? expandedTask
-		: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}${completionBrief ? `\n\n${completionBrief}` : ""}`;
+	// D12: a fork task keeps its own text first; the completion line follows it.
+	let fullTask = withCompletionBrief(
+		directTask
+			? expandedTask
+			: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}`,
+		completionBrief,
+	);
 	const skillInjection = getPreparedSkillInjection(prepared);
 	if (skillInjection) fullTask = `${skillInjection}\n\n${fullTask}`;
 
