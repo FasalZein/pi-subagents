@@ -29,7 +29,7 @@ import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../ty
 
 import { formatSubagentBatchLines, formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
-import { renderLaunchReply } from "./launch-reply.ts";
+import { type ChildDelivery, renderLaunchReply } from "./launch-reply.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
@@ -418,32 +418,46 @@ export function registerSubagentCoreTools(
 				);
 				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
 				// with its own warnings (a published rendering already holds them).
-				const delivered = results.map((result) => (result.details as { status?: string })?.status !== "started");
-				const text = renderLaunchReply(
-					launched,
-					results.map((result, index) =>
-						delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
-					),
-					[
-						...prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
-						// D10: outside every result frame, so each dropped entry is named once in this reply.
-						...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
-					],
-				);
+				const deliveries = results.map((result, index): ChildDelivery => {
+					const status = (result.details as { status?: string } | undefined)?.status;
+					if (status === "started") return null;
+					if (isFinishedStatus(status)) return { report: resultText(withToolWarning(result, prepared[index].warning)) };
+					// A wait error (interrupted, timed out) carries no status and no report.
+					return { waitError: resultText(result) };
+				});
+				const delivered = deliveries.map((delivery) => delivery !== null);
+				const replyDetails = (result: ToolResult, index: number) => {
+					const delivery = deliveries[index];
+					const details = result.details as Record<string, unknown> | undefined;
+					if (delivery && "waitError" in delivery) {
+						return { ...details, status: details?.error === "interrupted" ? "interrupted" : "wait_failed" };
+					}
+					return details;
+				};
+				const text = renderLaunchReply(launched, deliveries, [
+					...prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+					// D10: outside every result frame, so each dropped entry is named once in this reply.
+					...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
+				]);
 				if (launched.length === 1) {
-					return asSubagentToolResult({ ...results[0], content: [{ type: "text", text }] });
+					return asSubagentToolResult({
+						...results[0],
+						content: [{ type: "text", text }],
+						details: replyDetails(results[0], 0),
+					});
 				}
 				return asSubagentToolResult({
 					content: [{ type: "text", text }],
 					details: {
-						// "batch" when this reply holds reports, so the TUI shows them.
+						// "batch" when this reply holds reports or wait errors, so the TUI shows them.
 						status: delivered.some(Boolean) ? "batch" : "started",
 						children: results.map((result, index) => ({
-							...(result.details as Record<string, unknown>),
+							...replyDetails(result, index),
 							task: prepared[index]?.child.task,
 							title: prepared[index]?.child.title,
 							agent: prepared[index]?.child.agent,
 							name: (result.details as { name?: string } | undefined)?.name ?? prepared[index]?.child.name,
+							...(deliveries[index] && "report" in deliveries[index] ? { report: deliveries[index].report } : {}),
 						})),
 					},
 					...getSubagentBatchStopMetadata(),

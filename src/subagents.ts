@@ -1,4 +1,5 @@
 import { registerOutstandingWorkReporting } from "./runtime/work-reporting.ts";
+import { pendingRunEndCount, registerDeliveryQueue } from "./runtime/delivery-queue.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import type { AgentListEntry } from "./agents/agent-list.ts";
@@ -118,9 +119,10 @@ export function loadAgentDefaults(
  * not launchable here, so one bad target cannot stop the classification of its
  * siblings; the launch itself reports the parse error (D24).
  */
-function loadLaunchableAgentDefaults(agentName: string, cwdHint?: string): AgentDefaults | null {
+/** The definition the launch tool resolves: from the session cwd, as the executor does. */
+function loadLaunchableAgentDefaults(agentName: string, sessionCwd: string): AgentDefaults | null {
 	try {
-		return loadAgentDefaults(agentName, cwdHint);
+		return loadAgentDefaults(agentName, undefined, sessionCwd);
 	} catch {
 		return null;
 	}
@@ -175,8 +177,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const startupCatalog = loadAgentCatalog();
 	if (startupCatalog.definitions.length === 0 && startupCatalog.malformedFiles.length === 0) return;
 
-	publishRunningSubagentCount(() => runningSubagents.size);
+	// A run end that waits in the delivery queue keeps an auto-exit session open like a running
+	// child: Pi's own queue does not hold it while a turn runs, so hasPendingMessages() misses it.
+	publishRunningSubagentCount(() => runningSubagents.size + pendingRunEndCount());
 	const workReporting = registerOutstandingWorkReporting(pi);
+	registerDeliveryQueue(pi);
 
 	function attachWidgetContext(ctx: ExtensionContext) {
 		widgetManager.attachContext(ctx);
@@ -271,7 +276,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		return { action: "continue" as const };
 	});
 
-	pi.on("message_end", (event) => {
+	pi.on("message_end", (event, ctx) => {
 		// Mixed-batch barrier: when an assistant message contains BOTH an async
 		// subagent launch (subagent or subagent_resume) AND a non-subagent tool,
 		// mark the batch blocking before any tool runs. The shared
@@ -282,21 +287,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		// switch with the existing coordinator-only-turn behavior.
 		const message = event?.message;
 		if (!message) return;
-		classifyAssistantMessageForMixedBatch(message, (agent, cwd) =>
-			agent ? loadLaunchableAgentDefaults(agent, cwd) : null,
+		classifyAssistantMessageForMixedBatch(message, (agent) =>
+			agent ? loadLaunchableAgentDefaults(agent, ctx.cwd) : null,
 		);
 	});
 
-	pi.on("tool_call", (event) => {
+	pi.on("tool_call", (event, ctx) => {
 		if (event.toolName !== SUBAGENT_TOOL_NAME) return {};
 		// Classify every child of this call before any launch of the message runs:
 		// a blocking child here makes async children in sibling calls wait too.
 		const blocking = getLaunchCallChildren(event.input).map((child) => {
 			const input = child as Partial<SubagentParamsInput>;
-			const agentDefs =
-				typeof input.agent === "string"
-					? loadLaunchableAgentDefaults(input.agent, typeof input.cwd === "string" ? input.cwd : undefined)
-					: null;
+			const agentDefs = typeof input.agent === "string" ? loadLaunchableAgentDefaults(input.agent, ctx.cwd) : null;
 			if (!agentDefs) return null;
 			if (getSubagentAgentRequirementError(input, agentDefs) || getSubagentAgentOverrideError(input, agentDefs)) {
 				return null;

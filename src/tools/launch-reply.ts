@@ -3,8 +3,11 @@ import type { RunningSubagent } from "../types.ts";
 
 type LaunchedChild = Pick<RunningSubagent, "agent" | "name" | "id" | "modelRef" | "mode">;
 
-/** One delivered report: its result text, or null when the child reports later. */
-export type ChildDelivery = { report: string } | null;
+/**
+ * One child's part of the reply: its delivered report, the error of a wait that ended without a
+ * report (an interrupted wait stops the child, so no report follows), or null when it reports later.
+ */
+export type ChildDelivery = { report: string } | { waitError: string } | null;
 
 const WAITED_RETURN_LINE = "This call waited for its children; each report follows below.";
 const PARTLY_WAITED_RETURN_LINE = "Each report of a finished child follows below.";
@@ -24,13 +27,26 @@ export function renderLaunchReply(
 	deliveries: readonly ChildDelivery[],
 	laterWarnings: readonly string[],
 ): string {
-	const reports = deliveries.filter((delivery) => delivery !== null).map((delivery) => delivery.report);
+	const reports = deliveries.flatMap((delivery) => (delivery && "report" in delivery ? [delivery.report] : []));
+	const waitErrors = deliveries.flatMap((delivery) =>
+		delivery && "waitError" in delivery ? [delivery.waitError] : [],
+	);
+	const later = deliveries.some((delivery) => delivery === null);
 	const returnLines =
 		reports.length === 0
-			? [getLaunchReturnLine()]
-			: reports.length === deliveries.length
-				? [WAITED_RETURN_LINE]
-				: [PARTLY_WAITED_RETURN_LINE, getLaunchReturnLine()];
-	const head = [...children.map(renderLaunchChildLine), ...returnLines, ...laterWarnings.filter(Boolean)].join("\n");
+			? later
+				? [getLaunchReturnLine()]
+				: []
+			: later
+				? [PARTLY_WAITED_RETURN_LINE, getLaunchReturnLine()]
+				: waitErrors.length === 0
+					? [WAITED_RETURN_LINE]
+					: [PARTLY_WAITED_RETURN_LINE];
+	const head = [
+		...children.map(renderLaunchChildLine),
+		...returnLines,
+		...waitErrors,
+		...laterWarnings.filter(Boolean),
+	].join("\n");
 	return [head, ...reports].join("\n\n");
 }
