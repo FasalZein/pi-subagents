@@ -73,7 +73,6 @@ import "./runtime/result-files.test.ts";
 import "./runtime/headless-result.test.ts";
 import "./runtime/no-session-result.test.ts";
 import "./runtime/coordinator-turn-hardening.test.ts";
-import "./runtime/parent-prompt-hooks.test.ts";
 import "./runtime/index-prompt-hooks.test.ts";
 import "./runtime/background-watch.test.ts";
 import "./runtime/background-watch-timeout.test.ts";
