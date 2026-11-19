@@ -297,3 +297,10 @@ describe("review-fix verdicts", () => {
 		assert.equal(score({ workspace: null }), "wrong-answer");
 	});
 });
+
+// T68: both releases refuse one-word launch names (the subagent tool's name takes
+// 2-4 lower-kebab words); a refused first launch cost every parent a request.
+test("[T68] the prompt gives each child a 2-word lower-kebab launch name", () => {
+	const names = [...scenario.prompt.matchAll(/name "([^"]*)"/g)].map((m) => m[1]);
+	assert.deepEqual(names, ["cart-build", "cart-review", "cart-fix"]);
+});

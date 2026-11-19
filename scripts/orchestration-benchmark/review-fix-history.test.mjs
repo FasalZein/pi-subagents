@@ -24,6 +24,8 @@ const usage = {
 const ANSWER = { TESTS: "pass", FINDING: "R-2", FIXED: "R-2" };
 const FINAL = { heldOutPassed: true, changedTestFiles: [] };
 const ROLE = { build: "bench-build", review: "bench-review", fix: "bench-fix" };
+// Launch names as the scenario prompt gives them (lower-kebab, 2 words).
+const LAUNCH_NAME = { build: "cart-build", review: "cart-review", fix: "cart-fix" };
 const runId = (name) => `run-${name}`;
 const file = (name) => `/r/${name}.jsonl`;
 
@@ -53,7 +55,7 @@ const launch = (callId, names) => [
 				status: "started",
 				children: names.map((name) => ({
 					id: runId(name),
-					name,
+					name: LAUNCH_NAME[name],
 					status: "started",
 				})),
 			},
@@ -82,7 +84,7 @@ const childSession = (name, order, text, tools = []) => ({
 			customType: "pi-subagents_launch_metadata",
 			id: `m${order}`,
 			timestamp: `2026-11-18T17:00:0${order}.000Z`,
-			data: { agent: ROLE[name], name },
+			data: { agent: ROLE[name], name: LAUNCH_NAME[name] },
 		},
 		...tools,
 		assistant("stop", text),

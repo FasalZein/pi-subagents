@@ -213,15 +213,22 @@ export function summarizeParent(events) {
 	};
 }
 
+// Both releases write this model source on the launch marker that a resume with a
+// model or thinking override appends to the child's session (resume-service.ts).
+const RESUME_MARKER_SOURCE = "resume-override";
+
 /**
- * Index after the child's own launch boundary: the LAST launch marker, because a
- * nested fork copies its ancestors' markers before its own.
+ * Index of the child's own launch boundary: the LAST launch marker that a launch
+ * wrote, because a nested fork copies its ancestors' markers before its own. A
+ * marker a resume appended does not move it: the resumed run's requests, cost and
+ * reads belong to the same child (T68).
  */
 function launchBoundary(events) {
 	for (let i = events.length - 1; i >= 0; i--) {
 		if (
 			events[i]?.type === "custom" &&
-			events[i].customType === LAUNCH_METADATA
+			events[i].customType === LAUNCH_METADATA &&
+			events[i].data?.modelSource !== RESUME_MARKER_SOURCE
 		)
 			return i;
 	}
@@ -373,11 +380,52 @@ export function containsToken(text, token) {
 
 /** True when the child's own last reply ended its turn normally. */
 export function childEnded(events) {
-	const own = events.slice(Math.max(0, launchBoundary(events)) + 1);
+	return endedAfter(events, launchBoundary(events));
+}
+
+function endedAfter(events, index) {
+	const own = events.slice(Math.max(0, index) + 1);
 	return (
 		assistantMessages(own).at(-1)?.stopReason === "stop" ||
 		acceptedCompletion(own) !== null
 	);
+}
+
+const RESUME_TOOL = "subagent_resume";
+
+/**
+ * Resumes the parent started: one per successful subagent_resume tool result, with
+ * the session file it names (both releases put it in details.sessionFile, also for
+ * a resume by run id) and the time of the parent entry that made the call.
+ * @returns {Array<{sessionFile: string, calledAt: number}>}
+ */
+export function resumedRuns(parentEvents) {
+	const calledAt = new Map();
+	const resumes = [];
+	for (const e of parentEvents) {
+		const m = e?.type === "message" ? e.message : null;
+		if (m?.role === "assistant")
+			for (const part of m.content ?? [])
+				if (part.type === "toolCall") calledAt.set(part.id, Date.parse(e.timestamp));
+		if (m?.role !== "toolResult" || m.toolName !== RESUME_TOOL || m.isError) continue;
+		const sessionFile = m.details?.sessionFile;
+		if (typeof sessionFile === "string")
+			resumes.push({ sessionFile, calledAt: calledAt.get(m.toolCallId) ?? Number.NaN });
+	}
+	return resumes;
+}
+
+/**
+ * True when the resumed run has ended: a completion after its own boundary, the
+ * first user message (its task) written after the parent's resume call. The first
+ * run's completion earlier in the same file does not count. Before its task
+ * arrives the run is open.
+ */
+export function resumeEnded(events, calledAt) {
+	const task = events.findIndex(
+		(e) => e?.type === "message" && e.message?.role === "user" && Date.parse(e.timestamp) > calledAt,
+	);
+	return task >= 0 && endedAfter(events, task);
 }
 
 // Candidate (T59a): an auto-exit child ends with a subagent_done call that the
@@ -620,13 +668,31 @@ export function endsWithProviderError(events) {
  * otherFiles are the remaining session files of the attempt (no parent, no
  * launch marker): each needs a probe too, or it counts as a missing probe. Its
  * probe is still unmatched, because the file is no parent or child session.
- * @param {{parentFile: string, childFiles: string[], otherFiles: string[], checkout: string, parentTool: string, childTool: string}} input
+ * resumedFiles: the session file of each resume the parent started (resumedRuns).
+ * @param {{parentFile: string, childFiles: string[], otherFiles: string[], checkout: string, parentTool: string, childTool: string, resumedFiles?: string[]}} input
  */
 export function loadEvidence(
 	probes,
-	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool },
+	{ parentFile, childFiles, otherFiles, checkout, parentTool, childTool, resumedFiles = [] },
 ) {
-	const bySession = new Map(probes.map((probe) => [probe.sessionFile, probe]));
+	// The first probe of a session file is its launch. A later probe of a child
+	// file is a resumed run only up to the number of parent resumes that name the
+	// file (subagent_resume appends to it); any other second probe is unmatched (F8).
+	const bySession = new Map();
+	const extra = new Map();
+	for (const probe of probes) {
+		if (!bySession.has(probe.sessionFile)) bySession.set(probe.sessionFile, probe);
+		else extra.set(probe.sessionFile, [...(extra.get(probe.sessionFile) ?? []), probe]);
+	}
+	const childFileSet = new Set(childFiles);
+	const allowed = new Map();
+	for (const file of resumedFiles)
+		if (childFileSet.has(file)) allowed.set(file, (allowed.get(file) ?? 0) + 1);
+	const resumes = [...extra].flatMap(([file, list]) => list.slice(0, allowed.get(file) ?? 0));
+	const unprobedResumes = [...allowed].reduce(
+		(sum, [file, count]) => sum + Math.max(0, count - (extra.get(file)?.length ?? 0)),
+		0,
+	);
 	const fromCheckout = (probe, tool) =>
 		Boolean(
 			probe?.tools.some(
@@ -642,12 +708,14 @@ export function loadEvidence(
 		parent ? null : "parent",
 		...children.filter((c) => !c.probe).map(() => "child"),
 		...otherFiles.filter((file) => !bySession.has(file)).map(() => "other"),
+		...Array(unprobedResumes).fill("resume"),
 	].filter(Boolean);
 	// The reverse join: every probe needs its own session file of this attempt.
 	const sessionFiles = new Set([parentFile, ...childFiles]);
+	// A second probe of the parent file or of a file that is no child's is unmatched.
 	const unmatchedProbes =
 		probes.filter((probe) => !sessionFiles.has(probe.sessionFile)).length +
-		(probes.length - bySession.size);
+		(probes.length - bySession.size - resumes.length);
 	// A probe whose session file is no file of the attempt: Pi writes a session
 	// file only at the first message, so a child that never got its task has none.
 	const attemptFiles = new Set([parentFile, ...childFiles, ...otherFiles]);
@@ -660,9 +728,9 @@ export function loadEvidence(
 		unmatchedProbes,
 		unfiledProbes,
 		parentLoadedCheckout: fromCheckout(parent, parentTool),
-		childrenLoadedCheckout: children.every((child) =>
-			fromCheckout(child.probe, childTool),
-		),
+		childrenLoadedCheckout:
+			children.every((child) => fromCheckout(child.probe, childTool)) &&
+			resumes.every((probe) => fromCheckout(probe, childTool)),
 		parentModel: parent?.model ?? null,
 		parentThinking: parent?.thinking ?? null,
 		children: children.map((child) => ({
@@ -670,6 +738,11 @@ export function loadEvidence(
 			loadedCheckout: fromCheckout(child.probe, childTool),
 			model: child.probe?.model ?? null,
 			thinking: child.probe?.thinking ?? null,
+		})),
+		resumes: resumes.map((probe) => ({
+			agent: probe.agent ?? null,
+			model: probe.model ?? null,
+			thinking: probe.thinking ?? null,
 		})),
 	};
 }

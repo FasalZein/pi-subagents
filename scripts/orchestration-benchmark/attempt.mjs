@@ -19,6 +19,8 @@ import {
 	childFulfils,
 	endsWithProviderError,
 	loadEvidence,
+	resumedRuns,
+	resumeEnded,
 	scoreAttempt,
 	summarizeChild,
 	summarizeChildren,
@@ -122,6 +124,8 @@ const LAUNCH_TOOL = "subagent";
  * Number of launched children that have not ended. A child counts as launched
  * from the first trace it leaves: a successful launch tool result in the parent,
  * a child probe or a child session file. A half-written probe counts as pending.
+ * A resumed child (same session file) is the same child, not a new launch; each
+ * resumed run counts as pending until it has ended on its own.
  */
 function pendingChildren(parentEvents, root, probeDir) {
 	let evidence;
@@ -137,13 +141,25 @@ function pendingChildren(parentEvents, root, probeDir) {
 			e.message.toolName === LAUNCH_TOOL &&
 			!e.message.isError,
 	).length;
+	// A resumed run's probe names the session file of the child it resumes, so
+	// child probes count by session file (a probe without one counts alone).
+	const childProbes = evidence.probes.filter((probe) => probe.agent);
+	const probedChildren =
+		new Set(childProbes.map((p) => p.sessionFile).filter(Boolean)).size +
+		childProbes.filter((p) => !p.sessionFile).length;
 	const launched = Math.max(
 		launchResults,
-		evidence.probes.filter((probe) => probe.agent).length,
+		probedChildren,
 		evidence.children.length,
 	);
 	const ended = evidence.children.filter((c) => childEnded(c.events)).length;
-	return launched - ended;
+	// A resumed run is open until a completion after its own resume boundary: the
+	// first run's completion stays in the same session file (T68).
+	const openResumes = resumedRuns(parentEvents).filter((run) => {
+		const child = evidence.children.find((c) => c.file === run.sessionFile);
+		return !child || !resumeEnded(child.events, run.calledAt);
+	}).length;
+	return launched - ended + openResumes;
 }
 
 /**
@@ -247,13 +263,14 @@ export function classifyAttempt({
 		checkout: cli.checkout,
 		parentTool: scenario.parentLoadTool,
 		childTool: scenario.childLoadTool,
+		resumedFiles: evidence.parent
+			? resumedRuns(evidence.parent.events).map((run) => run.sessionFile)
+			: [],
 	});
 	const metrics = { parent, children, load };
-	const models = [load.parentModel, ...load.children.map((c) => c.model)];
-	const thinking = [
-		load.parentThinking,
-		...load.children.map((c) => c.thinking),
-	];
+	const probed = [...load.children, ...load.resumes];
+	const models = [load.parentModel, ...probed.map((c) => c.model)];
+	const thinking = [load.parentThinking, ...probed.map((c) => c.thinking)];
 	const infra = (infraReason) => ({ kind: "infra", infraReason, ...metrics });
 	if (observed.kind === "infra") return infra(observed.infraReason);
 	if (checkoutChanged) return infra("checkout changed during the attempt");
