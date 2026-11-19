@@ -172,15 +172,20 @@ function formatSubagentCompletionHeader(
  * D14: the published outcome decides the header; the exit facts decide it only for a result without
  * a published record (an old message or a run without a result store).
  */
-function completionVerdict(
-	details: (SubagentResultMessageDetails & { status?: string }) | undefined,
-): { label: string; tone: "ok" | "failed" | "help" } {
+function completionVerdict(details: (SubagentResultMessageDetails & { status?: string }) | undefined): {
+	label: string;
+	tone: "ok" | "failed" | "help";
+} {
 	const outcome = details?.outcome;
 	if (outcome) {
 		const tone = outcome === "done" || outcome === "partial" ? "ok" : outcome === "blocked" ? "help" : "failed";
 		return { label: OUTCOME_WORDS[outcome], tone };
 	}
 	if (details?.status === "pinged") return { label: "needs help", tone: "help" };
+	// A wait that ended without a report (the launch reply's typed status): no completion to show.
+	if (details?.status === "interrupted") return { label: "interrupted", tone: "failed" };
+	if (details?.status === "wait_failed")
+		return { label: `wait failed (${details.error ?? "unknown"})`, tone: "failed" };
 	const errorMessage = details?.errorMessage;
 	const exitCode = details?.exitCode ?? 0;
 	const failed = !!errorMessage || exitCode !== 0;

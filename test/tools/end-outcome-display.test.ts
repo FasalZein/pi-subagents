@@ -156,7 +156,11 @@ function replyText(reply: { content: Array<{ type: string; text?: string }> }): 
 }
 
 /** Every marker the returned text holds is shown by the renderer (differential check). */
-function assertShowsMarkers(reply: { content: Array<{ type: string; text?: string }> }, shown: string, markers: string[]) {
+function assertShowsMarkers(
+	reply: { content: Array<{ type: string; text?: string }> },
+	shown: string,
+	markers: string[],
+) {
 	const returned = replyText(reply);
 	for (const marker of markers) {
 		assert.ok(returned.includes(marker), `returned text lacks ${marker}: ${returned}`);
@@ -189,7 +193,11 @@ async function waitedLaunch(
 	const args = {
 		children: children.map(({ running }) => ({ agent: "scout", name: running.name, title: "t", task: "Work" })),
 	};
-	const ctx = { hasUI: true, cwd: process.cwd(), sessionManager: { getSessionFile: () => null, getSessionId: () => "p" } };
+	const ctx = {
+		hasUI: true,
+		cwd: process.cwd(),
+		sessionManager: { getSessionFile: () => null, getSessionId: () => "p" },
+	};
 	const tool = tools.get(SUBAGENT_TOOL_NAME)!;
 	const reply = await tool.execute("call-1", args, undefined, undefined, ctx);
 	const shown = tool.renderResult(reply, { expanded: true }, theme, { args }).render(WIDTH).join("\n");
@@ -257,7 +265,10 @@ describe("published text displays (B1 review)", () => {
 		const { running, result } = doneChild("resumed-worker");
 		const waited = await publishedWait(running, result)();
 		// resume-tool.ts: a waiting resume puts the dropped-extension lines in a block before the result.
-		const reply = { ...waited, content: [{ type: "text", text: "dropped missing extension: gone.ts" }, ...waited.content] };
+		const reply = {
+			...waited,
+			content: [{ type: "text", text: "dropped missing extension: gone.ts" }, ...waited.content],
+		};
 		const shown = registeredTools()
 			.get(SUBAGENT_RESUME_TOOL_NAME)!
 			.renderResult(reply, { expanded: true }, theme, { args: {} })
