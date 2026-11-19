@@ -18,9 +18,27 @@ export function createOversizeRefusal(tool: string, field: string) {
 		throw new Error(
 			`${tool} refused: ${field} has ${text.length.toLocaleString("en-US")} characters; the limit is ${COMPLETION_LIMIT_TEXT}. ` +
 				`Shorten ${field} to ${COMPLETION_LIMIT_TEXT} or less and call ${tool} again. ` +
-				`A second ${field} over the limit is accepted: its first ${COMPLETION_LIMIT_TEXT} become the summary and the full text goes into the report.`,
+				`A second ${field} over the limit is accepted: the summary is cut and marked, and the full text goes into the report.`,
 		);
 	};
+}
+
+/**
+ * D12: session entry that holds one accepted completion call by tool call id. The child appends it
+ * synchronously inside the tool, before any exit record, so the parent can type the result from it
+ * when Pi has not yet persisted the tool result, or omitted the arguments of a nested call over its
+ * 8 KiB limit, or a person took over the pane and no exit record exists.
+ */
+export const SUBAGENT_ACCEPTED_CALL_ENTRY = "pi-subagent-accepted-call";
+
+export interface AcceptedCallEntry {
+	toolCallId: string;
+	tool: string;
+	args: Record<string, unknown>;
+}
+
+export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry: AcceptedCallEntry): void {
+	pi.appendEntry<AcceptedCallEntry>(SUBAGENT_ACCEPTED_CALL_ENTRY, entry);
 }
 
 const OUTCOME_DESCRIPTION = "done, partial or blocked";
@@ -62,7 +80,10 @@ export interface SubagentDoneDeps {
 	getOutputTokens: () => number;
 }
 
-export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">, deps: SubagentDoneDeps) {
+export function registerSubagentDoneTool(
+	pi: Pick<ExtensionAPI, "registerTool" | "appendEntry">,
+	deps: SubagentDoneDeps,
+) {
 	const refuseOversizeSummary = createOversizeRefusal(SUBAGENT_DONE_TOOL_NAME, "summary");
 	pi.registerTool({
 		name: SUBAGENT_DONE_TOOL_NAME,
@@ -73,10 +94,13 @@ export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">,
 		parameters: buildSubagentDoneParams(),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			refuseOversizeSummary((params as { summary?: unknown }).summary);
+			const args = params as Record<string, unknown>;
+			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args });
 			if (deps.isTakenOver()) {
 				// D11/D12: the result stays in this session; the pane closes only
-				// when the person closes it.
+				// when the person closes it. The model's turn still ends here.
 				return {
+					terminate: true,
 					content: [
 						{
 							type: "text",
@@ -88,11 +112,14 @@ export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">,
 			}
 			// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
 			deps.writeExitSignal(
-				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args: params } },
+				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args } },
 				{ supersede: true },
 			);
 			deps.requestShutdown(ctx);
+			// D12: an accepted autonomous call is final. Print mode installs no shutdown handler, so
+			// end the agent loop here; another model turn would replace the typed result.
 			return {
+				terminate: true,
 				content: [{ type: "text", text: "Shutting down subagent session." }],
 				details: {},
 			};

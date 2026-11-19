@@ -485,6 +485,7 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown,
 			getOutputTokens: () => outputTokens,
+			isTakenOver: () => takeover.tookOver,
 		});
 	}
 

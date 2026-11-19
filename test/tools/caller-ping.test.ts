@@ -31,6 +31,7 @@ describe("caller_ping loop guard", () => {
 				handlers.set(event, list);
 			},
 			registerShortcut() {},
+			appendEntry() {},
 			registerCommand(name: string, definition: any) {
 				commands.set(name, definition);
 			},

@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { COMPLETION_LIMIT_TEXT, createOversizeRefusal } from "./completion-call.ts";
+import { COMPLETION_LIMIT_TEXT, createOversizeRefusal, recordAcceptedCall } from "./completion-call.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { CALLER_PING_TOOL_NAME } from "./tool-names.ts";
 
@@ -57,6 +57,8 @@ export interface CallerPingDeps {
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => "accepted" | "owned" | "no-session";
 	requestShutdown: (ctx: { shutdown: () => void }) => void;
 	getOutputTokens: () => number;
+	/** D11: a person took over the pane; no exit path of the child may close it. */
+	isTakenOver: () => boolean;
 }
 
 function buildCallerPingParams() {
@@ -113,6 +115,21 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
+			recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params });
+			if (deps.isTakenOver()) {
+				// D11/D12: the ping stays in this session; no exit record, no shutdown. The parent
+				// reads it when the person closes the pane.
+				return {
+					terminate: true,
+					content: [
+						{
+							type: "text",
+							text: "Ping recorded in this session. A person took over this pane, so it stays open until they close it. Do not call caller_ping again.",
+						},
+					],
+					details: {},
+				};
+			}
 			const pingWrite = deps.writeExitSignal(
 				{
 					type: "ping",
@@ -136,6 +153,7 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				// A done or error outcome already owns this child, so the parent
 				// will see that verdict, not a ping. Say so instead of pretending.
 				return {
+					terminate: true,
 					content: [
 						{
 							type: "text",
@@ -146,6 +164,7 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				};
 			}
 			return {
+				terminate: true,
 				content: [
 					{
 						type: "text",

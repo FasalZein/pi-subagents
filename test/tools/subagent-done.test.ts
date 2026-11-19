@@ -105,6 +105,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -164,6 +165,7 @@ describe("subagent-done.ts", () => {
 							handlers.set(event, handler);
 						},
 						registerShortcut() {},
+						appendEntry() {},
 						registerCommand() {},
 					} as any);
 
@@ -215,6 +217,7 @@ describe("subagent-done.ts", () => {
 					handlers.set(event, handler);
 				},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 
@@ -286,6 +289,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -338,6 +342,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -409,6 +414,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -484,6 +490,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand(name: string, def: any) {
 						commands.set(name, def);
 					},
@@ -544,6 +551,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand(name: string, def: any) {
 						commands.set(name, def);
 					},
@@ -622,6 +630,7 @@ describe("subagent-done.ts", () => {
 					handlers.set(event, handler);
 				},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 
@@ -686,6 +695,7 @@ describe("subagent-done.ts", () => {
 						handlers.set(event, handler);
 					},
 					registerShortcut() {},
+					appendEntry() {},
 					registerCommand() {},
 				} as any);
 
@@ -723,6 +733,7 @@ describe("subagent-done.ts", () => {
 				},
 				on() {},
 				registerShortcut() {},
+				appendEntry() {},
 				registerCommand() {},
 			} as any);
 			return tools;
