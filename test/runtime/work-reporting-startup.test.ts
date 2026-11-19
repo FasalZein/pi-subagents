@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
-import { createTestDir, writeExecutable } from "../support/index.ts";
+import { createTestDir, recordOscOnStdout, writeExecutable } from "../support/index.ts";
 
 // Differential checks of the default reporter connection against its c8cb9af behaviour:
 // no CLI call outside an eligible TUI, only bounded asynchronous discovery, and the
@@ -136,15 +136,10 @@ test("TUI cases on a Herdr app or Rex host write no OSC record to stdout", async
 	};
 	const saved = Object.fromEntries(Object.keys(host).map((name) => [name, process.env[name]]));
 	Object.assign(process.env, host);
-	// A recording terminal stands in for stdout: no live pane, and a record never reaches the runner's output.
-	const stdout = process.stdout as { isTTY?: boolean; write: typeof process.stdout.write };
-	const { isTTY, write } = stdout;
-	const written: string[] = [];
-	stdout.isTTY = true;
-	stdout.write = ((chunk: string | Uint8Array) => written.push(String(chunk)) > 0) as typeof process.stdout.write;
+	// A recording terminal stands in for stdout: no live pane, and a record never reaches the real stdout.
+	const terminal = recordOscOnStdout();
 	t.after(() => {
-		stdout.isTTY = isTTY;
-		stdout.write = write;
+		terminal.restore();
 		for (const [name, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
@@ -153,10 +148,7 @@ test("TUI cases on a Herdr app or Rex host write no OSC record to stdout", async
 	const herdr = fakeHerdr(dirs.bin, 0);
 	const { stop } = await startDefault(t, "tui", { PATH: dirs.bin, HERDR_ENV: "1", HERDR_PANE_ID: "pane-7" });
 	await stop();
-	assert.deepEqual(
-		written.filter((chunk) => chunk.includes("\x1b]7501;")),
-		[],
-	);
+	assert.deepEqual(terminal.records, []);
 	assert.equal(herdr.calls().filter((args) => args[1] === "report-metadata").length, 2);
 });
 

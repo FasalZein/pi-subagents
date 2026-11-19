@@ -165,3 +165,29 @@ export function useLegacyAgentDefinition(): string {
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	return "legacy";
 }
+
+/**
+ * Makes process.stdout a recording terminal for an OSC 7501 writer: isTTY is true, each OSC 7501 record is
+ * kept from the real stdout, and every other chunk passes through, because node --test reports through the
+ * same stdout and a swallowed report drops tests from the run. Call restore() before the test ends.
+ */
+export function recordOscOnStdout(): { records: string[]; restore(): void } {
+	const stdout = process.stdout as { isTTY?: boolean; write: typeof process.stdout.write };
+	const { isTTY, write } = stdout;
+	const records: string[] = [];
+	stdout.isTTY = true;
+	stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+		if (typeof chunk === "string" && chunk.includes("\x1b]7501;")) {
+			records.push(chunk);
+			return true;
+		}
+		return (write as (...args: unknown[]) => boolean).call(stdout, chunk, ...rest);
+	}) as typeof process.stdout.write;
+	return {
+		records,
+		restore() {
+			stdout.isTTY = isTTY;
+			stdout.write = write;
+		},
+	};
+}

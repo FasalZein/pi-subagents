@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { connectMuxWorkReporter, getMuxBackend } from "../../src/mux/core.ts";
-import { writeExecutable } from "../support/index.ts";
+import { recordOscOnStdout, writeExecutable } from "../support/index.ts";
 import { FAKE_HC, FAKE_HC_CALLER, seedFakeHcCaller } from "./fake-hc.ts";
 
 // Old herdr that answers its availability probes (status server, current pane).
@@ -122,14 +122,7 @@ describe("herdr-core detection needs the app to answer (T45, D27, D29)", () => {
 			}
 			assert.equal(getMuxBackend(), "herdr");
 			// A recording terminal stands in for stdout: an OSC reporter would write its record here.
-			const written: string[] = [];
-			const stdout = process.stdout as { isTTY?: boolean; write: typeof process.stdout.write };
-			const { isTTY, write } = stdout;
-			stdout.isTTY = true;
-			stdout.write = ((chunk: string | Uint8Array) => {
-				written.push(String(chunk));
-				return true;
-			}) as typeof process.stdout.write;
+			const terminal = recordOscOnStdout();
 			try {
 				const reporter = await connectMuxWorkReporter({
 					mode: "tui",
@@ -139,14 +132,9 @@ describe("herdr-core detection needs the app to answer (T45, D27, D29)", () => {
 				await reporter.publish(2);
 				await reporter.stop();
 			} finally {
-				stdout.isTTY = isTTY;
-				stdout.write = write;
+				terminal.restore();
 			}
-			assert.deepEqual(
-				written.filter((chunk) => chunk.includes("\x1b]7501;")),
-				[],
-				"no OSC 7501 record",
-			);
+			assert.deepEqual(terminal.records, [], "no OSC 7501 record");
 			const calls = join(process.env.FAKE_TERMINAL_STATE ?? "", "herdr-calls");
 			const metadata = existsSync(calls)
 				? readFileSync(calls, "utf8")

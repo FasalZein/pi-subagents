@@ -14,7 +14,7 @@ import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { resetRuntimeStateForTest, runningSubagents } from "../../src/runtime/state.ts";
 import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
 import type { RunningSubagent } from "../../src/types.ts";
-import { writeExecutable } from "../support/index.ts";
+import { recordOscOnStdout, writeExecutable } from "../support/index.ts";
 
 type Record = { state: string; msg?: string };
 
@@ -271,13 +271,9 @@ test("herdr-core and Rex expose the OSC writer as their status ability; with old
 	const binDir = mkdtempSync(join(tmpdir(), "osc-abilities-"));
 	writeExecutable(binDir, "hc", ANSWERING_HC);
 	writeExecutable(binDir, "rex", ANSWERING_REX);
-	const savedTty = process.stdout.isTTY;
-	const savedWrite = process.stdout.write;
-	const sink: string[] = [];
-	// The abilities write to the real stdout; it must look like a terminal so only the environment decides,
-	// and its write goes to a sink so no record reaches the test runner's output.
-	process.stdout.isTTY = true;
-	process.stdout.write = ((chunk: string | Uint8Array) => sink.push(String(chunk)) > 0) as typeof process.stdout.write;
+	// The abilities write to the real stdout; it must look like a terminal so only the environment and the
+	// fakes decide, and its records stay off the real stdout.
+	const terminal = recordOscOnStdout();
 	try {
 		for (const name of [
 			"HC_TERMINAL_ID",
@@ -301,12 +297,9 @@ test("herdr-core and Rex expose the OSC writer as their status ability; with old
 		const rex = await rexBackend.connectWorkReporter?.(session());
 		assert.ok(rex);
 		await rex.stop();
-		// The probes are asynchronous now, so the test runner's own reports can reach the sink too.
-		const records = sink.filter((chunk) => chunk.includes(`${ESC}]7501;`));
-		assert.equal(records.length, 2, "each stop clears the extension's own record once");
+		assert.equal(terminal.records.length, 2, "each stop clears the extension's own record once");
 	} finally {
-		process.stdout.write = savedWrite;
-		process.stdout.isTTY = savedTty;
+		terminal.restore();
 		for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
 		Object.assign(process.env, saved);
 		rmSync(binDir, { recursive: true, force: true });
