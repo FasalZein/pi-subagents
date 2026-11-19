@@ -1,6 +1,7 @@
 import { deliverRunEnd } from "../../runtime/delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolveArtifactProjectRoot } from "../../artifact-storage.ts";
+import { endRun } from "../../runtime/result-router.ts";
 import { runningSubagents, moduleAbortController } from "../../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
@@ -205,6 +206,7 @@ function registerAdoptedWatcher(
 					// delivery stays on disk for the authorized recipient. This
 					// catch is load-bearing — an unhandled rejection here killed
 					// live `-p` sessions at exit.
+					endRun(running);
 					return verifiedRunNotice(
 						manifest,
 						runDir,
@@ -216,6 +218,10 @@ function registerAdoptedWatcher(
 					);
 				}
 				const result = verifiedRunToSubagentResult(final, runDir, logicalChild(manifest), running.startTime, { parentCwd: cwd });
+				// D15: a closed parent takes no lease and gets no notice; the report stays with the run for
+				// the next authorized adopter.
+				const parentOpen = endRun(running);
+				if (!parentOpen) return result;
 				if (authorizedRecipientIds(final).includes(options.sessionId ?? "")) {
 					const sessionId = options.sessionId ?? "";
 					const lease = acquireVerifiedRunDeliveryLease(runDir, {

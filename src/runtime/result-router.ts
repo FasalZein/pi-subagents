@@ -33,13 +33,22 @@ interface RoutedPingOutcome {
 
 export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 
+/**
+ * D5: the run's one terminal transition, for a watched end, a watcher failure and a verified
+ * adoption alike. Returns whether the parent may still receive the run's end (D15: a closed session
+ * gets no more deliveries).
+ */
+export function endRun(running: RunningSubagent): boolean {
+	running.phase = "ended";
+	return !isParentDeliveryClosed(running);
+}
+
 export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): RoutedSubagentOutcome {
 	const { pi, running, result, updateWidget } = options;
-	running.phase = "ended";
+	const parentClosed = !endRun(running);
 	clearSubagentShutdownTimer(running);
 	// D15: a run end that a wait owns enters the queue held for that wait; the wait's reply takes it.
 	const heldByWait = isRunEndHeld(running.id);
-	const parentClosed = isParentDeliveryClosed(running);
 	if (result.ping) {
 		runningSubagents.delete(running.id);
 		updateWidget();

@@ -1,7 +1,7 @@
 import { deliverRunEnd } from "./delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
-import { deliverCompletedSubagentResult, routeSubagentOutcome } from "./result-router.ts";
+import { deliverCompletedSubagentResult, endRun, routeSubagentOutcome } from "./result-router.ts";
 import { withRuntimeEnd } from "./run-result.ts";
 import { resultTextOf } from "./unpublished-result.ts";
 import {
@@ -13,7 +13,7 @@ import {
 	runningSubagents,
 } from "./state.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
-import { runDeliveryState } from "./wait-holds.ts";
+import { isRunEndHeld, runDeliveryState } from "./wait-holds.ts";
 
 export interface RunningRegistryRuntime {
 	updateWidget(): void;
@@ -248,6 +248,7 @@ export function wireSubagentSteerBack(
 			handleDetachedSubagentOutcome(pi, running, result, updateWidget);
 		})
 		.catch((err) => {
+			const parentOpen = endRun(running);
 			releaseSpawnWidthSlot(running);
 			runningSubagents.delete(running.id);
 			updateWidget();
@@ -268,6 +269,9 @@ export function wireSubagentSteerBack(
 				},
 				{ kind: "failed", error },
 			);
+			// The record is in the run's files either way; a closed parent gets no message unless a wait holds the end.
+			const heldByWait = isRunEndHeld(running.id);
+			if (!parentOpen && !heldByWait) return;
 			deliverRunEnd(pi, running.id, {
 				customType: "subagent_result",
 				content: resultTextOf({ ...failed, id: running.id, agent: running.agent }),
@@ -290,6 +294,6 @@ export function wireSubagentSteerBack(
 					...(failed.resultRunId ? { runId: failed.resultRunId } : {}),
 					...(failed.reportFile ? { reportFile: failed.reportFile } : {}),
 				},
-			});
+			}, { heldByWait });
 		});
 }

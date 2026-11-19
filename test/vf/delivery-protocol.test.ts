@@ -15,6 +15,7 @@ import {
 import { getLiveSlotCount, resetSpawnWidthForTest } from "../../src/runtime/spawn-width.ts";
 import { resetSubagentStateForTest, runningSubagents, stopRunningSubagent } from "../../src/runtime/wiring.ts";
 import { moduleAbortController } from "../../src/runtime/state.ts";
+import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { assert, createTestDir, sleep } from "../support/index.ts";
 import {
 	buildSupervisedRun,
@@ -97,6 +98,33 @@ describe("verified fan-out reattach", () => {
 		assert.equal(messages.length, 1);
 		assert.match(messages[0].content, /Final report for VF-GOOD/);
 		assert.equal(getLiveSlotCount(), 0, "adopted watcher released its slots");
+		rmSync(artifactRoot, { recursive: true, force: true });
+	});
+
+	it("ends an adopted run without delivering to a closed parent; the report stays for the next adopter", async () => {
+		const { repo, fakePi, captureDir, parent } = setupFixture();
+		fixtureRoot = parent;
+		const artifactRoot = createTestDir();
+		process.env.PI_ARTIFACT_PROJECT_ROOT = artifactRoot;
+		const { runDir } = buildSupervisedRun(repo, fakePi, captureDir, [
+			{ marker: "VF-GOOD", beforeMs: 3_000, change: "good change" },
+			{ marker: "VF-MID", beforeMs: 3_000, change: "mid change" },
+		], { baseDir: verifiedRunsBaseDir(repo), parentSessionId: "session-origin" });
+		await waitForState(runDir, "running");
+		const closed = captureSink();
+		const adopted = await adoptVerifiedRuns(closed.sink as never, repo, { sessionId: "session-origin" });
+		assert.equal(adopted.find((entry) => entry.runDir === runDir)?.action, "watching");
+		const watched = [...runningSubagents.values()].find((entry) => entry.verifiedRunDir === runDir);
+		assert.ok(watched, "the adopted run is tracked");
+		// The parent session closes while the detached supervisor keeps running (D15).
+		closeParentDelivery(watched);
+		await watched.completionPromise;
+		assert.equal(watched.phase, "ended");
+		assert.equal(closed.messages.length, 0, "a closed parent gets no delivery");
+		const next = captureSink();
+		const again = await adoptVerifiedRuns(next.sink as never, repo, { sessionId: "session-origin" });
+		assert.equal(again.find((entry) => entry.runDir === runDir)?.action, "delivered");
+		assert.equal(next.messages.length, 1);
 		rmSync(artifactRoot, { recursive: true, force: true });
 	});
 

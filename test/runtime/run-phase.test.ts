@@ -4,7 +4,9 @@ import { appendFileSync } from "node:fs";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
-import { stopRunningSubagent } from "../../src/runtime/running-registry.ts";
+import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, RunPhase } from "../../src/types.ts";
@@ -243,6 +245,19 @@ describe("run phase", () => {
 		stoppedChild.emit("exit", 143);
 		const stopResult = await settleWithin(watch, 4000, "stop request");
 		assert.equal(stopResult.error, "cancelled");
+	});
+
+	it("ends a run whose watcher failed, and sends a closed parent nothing", async () => {
+		for (const closeParent of [false, true]) {
+			const running = makeRunning(makeSession(), { id: closeParent ? "closed-parent" : "open-parent" });
+			if (closeParent) closeParentDelivery(running);
+			const sent: unknown[] = [];
+			const pi = { sendMessage: (message: unknown) => sent.push(message) } as unknown as ExtensionAPI;
+			wireSubagentSteerBack(pi, running, Promise.reject(new Error("watcher crashed")), () => {});
+			await sleep(10);
+			assert.equal(running.phase, "ended");
+			assert.equal(sent.length, closeParent ? 0 : 1, closeParent ? "closed parent" : "open parent");
+		}
 	});
 
 	it("sends a stopping run no soft interruption and no reaper signal", async () => {
