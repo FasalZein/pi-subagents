@@ -69,6 +69,7 @@ import "./launch/resume-model-config.test.ts";
 import "./launch/model-choice.test.ts";
 import "./launch/model-launch-resume-parity.test.ts";
 import "./launch/env-frontmatter.test.ts";
+import "./launch/prompt-artifacts.test.ts";
 import "./agents/definitions-agent-list.test.ts";
 import "./agents/agent-list-runtime-contract.test.ts";
 import "./agents/spawn-fields.test.ts";
