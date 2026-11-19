@@ -3,6 +3,7 @@ import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
+import { runningSubagents } from "../../src/runtime/wiring.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
@@ -27,7 +28,7 @@ const REPORT_TAIL = "REPORT-TAIL-MARKER";
 /** A 20,000-character report whose tail must never enter the parent. */
 const LONG_REPORT = `REPORT-HEAD ${"x".repeat(20_000 - 12 - REPORT_TAIL.length - 1)} ${REPORT_TAIL}`;
 
-type Sent = { customType: string; content: string; details: { id: string } };
+type Sent = { customType: string; content: string; details: { id: string }; triggerTurn?: boolean };
 
 function mockParent() {
 	const sent: Sent[] = [];
@@ -39,8 +40,8 @@ function mockParent() {
 			return definition;
 		},
 		getThinkingLevel: () => "low",
-		sendMessage(message: Sent) {
-			sent.push(message);
+		sendMessage(message: Sent, options?: { triggerTurn?: boolean }) {
+			sent.push({ ...message, triggerTurn: options?.triggerTurn });
 		},
 		on(name: string, handler: (event: any, ctx: any) => void) {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -226,6 +227,8 @@ describe("T23: launches that wait use the delivery owner", () => {
 		abort.abort();
 		const waited = await waitForSubagentForTest({ id: running.id }, abort.signal);
 		assert.equal((waited.details as { error?: string }).error, "interrupted");
+		// T26 (D16): the aborted wait stops nothing; the run keeps running.
+		assert.equal(runningSubagents.get(running.id)?.executionState, "running", "no stop was sent");
 		const end = endOf(running.name, "LATE REPORT");
 		resolveCompletion(end);
 		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
@@ -299,7 +302,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		}
 	});
 
-	it("R4: a child that ends during the wait, then Esc before the reply returns: its result goes out as a message", async () => {
+	it("T26 checks 1-2: Esc during the launch wait stops no child; the taken result goes out with no turn, a later end starts one", async () => {
 		const parent = mockParent();
 		parent.fire("agent_start");
 		const abort = new AbortController();
@@ -316,6 +319,14 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(copies.length, 1, "the result the aborted wait took goes out as a message");
 		assert.match(copies[0].content, /REPORT-HEAD/);
 		assert.ok(copies[0].content.length <= COPY_CAP);
+		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
+		// D16: Esc stops only the wait; child 2 still runs and no stop was sent.
+		assert.equal(runningSubagents.get("id-child-two")?.executionState, "running", "child 2 still runs");
+		launch.finish["child-two"](endOf("child-two", "LATE-TWO"));
+		await sleep(10);
+		const late = parent.sent.filter((entry) => entry.details.id === "id-child-two");
+		assert.equal(late.length, 1, "child 2 reports by message when it ends");
+		assert.equal(late[0].triggerTurn, true, "a child that ends later starts a turn");
 	});
 
 	it("an early caller_ping is taken by the launch wait like any queued result", async () => {

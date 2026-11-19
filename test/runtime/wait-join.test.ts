@@ -2,11 +2,13 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
+import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { ResultRecordSchema } from "../../src/runtime/result-record-schema.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { joinRuns } from "../../src/runtime/wait-join.ts";
+import { runningSubagents } from "../../src/runtime/wiring.ts";
 import {
 	registerSubagentWaitTool,
 	SubagentWaitOutput,
@@ -40,7 +42,12 @@ function sink(sent: Sent[]) {
 }
 
 /** With a root, the run publishes a typed record when it ends, as its watcher does after subagent_done. */
-function startRun(name: string, sent: Sent[], root?: string): (summary: string) => void {
+function startRun(
+	name: string,
+	sent: Sent[],
+	root?: string,
+	pi: { sendMessage: (message: never, options?: never) => void } = sink(sent),
+): (summary: string) => void {
 	let finish!: (result: SubagentResult) => void;
 	const watch = new Promise<SubagentResult>((resolve) => {
 		finish = resolve;
@@ -65,7 +72,7 @@ function startRun(name: string, sent: Sent[], root?: string): (summary: string) 
 		running.resultTarget = { store, reservation: store.reserve(), parentCwd: root, warnings: [] };
 	}
 	setRunningSubagentForTest(running);
-	wireSubagentSteerBack(sink(sent) as never, running, watch, () => {});
+	wireSubagentSteerBack(pi as never, running, watch, () => {});
 	return (summary) => {
 		const base = { name, task: "t", summary, summarySource: "subagent" as const, exitCode: 0, elapsed: 1 };
 		if (!root) return finish(base);
@@ -202,6 +209,37 @@ describe("T24: joinRuns", () => {
 		const outcome = await wait;
 		assert.equal(outcome.status, "interrupted");
 		assert.deepEqual(sent, [{ customType: "subagent_result", id: "id-one" }]);
+		resetSubagentStateForTest();
+	});
+
+	it("T26 check 1: an aborted wait stops no run and gives the ends it took back as one message that starts no turn", async () => {
+		resetSubagentStateForTest();
+		const messages: Array<{ ids: string[]; triggerTurn?: boolean }> = [];
+		const pi = {
+			sendMessage: (message: { customType: string; details: unknown }, options?: { triggerTurn?: boolean }) =>
+				messages.push({ ids: runEndIds({ role: "custom", ...message }), triggerTurn: options?.triggerTurn }),
+		};
+		const finishOne = startRun("one", [], undefined, pi as never);
+		const finishTwo = startRun("two", [], undefined, pi as never);
+		const finishThree = startRun("three", [], undefined, pi as never);
+		const abort = new AbortController();
+		const wait = joinRuns({ ids: ["id-one", "id-two", "id-three"] }, abort.signal);
+		await tick();
+		finishOne("ONE-REPORT");
+		finishTwo("TWO-REPORT");
+		await tick();
+		abort.abort();
+		const outcome = await wait;
+		assert.equal(outcome.status, "interrupted");
+		assert.deepEqual(outcome.pending, ["id-three"]);
+		assert.equal(runningSubagents.get("id-three")?.executionState, "running", "no stop was sent");
+		assert.deepEqual(messages, [{ ids: ["id-one", "id-two"], triggerTurn: false }]);
+		// Check 2: a run that ends later reports by message and starts a turn.
+		finishThree("THREE-REPORT");
+		await tick();
+		assert.equal(messages.length, 2);
+		assert.deepEqual(messages[1].ids, ["id-three"]);
+		assert.notEqual(messages[1].triggerTurn, false, "the later end starts a turn");
 		resetSubagentStateForTest();
 	});
 });

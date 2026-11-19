@@ -9,7 +9,10 @@ import { groupRunEnds, type RunEndMessage, runEndIds } from "./run-end-message.t
  * before Pi polls it, and only while it is empty. All results queued at one boundary leave as one
  * message (D15). A result that the boundary did not
  * commit is handed over again at the next boundary, or at once when the parent is idle. Delivery
- * is at least once; no result waits for the person's next prompt.
+ * is at least once. The settle step appends the queued results as a session entry and asks for one
+ * more request; when the person presses Esc during that step, Pi commits the entry and starts no
+ * turn, so the results enter the next request when the person types (D15). No result waits for the
+ * person's next prompt in any other case.
  */
 class DeliveryQueue {
 	private pending = new Map<string, RunEndMessage>();
@@ -33,6 +36,22 @@ class DeliveryQueue {
 			if (stop === "aborted" || stop === "error" || ctx.hasPendingMessages()) return;
 			this.sendPending();
 		});
+		// An aborted run skips this step (extensions.md, lifecycle): its queued results leave when
+		// agent_settled finds the parent idle.
+		pi.on("agent_before_settle", (event) => {
+			const free = this.takeFree();
+			if (free.length === 0) return;
+			const message = groupRunEnds(free);
+			// Pi emits no message_end for a boundary entry, so its leases end here (D30).
+			outstandingWork.release(...free.map((entry) => entry.details.id));
+			return {
+				entries: [
+					...event.entries,
+					{ type: "custom_message", customType: message.customType, content: message.content, display: true, details: message.details },
+				],
+				continue: true,
+			};
+		});
 		pi.on("agent_settled", () => {
 			this.busy = false;
 			this.sendPending();
@@ -54,16 +73,24 @@ class DeliveryQueue {
 		this.held.set(message.details.id, pi);
 	}
 
-	/** An aborted wait gives a held run end back: it leaves now when nothing else will send it. */
-	release(id: string): void {
-		const pi = this.held.get(id);
-		this.held.delete(id);
-		const message = this.pending.get(id);
-		if (!pi || !message) return;
-		if (!this.registered) {
+	/**
+	 * An aborted wait gives the run ends it held back (D15, T26): they leave now as one message that
+	 * starts no turn, since the person stopped the turn. Pi appends it at the end of the aborted
+	 * turn, or at once when idle, so it enters the next request. Runs that end later start turns.
+	 */
+	giveBack(ids: readonly string[]): void {
+		let sink: Pick<ExtensionAPI, "sendMessage"> | undefined;
+		const messages: RunEndMessage[] = [];
+		for (const id of ids) {
+			const pi = this.held.get(id);
+			this.held.delete(id);
+			const message = this.pending.get(id);
+			if (!pi || !message) continue;
 			this.pending.delete(id);
-			pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
-		} else if (!this.busy) this.send(message, true);
+			sink ??= pi;
+			messages.push(message);
+		}
+		if (sink && messages.length > 0) sink.sendMessage<object>(groupRunEnds(messages), { triggerTurn: false });
 	}
 
 	queuedIds(): string[] {
@@ -87,6 +114,13 @@ class DeliveryQueue {
 
 	private send(message: RunEndMessage, triggerTurn: boolean): void {
 		this.pi?.sendMessage(message, { triggerTurn, deliverAs: "steer" });
+	}
+
+	/** The queued results that no wait holds, taken out of the queue. */
+	private takeFree(): RunEndMessage[] {
+		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
+		for (const message of free) this.pending.delete(message.details.id);
+		return free;
 	}
 
 	/** One boundary hands every queued result that no wait holds over as one message. */
@@ -149,8 +183,8 @@ export function queuedRunEndIds(): string[] {
  * D15 and R4, the one hand-over rule for waits: a run end stays in the queue until the reply of
  * the call that waited for it is returned. A returned reply delivers the results it holds: they
  * leave the queue and their lease ends once by id. An aborted call's reply may never reach the
- * model (codemode discards it), so every result it holds stays queued and is handed over as a
- * message; when Pi commits the reply anyway, the second copy is capped like every copy.
+ * model (codemode discards it), so every result it holds is handed over as one message that starts
+ * no turn; when Pi commits the reply anyway, the second copy is capped like every copy.
  */
 export function settleWaitReply(
 	ids: readonly string[],
@@ -164,12 +198,14 @@ export function settleWaitReply(
 			return typeof details?.id === "string" && !details.error ? [details.id] : [];
 		}),
 	);
+	const givenBack: string[] = [];
 	for (const id of ids) {
 		if (!signal?.aborted && returned.has(id)) {
 			deliveryQueue.take(id);
 			outstandingWork.release(id);
-		} else deliveryQueue.release(id);
+		} else givenBack.push(id);
 	}
+	deliveryQueue.giveBack(givenBack);
 }
 
 /** Forget the session-scoped queue (test isolation and runtime reset). */
