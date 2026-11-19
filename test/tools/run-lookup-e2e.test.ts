@@ -219,14 +219,11 @@ async function startParent(options: { unwritableResults?: boolean } = {}): Promi
 }
 
 /** A workflow script: launches `count` children one after another, waits for each, then throws. */
-function sequentialScript(count: number, options: { print: boolean }): string {
+function sequentialScript(count: number): string {
 	return [
 		`for (let i = 0; i < ${count}; i++) {`,
 		"  const launched = await tools.subagent({ children: [{ name: `seq-${i}`, task: 't', title: 'Seq', agent: 'worker-a' }] });",
-		"  const text = typeof launched === 'string' ? launched : JSON.stringify(launched);",
-		"  const id = /run (\\w+)/.exec(text)[1];",
-		"  const r = await tools.subagent_wait({ ids: [id] });",
-		options.print ? "  console.log(r.status);" : "",
+		"  await tools.subagent_wait({ ids: [launched.children[0].runId] });",
 		"}",
 		"throw new Error('workflow failed after its waits');",
 	].join("\n");
@@ -243,7 +240,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 		const parent = await startParent();
 		try {
 			await prompt(parent, "work", [
-				fauxToolCall("codemode", { code: sequentialScript(21, { print: false }) }, { id: "s1" }),
+				fauxToolCall("codemode", { code: sequentialScript(21) }, { id: "s1" }),
 			]);
 			const [script] = parent.toolResults("codemode");
 			assert.ok(script?.isError, "the script failed");
@@ -275,7 +272,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 		const parent = await startParent({ unwritableResults: true });
 		try {
 			await prompt(parent, "work", [
-				fauxToolCall("codemode", { code: sequentialScript(1, { print: false }) }, { id: "s1" }),
+				fauxToolCall("codemode", { code: sequentialScript(1) }, { id: "s1" }),
 			]);
 			const [script] = parent.toolResults("codemode");
 			assert.ok(script?.isError);

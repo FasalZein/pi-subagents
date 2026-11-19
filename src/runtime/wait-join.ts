@@ -215,9 +215,8 @@ export async function joinRuns(
 		// Only runs that still run report later; an end another wait holds is delivered by that wait.
 		return { status, results: [], pending, missing };
 	}
-	settleWaitReply(
-		settled.map((result) => result.id),
-		settled.map((result) => ({ details: { id: result.id } })),
-	);
+	// Every returned result carries its report; a copy by lookup settles nothing (D16).
+	const settledIds = settled.map((result) => result.id);
+	settleWaitReply(settledIds, settledIds);
 	return { status, results: reply, pending, missing };
 }
