@@ -146,7 +146,6 @@ export async function getLaunchedSubagentResult(running: RunningSubagent, signal
 	return getLaunchedSubagentResultWithRuntime(
 		running,
 		{
-			formatElapsed,
 			updateWidget,
 			waitForSubagentResult,
 			asSubagentToolResult,
@@ -175,7 +174,7 @@ function deliverCompletedSubagentResultViaSteer(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	cached: CompletedSubagentResult,
 ): CompletedSubagentResult {
-	return deliverCompletedSubagentResultViaSteerWithDeps(pi, cached, formatElapsed);
+	return deliverCompletedSubagentResultViaSteerWithDeps(pi, cached);
 }
 
 function routeDetachedSubagentCompletion(
@@ -183,7 +182,7 @@ function routeDetachedSubagentCompletion(
 	running: RunningSubagent,
 	result: SubagentResult,
 ): CompletedSubagentResult {
-	return routeDetachedSubagentCompletionWithDeps(pi, running, result, formatElapsed, updateWidget);
+	return routeDetachedSubagentCompletionWithDeps(pi, running, result, updateWidget);
 }
 
 export function wireSubagentSteerBack(
@@ -191,7 +190,7 @@ export function wireSubagentSteerBack(
 	running: RunningSubagent,
 	watchPromise: Promise<SubagentResult>,
 ): void {
-	wireSubagentSteerBackWithDeps(pi, running, watchPromise, formatElapsed, updateWidget);
+	wireSubagentSteerBackWithDeps(pi, running, watchPromise, updateWidget);
 }
 
 function getWaitRuntime(): WaitRuntime {

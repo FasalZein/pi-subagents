@@ -92,7 +92,6 @@ function renderedMessage(running: RunningSubagent, result: SubagentResult): { te
 		pi: { sendMessage: (message: never) => void sent.push(message) },
 		running,
 		result,
-		formatElapsed: String,
 		updateWidget() {},
 	} as never);
 	assert.equal(sent.length, 1);

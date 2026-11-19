@@ -19,7 +19,8 @@ import {
 	writeVerifiedRunDeliveryReceipt,
 	type VerifiedRunManifest,
 } from "./types.ts";
-import { verifiedRunToSubagentResult, verifiedRunsBaseDir } from "./launch.ts";
+import { verifiedRunsBaseDir } from "./launch.ts";
+import { type RenderedVerifiedResult, verifiedRunNotice, verifiedRunToSubagentResult } from "./winner-result.ts";
 import type { RunningSubagent, SubagentResult } from "../../types.ts";
 
 /**
@@ -110,7 +111,8 @@ export async function adoptVerifiedRuns(
 				});
 				continue;
 			}
-			const confirmed = await deliverWithReceipt(pi, manifest, runDir, {
+			const result = verifiedRunToSubagentResult(manifest, runDir, logicalChild(manifest), runStart(manifest), { parentCwd: cwd });
+			const confirmed = await deliverWithReceipt(pi, manifest, result, runDir, {
 				sessionId: options.sessionId ?? "",
 				deliveryId: lease.deliveryId,
 				confirmPersisted: options.confirmPersisted,
@@ -141,7 +143,7 @@ export async function adoptVerifiedRuns(
 				// still collects the result.
 			}
 		}
-		registerAdoptedWatcher(pi, manifest, runDir, options);
+		registerAdoptedWatcher(pi, manifest, runDir, cwd, options);
 		adoptedRunDirs.add(runDir);
 		outcomes.push({ runDir, runId: manifest.runId, action: respawned ? "respawned" : "watching" });
 	}
@@ -152,6 +154,7 @@ function registerAdoptedWatcher(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	manifest: VerifiedRunManifest,
 	runDir: string,
+	cwd: string,
 	options: {
 		sessionId?: string;
 		confirmPersisted?: (deliveryId: string) => Promise<boolean>;
@@ -182,7 +185,7 @@ function registerAdoptedWatcher(
 		async: true,
 		autoExit: true,
 		noSession: false,
-		startTime: Date.parse(manifest.createdAt) || Date.now(),
+		startTime: runStart(manifest),
 		sessionFile: manifest.request.candidates[0]?.sessionFile ?? "",
 		verifiedRunDir: runDir,
 		verifiedRunId: manifest.runId,
@@ -203,20 +206,17 @@ function registerAdoptedWatcher(
 					// delivery stays on disk for the authorized recipient. This
 					// catch is load-bearing — an unhandled rejection here killed
 					// live `-p` sessions at exit.
-					return {
-						name: manifest.request.name,
-						task: manifest.request.taskPrompt,
-						summary: `[llm-as-a-verifier ${manifest.runId}: this session stopped watching; ` +
+					return verifiedRunNotice(
+						manifest,
+						runDir,
+						logicalChild(manifest),
+						running.startTime,
+						`[llm-as-a-verifier ${manifest.runId}: this session stopped watching; ` +
 							`the detached run continues and its report stays with the run (${runDir})]`,
-						exitCode: 0,
-						elapsed: (Date.now() - running.startTime) / 1000,
-						sessionFile: manifest.request.candidates[0]?.sessionFile,
-					};
+						{ parentCwd: cwd },
+					);
 				}
-				const result = verifiedRunToSubagentResult(final, runDir, {
-					name: manifest.request.name,
-					task: manifest.request.taskPrompt,
-				}, running.startTime);
+				const result = verifiedRunToSubagentResult(final, runDir, logicalChild(manifest), running.startTime, { parentCwd: cwd });
 				if (authorizedRecipientIds(final).includes(options.sessionId ?? "")) {
 					const sessionId = options.sessionId ?? "";
 					const lease = acquireVerifiedRunDeliveryLease(runDir, {
@@ -224,7 +224,7 @@ function registerAdoptedWatcher(
 						expectedGeneration: verifiedRunResultGeneration(final),
 					});
 					if (lease.acquired) {
-						const confirmed = await deliverWithReceipt(pi, final, runDir, {
+						const confirmed = await deliverWithReceipt(pi, final, result, runDir, {
 							sessionId,
 							deliveryId: lease.deliveryId,
 							confirmPersisted: options.confirmPersisted,
@@ -260,6 +260,7 @@ function registerAdoptedWatcher(
 async function deliverWithReceipt(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	manifest: VerifiedRunManifest,
+	result: RenderedVerifiedResult,
 	runDir: string,
 	info: {
 		sessionId: string;
@@ -268,7 +269,7 @@ async function deliverWithReceipt(
 		triggerTurn?: boolean;
 	},
 ): Promise<boolean> {
-	deliverVerifiedRunResult(pi, manifest, runDir, info.deliveryId, info.triggerTurn ?? true);
+	deliverVerifiedRunResult(pi, manifest, result, info.deliveryId, info.triggerTurn ?? true);
 	const persisted = info.confirmPersisted ? await info.confirmPersisted(info.deliveryId) : true;
 	if (persisted) {
 		try {
@@ -284,21 +285,16 @@ async function deliverWithReceipt(
 function deliverVerifiedRunResult(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	manifest: VerifiedRunManifest,
-	runDir: string,
+	result: RenderedVerifiedResult,
 	deliveryId: string,
 	triggerTurn: boolean,
 ): void {
-	const result = verifiedRunToSubagentResult(
-		manifest,
-		runDir,
-		{ name: manifest.request.name, task: manifest.request.taskPrompt },
-		Date.parse(manifest.createdAt) || Date.now(),
-	);
 	const selection = manifest.result?.selection ?? null;
 	outstandingWork.delivery(manifest.runId.slice(-8), () => pi.sendMessage(
 		{
 			customType: "subagent_result",
-			content: result.summary,
+			// D14 and D18: the renderer's capped text; the delivery id stays in the details.
+			content: result.resultText,
 			display: true,
 			details: {
 				id: manifest.runId.slice(-8),
@@ -315,6 +311,9 @@ function deliverVerifiedRunResult(
 				sessionFile: selection?.winnerSessionFile ?? manifest.request.candidates[0]?.sessionFile,
 				verifiedRunId: manifest.runId,
 				deliveryId,
+				...(result.resultRunId ? { runId: result.resultRunId } : {}),
+				...(result.resultOutcome ? { outcome: result.resultOutcome } : {}),
+				...(result.reportFile ? { reportFile: result.reportFile } : {}),
 				errorMessage: result.errorMessage,
 			},
 		},
@@ -352,4 +351,13 @@ function sendProvenanceNotice(
 		},
 		{ triggerTurn: false, deliverAs: "steer" },
 	);
+}
+
+/** The logical child the fan-out stands for: its tool name and task. */
+function logicalChild(manifest: VerifiedRunManifest): { name: string; task: string } {
+	return { name: manifest.request.name, task: manifest.request.taskPrompt };
+}
+
+function runStart(manifest: VerifiedRunManifest): number {
+	return Date.parse(manifest.createdAt) || Date.now();
 }

@@ -21,7 +21,6 @@ export function messageText(result: SubagentResult, running: RunningSubagent): s
 	deliverCompletedSubagentResult(
 		{ sendMessage: (message) => sent.push(message as { content: string }) },
 		completed,
-		String,
 	);
 	assert.equal(sent.length, 1);
 	return sent[0].content;
