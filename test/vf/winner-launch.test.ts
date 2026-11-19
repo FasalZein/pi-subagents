@@ -1,5 +1,5 @@
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { loadAgentDefaults } from "../../src/agents/definitions.ts";
 import { resolveSubagentCwd } from "../../src/launch/runtime-paths.ts";
@@ -10,7 +10,9 @@ import {
 	wireSubagentSteerBack,
 } from "../../src/runtime/wiring.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
+import { verifiedRunFilePaths } from "../../src/vf/run/types.ts";
 import { assert, createTestDir, ORIGINAL_ENV } from "../support/index.ts";
+import { dropInheritedSubagentEnv } from "../support/env.ts";
 import { gitRun as run, setupVerifiedRunFixture } from "../support/verified-runs.ts";
 
 /**
@@ -35,8 +37,8 @@ afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe("verified fan-out launch reply", () => {
-	it("keeps the ignored-override warning in a waited launch's capped text", async () => {
+/** Starts one waited verified fan-out launch of an agent that ignores the call's thinking setting. */
+async function launchWaitedVerifiedRun(): Promise<{ text: string; artifactRoot: string }> {
 		const { repo, parent, fakePi, captureDir } = setupVerifiedRunFixture();
 		dirs.push(parent);
 		mkdirSync(join(repo, ".pi", "agents", "verifiers"), { recursive: true });
@@ -89,12 +91,43 @@ describe("verified fan-out launch reply", () => {
 			],
 		};
 		const result = await tools.get("subagent").execute("c1", params, undefined, undefined, ctx);
-		const text = (result.content[0] as { text: string }).text;
+		return { text: (result.content[0] as { text: string }).text, artifactRoot };
+}
+
+describe("verified fan-out launch reply", () => {
+	it("keeps the ignored-override warning in a waited launch's capped text", async () => {
+		const { text } = await launchWaitedVerifiedRun();
 		assert.match(text, /verifier: winner/, "the waited reply carries the winner");
 		assert.match(
 			text,
 			/warning: agent 'vf-worker' sets allow-model-override: false; thinking 'high' from the call ignored/,
 		);
 		assert.match(text, /verifier: winner (staged|not applied)/, "the winner fact stays beside the warning");
+	});
+
+	it("keeps a name that PI_SUBAGENT_ENV_DENY protects out of the manifest after the root-session reset", async () => {
+		// The parent shell as a Pi child exports it: a deny list and the value that it protects.
+		process.env.PI_SUBAGENT_ENV_DENY = "B1_DENIED_MARKER";
+		process.env.B1_DENIED_MARKER = "denied";
+		process.env.B1_ALLOWED_MARKER = "allowed";
+		try {
+			dropInheritedSubagentEnv(process.env);
+			const { artifactRoot } = await launchWaitedVerifiedRun();
+			const manifestName = basename(verifiedRunFilePaths(artifactRoot).manifest);
+			const manifests = readdirSync(artifactRoot, { recursive: true })
+				.map(String)
+				.filter((path) => basename(path) === manifestName);
+			assert.equal(manifests.length, 1, "one verified run manifest");
+			const manifest = JSON.parse(readFileSync(join(artifactRoot, manifests[0]), "utf8"));
+			const env = manifest.request.env as Record<string, string>;
+			assert.deepEqual(
+				{ denied: "B1_DENIED_MARKER" in env, allowed: "B1_ALLOWED_MARKER" in env },
+				{ denied: false, allowed: true },
+			);
+		} finally {
+			delete process.env.B1_DENIED_MARKER;
+			delete process.env.B1_ALLOWED_MARKER;
+			delete process.env.PI_SUBAGENT_ENV_DENY;
+		}
 	});
 });
