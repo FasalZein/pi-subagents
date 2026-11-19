@@ -70,7 +70,7 @@ async function launchThroughTool(dir: string, model: string | undefined): Promis
 			task: params.task,
 			agent: params.agent,
 			mode: "background",
-			executionState: "running",
+			phase: "running",
 			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			startTime: Date.now(),

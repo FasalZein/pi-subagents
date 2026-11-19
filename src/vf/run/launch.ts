@@ -294,7 +294,7 @@ export async function launchVerifiedFanOut(
 			title: params.title,
 			agent: params.agent,
 			mode: "background",
-			executionState: "running",
+			phase: "running",
 			deliveryState: options.awaited ? "awaited" : "detached",
 			parentClosePolicy: "continue",
 			blocking: params.blocking ?? false,

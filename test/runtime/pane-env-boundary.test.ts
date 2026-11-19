@@ -439,7 +439,7 @@ for (const backend of BACKENDS)
 					task: "Do the long task",
 					agent: "scout",
 					mode: "interactive",
-					executionState: "running",
+					phase: "running",
 					deliveryState: "detached",
 					parentClosePolicy: "terminate",
 					async: true,

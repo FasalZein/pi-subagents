@@ -27,6 +27,7 @@ export function terminateBackgroundChildProcess(running: RunningSubagent, signal
 }
 
 function abortBackgroundSubagent(running: RunningSubagent, escalationMs: number): void {
+	running.phase = "stopping";
 	if (running.abortController) {
 		running.abortController.abort();
 		return;
@@ -97,6 +98,7 @@ async function awaitNoSessionCleanup(
 }
 
 async function terminateInteractiveSubagent(running: RunningSubagent, runtime: ShutdownRuntime): Promise<void> {
+	running.phase = "stopping";
 	running.abortController?.abort();
 	try {
 		await runtime.closeRunningSurface(running);

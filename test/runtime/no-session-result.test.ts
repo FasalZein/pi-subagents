@@ -44,7 +44,7 @@ function makeNoSessionRun(
 		task: "Answer at length",
 		agent: "scout",
 		mode,
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy,
 		async: true,

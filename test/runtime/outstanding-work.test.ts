@@ -16,7 +16,7 @@ import { groupRunEnds, type RunEndMessage, runEndIds } from "../../src/runtime/r
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 
 function child(id: string): RunningSubagent {
-	return { id, name: id, task: "test", mode: "background", executionState: "running",
+	return { id, name: id, task: "test", mode: "background", phase: "running",
 		deliveryState: "detached", parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
 }
 

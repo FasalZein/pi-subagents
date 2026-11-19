@@ -35,7 +35,7 @@ async function pingChild(parent: Parent, name: string): Promise<RunId> {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

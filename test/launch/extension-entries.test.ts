@@ -296,7 +296,7 @@ describe("extension entries that are gone (D10)", () => {
 					title: params.title,
 					agent: params.agent,
 					mode: "background",
-					executionState: "running",
+					phase: "running",
 					deliveryState: "detached",
 					parentClosePolicy: "terminate",
 					blocking: params.blocking,

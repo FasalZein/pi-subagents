@@ -69,7 +69,7 @@ function makeRunning(dir: string, sessionFile: string): RunningSubagent {
 		task: "Do the long task",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

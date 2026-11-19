@@ -38,7 +38,7 @@ describe("interactive watcher after a pane takeover", () => {
 			name: "pane-child",
 			task: "Fix the build",
 			mode: "interactive",
-			executionState: "running",
+			phase: "running",
 			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			async: true,

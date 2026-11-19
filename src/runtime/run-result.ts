@@ -121,7 +121,7 @@ function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
 	}
 	if (end.errorMessage) return { kind: "failed", error: end.errorMessage, code: end.exitCode };
 	const wrapUp = running.timeoutWrapUp;
-	if (wrapUp && running.timeoutWrapUpMode) {
+	if (wrapUp && running.phase === "wrapping-up") {
 		return { kind: "timed_out", budget: wrapUp.kind, seconds: wrapUp.seconds, wrapUp: true };
 	}
 	if (end.exitCode === 0 || end.operatorClosed) return { kind: "exited", code: end.exitCode };

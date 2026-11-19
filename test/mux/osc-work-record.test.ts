@@ -66,7 +66,7 @@ function child(id: string): RunningSubagent {
 		name: id,
 		task: "test",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

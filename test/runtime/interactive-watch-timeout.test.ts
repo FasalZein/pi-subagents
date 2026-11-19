@@ -48,7 +48,7 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent> = 
 		name: "pane-child",
 		task: "Sweep the repo",
 		mode: "interactive",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

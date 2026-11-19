@@ -176,7 +176,7 @@ export async function watchSubagent(
 				if (restart.kind === "timedOut") {
 					return buildInteractiveRestartTimeoutResult(running, restart.expiry);
 				}
-				running.timeoutWrapUpMode = true;
+				running.phase = "wrapping-up";
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -243,13 +243,15 @@ async function watchInteractiveGeneration(
 			// terms; the deadline it crossed while exiting is not a runaway.
 			if (hasSubagentExitSidecar(running.sessionFile)) return;
 			running.timeoutExpiry = expired;
+			running.phase = "stopping";
 			void closeTimedOutSurface(running, runtime, true);
 			armDeadlineTimer();
 			return;
 		}
 		const wrapUp = checkSubagentTimeoutWrapUp(running, now);
-		if (wrapUp && !running.timeoutWrapUpMode && !hasSubagentExitSidecar(running.sessionFile)) {
+		if (wrapUp && running.phase !== "wrapping-up" && !hasSubagentExitSidecar(running.sessionFile)) {
 			running.timeoutWrapUp = wrapUp;
+			if (running.phase === "running") running.phase = "soft-limit";
 			const baseline =
 				wrapUp.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + wrapUp.seconds * 1000;
@@ -302,9 +304,7 @@ async function watchInteractiveGeneration(
 		const end = lateExitSignal && pollResult.reason === "sentinel" ? lateExitSignal : pollResult;
 		const exitSignal = end === lateExitSignal ? undefined : lateExitSignal;
 		if (
-			running.timeoutWrapUp &&
-			!running.timeoutWrapUpMode &&
-			!running.timeoutExpiry &&
+			running.phase === "soft-limit" &&
 			!signal.aborted &&
 			end.reason !== "ping" &&
 			exitSignal?.reason !== "ping"
@@ -378,7 +378,7 @@ async function watchInteractiveGeneration(
 		try {
 			await runtime.closeRunningSurface(running);
 		} catch {}
-		if (running.timeoutWrapUp && !running.timeoutWrapUpMode && !running.timeoutExpiry && !signal.aborted) {
+		if (running.phase === "soft-limit" && !signal.aborted) {
 			return { kind: "restart" };
 		}
 

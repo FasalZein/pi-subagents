@@ -26,7 +26,7 @@ function makeRunning(id: string): RunningSubagent {
 		title: "Task",
 		agent: "worker",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

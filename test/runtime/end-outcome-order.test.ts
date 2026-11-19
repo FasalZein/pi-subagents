@@ -36,7 +36,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
@@ -188,7 +188,7 @@ describe("end outcome order and crash records (T09 fix round 1)", () => {
 		const wrap = setup(DONE_CALL, {
 			timeoutBlocksResume: true,
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			timeoutWrapUpMode: true,
+			phase: "wrapping-up",
 		});
 		const wrapChild = new EventEmitter() as ChildProcess;
 		wrap.running.childProcess = wrapChild;

@@ -50,7 +50,7 @@ describe("pane result outcome", () => {
 			task: "Answer",
 			agent: "scout",
 			mode: "interactive",
-			executionState: "running",
+			phase: "running",
 			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			async: true,

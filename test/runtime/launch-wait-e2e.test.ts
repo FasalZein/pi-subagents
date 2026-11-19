@@ -60,7 +60,7 @@ function launchRuntime(children: {
 				task: params.task,
 				agent: "worker-a",
 				mode: "background",
-				executionState: "running",
+				phase: "running",
 				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				blocking: true,

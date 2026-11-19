@@ -162,7 +162,7 @@ async function startParent(
 				agent: params.agent,
 				modelRef: CHILD_MODEL,
 				mode: "background",
-				executionState: "running",
+				phase: "running",
 				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				blocking: params.agent === "worker-wait",

@@ -35,6 +35,7 @@ export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 
 export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): RoutedSubagentOutcome {
 	const { pi, running, result, updateWidget } = options;
+	running.phase = "ended";
 	clearSubagentShutdownTimer(running);
 	// D15: a run end that a wait owns enters the queue held for that wait; the wait's reply takes it.
 	const heldByWait = running.resultOwner?.kind === "wait" || isRunEndHeld(running.id);

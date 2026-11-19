@@ -460,7 +460,7 @@ async function resumeSubagentSessionWithoutWidth(
 		task: task ?? "resumed session",
 		agent: resumedAgent,
 		mode: metadata.mode,
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: invocationMetadata?.parentClosePolicy ?? metadata.parentClosePolicy ?? "terminate",
 		async: resumedAsync,

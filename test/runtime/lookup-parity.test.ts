@@ -50,7 +50,7 @@ async function deliverAndLookUp(spec: Case) {
 		task: "t",
 		agent: "worker-a",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

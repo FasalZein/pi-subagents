@@ -162,7 +162,7 @@ async function watchAndPublish(sessionFile: string, runningFields: Partial<Runni
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
@@ -510,7 +510,7 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 			if (savedPiCommand === undefined) delete process.env.PI_SUBAGENT_PI_COMMAND;
 			else process.env.PI_SUBAGENT_PI_COMMAND = savedPiCommand;
 		}
-		running.timeoutWrapUpMode = true; // as the watcher sets it after the restart
+		running.phase = "wrapping-up"; // as the watcher sets it after the restart
 		const replacement = await runChild({
 			autoExit: true,
 			wrapUp: true,
@@ -523,7 +523,7 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 		const { record, report } = await watchAndPublish(first.sessionFile, {
 			startTime,
 			timeoutWrapUp,
-			timeoutWrapUpMode: true,
+			phase: "wrapping-up",
 			timeoutWrapUpDeadlineAt: startTime + 600_000,
 			processEntryCount: running.processEntryCount,
 		} as Partial<RunningSubagent>);

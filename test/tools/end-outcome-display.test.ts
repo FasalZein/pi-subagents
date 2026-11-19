@@ -56,7 +56,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,
@@ -336,7 +336,7 @@ describe("end outcome displays (T09 fix round 1)", () => {
 	it("shows a finished report-only wrap-up as timed out with its notice, not completed", async () => {
 		const running = setup(DONE_CALL, {
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			timeoutWrapUpMode: true,
+			phase: "wrapping-up",
 		});
 		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: running.timeoutWrapUp });
 		for (const shown of [renderedMessage(running, result).text, await renderedWaitingLaunch(running, result)]) {

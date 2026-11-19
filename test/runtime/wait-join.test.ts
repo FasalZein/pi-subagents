@@ -58,7 +58,7 @@ function startRun(
 		task: "t",
 		agent: "worker-a",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: false,
@@ -232,7 +232,7 @@ describe("T24: joinRuns", () => {
 		const outcome = await wait;
 		assert.equal(outcome.status, "interrupted");
 		assert.deepEqual(outcome.pending, ["id-three"]);
-		assert.equal(runningSubagents.get("id-three")?.executionState, "running", "no stop was sent");
+		assert.equal(runningSubagents.get("id-three")?.phase, "running", "no stop was sent");
 		assert.deepEqual(messages, [{ ids: ["id-one", "id-two"], triggerTurn: false }]);
 		// Check 2: a run that ends later reports by message and starts a turn.
 		finishThree("THREE-REPORT");
@@ -252,7 +252,7 @@ function watchVerifiedRun(id: string, recipient: boolean): void {
 		task: "t",
 		agent: "worker-a",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "continue",
 		async: true,

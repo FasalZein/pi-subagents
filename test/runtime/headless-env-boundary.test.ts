@@ -199,7 +199,7 @@ describe("headless child environment boundary (D34)", () => {
 				task: "Do the long task",
 				agent: "scout",
 				mode: "background",
-				executionState: "running",
+				phase: "running",
 				deliveryState: "detached",
 				parentClosePolicy: "terminate",
 				async: true,

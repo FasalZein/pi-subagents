@@ -9,7 +9,7 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		name: "runaway",
 		task: "Loop forever",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

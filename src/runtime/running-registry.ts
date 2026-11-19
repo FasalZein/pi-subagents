@@ -111,6 +111,7 @@ export async function stopRunningSubagent(
 	closeSurface: (running: RunningSubagent) => Promise<void>,
 ): Promise<void> {
 	clearSubagentShutdownTimer(running);
+	running.phase = "stopping";
 	running.abortController?.abort();
 
 	// Always kill the child process/surface regardless of abortController.

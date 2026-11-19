@@ -172,7 +172,7 @@ async function watchBackgroundSubagentUntilFinal(
 				if (restart.kind === "timedOut") {
 					return buildBackgroundRestartTimeoutResult(running, restart.expiry);
 				}
-				running.timeoutWrapUpMode = true;
+				running.phase = "wrapping-up";
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -257,6 +257,7 @@ function watchBackgroundGeneration(
 			// point is a consequence of the kill, not a verdict that outranks it.
 			if (hasSubagentExitSidecar(running.sessionFile)) return false;
 			running.timeoutExpiry = expired;
+			running.phase = "stopping";
 			if (!running.timeoutKillTimer) beginKill();
 			return true;
 		};
@@ -264,9 +265,10 @@ function watchBackgroundGeneration(
 		const enforceTimeoutWrapUp = (now: number): boolean => {
 			if (!isDeadlineEnforceable(signal)) return false;
 			const due = checkSubagentTimeoutWrapUp(running, now);
-			if (!due || running.timeoutWrapUpMode) return false;
+			if (!due || running.phase === "wrapping-up") return false;
 			if (hasSubagentExitSidecar(running.sessionFile)) return false;
 			running.timeoutWrapUp = due;
+			if (running.phase === "running") running.phase = "soft-limit";
 			const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + due.seconds * 1000;
 			beginKill();
@@ -323,7 +325,7 @@ function watchBackgroundGeneration(
 				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
 				return;
 			}
-			if (running.timeoutExpiry || (running.timeoutWrapUp && !running.timeoutWrapUpMode)) return;
+			if (running.timeoutExpiry || running.phase === "soft-limit") return;
 			if (!sessionReadable) return;
 			try {
 				if (!shouldReapStableTerminalSummary(running)) return;
@@ -358,13 +360,7 @@ function watchBackgroundGeneration(
 			code: number | null,
 			exitSignal: ReturnType<typeof consumeSubagentExitSignal>,
 		) => {
-			if (
-				running.timeoutWrapUp &&
-				!running.timeoutWrapUpMode &&
-				!running.timeoutExpiry &&
-				!signal.aborted &&
-				exitSignal?.reason !== "ping"
-			) {
+			if (running.phase === "soft-limit" && !signal.aborted && exitSignal?.reason !== "ping") {
 				finish({ kind: "restart" });
 				return;
 			}
@@ -463,7 +459,7 @@ function watchBackgroundGeneration(
 			const exitSignal = consumeSubagentExitSignal(running.sessionFile);
 			const runtimeOwnsExit =
 				Boolean(running.timeoutExpiry) ||
-				Boolean(running.timeoutWrapUp && !running.timeoutWrapUpMode) ||
+				running.phase === "soft-limit" ||
 				signal.aborted;
 			if (runtimeOwnsExit && processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 				if (!groupExitPoll) {
@@ -480,7 +476,7 @@ function watchBackgroundGeneration(
 			finalizeExit(code, exitSignal);
 		};
 		const onError = (error: Error) => {
-			if (running.timeoutWrapUp && !running.timeoutWrapUpMode && !running.timeoutExpiry && !signal.aborted) {
+			if (running.phase === "soft-limit" && !signal.aborted) {
 				finish({ kind: "restart" });
 				return;
 			}

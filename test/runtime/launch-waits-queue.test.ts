@@ -62,7 +62,7 @@ function blockingRunning(name: string): RunningSubagent {
 		title: `T ${name}`,
 		agent: "worker-a",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		blocking: true,
@@ -228,7 +228,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const waited = await waitForSubagentForTest({ id: running.id }, abort.signal);
 		assert.equal((waited.details as { error?: string }).error, "interrupted");
 		// T26 (D16): the aborted wait stops nothing; the run keeps running.
-		assert.equal(runningSubagents.get(running.id)?.executionState, "running", "no stop was sent");
+		assert.equal(runningSubagents.get(running.id)?.phase, "running", "no stop was sent");
 		const end = endOf(running.name, "LATE REPORT");
 		resolveCompletion(end);
 		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
@@ -321,7 +321,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.ok(copies[0].content.length <= COPY_CAP);
 		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
 		// D16: Esc stops only the wait; child 2 still runs and no stop was sent.
-		assert.equal(runningSubagents.get("id-child-two")?.executionState, "running", "child 2 still runs");
+		assert.equal(runningSubagents.get("id-child-two")?.phase, "running", "child 2 still runs");
 		launch.finish["child-two"](endOf("child-two", "LATE-TWO"));
 		await sleep(10);
 		const late = parent.sent.filter((entry) => entry.details.id === "id-child-two");

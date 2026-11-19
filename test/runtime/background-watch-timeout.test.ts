@@ -128,7 +128,7 @@ function makeRunning(
 		name: "timeout-child",
 		task: "Loop forever",
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

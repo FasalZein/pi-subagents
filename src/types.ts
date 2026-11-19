@@ -7,6 +7,9 @@ import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts
 export type ResultParent = Pick<ResultTarget, "parentCwd" | "warnings">;
 
 export type DeliveryState = "detached" | "awaited";
+
+/** D5: starting, running, soft limit reached, wrapping up, stopping, ended. */
+export type RunPhase = "starting" | "running" | "soft-limit" | "wrapping-up" | "stopping" | "ended";
 export type ParentClosePolicy = "terminate" | "continue";
 type CompletedDelivery = "steer" | "wait";
 export type SubagentCompletionStatus = "completed" | "failed" | "cancelled";
@@ -133,7 +136,8 @@ export interface RunningSubagent {
 	title?: string;
 	agent?: string;
 	mode: "interactive" | "background";
-	executionState: "starting" | "running";
+	/** D5: the one phase of this run; the outcome comes at "ended". */
+	phase: RunPhase;
 	deliveryState: DeliveryState;
 	parentClosePolicy: ParentClosePolicy;
 	blocking?: boolean;
@@ -149,8 +153,6 @@ export interface RunningSubagent {
 	timeoutWarnThreshold?: number;
 	/** Set once the watcher has interrupted this run for its report-only continuation. */
 	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
-	/** True after the interrupted generation has been replaced by the continuation. */
-	timeoutWrapUpMode?: boolean;
 	/** Session entries before the current child process: a time-limit wrap-up restart sets it (D12 nudge boundary). */
 	processEntryCount?: number;
 	/** Fixed hard deadline for the budget that triggered the wrap-up. */

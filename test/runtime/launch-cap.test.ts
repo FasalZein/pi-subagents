@@ -41,7 +41,7 @@ function makeRunning(params: SubagentParamsInput): RunningSubagent {
 		title: params.title,
 		agent: params.agent,
 		mode: "background",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: "terminate",
 		async: true,

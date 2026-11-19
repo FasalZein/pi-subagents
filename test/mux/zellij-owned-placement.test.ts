@@ -289,7 +289,7 @@ fi
 			name: "Dead pane",
 			task: "Exit abruptly",
 			mode: "interactive",
-			executionState: "running",
+			phase: "running",
 			deliveryState: "detached",
 			parentClosePolicy: "terminate",
 			startTime: Date.now(),

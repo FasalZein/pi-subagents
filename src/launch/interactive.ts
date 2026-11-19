@@ -255,7 +255,7 @@ async function startInteractiveSubagent(
 		title: getSubagentDisplayTitle(params),
 		agent: params.agent,
 		mode: "interactive",
-		executionState: "running",
+		phase: "running",
 		deliveryState: "detached",
 		parentClosePolicy: resolveSubagentParentClosePolicy(prepared.agentDefs),
 		blocking: params.blocking ?? false,
