@@ -4,7 +4,7 @@ import { firstLine } from "./render-helpers.ts";
 // The /subagents overlay reads finished runs back from the parent session file (D15): one entry
 // per run end, from grouped messages and from old single-result and ping messages alike.
 
-export interface RecoveredResultDetails {
+interface RecoveredResultDetails {
 	id: string;
 	name: string;
 	agent?: string;
