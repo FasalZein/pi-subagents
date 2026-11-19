@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
@@ -240,6 +240,32 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 		});
 	});
 
+	it("refuses a second resume of one session reached through a symlinked folder alias", async () => {
+		const dir = createTestDir();
+		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
+		await withFakePi(bin, async () => {
+			const realDir = join(dir, "real");
+			mkdirSync(realDir);
+			symlinkSync(realDir, join(dir, "alias"));
+			const sessionFile = writeBlockedSession(realDir, "aliased.jsonl");
+			const aliasFile = join(dir, "alias", "aliased.jsonl");
+			writeSubagentTimeoutSidecar(sessionFile, { kind: "timeout", blocksResume: false });
+			const runtime = createRuntime(() => new Promise(() => {}));
+			const [first, second] = await Promise.allSettled([
+				serviceResume(sessionFile, runtime),
+				serviceResume(aliasFile, runtime),
+			]);
+			assert.equal(first.status, "fulfilled");
+			assert.equal(second.status, "rejected");
+			assert.match(String((second as PromiseRejectedResult).reason), /already being resumed/);
+			if (first.status === "fulfilled") await waitForExit(first.value);
+
+			const other = createRuntime();
+			other.runningSubagents.set("cccc0001", { id: "cccc0001", name: "aliased", sessionFile: aliasFile } as RunningSubagent);
+			await assert.rejects(() => serviceResume(join(realDir, "..", "real", "aliased.jsonl"), other), /already running/);
+		});
+	});
+
 	it("stays after an overlay resume with the override whose child is stopped, so a later resume is refused", async () => {
 		const dir = createTestDir();
 		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
@@ -280,6 +306,24 @@ describe("the block-resume verdict stays until the new run ends (D8)", () => {
 			await running.completionPromise;
 			assert.deepEqual(seen, { type: "done", run: "new" });
 			assert.equal(existsSync(getSubagentTimeoutSidecarPath(sessionFile)), false, "a clean end removes the verdict");
+		});
+	});
+
+	it("is removed when a resumed manual pane publishes success with a nonzero shell status", async () => {
+		const dir = createTestDir();
+		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
+		await withFakePi(bin, async () => {
+			const sessionFile = writeBlockedSession(dir, "manual-pane.jsonl");
+			// The pane watcher's result for an operator close after an answer: the shell status
+			// stays nonzero, and the published record says the run is done (interactive-watch.ts).
+			const running = await serviceResume(
+				sessionFile,
+				createRuntime(async () => cleanResult({ exitCode: 1, resultOutcome: "done" })),
+				true,
+			);
+			await running.completionPromise;
+			await waitForExit(running);
+			assert.equal(existsSync(getSubagentTimeoutSidecarPath(sessionFile)), false, "the published success removes it");
 		});
 	});
 
