@@ -634,3 +634,23 @@ test("[T02b-5] FACT-7 counts only when it arrives through child 4's own report",
 		[true, true],
 	);
 });
+
+test("[T67] a subagent_wait entry binds to its run by runId, the launch children's field name", () => {
+	const wait = (entry) => ({
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent_wait",
+			content: [{ type: "text", text: "..." }],
+			details: { status: "complete", results: [entry], pending: [], missing: [] },
+		},
+	});
+	const allow = ["subagent", "subagent_wait"];
+	const bound = carriers([wait({ runId: "r2", name: "b", text: "y-2", record: null })], allow);
+	assert.deepEqual(
+		bound.map((c) => [c.kind, c.runId, c.tool, c.text]),
+		[["tool-result", "r2", "subagent_wait", "y-2"]],
+	);
+	// The pre-T67 shape named the run id; it no longer binds a run.
+	assert.equal(carriers([wait({ id: "r2", text: "y-2", record: null })], allow)[0].runId, null);
+});
