@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { REX_PANE_IDENTITY } from "../launch/child-env.ts";
 import type { MuxBackendAdapter, SurfaceSplitDirection } from "./backend.ts";
 import { tailLines } from "./core.ts";
+import { createOscWorkReporter } from "./osc-work-record.ts";
 import {
 	RexCallError,
 	resolveRexBinary,
@@ -182,4 +183,5 @@ export const rexBackend: MuxBackendAdapter = {
 	renameCurrentTab: () => {},
 	renameWorkspace: () => {},
 	paneIdentity: REX_PANE_IDENTITY,
+	connectWorkReporter: (session) => createOscWorkReporter(session, "rex"),
 };

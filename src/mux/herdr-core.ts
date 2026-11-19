@@ -12,6 +12,7 @@ import {
 	readFinishedTerminal,
 } from "./herdr-core-exit.ts";
 import { placeChildTerminal } from "./herdr-core-placement.ts";
+import { createOscWorkReporter } from "./osc-work-record.ts";
 import type { PollResult } from "./poll.ts";
 import { defaultMuxRuntimeProbe } from "./runtime-probe.ts";
 
@@ -265,6 +266,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 	// herdr-core has no workspace to rename.
 	renameWorkspace: () => {},
 	paneIdentity: HERDR_CORE_PANE_IDENTITY,
+	connectWorkReporter: (session) => createOscWorkReporter(session, "herdr-core"),
 	openProgramSession: async (): Promise<DirectProgramSession> => ({
 		// herdr-core has no numeric pane; the caller terminal names the session.
 		target: { sessionName: callerTerminal(), parentPaneId: 0 },
