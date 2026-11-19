@@ -231,6 +231,7 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 		settle({ kind: "exit", code: null, signal: null, spawnError: error.message });
 	});
 	child.on("exit", (code, signal) => {
+		log(`body exited (code ${code}, signal ${signal}); draining output`);
 		settle({ kind: "exit", code, signal });
 	});
 
@@ -275,7 +276,9 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 				clearInterval(timer);
 				await abortBody("cancelled");
 			}
-			if (!cancelled && !timedOut && Date.now() >= timeoutAt) {
+			// The timeout bounds the body process only: once its exit settled,
+			// the output drain must not turn a finished body into a timeout.
+			if (!settled && !cancelled && !timedOut && Date.now() >= timeoutAt) {
 				timedOut = true;
 				log(`body timed out after ${timeoutMs}ms; killing`);
 				clearInterval(timer);
@@ -292,6 +295,10 @@ const outcome = await new Promise<BodyOutcome>((resolveOutcome) => {
 	};
 });
 await drainBodyOutput();
+// One cancellation rule for every ordering: a cancel (signal or sentinel)
+// seen before the terminal write marks the run cancelled, even when the
+// body already exited. cancelRun writes the sentinel before it signals.
+if (cancelSignal || existsSync(paths.cancelSentinel)) cancelled = true;
 
 // ---------------------------------------------------------------------------
 // Terminal write
@@ -318,12 +325,15 @@ const result = {
 	finishedAt,
 };
 
-// Log before the terminal write: a reader that sees the terminal state must
-// also see the complete supervisor log.
-log(`run ${manifest.runId} finished: outcome=${outcome.kind} ok=${result.ok}`);
 updateManifest(runDir, (current) => {
 	if (current.leaseId !== leaseId) fail("lease lost before terminal write", 5);
-	if (isTerminalState(current.state)) return;
+	if (isTerminalState(current.state)) {
+		log(`run ${manifest.runId} already ${current.state}; result not written`);
+		return;
+	}
+	// Log after the ownership checks and before the write lands: a reader
+	// that sees the terminal state also sees the complete supervisor log.
+	log(`run ${manifest.runId} finished: outcome=${outcome.kind} ok=${result.ok}`);
 	current.body = null;
 	current.result = result;
 	current.state = cancelled ? "cancelled" : result.ok ? "completed" : "failed";
