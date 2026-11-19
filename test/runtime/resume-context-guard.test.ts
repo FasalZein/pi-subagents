@@ -83,10 +83,13 @@ function registerResumeTool(runtime: ReturnType<typeof createResumeRuntime>) {
 }
 
 describe("context-exhausted resume guard", () => {
-	it("rejects a resume without a session file before checking child state", async () => {
+	it("rejects a resume without a run id or a session file before checking child state", async () => {
 		const tool = registerResumeTool(createResumeRuntime());
 
-		await assert.rejects(() => tool.execute("call-missing", {}, undefined), /Session file is required/);
+		await assert.rejects(
+			() => tool.execute("call-missing", {}, undefined, undefined, parentToolCtx(createTestDir(), { hasUI: false })),
+			/A run id or a session file is required/,
+		);
 	});
 
 	it("refuses an agent-initiated resume and never starts the child", async () => {
@@ -100,7 +103,7 @@ describe("context-exhausted resume guard", () => {
 			const tool = registerResumeTool(createResumeRuntime());
 
 			await assert.rejects(
-				() => tool.execute("call-1", { sessionFile }, undefined),
+				() => tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false })),
 				/stopped early as instructed by its context-warning policy[\s\S]*fresh sub-agent/,
 			);
 			assert.equal(existsSync(spawnMarker), false, "the guard must refuse before any child is started");
@@ -108,6 +111,19 @@ describe("context-exhausted resume guard", () => {
 			if (originalCommand == null) delete process.env.PI_SUBAGENT_PI_COMMAND;
 			else process.env.PI_SUBAGENT_PI_COMMAND = originalCommand;
 		}
+	});
+
+	it("refuses a direct service resume too, because the guard lives in the resume (D8)", async () => {
+		const dir = createTestDir();
+		const sessionFile = writeExhaustedSession(dir, "service-child.jsonl");
+		await assert.rejects(
+			() =>
+				resumeSubagentSession(
+					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" },
+					createResumeRuntime() as any,
+				),
+			/stopped early as instructed by its context-warning policy/,
+		);
 	});
 
 	it("leaves the operator overlay path free to resume the same session", async () => {
@@ -118,9 +134,9 @@ describe("context-exhausted resume guard", () => {
 		try {
 			const sessionFile = writeExhaustedSession(dir, "overlay-child.jsonl");
 
-			// The overlay controller calls the service directly; the guard is agent-facing only.
+			// The overlay controller passes the operator's override for its own attempt (D8).
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as any),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", operatorOverride: true }, createResumeRuntime() as any),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
