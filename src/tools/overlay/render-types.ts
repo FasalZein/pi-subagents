@@ -57,7 +57,8 @@ type ViewState =
 	| { kind: "list" }
 	| { kind: "detail"; item: OverlayItem; scroll: number }
 	| { kind: "confirm"; item: OverlayItem; confirmed: boolean }
-	| { kind: "editor"; itemIndex: number };
+	/** The reply editor pins the run it opened on; a refresh that reorders rows cannot redirect it. */
+	| { kind: "editor"; item: OverlayItem };
 
 export interface OverlayState {
 	activeTab: TabId;
