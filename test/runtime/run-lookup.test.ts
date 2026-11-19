@@ -17,7 +17,11 @@ import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { runningSubagents } from "../../src/runtime/state.ts";
-import { registerSubagentWaitTool, SubagentWaitOutput, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
+import {
+	registerSubagentWaitTool,
+	SubagentWaitOutput,
+	type SubagentWaitStructured,
+} from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	assert,
@@ -93,11 +97,34 @@ function startRun(session: ReturnType<typeof parentSession>, name: string, deliv
 	wireSubagentSteerBack(sink as never, running, watch, () => {});
 	const end = (summary: string) => {
 		const args = { outcome: "done", summary };
-		const entries = [sessionHeader(), user("task"), toolCall("subagent_done", args, "d1"), toolResult("subagent_done", "d1", "ok")];
+		const entries = [
+			sessionHeader(),
+			user("task"),
+			toolCall("subagent_done", args, "d1"),
+			toolResult("subagent_done", "d1", "ok"),
+		];
 		writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
-		const exitSignal: WatchedEnd["exitSignal"] = { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } };
-		const published = publishRunResult(running, { exitCode: 0, operatorClosed: false, stopped: false, exitSignal, contextUsage: {} });
-		finish({ name, task: "t", summary, summarySource: "subagent", exitCode: 0, elapsed: 1, ...publishedResultFields(published) });
+		const exitSignal: WatchedEnd["exitSignal"] = {
+			reason: "done",
+			exitCode: 0,
+			acceptedCall: { toolCallId: "d1", args },
+		};
+		const published = publishRunResult(running, {
+			exitCode: 0,
+			operatorClosed: false,
+			stopped: false,
+			exitSignal,
+			contextUsage: {},
+		});
+		finish({
+			name,
+			task: "t",
+			summary,
+			summarySource: "subagent",
+			exitCode: 0,
+			elapsed: 1,
+			...publishedResultFields(published),
+		});
 	};
 	return { runId: reservation.runId as string, end };
 }
@@ -107,7 +134,10 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 /** Publishes one record straight into a store, as a watcher of an earlier process did. */
 function publishRecord(store: ResultStore, name: string, endedAt: number, summary = `SUMMARY OF ${name}`): RunId {
 	const reservation = store.reserve();
-	store.publish(reservation, assembleResult(facts([sessionHeader(), assistant(summary)], { runId: reservation.runId, name, endedAt })));
+	store.publish(
+		reservation,
+		assembleResult(facts([sessionHeader(), assistant(summary)], { runId: reservation.runId, name, endedAt })),
+	);
 	return reservation.runId;
 }
 
@@ -229,13 +259,19 @@ describe("T25: the recent list", () => {
 			.sort((a, b) => b.endedAt - a.endedAt || (a.runId < b.runId ? -1 : 1))
 			.slice(0, 20)
 			.map((run) => run.runId);
-		assert.deepEqual(lines.map((line) => line.split(" · ")[0]), expected);
+		assert.deepEqual(
+			lines.map((line) => line.split(" · ")[0]),
+			expected,
+		);
 		assert.match(lines[0]!, /^\w+ · run-24 · done · 2023-11-14T22:13:44\.000Z$/);
 		assert.doesNotMatch(text, /foreign-run|SUMMARY OF|report:/);
 		const structured = reply.structuredContent as SubagentWaitStructured;
 		assert.ok(Value.Check(SubagentWaitOutput, structured));
 		assert.equal(structured.status, "recent");
-		assert.deepEqual(structured.recent?.map((run) => run.runId), expected);
+		assert.deepEqual(
+			structured.recent?.map((run) => run.runId),
+			expected,
+		);
 		assert.deepEqual(structured.results, []);
 		assert.deepEqual(deliveryState(), before, "the list changes no state");
 	});
