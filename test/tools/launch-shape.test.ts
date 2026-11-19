@@ -300,6 +300,36 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		);
 	});
 
+	it("makes an async project agent wait beside a direct tool when the session cwd is not the process cwd", async () => {
+		// The hooks resolve definitions from the session cwd, as the executor does (B1 review, subagents.ts:298).
+		const cwd = createTestDir();
+		const projectAgents = join(cwd, ".pi", "agents");
+		mkdirSync(projectAgents, { recursive: true });
+		writeFileSync(
+			join(projectAgents, "project-scout.md"),
+			"---\nname: project-scout\ndescription: project agent\nmode: background\nauto-exit: true\nasync: true\n---\n\nBody.",
+		);
+		mkdirSync(join(cwd, "agent-root", "agents"), { recursive: true });
+		process.env.PI_CODING_AGENT_DIR = join(cwd, "agent-root");
+		useFakePi("sleep 0.3");
+		const extension = await loadExtension(cwd);
+		await extension.startSession("startup");
+		assert.notEqual(process.cwd(), cwd);
+		const launch = {
+			type: "toolCall",
+			id: "call-launch",
+			name: "subagent",
+			arguments: { children: [child("project-scout", "project-one")] },
+		};
+		const read = { type: "toolCall", id: "call-read", name: "read", arguments: { path: "README.md" } };
+		await extension.emit("message_end", { message: { role: "assistant", content: [launch, read] } });
+		await extension.emit("tool_call", { toolName: launch.name, toolCallId: launch.id, input: launch.arguments });
+		const tool = extension.tools.get("subagent");
+		assert.ok(tool);
+		const result = await tool.execute(launch.id, launch.arguments, undefined, undefined, extension.ctx);
+		assert.equal(result.details.status, "completed", result.content[0].text);
+	});
+
 	it("refuses a misspelled agent name and names the intended agent", async () => {
 		const launch = realLaunchTool({ reviewer: "", scout: "", worker: "" });
 		await assert.rejects(launch("reviwer"), (error: Error) => {
