@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { deliverRunEnd } from "./delivery-queue.ts";
 import type { CompletedSubagentResult, RunningSubagent, SubagentPingMessageDetails, SubagentResult } from "../types.ts";
+import { deliverRunEnd } from "./delivery-queue.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 import {
 	buildCompletedSubagentResult,

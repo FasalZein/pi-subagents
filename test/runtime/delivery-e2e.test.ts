@@ -16,8 +16,8 @@ import { Type } from "typebox";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import type { RunId } from "../../src/runtime/result-record.ts";
-import { wireSubagentSteerBack } from "../../src/runtime/wiring.ts";
 import { markSubagentBatchBlocking, requestSubagentBatchStop } from "../../src/runtime/state.ts";
+import { wireSubagentSteerBack } from "../../src/runtime/wiring.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import { assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
 
