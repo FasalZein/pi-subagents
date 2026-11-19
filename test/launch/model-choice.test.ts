@@ -277,11 +277,11 @@ describe("short model names: review round 1 (D22)", () => {
 	it("refuses an unqualified id that matches two models of one provider, even when one id equals it", async () => {
 		await assert.rejects(
 			() =>
-				launchModel(
-					"mini",
-					{ model: "synthetic-a/base", allowedModels: "synthetic-a/mini,synthetic-a/mini-v2" },
-					["synthetic-a/base", "synthetic-a/mini", "synthetic-a/mini-v2"],
-				),
+				launchModel("mini", { model: "synthetic-a/base", allowedModels: "synthetic-a/mini,synthetic-a/mini-v2" }, [
+					"synthetic-a/base",
+					"synthetic-a/mini",
+					"synthetic-a/mini-v2",
+				]),
 			/several models of one provider\. Candidates: synthetic-a: mini, mini-v2\./,
 		);
 	});

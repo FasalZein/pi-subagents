@@ -32,7 +32,6 @@ function listEntries(dir: string) {
 	return getAgentListEntries(dir, resolveSessionMode, { callerAgent: null, callerSpawnable: true });
 }
 
-
 function render(dir: string): string {
 	return renderAgentDetailsForTest(listEntries(dir));
 }
@@ -53,7 +52,10 @@ describe("agent detail limit fields", () => {
 		assert.equal(entry?.idleTimeout, 180);
 		assert.equal(entry?.contextWarnThreshold, "80%");
 		assert.equal(entry?.reportContextUsage, false);
-		assert.match(render(dir), /^limits: timeout 15m, idle-timeout 3m, context warnings at 80%, 85%, 90%, token counts hidden$/m);
+		assert.match(
+			render(dir),
+			/^limits: timeout 15m, idle-timeout 3m, context warnings at 80%, 85%, 90%, token counts hidden$/m,
+		);
 	});
 
 	it("says none when no limit field is set", () => {

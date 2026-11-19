@@ -57,10 +57,7 @@ function getFlags(entry: AgentListEntry, policy: IndexLaunchPolicy): string[] {
  * The entries this session may launch directly: the same spawn policy the
  * launch tool applies, without the caller itself.
  */
-export function selectIndexTargets(
-	entries: readonly AgentListEntry[],
-	spawnEnv: ParsedSpawnEnv,
-): AgentListEntry[] {
+export function selectIndexTargets(entries: readonly AgentListEntry[], spawnEnv: ParsedSpawnEnv): AgentListEntry[] {
 	return entries.filter(
 		(entry) =>
 			entry.name !== spawnEnv.callerAgent &&
@@ -80,11 +77,7 @@ export function selectIndexTargets(
 }
 
 function renderAgentLine(entry: AgentListEntry, policy: IndexLaunchPolicy): string {
-	const description = (entry.description ?? "")
-		.replace(/\s+/g, " ")
-		.trim()
-		.slice(0, DESCRIPTION_CHARS)
-		.trimEnd();
+	const description = (entry.description ?? "").replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_CHARS).trimEnd();
 	return [`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" ");
 }
 
@@ -113,10 +106,7 @@ export function renderAgentIndexSection(
 	const fixed = [...FIXED_LINES, ...(policy.forcesWait ? [FORCED_WAIT_LINE] : [])].join("\n");
 	// Length with the first k agent lines: each line adds itself and one newline.
 	const lengthWith = (k: number, prefix: number) =>
-		WRAPPER_CHARS +
-		fixed.length +
-		prefix +
-		(k < lines.length ? 1 + renderCountLine(lines.length - k).length : 0);
+		WRAPPER_CHARS + fixed.length + prefix + (k < lines.length ? 1 + renderCountLine(lines.length - k).length : 0);
 	// The fixed lines and a count line alone fit, so zero agent lines always fit.
 	let shown = 0;
 	let prefix = 0;
@@ -125,11 +115,7 @@ export function renderAgentIndexSection(
 		if (lengthWith(k, prefix) <= AGENT_INDEX_MAX_CHARS) shown = k;
 	}
 	const rest = lines.length - shown;
-	return [
-		fixed,
-		...lines.slice(0, shown),
-		...(rest > 0 ? [renderCountLine(rest)] : []),
-	].join("\n");
+	return [fixed, ...lines.slice(0, shown), ...(rest > 0 ? [renderCountLine(rest)] : [])].join("\n");
 }
 
 interface IndexPromptEvent {

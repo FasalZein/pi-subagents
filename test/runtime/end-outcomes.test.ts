@@ -6,6 +6,7 @@ import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { TIME_LIMIT_GUIDANCE, TIME_LIMIT_NO_RESUME_GUIDANCE, WRAP_UP_NOTICE } from "../../src/runtime/result-render.ts";
+import { settleVerdictAfterRun } from "../../src/runtime/resume-guards.ts";
 import {
 	publishRunResult,
 	STOPPED_REASON,
@@ -13,7 +14,6 @@ import {
 	type WatchedEnd,
 } from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
-import { settleVerdictAfterRun } from "../../src/runtime/resume-guards.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import { readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";

@@ -312,7 +312,12 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			fallbackThinking,
 		);
 		if (hasAllowedModels) {
-			assertModelAllowed(ref.effectiveModelRef, agentDefs?.allowedModels, params.agent, implicitRef ? [implicitRef] : []);
+			assertModelAllowed(
+				ref.effectiveModelRef,
+				agentDefs?.allowedModels,
+				params.agent,
+				implicitRef ? [implicitRef] : [],
+			);
 		}
 		// A bare default passes to Pi as written; the recorded ref names the one registry
 		// ref Pi picks for it, or stays bare when the name is not unique (D23).

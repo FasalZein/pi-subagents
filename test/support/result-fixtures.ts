@@ -1,9 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionEntry } from "../../src/session/session.ts";
 import { type RunEnd, type RunFacts } from "../../src/runtime/result-assembler.ts";
 import { parseRunId } from "../../src/runtime/result-record.ts";
+import type { SessionEntry } from "../../src/session/session.ts";
 
 let resultsRoot: string | undefined;
 /** A results folder for resume calls, removed when the test process exits. */
@@ -57,7 +57,13 @@ export interface NestedCall {
 	status: "ok" | "error" | "unfinished";
 }
 
-export function toolResult(name: string, callId: string, text: string, isError = false, nestedCalls?: NestedCall[]): SessionEntry {
+export function toolResult(
+	name: string,
+	callId: string,
+	text: string,
+	isError = false,
+	nestedCalls?: NestedCall[],
+): SessionEntry {
 	const nested = nestedCalls && { calls: nestedCalls, complete: nestedCalls.every((c) => c.status !== "unfinished") };
 	return {
 		type: "message",

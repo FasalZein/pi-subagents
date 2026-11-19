@@ -7,6 +7,7 @@ import type { RunId } from "../../src/runtime/result-record.ts";
 import { completedSubagentResults } from "../../src/runtime/state.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/wiring.ts";
 import { registerOutstandingWorkReporting, type WorkReporterSession } from "../../src/runtime/work-reporting.ts";
+import { registerSubagentMessageRenderers } from "../../src/tools/message-renderers.ts";
 import { buildCompletedItems } from "../../src/tools/overlay/data.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
@@ -18,7 +19,6 @@ import {
 	startParent,
 	waitFor,
 } from "../support/delivery-parent.ts";
-import { registerSubagentMessageRenderers } from "../../src/tools/message-renderers.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 
 // T22 at the extension boundary (D15, D30): a real Pi parent session, three children that end

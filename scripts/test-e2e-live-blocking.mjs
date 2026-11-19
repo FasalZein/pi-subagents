@@ -5,9 +5,9 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 import { installLiveTestCleanup } from "./live-test-cleanup.mjs";
 import { acquireLiveWindowLock, LIVE_TEST_MODEL, requireLiveWindowOptIn } from "./live-test-guard.mjs";
-import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 
 const piBin = process.env.PI_E2E_PI_BIN ?? "pi";
 

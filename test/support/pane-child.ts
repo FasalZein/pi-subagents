@@ -2,13 +2,22 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { mock } from "node:test";
 import { createTestDir } from "./fixtures.ts";
-import { clearPublishedRunningSubagentCountForTest, resetSubagentStateForTest, subagentDoneExtension } from "./project.ts";
+import {
+	clearPublishedRunningSubagentCountForTest,
+	resetSubagentStateForTest,
+	subagentDoneExtension,
+} from "./project.ts";
 
 /**
  * The child extension of a pane subagent, loaded in this process with a fake
  * Pi API. emit() replays Pi events, press() replays raw pane keys.
  */
-const ENV_KEYS = ["PI_SUBAGENT_SESSION", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS"];
+const ENV_KEYS = [
+	"PI_SUBAGENT_SESSION",
+	"PI_SUBAGENT_AUTO_EXIT",
+	"PI_SUBAGENT_SURFACE",
+	"PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS",
+];
 
 export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNotice?: (message: string) => void }) {
 	const handlers = new Map<string, any>();

@@ -1,4 +1,3 @@
-import { testResultsDir } from "../support/result-fixtures.ts";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -22,6 +21,7 @@ import {
 	writeResumeTaskArtifactForTest,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
+import { testResultsDir } from "../support/result-fixtures.ts";
 import "../support/ambient-spawn-grant.ts";
 
 function readCapsuleFromTmuxLog(log: string): { args: string[]; overrides: Record<string, string> } {
@@ -136,7 +136,16 @@ describe("subagent_resume approval args", () => {
 			);
 
 			const agent = useLegacyAgentDefinition();
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					mode: "background",
+					agent,
+				},
+				createResumeRuntime(),
+			);
 
 			assert.equal(running.childProcess?.spawnargs.includes("--no-approve"), true);
 		} finally {
@@ -185,7 +194,10 @@ describe("subagent_resume approval args", () => {
 				contextWarnThreshold: "80%",
 			});
 
-			await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile }, createResumeRuntime());
+			await resumeSubagentSession(
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
+				createResumeRuntime(),
+			);
 
 			assert.equal(await readNonEmptyFileEventually(capturedThreshold), "80%");
 		} finally {
@@ -229,7 +241,10 @@ describe("subagent_resume approval args", () => {
 				reportContextUsage: false,
 			});
 
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
+				createResumeRuntime(),
+			);
 
 			assert.equal(running.reportContextUsage, false);
 		} finally {
@@ -273,7 +288,10 @@ describe("subagent_resume approval args", () => {
 				boundarySystemPrompt: false,
 			});
 
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
+				createResumeRuntime(),
+			);
 			const approvalArgs =
 				running.childProcess?.spawnargs.filter((arg) => arg === "--approve" || arg === "--no-approve") ?? [];
 
@@ -321,7 +339,15 @@ describe("subagent_resume approval args", () => {
 
 			// Persisted metadata (background) wins over the explicit interactive
 			// mode argument, so the resume stays background and uses --no-approve.
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "interactive" }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					mode: "interactive",
+				},
+				createResumeRuntime(),
+			);
 			const approvalArgs =
 				running.childProcess?.spawnargs.filter((arg) => arg === "--approve" || arg === "--no-approve") ?? [];
 
@@ -394,7 +420,10 @@ describe("subagent_resume extension parity", () => {
 				boundarySystemPrompt: false,
 			});
 
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
+				createResumeRuntime(),
+			);
 
 			assert.equal(running.childProcess?.spawnargs.includes("--no-extensions"), false);
 		} finally {
@@ -422,7 +451,16 @@ describe("subagent_resume extension parity", () => {
 			);
 
 			const agent = useLegacyAgentDefinition();
-			const running = await resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent }, createResumeRuntime());
+			const running = await resumeSubagentSession(
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					mode: "background",
+					agent,
+				},
+				createResumeRuntime(),
+			);
 
 			assert.equal(running.childProcess?.spawnargs.includes("--no-extensions"), true);
 		} finally {
@@ -494,7 +532,12 @@ esac
 			});
 
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "resume sentinel check" },
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					task: "resume sentinel check",
+				},
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -641,7 +684,12 @@ esac
 		});
 
 		await resumeSubagentSession(
-			{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Follow-up marker: !`printf resume-marker`" },
+			{
+				resultsDir: testResultsDir(),
+				parent: { parentCwd: process.cwd(), warnings: [] },
+				sessionFile,
+				task: "Follow-up marker: !`printf resume-marker`",
+			},
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,
@@ -719,7 +767,12 @@ cat > '${stdinLog}'
 			});
 
 			await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Background marker: !`printf background-marker`" },
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					task: "Background marker: !`printf background-marker`",
+				},
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -804,7 +857,12 @@ esac
 		});
 
 		await resumeSubagentSession(
-			{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "follow up\nwith newline" },
+			{
+				resultsDir: testResultsDir(),
+				parent: { parentCwd: process.cwd(), warnings: [] },
+				sessionFile,
+				task: "follow up\nwith newline",
+			},
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,
@@ -886,7 +944,13 @@ describe("subagent_resume same-session guard", () => {
 		await assert.rejects(
 			() =>
 				resumeSubagentSession(
-					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, model: "zai-messages/glm-5-turbo", thinking: "off" },
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						model: "zai-messages/glm-5-turbo",
+						thinking: "off",
+					},
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,

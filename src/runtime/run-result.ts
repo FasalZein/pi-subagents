@@ -185,7 +185,12 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 export function withRuntimeEnd(running: RunningSubagent, result: SubagentResult, end: RunEnd): SubagentResult {
 	const published = publishEnd(running, end, { contextWarned: false, failWithoutText: false });
 	if (!published) return result;
-	return { ...result, summary: published.summary, summarySource: published.summarySource, ...publishedResultFields(published) };
+	return {
+		...result,
+		summary: published.summary,
+		summarySource: published.summarySource,
+		...publishedResultFields(published),
+	};
 }
 
 interface PublishOptions {
@@ -201,23 +206,24 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 	if (!target) return undefined;
 	const entries = existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [];
 	const launchEntryCount = running.launchEntryCount ?? 0;
-	const assemble = (runEnd: RunEnd) => assembleResult({
-		runId: target.reservation.runId,
-		name: running.name,
-		agent: running.agent ?? "",
-		title: running.title,
-		modelRef: running.modelRef,
-		sessionFile: running.noSession ? undefined : running.sessionFile,
-		startedAt: running.startTime,
-		endedAt: Date.now(),
-		end: runEnd,
-		entries,
-		launchEntryCount,
-		nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
-		acceptedCall: options.acceptedCall,
-		contextUsage: options.contextUsage,
-		resume: resumeFact(running, runEnd, options.contextWarned),
-	});
+	const assemble = (runEnd: RunEnd) =>
+		assembleResult({
+			runId: target.reservation.runId,
+			name: running.name,
+			agent: running.agent ?? "",
+			title: running.title,
+			modelRef: running.modelRef,
+			sessionFile: running.noSession ? undefined : running.sessionFile,
+			startedAt: running.startTime,
+			endedAt: Date.now(),
+			end: runEnd,
+			entries,
+			launchEntryCount,
+			nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
+			acceptedCall: options.acceptedCall,
+			contextUsage: options.contextUsage,
+			resume: resumeFact(running, runEnd, options.contextWarned),
+		});
 	const hasNoText = (result: ReturnType<typeof assembleResult>) =>
 		!result.record.typed && result.report === `${result.record.summary}\n\n${NO_REPORT_LINE}`;
 	let assembled = assemble(end);

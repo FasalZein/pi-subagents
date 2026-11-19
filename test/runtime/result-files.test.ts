@@ -1,20 +1,31 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmdirSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import {
 	publishResult,
 	RECORD_FILE,
+	type Reservation,
+	ResultStore,
 	readResultRecord,
 	reserveRunId,
-	ResultStore,
-	type Reservation,
 } from "../../src/runtime/result-files.ts";
 import { parseRunId, type ResultRecord, type RunId } from "../../src/runtime/result-record.ts";
 import { renderResult } from "../../src/runtime/result-render.ts";
-import { assistant, facts, sessionHeader } from "../support/result-fixtures.ts";
 import { after, assert, describe, it } from "../support/index.ts";
+import { assistant, facts, sessionHeader } from "../support/result-fixtures.ts";
 
 const roots: string[] = [];
 function resultsDir(): string {
@@ -73,7 +84,9 @@ process.stdout.write(JSON.stringify({ record, files }));
 `,
 	);
 	writeFileSync(join(root, "input.txt"), text);
-	const child = spawnSync("bash", ["-c", 'ulimit -f 1 && exec "$0" "$1" "$2"', process.execPath, script, root], { encoding: "utf8" });
+	const child = spawnSync("bash", ["-c", 'ulimit -f 1 && exec "$0" "$1" "$2"', process.execPath, script, root], {
+		encoding: "utf8",
+	});
 	assert.equal(child.status, 0, child.stderr);
 	return JSON.parse(child.stdout) as { record: ResultRecord; files: Record<string, string> };
 }
@@ -291,4 +304,3 @@ describe("result files (D13)", () => {
 		}
 	});
 });
-

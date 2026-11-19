@@ -9,7 +9,13 @@ const authErrorEnd = {
 	messages: [{ role: "assistant", stopReason: "error", errorMessage: "401 Unauthorized: invalid api key" }],
 };
 const toolUseEnd = {
-	messages: [{ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }] }],
+	messages: [
+		{
+			role: "assistant",
+			stopReason: "toolUse",
+			content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }],
+		},
+	],
 };
 const retryableErrorEnd = {
 	messages: [{ role: "assistant", stopReason: "error", errorMessage: "503 service unavailable" }],
@@ -116,7 +122,9 @@ const contextOverflowEnd = {
 		},
 	],
 };
-const answerEnd = { messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed." }] }] };
+const answerEnd = {
+	messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "Fixed." }] }],
+};
 const ESCAPE = "\x1b";
 
 function startOverflowCompaction(child: ReturnType<typeof loadChild>) {
@@ -220,7 +228,11 @@ describe("subagent-done.ts takeover without a submitted input (finding 1)", () =
 describe("subagent-done.ts kept error after a takeover (finding 2)", () => {
 	const cases = [
 		{ name: "three tool-call endings", run: endThreeTimesAtToolCall, error: /3 consecutive tool-use boundary endings/ },
-		{ name: "provider-recovery exhaustion", run: exhaustProviderRecovery, error: /recovery exhausted after 3 .*503 service unavailable/ },
+		{
+			name: "provider-recovery exhaustion",
+			run: exhaustProviderRecovery,
+			error: /recovery exhausted after 3 .*503 service unavailable/,
+		},
 		{ name: "a 401 error", run: endWithAuthError, error: /401 Unauthorized/ },
 	];
 	for (const testCase of cases) {

@@ -328,7 +328,10 @@ describe("subagent_agents tool", () => {
 		writeAgent(agentsDir, "unreadable", "name: unreadable\ndescription: Unreadable\nvisible-to: all, root");
 		writeAgent(agentsDir, "granted", "name: granted\ndescription: Granted\ntimeout: 0");
 		// An unterminated header is read to the end of the file: its visible-to still holds.
-		writeFileSync(join(agentsDir, "open-root.md"), "---\nname: open-root\ndescription: Open\nvisible-to: root\n\nBody.");
+		writeFileSync(
+			join(agentsDir, "open-root.md"),
+			"---\nname: open-root\ndescription: Open\nvisible-to: root\n\nBody.",
+		);
 		writeAgent(agentsDir, "worker", "name: worker\ndescription: Works");
 		process.env.PI_SUBAGENT_AGENT = "coordinator";
 		process.env.PI_SUBAGENT_SPAWNABLE = "true";

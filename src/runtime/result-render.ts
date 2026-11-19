@@ -107,7 +107,10 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 	const verifier = options.verifierFooter;
 	if (verifier) {
 		const fact = `verifier: winner ${verifier.winner}`;
-		lines.push({ fact, detail: verifier.detail ? { text: verifier.detail, max: FRAME_MAX_CHARS, priority: 2 } : undefined });
+		lines.push({
+			fact,
+			detail: verifier.detail ? { text: verifier.detail, max: FRAME_MAX_CHARS, priority: 2 } : undefined,
+		});
 	}
 	if (options.showContextUsage && record.contextUsage) {
 		const { tokens, window } = record.contextUsage;
@@ -133,7 +136,8 @@ export const WRAP_UP_NOTICE =
 function timeLimitLine(record: ResultRecord): RequiredLine | undefined {
 	const limit = record.timeLimit;
 	if (record.outcome !== "timed_out" || !limit) return undefined;
-	const budget = limit.kind === "idle-timeout" ? `${limit.seconds}s without output` : `${limit.seconds}s for the whole run`;
+	const budget =
+		limit.kind === "idle-timeout" ? `${limit.seconds}s without output` : `${limit.seconds}s for the whole run`;
 	const [label, text] = limit.wrapUp
 		? ["wrap-up", WRAP_UP_NOTICE]
 		: ["time limit", record.resume.resumable ? TIME_LIMIT_GUIDANCE : TIME_LIMIT_NO_RESUME_GUIDANCE];

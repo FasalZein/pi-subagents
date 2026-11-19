@@ -1,4 +1,3 @@
-import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -7,6 +6,7 @@ import { writeSubagentLaunchMetadataEntry } from "../../src/session/session-file
 import { readSubagentTimeoutSidecar, writeSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import { assert, createTestDir, existsSync, readFileSync, writeExecutable, writeFileSync } from "../support/index.ts";
+import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 
 const SPAWN_GRANT_VARS = [
 	"PI_SUBAGENT_SPAWNABLE",
@@ -89,7 +89,18 @@ function createResumeRuntime() {
 }
 
 function registerResumeTool(runtime: ReturnType<typeof createResumeRuntime>) {
-	const tools = new Map<string, { execute: (id: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<unknown> }>();
+	const tools = new Map<
+		string,
+		{
+			execute: (
+				id: string,
+				params: unknown,
+				signal?: AbortSignal,
+				onUpdate?: unknown,
+				ctx?: unknown,
+			) => Promise<unknown>;
+		}
+	>();
 	registerSubagentResumeTool(
 		{
 			registerTool(definition: { name: string }) {
@@ -156,7 +167,15 @@ describe("timeout resume guard", () => {
 			const sessionFile = writeTimedOutSession(dir, "recoverable-child.jsonl", { blocksResume: false });
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession(
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						mode: "background",
+					},
+					createResumeRuntime() as never,
+				),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
@@ -181,7 +200,15 @@ describe("timeout resume guard", () => {
 			});
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession(
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						mode: "background",
+					},
+					createResumeRuntime() as never,
+				),
 			);
 
 			assert.deepEqual(running.timeoutBudget, { timeoutSeconds: 45, idleTimeoutSeconds: 20 });
@@ -206,7 +233,15 @@ describe("timeout resume guard", () => {
 			});
 
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" }, createResumeRuntime() as never),
+				resumeSubagentSession(
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						mode: "background",
+					},
+					createResumeRuntime() as never,
+				),
 			);
 
 			assert.deepEqual(running.timeoutBudget, { timeoutSeconds: 30 });

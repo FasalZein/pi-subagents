@@ -349,7 +349,10 @@ describe("agent definitions and catalog", () => {
 		assert.match(details, /^default model: zai-messages\/glm-5\.1:high$/m);
 		// Accepted refs grouped by provider, the default first (D20).
 		assert.match(details, /^models: zai-messages: glm-5\.1:high; openai-ws: gpt-5\.5:low; nahcrof: glm-5\.1:off$/m);
-		assert.match(details, /^scout \(global\): Inspect files\ndefault model: the parent's model\nmodels: any model ref$/m);
+		assert.match(
+			details,
+			/^scout \(global\): Inspect files\ndefault model: the parent's model\nmodels: any model ref$/m,
+		);
 	});
 
 	it("renders open model overrides when allow-model-override is true without allowed-models", () => {

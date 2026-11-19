@@ -1,12 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync } from "node:fs";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
+import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
-import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, RunPhase } from "../../src/types.ts";

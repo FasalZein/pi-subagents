@@ -5,6 +5,9 @@ import { stopExitWatchesForTest } from "../../src/mux/herdr-core.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import type { RunningSubagent } from "../../src/types.ts";
+import { FAKE_HC, seedFakeHcCaller } from "../mux/fake-hc.ts";
+import { FAKE_HERDR_APP, seedFakeHerdrApp } from "../mux/fake-herdr-app.ts";
+import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION } from "../mux/fake-rex.ts";
 import { makeProbeDir, presenceProbeCommand, runLauncherInSurface } from "../support/env-presence.ts";
 import {
 	ASSISTANT_MSG,
@@ -23,12 +26,10 @@ import {
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
 import { testResultsDir } from "../support/result-fixtures.ts";
-import { FAKE_HC, seedFakeHcCaller } from "../mux/fake-hc.ts";
-import { FAKE_HERDR_APP, seedFakeHerdrApp } from "../mux/fake-herdr-app.ts";
-import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION } from "../mux/fake-rex.ts";
 
 /** The first block that the fake rex creates in a fresh state: the child's own block. */
 const FAKE_REX_FIRST_CHILD = "block:01a1ee5b-1f99-7a29-88d3-000000000002";
+
 import "../support/ambient-spawn-grant.ts";
 
 // Old herdr fake: answers the availability probes and one split surface; "pane run" only logs the staged script.
@@ -143,7 +144,12 @@ const BACKENDS: BackendFake[] = [
 		bin: "hc",
 		script: FAKE_HC,
 		parentEnv: { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/fake/hc-parent.sock", HC_SCOPE: "parent-scope" },
-		surfaceEnv: { HC_TERMINAL_ID: "t2", HC_TERMINAL_SOCKET: "/fake/hc-child.sock", HC_SCOPE: "child-scope", HC_PROBE_PRIVATE: "daemon-only" },
+		surfaceEnv: {
+			HC_TERMINAL_ID: "t2",
+			HC_TERMINAL_SOCKET: "/fake/hc-child.sock",
+			HC_SCOPE: "child-scope",
+			HC_PROBE_PRIVATE: "daemon-only",
+		},
 		identity: ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"],
 		extraMarkers: ["HC_PROBE_PRIVATE"],
 		extraFlags: { HC_PROBE_PRIVATE: "no" },
@@ -271,15 +277,11 @@ function useFakeParent(backend: BackendFake): Fixture {
 	seedFakeHcCaller(hcState);
 	seedFakeHerdrApp(hcState, "t1");
 	const probe = makeProbeDir();
-	const { command, args } = presenceProbeCommand(
-		probe.outFile,
-		[...COMMON_MARKERS, ...backend.extraMarkers],
-		{
-			...Object.fromEntries(backend.identity.map((name) => [name, backend.surfaceEnv[name]])),
-			PI_SUBAGENT_DATA_SCHEMA: "",
-			...(backend.derivedSurface ? { PI_SUBAGENT_SURFACE: backend.derivedSurface } : {}),
-		},
-	);
+	const { command, args } = presenceProbeCommand(probe.outFile, [...COMMON_MARKERS, ...backend.extraMarkers], {
+		...Object.fromEntries(backend.identity.map((name) => [name, backend.surfaceEnv[name]])),
+		PI_SUBAGENT_DATA_SCHEMA: "",
+		...(backend.derivedSurface ? { PI_SUBAGENT_SURFACE: backend.derivedSurface } : {}),
+	});
 	const probeScript = join(dir, "probe.cjs");
 	writeFileSync(
 		probeScript,
@@ -329,7 +331,10 @@ function checkChildEnvironment(fixture: Fixture): void {
 	// Rex: one line of text into the child's own block, then Enter as a key.
 	if (backend.mux === "rex") {
 		const target = `-s ${FAKE_REX_SESSION} -b ${FAKE_REX_FIRST_CHILD}`;
-		assert.match(log, new RegExp(`^rex send ${target} trap [^\\n]*run-child\\.mjs[^\\n]*\\nrex send-key ${target} enter$`, "m"));
+		assert.match(
+			log,
+			new RegExp(`^rex send ${target} trap [^\\n]*run-child\\.mjs[^\\n]*\\nrex send-key ${target} enter$`, "m"),
+		);
 	}
 	const capsulePath = capsuleIn(log);
 	assert.ok(capsulePath, "expected the launch to invoke the capsule launcher");
@@ -415,7 +420,12 @@ for (const backend of BACKENDS)
 					boundarySystemPrompt: false,
 				});
 				await resumeSubagentSession(
-					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Probe." },
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						task: "Probe.",
+					},
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,

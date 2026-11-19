@@ -125,7 +125,11 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 	}
 	if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 	if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
-	const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
+	const {
+		command,
+		launch: programLaunch,
+		dispose,
+	} = buildInteractiveShellCommand({
 		cwd: start.resumeCwd ?? undefined,
 		piArgs,
 		envOverrides: resumeEnvVars,

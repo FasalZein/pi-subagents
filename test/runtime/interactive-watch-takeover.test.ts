@@ -6,7 +6,13 @@ import { assert, createTestDir, describe, it, sleep, writeExecutable } from "../
 import { cleanupPaneChild, loadPaneChild } from "../support/pane-child.ts";
 
 const toolUseEnd = {
-	messages: [{ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }] }],
+	messages: [
+		{
+			role: "assistant",
+			stopReason: "toolUse",
+			content: [{ type: "toolCall", id: "t1", name: "bash", arguments: {} }],
+		},
+	],
 };
 const MUX_ENV_KEYS = ["PATH", "PI_SUBAGENT_MUX", "CMUX_SOCKET_PATH"] as const;
 // The watcher polls the pane once per second.

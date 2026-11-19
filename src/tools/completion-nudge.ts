@@ -16,8 +16,7 @@ const SUBAGENT_COMPLETION_NUDGE_ENTRY = "pi-subagent-completion-nudge";
  */
 const SUBAGENT_TAKEOVER_AFTER_NUDGE_ENTRY = "pi-subagent-takeover-after-nudge";
 
-const CALL_FIELDS =
-	`outcome (done, partial or blocked), a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of the files you wrote, and optional data`;
+const CALL_FIELDS = `outcome (done, partial or blocked), a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of the files you wrote, and optional data`;
 
 /** The nudge when the run already wrote a report: the call alone. */
 export const COMPLETION_NUDGE_AFTER_REPORT = `Call ${SUBAGENT_DONE_TOOL_NAME} now with ${CALL_FIELDS}. Make only the call.`;
@@ -30,7 +29,10 @@ export function hasAssistantText(messages: readonly unknown[] | undefined): bool
 	return (messages ?? []).some((message) => {
 		const m = message as { role?: unknown; content?: unknown };
 		if (m.role !== "assistant" || !Array.isArray(m.content)) return false;
-		return m.content.some((block: { type?: unknown; text?: unknown }) => block?.type === "text" && typeof block.text === "string" && block.text.trim() !== "");
+		return m.content.some(
+			(block: { type?: unknown; text?: unknown }) =>
+				block?.type === "text" && typeof block.text === "string" && block.text.trim() !== "",
+		);
 	});
 }
 

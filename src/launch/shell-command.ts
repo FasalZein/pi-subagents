@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { shellEscape } from "../mux.ts";
 import type { ProgramLaunch, SurfaceFromEnv } from "../mux/backend.ts";
+import { shellEscape } from "../mux.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { getPiInvocation } from "./child-command.ts";
 import {

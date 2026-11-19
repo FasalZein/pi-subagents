@@ -102,7 +102,13 @@ describe("subagent_resume from a headless parent", () => {
 			const sessionFile = writeAsyncChildSession(dir);
 			const { tool, awaited } = registerResumeTool();
 
-			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: false }))) as {
+			const result = (await tool.execute(
+				"call-1",
+				{ sessionFile },
+				undefined,
+				undefined,
+				parentToolCtx(dir, { hasUI: false }),
+			)) as {
 				details: { status?: string };
 				terminate?: true;
 			};
@@ -123,7 +129,13 @@ describe("subagent_resume from a headless parent", () => {
 			const sessionFile = writeAsyncChildSession(dir);
 			const { tool, awaited } = registerResumeTool();
 
-			const result = (await tool.execute("call-1", { sessionFile }, undefined, undefined, parentToolCtx(dir, { hasUI: true }))) as {
+			const result = (await tool.execute(
+				"call-1",
+				{ sessionFile },
+				undefined,
+				undefined,
+				parentToolCtx(dir, { hasUI: true }),
+			)) as {
 				details: { status?: string };
 				terminate?: true;
 			};

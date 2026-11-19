@@ -133,7 +133,13 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 	nested.calls.forEach((record: unknown, index) => {
 		if (!isRecord(record) || record.status !== "ok" || typeof record.id !== "string") return;
 		const tool = completionTool(record.name);
-		if (tool) calls.push({ tool, id: record.id, at: [entry, index], args: isRecord(record.arguments) ? record.arguments : undefined });
+		if (tool)
+			calls.push({
+				tool,
+				id: record.id,
+				at: [entry, index],
+				args: isRecord(record.arguments) ? record.arguments : undefined,
+			});
 	});
 	return calls;
 }
@@ -141,7 +147,9 @@ function nestedCompletions(message: Record<string, unknown>, entry: number): Com
 /** A completion call the child's tool accepted and recorded in the session (SUBAGENT_ACCEPTED_CALL_ENTRY). */
 function acceptedEntry(
 	entry: SessionEntry,
-): { id: string; tool: CompletionTool; args: Record<string, unknown>; autonomous: boolean; dataError?: string } | undefined {
+):
+	| { id: string; tool: CompletionTool; args: Record<string, unknown>; autonomous: boolean; dataError?: string }
+	| undefined {
 	const raw = entry as { type?: unknown; customType?: unknown; data?: unknown };
 	if (raw.type !== "custom" || raw.customType !== SUBAGENT_ACCEPTED_CALL_ENTRY || !isRecord(raw.data)) return undefined;
 	const { toolCallId, tool, args, autonomous, dataError } = raw.data;
@@ -195,7 +203,13 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 				texts.push({ at: [i, b], text: block.text });
 			} else if (block.type === "toolCall" && typeof block.id === "string") {
 				const tool = completionTool(block.name);
-				if (tool) requested.set(block.id, { tool, id: block.id, at: [i, b], args: isRecord(block.arguments) ? block.arguments : {} });
+				if (tool)
+					requested.set(block.id, {
+						tool,
+						id: block.id,
+						at: [i, b],
+						args: isRecord(block.arguments) ? block.arguments : {},
+					});
 			}
 		});
 	}
@@ -400,7 +414,13 @@ function untypedBody(facts: RunFacts, text: string | undefined): Body {
 		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
 		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts: [] };
 	}
-	return { typing: { typed: false }, outcome, summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS), report: text, artifacts: [] };
+	return {
+		typing: { typed: false },
+		outcome,
+		summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS),
+		report: text,
+		artifacts: [],
+	};
 }
 
 /**

@@ -155,7 +155,12 @@ export function resolveModelChoice(request: ModelChoiceRequest): ModelChoice {
 	const restricted = request.accepted.length > 0;
 	const pool = restricted
 		? groupRefsByModel(request.accepted)
-		: new Map(request.known.map((model): [string, Array<string | undefined>] => [`${model.provider}/${model.id}`, [undefined]]));
+		: new Map(
+				request.known.map((model): [string, Array<string | undefined>] => [
+					`${model.provider}/${model.id}`,
+					[undefined],
+				]),
+			);
 	const { model: name, thinking: suffixThinking } = splitRequestedRef(request.requested, pool);
 	const askedThinking = suffixThinking ?? request.requestedThinking;
 	// No accepted list and no known models: leave the name to Pi, as before.
