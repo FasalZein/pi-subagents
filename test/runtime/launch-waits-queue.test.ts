@@ -111,6 +111,44 @@ function launchRuntime(overrides: Partial<SubagentToolRuntime>): SubagentToolRun
 	};
 }
 
+/** Launches child-one and child-two through the real tool; child-two's launch waits for its gate. */
+function launchTwo(parent: ReturnType<typeof mockParent>, signal?: AbortSignal) {
+	const finish: Record<string, (result: SubagentResult) => void> = {};
+	let releaseLaunch2!: () => void;
+	const gate2 = new Promise<void>((resolve) => {
+		releaseLaunch2 = resolve;
+	});
+	registerSubagentCoreTools(
+		parent.pi,
+		() => true,
+		launchRuntime({
+			launchBackgroundSubagent: async (params) => {
+				if (params.name === "child-two") await gate2;
+				const running = blockingRunning(params.name);
+				setRunningSubagentForTest(running as any);
+				return running;
+			},
+			watchBackgroundSubagent: (running) =>
+				new Promise<SubagentResult>((resolve) => {
+					finish[running.name] = resolve;
+				}),
+		}),
+	);
+	const exec = parent.tools.get("subagent").execute(
+		"call-1",
+		{
+			children: [
+				{ name: "child-one", task: "a", title: "One", agent: "worker-a" },
+				{ name: "child-two", task: "b", title: "Two", agent: "worker-a" },
+			],
+		},
+		signal,
+		undefined,
+		toolCtx,
+	);
+	return { finish, releaseLaunch2, exec };
+}
+
 describe("T23: launches that wait use the delivery owner", () => {
 	afterEach(() => resetSubagentStateForTest());
 
@@ -256,5 +294,49 @@ describe("T23: launches that wait use the delivery owner", () => {
 		} finally {
 			unsubscribe();
 		}
+	});
+
+	it("R4: a child that ends during the wait, then Esc before the reply returns: its result goes out as a message", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const abort = new AbortController();
+		const launch = launchTwo(parent, abort.signal);
+		launch.releaseLaunch2();
+		await sleep(10);
+		launch.finish["child-one"](endOf("child-one", LONG_REPORT));
+		await sleep(10);
+		abort.abort();
+		await launch.exec;
+		parent.fire("turn_end", { message: { stopReason: "aborted" } });
+		parent.fire("agent_settled");
+		const copies = parent.sent.filter((entry) => entry.details.id === "id-child-one");
+		assert.equal(copies.length, 1, "the result the aborted wait took goes out as a message");
+		assert.match(copies[0].content, /REPORT-HEAD/);
+		assert.ok(copies[0].content.length <= COPY_CAP);
+	});
+
+	it("an early caller_ping is taken by the launch wait like any queued result", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const launch = launchTwo(parent);
+		await sleep(10);
+		launch.finish["child-one"]({ ...endOf("child-one", ""), ping: { name: "child-one", message: "PING-QUESTION" } });
+		await sleep(10);
+		launch.releaseLaunch2();
+		await sleep(10);
+		launch.finish["child-two"](endOf("child-two", "REPORT-TWO"));
+		const result = await launch.exec;
+		parent.fire("turn_end", { message: { stopReason: "stop" } });
+		parent.fire("agent_settled");
+		const children = (result.details as { children: Array<{ id: string; status?: string; error?: string }> }).children;
+		const one = children.find((child) => child.id === "id-child-one");
+		assert.equal(one?.error, undefined, "the wait does not reply not_found");
+		assert.equal(one?.status, "pinged");
+		assert.deepEqual(
+			parent.sent.filter((entry) => entry.details.id === "id-child-one"),
+			[],
+			"the reply delivered the ping",
+		);
+		assert.equal(pendingRunEndCount(), 0);
 	});
 });
