@@ -15,6 +15,8 @@ import {
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { getSubagentExitSidecarPath } from "../../src/session/exit-sidecar.ts";
+import { COMPLETION_NUDGE_MESSAGE } from "../../src/tools/completion-nudge.ts";
+import { PI_SUBAGENT_TIMEOUT_WRAP_UP } from "../../src/tools/timeout-reminders.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
@@ -29,7 +31,13 @@ import {
 // D11 and D12 end to end: a real Pi session with a faux provider runs the child extension; the exit
 // record, the real background watcher and the published result files decide the result.
 const DONE = SUBAGENT_DONE_TOOL_NAME;
-const ENV_KEYS = ["PI_SUBAGENT_SESSION", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_DENY_TOOLS"];
+const ENV_KEYS = [
+	"PI_SUBAGENT_SESSION",
+	"PI_SUBAGENT_AUTO_EXIT",
+	"PI_SUBAGENT_SURFACE",
+	"PI_DENY_TOOLS",
+	PI_SUBAGENT_TIMEOUT_WRAP_UP,
+];
 
 interface ChildRun {
 	sessionFile: string;
@@ -76,6 +84,8 @@ async function runChild(options: {
 	extensions?: ExtensionFactory[];
 	/** The defaultTools setting, for example ["+codemode"]. */
 	defaultTools?: string[];
+	/** D7: run as the report-only wrap-up continuation. */
+	wrapUp?: boolean;
 }): Promise<ChildRun> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
@@ -84,6 +94,7 @@ async function runChild(options: {
 	process.env.PI_SUBAGENT_SESSION = sessionFile;
 	if (options.autoExit) process.env.PI_SUBAGENT_AUTO_EXIT = "1";
 	if (options.pane) process.env.PI_SUBAGENT_SURFACE = "fake-pane";
+	if (options.wrapUp) process.env[PI_SUBAGENT_TIMEOUT_WRAP_UP] = "1";
 	const faux = fauxProvider();
 	faux.setResponses(options.replies);
 	const modelRuntime = await ModelRuntime.create({
@@ -134,7 +145,7 @@ async function runChild(options: {
 }
 
 /** The real background watcher on a child process that exits 0; returns the published record. */
-async function watchAndPublish(sessionFile: string) {
+async function watchAndPublish(sessionFile: string, runningFields: Partial<RunningSubagent> = {}) {
 	const root = createTestDir();
 	const store = new ResultStore(join(root, "results"), () => {});
 	const reservation = store.reserve();
@@ -153,6 +164,7 @@ async function watchAndPublish(sessionFile: string) {
 		sessionFile,
 		childProcess: child,
 		resultTarget: { store, reservation, parentCwd: root, warnings: [] },
+		...runningFields,
 	} as unknown as RunningSubagent;
 	const watch = watchBackgroundSubagent(
 		running,
@@ -271,5 +283,111 @@ describe("completion call end to end (D11, D12)", () => {
 		const { record } = await watchAndPublish(run.sessionFile);
 		assert.equal(record.outcome, "blocked");
 		assert.equal(record.summary, "Need the API key.");
+	});
+});
+
+/** The user messages of a child session that carry the missing-call nudge. */
+function nudgeCount(sessionFile: string): number {
+	return readFileSync(sessionFile, "utf8")
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line))
+		.filter((entry) => entry.message?.role === "user" && JSON.stringify(entry.message.content).includes(COMPLETION_NUDGE_MESSAGE))
+		.length;
+}
+
+/** Ends each model run that started from the given text with one more extension-sent prompt. */
+function extraModelRuns(count: number): ExtensionFactory {
+	return (pi) => {
+		let sent = 0;
+		pi.on("agent_end", () => {
+			if (sent >= count) return;
+			sent += 1;
+			pi.sendUserMessage(`extension follow-up ${sent}`, { deliverAs: "followUp" });
+		});
+	};
+}
+
+describe("one completion nudge, then an untyped result (D12)", () => {
+	const longReport = Array.from({ length: 80 }, (_, i) => `Finding ${i + 1}: the module behaves as documented.`).join("\n");
+
+	it("a long report, the nudge, then \"ok\": one nudge, an untyped done record, the report file holds the long report", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [fauxAssistantMessage(longReport), fauxAssistantMessage("ok"), fauxAssistantMessage("never sent")],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 1, "exactly one nudge");
+		assert.equal(run.unusedReplies, 1, "the child exits after its answer to the nudge");
+		assert.ok(run.shutdownRequests >= 1, "the child requests its exit");
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, false);
+		assert.equal(record.outcome, "done", "a missing call is not an error");
+		assert.equal(report, longReport);
+	});
+
+	it("exactly one nudge across several model runs", async () => {
+		// Model runs: the report (nudged), the answer "ok", then two extension follow-ups.
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [
+				fauxAssistantMessage("Report."),
+				fauxAssistantMessage("ok"),
+				fauxAssistantMessage("still ok"),
+				fauxAssistantMessage("still ok again"),
+			],
+			extensions: [extraModelRuns(3)],
+		});
+		assert.equal(run.unusedReplies, 0, "every model run took place");
+		assert.equal(nudgeCount(run.sessionFile), 1, "one nudge per run");
+	});
+
+	it("a child that answers the nudge with the call ends typed", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [
+				fauxAssistantMessage("Report written before the nudge."),
+				fauxAssistantMessage([fauxToolCall(DONE, partial, { id: "c1" })], { stopReason: "toolUse" }),
+				fauxAssistantMessage("never sent"),
+			],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 1);
+		assert.equal(run.unusedReplies, 1);
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.equal(record.summary, partial.summary);
+		assert.equal(report, "Report written before the nudge.");
+	});
+
+	it("a child that makes the call without a nudge gets none", async () => {
+		const run = await runChild({
+			autoExit: true,
+			prompts: ["task"],
+			replies: [fauxAssistantMessage([fauxToolCall(DONE, partial, { id: "c1" })], { stopReason: "toolUse" })],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 0);
+	});
+
+	it("a child in report-only wrap-up gets no nudge; its result is untyped and timed out on the original deadline", async () => {
+		const run = await runChild({
+			autoExit: true,
+			wrapUp: true,
+			prompts: ["wrap up"],
+			replies: [fauxAssistantMessage("Wrap-up report."), fauxAssistantMessage("never sent")],
+		});
+		assert.equal(nudgeCount(run.sessionFile), 0);
+		assert.equal(run.unusedReplies, 1);
+		const deadline = { kind: "timeout" as const, seconds: 600, threshold: 0.8 };
+		const { record, report } = await watchAndPublish(run.sessionFile, {
+			timeoutWrapUp: deadline,
+			timeoutWrapUpMode: true,
+		});
+		assert.equal(record.typed, false);
+		assert.equal(record.outcome, "timed_out");
+		assert.deepEqual(record.timeLimit, { kind: "timeout", seconds: 600, wrapUp: true });
+		assert.equal(report, "Wrap-up report.");
 	});
 });
