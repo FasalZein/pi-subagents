@@ -12,7 +12,7 @@ const SECTION_CAP = 1_600;
 const AGENTS_NO_ARG_CAP = 200;
 // D21: management tools are direct without a discovery tool and deferred with codemode.
 const EXPECTED_DECLARED = {
-	none: ["subagent", "subagent_agents", "subagent_kill", "subagent_resume"],
+	none: ["subagent", "subagent_agents", "subagent_kill", "subagent_resume", "subagent_wait"],
 	on: ["subagent"],
 	only: [],
 };

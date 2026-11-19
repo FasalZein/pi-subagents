@@ -100,7 +100,7 @@ export function registerSubagentResumeTool(
 			),
 			agent: Type.Optional(
 				Type.String({
-					description: "Agent name for display. Use the original agent name from the session being resumed.",
+					description: "Agent name for display; use the resumed session's original agent.",
 				}),
 			),
 			model: Type.Optional(
@@ -118,7 +118,7 @@ export function registerSubagentResumeTool(
 			mode: Type.Optional(
 				Type.Union([Type.Literal("background"), Type.Literal("interactive")], {
 					description:
-						"Fallback resume mode used only when launch metadata cannot be inferred. Persisted metadata always wins when present; an explicit mode here cannot override it.",
+						"Resume mode used only when the session has no launch metadata; saved metadata always wins.",
 				}),
 			),
 		}),
