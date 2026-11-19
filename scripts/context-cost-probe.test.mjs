@@ -39,6 +39,20 @@ describe("context cost probe (G1.1)", () => {
 	}
 });
 
+describe("context cost probe declaration sizes", () => {
+	for (const loadout of LOADOUTS) {
+		it(`counts each declaration as the complete object in the request, loadout ${loadout}`, async () => {
+			const report = await probe(FIXTURE, loadout);
+			for (const side of ["with", "without"]) {
+				assert.ok(report.tools[side].length > 0);
+				for (const tool of report.tools[side]) {
+					assert.equal(tool.chars, tool.request.length, `${side} ${tool.name}`);
+				}
+			}
+		});
+	}
+});
+
 describe("context cost probe with 100 definitions (G1.2)", () => {
 	const dirs = [];
 	after(() => {
@@ -60,7 +74,10 @@ describe("context cost probe with 100 definitions (G1.2)", () => {
 				assert.ok(report.section <= SECTION_CAP, `${loadout} section ${report.section}`);
 				assert.ok(report.indexShown < 100, "the index lists only some agents");
 				assert.match(report.indexText, /\+\d+ more: subagent_agents/);
+				assert.equal(report.indexShown + report.indexOmitted, 100, `${loadout} index coverage`);
+				assert.equal(report.pass.indexCoverage, true);
 				if (loadout !== "none") continue;
+				assert.equal(report.agentsNoArg.ok, true, report.agentsNoArg.text);
 				assert.ok(report.agentsNoArg.chars > 0 && report.agentsNoArg.chars <= AGENTS_NO_ARG_CAP);
 				assert.match(report.agentsNoArg.text, /100 agents/);
 				assert.ok(report.outsideLaunch, "an agent outside the index exists");

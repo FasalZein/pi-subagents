@@ -15,7 +15,8 @@
  * provider receives. The other tools (Pi's default loadout), the codemode extension, its
  * mode and its inline budget (3000) are the same in both runs. Loadouts: on = codemode
  * active in mode on; only = codemode active in mode only; none = codemode inactive.
- * A declaration counts as JSON.stringify({ name, description, parameters }).length.
+ * A declaration counts as JSON.stringify(toToolDeclaration(tool)).length: Pi's complete
+ * declaration (name, description, parameters, constrainedSampling).
  * total = (system prompt with - without) + (sum of declarations with - without); the
  * codemode description is a declaration, so tool sections embedded in it count too.
  * subagent_agents with no argument and a launch of an agent outside the index run as faux
@@ -43,6 +44,7 @@ import {
 	fauxToolCall,
 	getCurrentSystemPrompt,
 	getCurrentTools,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
@@ -59,8 +61,8 @@ export const CAPS = { total: 6000, section: 1600, agentsNoArg: 200 };
 const EXTENSION_URL = new URL("../src/subagents.ts", import.meta.url);
 const EXTENSION_TOOL = /^(subagent|caller_ping)/;
 
-const declarationChars = (tool) =>
-	JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }).length;
+// Pi's own declaration shape, constrainedSampling included (codemode carries its grammar there).
+const declarationChars = (tool) => JSON.stringify(toToolDeclaration(tool)).length;
 
 function rootEnv() {
 	for (const key of Object.keys(process.env)) {
@@ -86,10 +88,16 @@ async function runSession({ agentDir, loadout, extension, replies }) {
 					name: tool.name,
 					description: tool.description,
 					chars: declarationChars(tool),
+					// The declaration exactly as the request carries it (the faux provider serializes this object).
+					request: JSON.stringify(tool),
 				})),
 				toolResults: context.messages
 					.filter((message) => message.role === "toolResult")
-					.map((message) => (message.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join("")),
+					.map((message) => ({
+						toolName: message.toolName,
+						isError: message.isError === true,
+						text: (message.content ?? []).map((part) => (part.type === "text" ? part.text : "")).join(""),
+					})),
 			});
 			return reply;
 		}),
@@ -120,15 +128,14 @@ async function runSession({ agentDir, loadout, extension, replies }) {
 		noContextFiles: true,
 	});
 	await resourceLoader.reload();
-	const settings = { codemode: { mode, inlineBudget: INLINE_BUDGET } };
-	if (loadout !== "none") settings.defaultTools = ["+codemode"];
 	const { session } = await createAgentSession({
 		cwd,
 		agentDir: piDir,
 		modelRuntime,
 		model: faux.getModel(),
 		resourceLoader,
-		settingsManager: SettingsManager.inMemory(settings),
+		// The codemode factory fixes mode and inline budget; the setting only activates it.
+		settingsManager: SettingsManager.inMemory(loadout === "none" ? {} : { defaultTools: ["+codemode"] }),
 		// A persistent session: a lineage-only child needs a parent session file.
 		sessionManager: SessionManager.create(cwd, join(piDir, "sessions")),
 	});
@@ -162,12 +169,17 @@ export async function measureLoadout(agentDir, loadout) {
 		loadout,
 		section: sectionText.length,
 		indexShown: (sectionText.match(/^- /gm) ?? []).length,
+		indexOmitted: Number(sectionText.match(/^\+(\d+) more:/m)?.[1] ?? 0),
 		declarations: withExt.tools
 			.filter((tool) => EXTENSION_TOOL.test(tool.name))
 			.map((tool) => ({ name: tool.name, chars: tool.chars })),
 		codemodeDescription: {
 			with: codemode(withExt)?.description.length ?? null,
 			without: codemode(without)?.description.length ?? null,
+		},
+		tools: {
+			with: withExt.tools.map(({ name, chars, request }) => ({ name, chars, request })),
+			without: without.tools.map(({ name, chars, request }) => ({ name, chars, request })),
 		},
 		codemodeDeclaration: { with: codemode(withExt)?.chars ?? null, without: codemode(without)?.chars ?? null },
 		otherTools: without.tools.map((tool) => tool.name),
@@ -187,8 +199,10 @@ export async function measureAgentsNoArg(agentDir) {
 		extension: true,
 		replies: [fauxAssistantMessage(fauxToolCall("subagent_agents", {})), fauxAssistantMessage("ok")],
 	});
-	const text = requests[1]?.toolResults.at(-1) ?? "";
-	return { chars: text.length, text };
+	const result = requests[1]?.toolResults.at(-1);
+	const text = result?.text ?? "";
+	const ok = result?.toolName === "subagent_agents" && !result.isError;
+	return { chars: text.length, text, ok };
 }
 
 /** Launch an agent that the index does not list; a fake pi records the agent it was started as. */
@@ -211,7 +225,7 @@ export async function launchOutsideIndex(agentDir, agent) {
 			extension: true,
 			replies: [fauxAssistantMessage(fauxToolCall("subagent", { children: [child] })), fauxAssistantMessage("ok")],
 		});
-		const reply = requests[1]?.toolResults.at(-1) ?? "";
+		const reply = requests[1]?.toolResults.at(-1)?.text ?? "";
 		const launched = existsSync(marker) ? readFileSync(marker, "utf8") : null;
 		return { agent, launched, works: launched === agent, reply };
 	} finally {
@@ -230,35 +244,17 @@ export function generateAgentDir(sourceDir, count, { pinned = false } = {}) {
 	if (files.length === 0) throw new Error(`no agent files in ${sourceDir}/agents`);
 	const dir = mkdtempSync(join(tmpdir(), "cost-probe-agents-"));
 	mkdirSync(join(dir, "agents"));
-	const skills = new Set();
 	for (let i = 0; i < count; i++) {
 		const name = `generated-${String(i + 1).padStart(3, "0")}`;
 		let text = readFileSync(join(sourceDir, "agents", files[i % files.length]), "utf8");
 		text = text.replace(/^name: .*$/m, `name: ${name}`);
 		text = text.replace(/^pinned: .*\n/m, "");
 		if (pinned) text = text.replace(/^name: .*$/m, (line) => `${line}\npinned: true`);
+		// Self-contained: a launch resolves named skills, which a generated dir does not hold.
+		text = text.replace(/^(?:skills|inject-skills): .*\n/gm, "");
 		writeFileSync(join(dir, "agents", `${name}.md`), text);
-		for (const skill of namedSkills(text)) skills.add(skill);
-	}
-	// A launch resolves the skills an agent names; stub skills keep a generated agent launchable.
-	for (const skill of skills) {
-		mkdirSync(join(dir, "skills", skill), { recursive: true });
-		writeFileSync(
-			join(dir, "skills", skill, "SKILL.md"),
-			`---\nname: ${skill}\ndescription: Generated stub skill for the cost probe.\n---\n\nStub.\n`,
-		);
 	}
 	return dir;
-}
-
-/** Skill names of the skills and inject-skills fields, without a "=mode" suffix. */
-function namedSkills(text) {
-	return [...text.matchAll(/^(?:skills|inject-skills): (.*)$/gm)].flatMap((match) =>
-		match[1]
-			.split(",")
-			.map((entry) => entry.split("=")[0].trim())
-			.filter(Boolean),
-	);
 }
 
 /** Every agent name in agentDir/agents that the index section does not list. */
@@ -279,14 +275,20 @@ export function agentsOutsideIndex(agentDir, indexText) {
 export async function probe(agentDir, loadout, { extras = false } = {}) {
 	const result = await measureLoadout(agentDir, loadout);
 	const report = { agentDir, ...result, caps: CAPS };
-	report.pass = { total: result.total <= CAPS.total, section: result.section <= CAPS.section };
+	// Fail closed: a missing index, a failed tool call or a missing launch fails, never counts as zero.
+	const count = readdirSync(join(agentDir, "agents")).filter((file) => file.endsWith(".md")).length;
+	report.pass = {
+		total: result.total <= CAPS.total,
+		section: result.section > 0 && result.section <= CAPS.section,
+		indexCoverage: result.indexShown + result.indexOmitted === count,
+	};
 	if (extras) {
 		const agents = await measureAgentsNoArg(agentDir);
 		report.agentsNoArg = agents;
-		report.pass.agentsNoArg = agents.chars <= CAPS.agentsNoArg;
+		report.pass.agentsNoArg = agents.ok && agents.chars > 0 && agents.chars <= CAPS.agentsNoArg;
 		const outside = agentsOutsideIndex(agentDir, result.indexText);
 		report.outsideLaunch = outside.length > 0 ? await launchOutsideIndex(agentDir, outside.at(-1)) : null;
-		if (report.outsideLaunch) report.pass.outsideLaunch = report.outsideLaunch.works;
+		report.pass.outsideLaunch = report.outsideLaunch?.works === true;
 	}
 	return report;
 }
@@ -295,9 +297,16 @@ function formatReport(report) {
 	const lines = [
 		`agent dir: ${report.agentDir}`,
 		`loadout: ${report.loadout} (codemode inline budget ${INLINE_BUDGET}; other tools: ${report.otherTools.join(", ")})`,
-		`section <index>: ${report.section} chars (${report.indexShown} agent lines; cap ${CAPS.section})`,
-		...report.declarations.map((d) => `declaration ${d.name}: ${d.chars} chars`),
+		`section <index>: ${report.section} chars (${report.indexShown} agent lines, ${report.indexOmitted} omitted; cap ${CAPS.section})`,
+		...["with", "without"].flatMap((side) =>
+			report.tools[side].map((d) => `declaration (${side}) ${d.name}: ${d.chars} chars`),
+		),
 		`codemode description: with ${report.codemodeDescription.with ?? "-"}, without ${report.codemodeDescription.without ?? "-"} chars`,
+		...(report.loadout === "only"
+			? [
+					`  of which embedded extension sections: ${report.codemodeDescription.with - report.codemodeDescription.without} chars (breakdown; already in the codemode declaration)`,
+				]
+			: []),
 		`system prompt: with ${report.systemPrompt.with}, without ${report.systemPrompt.without}, delta ${report.systemPrompt.delta}`,
 		`declarations: with ${report.declarationSum.with}, without ${report.declarationSum.without}, delta ${report.declarationSum.delta}`,
 		`total: ${report.total} chars (about ${Math.round(report.total / 4)} tokens; cap ${CAPS.total})`,
