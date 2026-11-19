@@ -1,4 +1,4 @@
-import { COMPLETION_LIMIT_TEXT } from "../tools/completion-call.ts";
+import { COMPLETION_LIMIT_TEXT, SUMMARY_ANSWER_FIRST } from "../tools/completion-call.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 
 /**
@@ -10,6 +10,7 @@ export function completionCallBrief(denySet: ReadonlySet<string>): string {
 	return (
 		`When your task is complete, call ${SUBAGENT_DONE_TOOL_NAME} with outcome (done, partial or blocked), ` +
 		`a summary of at most ${COMPLETION_LIMIT_TEXT}, artifacts (paths of the files you wrote) and optional JSON data. ` +
+		`${SUMMARY_ANSWER_FIRST} ` +
 		`A summary over ${COMPLETION_LIMIT_TEXT} is refused once; put long detail in your final message or a file.`
 	);
 }

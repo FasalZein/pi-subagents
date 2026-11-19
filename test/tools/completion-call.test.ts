@@ -69,6 +69,12 @@ describe("completion call (D12)", () => {
 				const properties = Object.keys(tool.parameters.properties ?? {}).sort();
 				assert.deepEqual(properties, ["artifacts", "data", "outcome", "summary"]);
 				assert.match(tool.description, LIMIT);
+				// T66: the summary field asks for the task's answer first, verbatim, one keyed value per line.
+				assert.equal(
+					tool.parameters.properties?.summary?.description,
+					"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, " +
+						"each keyed value on its own line. Then say what you accomplished. At most 1,500 characters.",
+				);
 			}),
 		);
 	}
@@ -88,6 +94,15 @@ describe("completion call (D12)", () => {
 		assert.match(completionCallBrief(new Set()), /call subagent_done with outcome .* at most 1,500 characters/);
 		assert.doesNotMatch(completionCallBrief(new Set()), /caller_ping/, "the brief names no tool a manual pane lacks");
 		assert.equal(completionCallBrief(new Set([DONE])), "");
+	});
+
+	it("the brief asks for the task's answer first in the summary, verbatim, one keyed value per line (T66)", () => {
+		assert.ok(
+			completionCallBrief(new Set()).includes(
+				"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, " +
+					"each keyed value on its own line.",
+			),
+		);
 	});
 
 	const briefCases = [
