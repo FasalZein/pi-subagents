@@ -181,13 +181,14 @@ export function carriers(events, parentToolAllowlist) {
 		)
 			return;
 		// A wait or lookup reply (candidate subagent_wait) lists ended runs under results,
-		// each with its own id and text; pending and missing runs carry nothing.
+		// each with its own runId (T67: the launch children's field name) and text; pending
+		// and missing runs carry nothing.
 		if (Array.isArray(m.details?.results)) {
 			for (const member of m.details.results)
 				found.push({
 					kind: "tool-result",
 					index,
-					runId: typeof member?.id === "string" ? member.id : null,
+					runId: typeof member?.runId === "string" ? member.runId : null,
 					tool: m.toolName,
 					text: typeof member?.text === "string" ? member.text : "",
 				});

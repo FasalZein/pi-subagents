@@ -527,7 +527,7 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `agent` | yes | Name of the agent definition |
-| `name` | yes | Lower-kebab handle of 2 to 4 words and at most 32 characters, such as `auth-scout` |
+| `name` | yes | Lower-kebab handle: 2 to 4 words joined by hyphens, at most 32 characters, such as `auth-scout`; one word, such as `build`, is refused |
 | `title` | yes | Sentence-case title of 3 to 8 words, such as `Auth implementation map` |
 | `task` | yes | The work for this child |
 | `model` | no | A model for this launch. See [Model names](#model-names) |
@@ -637,7 +637,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`, and each entry of `results` has the run's `record`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -698,9 +698,9 @@ let pending = [];
 let missing = [];
 if (started.length > 0) {
 	const wait = await tools.subagent_wait({ ids: started, timeout: WAIT_SECONDS });
-	runs.push(...wait.results.map((result) => entry(result.id, result.record, result.text)));
+	runs.push(...wait.results.map((result) => entry(result.runId, result.record, result.text)));
 	pending = wait.pending;
-	missing = wait.missing.map((item) => ({ id: item.id, error: item.error.slice(0, SUMMARY_CHARS) }));
+	missing = wait.missing.map((item) => ({ id: item.runId, error: item.error.slice(0, SUMMARY_CHARS) }));
 }
 
 const digest = {
@@ -750,8 +750,8 @@ A failed script keeps its partial output, and the children that it launched keep
 const RUN_IDS = [];
 const WAIT_SECONDS = 600;
 const brief = (result) => ({
-	id: result.id,
-	name: result.record?.name,
+	id: result.runId,
+	name: result.name,
 	outcome: result.record?.outcome ?? "unknown",
 	report: result.record?.report.saved ? result.record.report.path : undefined,
 });

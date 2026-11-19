@@ -246,7 +246,7 @@ test("[T59a] a subagent_wait reply is one carrier per run it lists; a lookup aft
 	];
 	const wait = (ids) =>
 		toolResult("w1", "subagent_wait", "...", {
-			details: { status: "complete", results: ids.map((id) => ({ id, text: LINE(TARGETS[IDS.indexOf(id)]) })), pending: [], missing: [] },
+			details: { status: "complete", results: ids.map((id) => ({ runId: id, name: NAMES[IDS.indexOf(id)], text: LINE(TARGETS[IDS.indexOf(id)]) })), pending: [], missing: [] },
 		});
 	const message = (i) => ({ type: "custom_message", customType: "subagent_result", content: LINE(TARGETS[i]), details: { id: IDS[i] } });
 	const account = (events) =>

@@ -389,7 +389,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 		const script = [
 			'const r = await tools.subagent_wait({ ids: ["id-child-one", "id-child-two"] });',
 			'if (typeof r !== "object") return `TEXT ${r}`;',
-			'const one = r.results.find((x) => x.id === "id-child-one").record;',
+			'const one = r.results.find((x) => x.runId === "id-child-one").record;',
 			"return `OBJECT ${r.status} answer=${one.data?.answer} outcome=${one.outcome} typed=${one.typed} summary=${one.summary} saved=${one.report?.saved} resumable=${one.resume?.resumable}`;",
 		].join("\n");
 		const parent = await startParent(
@@ -422,7 +422,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 		const script = [
 			"await tools.gate({});",
 			"const r = await tools.subagent_wait({});",
-			'return `IDS ${r.results.map((x) => x.id).sort().join(",")} PENDING ${r.pending.join(",")} STATUS ${r.status}`;',
+			'return `IDS ${r.results.map((x) => x.runId).sort().join(",")} PENDING ${r.pending.join(",")} STATUS ${r.status}`;',
 		].join("\n");
 		const parent = await startParent(
 			{ delegate: LAUNCH, join: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },

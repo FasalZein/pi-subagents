@@ -3,11 +3,8 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agents/launchable-agents.ts";
+import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
-import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
-import { parseDataSchema } from "./data-schema.ts";
-import { asPrepareArguments, parseJsonContainer, parseLaunchJsonFields } from "./json-string-args.ts";
-import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import {
 	enforceAgentFrontmatter,
 	getSubagentAgentRequirementError,
@@ -15,9 +12,11 @@ import {
 	shouldUseBackgroundLaunch,
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
-import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
+import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
+import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
+import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
+import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
-import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -26,22 +25,22 @@ import {
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
-import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
-import { isFinishedStatus } from "../runtime/run-end-message.ts";
-import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
-import { launchVerifiedFanOut } from "../vf/run/launch.ts";
+import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
+import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
-
-import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
-import { droppedExtensionLines } from "../launch/extension-entries.ts";
+import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
+import { launchVerifiedFanOut } from "../vf/run/launch.ts";
+import { parseDataSchema } from "./data-schema.ts";
+import { asPrepareArguments, parseJsonContainer, parseLaunchJsonFields } from "./json-string-args.ts";
 import { type ChildDelivery, launchErrorReason, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
 import {
 	asStructuredContent,
 	type FailedChild,
 	launchedChildData,
-	type SubagentLaunchStructured,
 	SubagentLaunchOutput,
+	type SubagentLaunchStructured,
 } from "./launch-structured.ts";
+import { formatSubagentBatchLines, formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
 import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
@@ -51,7 +50,7 @@ let initialPromptLaunchActive = isInitialPromptInvocation();
 export const SubagentChildParams = Type.Object({
 	agent: Type.String({ description: "Name of the agent definition to launch." }),
 	name: Type.String({
-		description: "Lower-kebab handle of 2 to 4 words and at most 32 characters, such as auth-scout or diff-reviewer.",
+		description: "2-4 lower-kebab words joined by hyphens, max 32 chars. Use auth-scout; one word (build) fails.",
 	}),
 	title: Type.String({
 		description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map.",
@@ -68,7 +67,8 @@ export const SubagentChildParams = Type.Object({
 	),
 	schema: Type.Optional(
 		Type.Unknown({
-			description: "JSON Schema (draft 2020-12 or 7) that this child's completion data must match; every $ref stays inside it.",
+			description:
+				"JSON Schema (draft 2020-12 or 7) that this child's completion data must match; every $ref stays inside it.",
 		}),
 	),
 });

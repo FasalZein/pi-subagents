@@ -41,16 +41,18 @@ export const SubagentWaitOutput = Type.Object({
 		Type.Literal("interrupted"),
 		Type.Literal("recent"),
 	]),
+	/** T67: with ids, in the order of the requested ids; runId and name as in the launch children. */
 	results: Type.Array(
 		Type.Object({
-			id: Type.String(),
+			runId: Type.String(),
+			name: Type.String(),
 			text: Type.String(),
 			/** The run's published record (D13); null when the run published none. */
 			record: Type.Union([ResultRecordSchema, Type.Null()]),
 		}),
 	),
 	pending: Type.Array(Type.String()),
-	missing: Type.Array(Type.Object({ id: Type.String(), error: Type.String() })),
+	missing: Type.Array(Type.Object({ runId: Type.String(), error: Type.String() })),
 	/** D16: the recent list, only with the recent parameter; never full results. */
 	recent: Type.Optional(
 		Type.Array(
@@ -80,7 +82,8 @@ function toStructured(outcome: JoinOutcome): SubagentWaitStructured {
 	return {
 		status: outcome.status,
 		results: outcome.results.map((result) => ({
-			id: result.id,
+			runId: result.runId,
+			name: result.name,
 			text: result.text,
 			record: result.record && recordAsJson(result.record),
 		})),

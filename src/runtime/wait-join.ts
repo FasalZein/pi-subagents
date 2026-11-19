@@ -20,15 +20,19 @@ interface JoinParams {
 /**
  * One ended run in a wait reply: the same rendering a message carries, and the run's published
  * record (D13), or null when the run published none (a launch that failed before it reserved one).
+ * T67: runId and name are the launch children's field names, so a script joins the two by runId.
  */
 export interface JoinedResult {
-	id: string;
+	runId: string;
+	/** The run's launch name. */
+	name: string;
 	text: string;
 	record: ResultRecord | null;
 }
 
 export interface MissingRun {
-	id: string;
+	/** The requested run id or name that matched no run. */
+	runId: string;
 	error: string;
 }
 
@@ -76,18 +80,22 @@ function readRecord(runId: string | undefined, sources: RecordSources): ResultRe
 	return sources.runStore?.read(id) ?? sources.sessionStore?.read(id) ?? null;
 }
 
-function snapshotEnd(id: string, sources: RecordSources): JoinedResult {
+/** `name` is the launch name when the caller has the running run. */
+function snapshotEnd(id: string, sources: RecordSources, name?: string): JoinedResult {
 	// The text is the rendering the message path would carry (D14); the record is the published one.
 	const queued = queuedRunEnd(id);
 	const cached = completedSubagentResults.get(id);
 	const queuedRunId = typeof queued?.details.runId === "string" ? queued.details.runId : undefined;
+	const queuedName = typeof queued?.details.name === "string" ? queued.details.name : undefined;
 	const record = readRecord(sources.runId ?? cached?.resultRunId ?? queuedRunId, sources);
-	if (queued) return { id, text: queued.content, record };
+	// Parent-owned names first (a queued ping's sidecar name can be missing or differ); the id is the last resort.
+	const ended = { runId: id, name: name ?? cached?.name ?? record?.name ?? queuedName ?? id, record };
+	if (queued) return { ...ended, text: queued.content };
 	if (cached) {
 		const reply = getSubagentWaitSuccessResult(cached);
-		return { id, text: reply.content.map((block) => block.text).join("\n\n"), record };
+		return { ...ended, text: reply.content.map((block) => block.text).join("\n\n") };
 	}
-	return { id, text: `Sub-agent "${id}" ended without a result.`, record };
+	return { ...ended, text: `Sub-agent "${id}" ended without a result.` };
 }
 
 /**
@@ -108,7 +116,7 @@ function resolveTarget(query: string, session: SessionResults | undefined): Targ
 	if (byId) return { kind: "active", running: byId };
 	const [named, ...others] = receivable.filter((running) => running.name === query);
 	if (named && others.length === 0) return { kind: "active", running: named };
-	if (named) return { id: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
+	if (named) return { runId: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
 	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: false };
 	// An ended run this process still knows, by id only (D16): a lookup returns its rendering.
 	if (completedSubagentResults.has(query))
@@ -117,9 +125,9 @@ function resolveTarget(query: string, session: SessionResults | undefined): Targ
 	const record = lookUpRecord(sessionStore, query);
 	if (record && session) {
 		const text = renderLookup(session.store, record, session.cwd);
-		return { kind: "ended", result: { id: query, text, record }, lookup: true };
+		return { kind: "ended", result: { runId: query, name: record.name, text, record }, lookup: true };
 	}
-	return { id: query, error: noRecordText(sessionStore, query) };
+	return { runId: query, error: noRecordText(sessionStore, query) };
 }
 
 function defaultIds(): string[] {
@@ -144,13 +152,19 @@ export async function joinRuns(
 	/** Already delivered runs in this reply: copies by lookup that settle nothing (D16). */
 	const lookups = new Set<string>();
 	const active: RunningSubagent[] = [];
+	/** T67: the reply order, the order of the requested ids (with no ids: running runs in launch order, then queued ends). */
+	const order: string[] = [];
 	for (const query of ids) {
 		const target = resolveTarget(query, session);
 		if (!("kind" in target)) missing.push(target);
 		else if (target.kind === "ended") {
-			results.set(target.result.id, target.result);
-			if (target.lookup) lookups.add(target.result.id);
-		} else if (!active.includes(target.running)) active.push(target.running);
+			results.set(target.result.runId, target.result);
+			if (!order.includes(target.result.runId)) order.push(target.result.runId);
+			if (target.lookup) lookups.add(target.result.runId);
+		} else if (!active.includes(target.running)) {
+			active.push(target.running);
+			if (!order.includes(target.running.id)) order.push(target.running.id);
+		}
 	}
 	if (active.length === 0 && results.size === 0) return { status: "empty", results: [], pending: [], missing };
 
@@ -161,7 +175,7 @@ export async function joinRuns(
 			// The router ran first (it was wired at launch), so the end is held in the queue now.
 			if (!holds.has(running.id)) return;
 			const sources = { runStore: running.resultTarget?.store, sessionStore, runId: result?.resultRunId };
-			results.set(running.id, snapshotEnd(running.id, sources));
+			results.set(running.id, snapshotEnd(running.id, sources, running.name));
 			wake();
 		};
 		(running.completionPromise ?? new Promise<never>(() => {})).then(ended, () => ended());
@@ -198,8 +212,8 @@ export async function joinRuns(
 	}
 
 	// Freeze the reply, then end this wait's holds before the queue is settled.
-	const reply = [...results.values()];
-	const settled = reply.filter((result) => !lookups.has(result.id));
+	const reply = order.flatMap((id) => results.get(id) ?? []);
+	const settled = reply.filter((result) => !lookups.has(result.runId));
 	const pending = active.filter((running) => !results.has(running.id)).map((running) => running.id);
 	const stillHeld = new Set<string>();
 	for (const [id, token] of holds) {
@@ -209,7 +223,7 @@ export async function joinRuns(
 	if (status === "interrupted") {
 		// Another wait that still holds an end delivers it when it returns (or gives it back).
 		settleWaitReply(
-			settled.map((result) => result.id).filter((id) => !stillHeld.has(id)),
+			settled.map((result) => result.runId).filter((id) => !stillHeld.has(id)),
 			[],
 			signal,
 		);
@@ -217,7 +231,7 @@ export async function joinRuns(
 		return { status, results: [], pending, missing };
 	}
 	// Every returned result carries its report; a copy by lookup settles nothing (D16).
-	const settledIds = settled.map((result) => result.id);
+	const settledIds = settled.map((result) => result.runId);
 	settleWaitReply(settledIds, settledIds);
 	return { status, results: reply, pending, missing };
 }

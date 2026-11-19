@@ -212,10 +212,10 @@ describe("T25: lookup by run id", () => {
 		);
 		const missing = (reply.structuredContent as SubagentWaitStructured).missing;
 		assert.deepEqual(missing, [
-			{ id: known.runId, error: `No result record for "${known.runId}". Its session file: ${childSession}` },
-			{ id: gone.runId, error: `No result record for "${gone.runId}".` },
-			{ id: noSession.runId, error: `No result record for "${noSession.runId}".` },
-			{ id: "feedbeef", error: 'No result record for "feedbeef".' },
+			{ runId: known.runId, error: `No result record for "${known.runId}". Its session file: ${childSession}` },
+			{ runId: gone.runId, error: `No result record for "${gone.runId}".` },
+			{ runId: noSession.runId, error: `No result record for "${noSession.runId}".` },
+			{ runId: "feedbeef", error: 'No result record for "feedbeef".' },
 		]);
 		assert.equal((reply.structuredContent as SubagentWaitStructured).status, "empty");
 		assert.equal(runningSubagents.size, 0, "nothing launched");
