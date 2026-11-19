@@ -18,6 +18,7 @@ import "./vf/capability-gate.test.ts";
 import "./vf/apply-gate.test.ts";
 import "./vf/winner-result.test.ts";
 import "./vf/winner-launch.test.ts";
+import "./vf/verifier-isolation.test.ts";
 import "./tools/tool-policy.test.ts";
 import "./tools/management-tool-loadout.test.ts";
 import "./tools/subagent-done-autoexit-notify.test.ts";
