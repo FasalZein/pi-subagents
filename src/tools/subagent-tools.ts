@@ -419,11 +419,12 @@ export function registerSubagentCoreTools(
 				// D23: every launch reply starts with the launch facts; each delivered report follows unchanged,
 				// with its own warnings (a published rendering already holds them).
 				const delivered = results.map((result) => (result.details as { status?: string })?.status !== "started");
+				const deliveries = results.map((result, index) =>
+					delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
+				);
 				const text = renderLaunchReply(
 					launched,
-					results.map((result, index) =>
-						delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
-					),
+					deliveries,
 					[
 						...prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
 						// D10: outside every result frame, so each dropped entry is named once in this reply.
@@ -444,6 +445,7 @@ export function registerSubagentCoreTools(
 							title: prepared[index]?.child.title,
 							agent: prepared[index]?.child.agent,
 							name: (result.details as { name?: string } | undefined)?.name ?? prepared[index]?.child.name,
+							...(deliveries[index] ? { report: deliveries[index].report } : {}),
 						})),
 					},
 					...getSubagentBatchStopMetadata(),

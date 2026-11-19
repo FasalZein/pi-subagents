@@ -6,9 +6,19 @@ import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../
 import { buildCompletedSubagentResult } from "../../src/runtime/state.ts";
 import { waitForSubagentResult } from "../../src/runtime/wait-result.ts";
 import { registerSubagentMessageRenderers } from "../../src/tools/message-renderers.ts";
-import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "../../src/tools/tool-names.ts";
-import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
+import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
+import {
+	markInitialPromptLaunchComplete,
+	registerSubagentCoreTools,
+	type SubagentToolRuntime,
+} from "../../src/tools/subagent-tools.ts";
+import {
+	CALLER_PING_TOOL_NAME,
+	SUBAGENT_DONE_TOOL_NAME,
+	SUBAGENT_RESUME_TOOL_NAME,
+	SUBAGENT_TOOL_NAME,
+} from "../../src/tools/tool-names.ts";
+import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
 	assert,
@@ -121,6 +131,171 @@ async function renderedWaitingLaunch(running: RunningSubagent, result: SubagentR
 	const component = tools.get(SUBAGENT_TOOL_NAME)!.renderResult(reply, { expanded: true }, theme, { args: {} });
 	return component.render(WIDTH).join("\n");
 }
+
+type Rendered = { render(width: number): string[] };
+type RegisteredTool = {
+	name: string;
+	renderResult: (...args: unknown[]) => Rendered;
+	// biome-ignore lint/suspicious/noExplicitAny: the tool reply shape is probed dynamically.
+	execute: (...args: unknown[]) => Promise<any>;
+};
+
+function registeredTools(runtime: Partial<SubagentToolRuntime> = {}) {
+	const tools = new Map<string, RegisteredTool>();
+	const pi = {
+		registerTool: (definition: RegisteredTool) => void tools.set(definition.name, definition),
+		getThinkingLevel: () => "low",
+	} as never;
+	registerSubagentCoreTools(pi, () => true, runtime as SubagentToolRuntime);
+	registerSubagentResumeTool(pi, () => true, {} as never, { mayLaunch: () => true });
+	return tools;
+}
+
+function replyText(reply: { content: Array<{ type: string; text?: string }> }): string {
+	return reply.content.map((block) => block.text ?? "").join("\n\n");
+}
+
+/** Every marker the returned text holds is shown by the renderer (differential check). */
+function assertShowsMarkers(reply: { content: Array<{ type: string; text?: string }> }, shown: string, markers: string[]) {
+	const returned = replyText(reply);
+	for (const marker of markers) {
+		assert.ok(returned.includes(marker), `returned text lacks ${marker}: ${returned}`);
+		assert.ok(shown.includes(marker), `renderer omits ${marker}: ${shown}`);
+	}
+}
+
+/**
+ * The real launch tool over a fake runtime: each named child is a prepared running whose wait
+ * reply comes from the given function; every child is blocking, so the launch waits for all.
+ */
+async function waitedLaunch(
+	children: Array<{ running: RunningSubagent; reply: () => Promise<unknown> }>,
+): Promise<{ reply: any; shown: string }> {
+	const byName = new Map(children.map((entry) => [entry.running.name, entry]));
+	const launch = async (params: SubagentParamsInput) => byName.get(params.name)!.running;
+	const tools = registeredTools({
+		loadAgentDefaults: () => ({ mode: "background", async: false }) as never,
+		listLaunchableAgents: () => [],
+		launchBackgroundSubagent: launch,
+		launchSubagent: launch,
+		// The wait replies come from getLaunchedSubagentResult; the watchers never settle here.
+		watchBackgroundSubagent: () => new Promise(() => {}),
+		watchSubagent: () => new Promise(() => {}),
+		getWatcherSignal: (_running, controller) => controller.signal,
+		wireSubagentSteerBack: () => {},
+		startWidgetRefresh: () => {},
+		getLaunchedSubagentResult: async (running: RunningSubagent) => byName.get(running.name)!.reply() as never,
+	});
+	const args = {
+		children: children.map(({ running }) => ({ agent: "scout", name: running.name, title: "t", task: "Work" })),
+	};
+	const ctx = { hasUI: true, cwd: process.cwd(), sessionManager: { getSessionFile: () => null, getSessionId: () => "p" } };
+	const tool = tools.get(SUBAGENT_TOOL_NAME)!;
+	const reply = await tool.execute("call-1", args, undefined, undefined, ctx);
+	const shown = tool.renderResult(reply, { expanded: true }, theme, { args }).render(WIDTH).join("\n");
+	return { reply, shown };
+}
+
+/** The wait reply for a published end, as the launch tool receives it. */
+function publishedWait(running: RunningSubagent, result: SubagentResult) {
+	return () =>
+		result.ping
+			? waitForSubagentResult({ id: running.id }, {
+					findTrackedSubagent: () => ({ running: { ...running, completionPromise: Promise.resolve(result) } }),
+					updateWidget() {},
+				} as never)
+			: waitForSubagentResult({ id: running.id }, {
+					findTrackedSubagent: () => ({ cached: buildCompletedSubagentResult(running, result) }),
+				} as never);
+}
+
+/** A wait interrupted by Esc (an aborted tool signal) while the child still runs. */
+function interruptedWait(running: RunningSubagent) {
+	const signal = AbortSignal.abort();
+	return () =>
+		waitForSubagentResult(
+			{ id: running.id },
+			{
+				findTrackedSubagent: () => ({ running: { ...running, completionPromise: new Promise(() => {}) } }),
+				stopRunningSubagent: async () => {},
+				runningSubagents: new Map(),
+				updateWidget() {},
+			} as never,
+			signal,
+		);
+}
+
+const ANSWER = "ANSWER-MARKER-7f3 the child's published answer.";
+const QUESTION = "QUESTION-MARKER-c21 where is the key?";
+
+function doneChild(name: string) {
+	const running = setup(
+		[
+			toolCall(SUBAGENT_DONE_TOOL_NAME, { outcome: "done", summary: ANSWER }, `done-${name}`, "Pre-call text."),
+			toolResult(SUBAGENT_DONE_TOOL_NAME, `done-${name}`, "ok"),
+		],
+		{ name },
+	);
+	return { running, result: watcherResult(running, watchedEnd(), {}) };
+}
+
+function pingChild(name: string) {
+	const running = setup([toolCall(CALLER_PING_TOOL_NAME, { message: QUESTION }, `ping-${name}`)], { name });
+	const result = watcherResult(running, watchedEnd({ ping: { message: QUESTION } }), {
+		ping: { name, message: QUESTION },
+	});
+	return { running, result };
+}
+
+describe("published text displays (B1 review)", () => {
+	afterEach(() => {
+		resetSubagentStateForTest();
+		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("shows the child's answer in a waiting resume reply with a dropped-extension notice", async () => {
+		const { running, result } = doneChild("resumed-worker");
+		const waited = await publishedWait(running, result)();
+		// resume-tool.ts: a waiting resume puts the dropped-extension lines in a block before the result.
+		const reply = { ...waited, content: [{ type: "text", text: "dropped missing extension: gone.ts" }, ...waited.content] };
+		const shown = registeredTools()
+			.get(SUBAGENT_RESUME_TOOL_NAME)!
+			.renderResult(reply, { expanded: true }, theme, { args: {} })
+			.render(WIDTH)
+			.join("\n");
+		assertShowsMarkers(reply, shown, ["dropped missing extension: gone.ts", ANSWER]);
+	});
+
+	it("shows each published answer and the ping question of a waiting multi-child launch", async () => {
+		markInitialPromptLaunchComplete();
+		const done = doneChild("answer-worker");
+		const ping = pingChild("ask-worker");
+		const { reply, shown } = await waitedLaunch([
+			{ running: done.running, reply: publishedWait(done.running, done.result) },
+			{ running: ping.running, reply: publishedWait(ping.running, ping.result) },
+		]);
+		assert.equal(reply.details.status, "batch");
+		assertShowsMarkers(reply, shown, [ANSWER, QUESTION]);
+	});
+
+	it("shows an interrupted sibling wait as interrupted, not completed, in the reply and the renderer", async () => {
+		markInitialPromptLaunchComplete();
+		const done = doneChild("finish-worker");
+		const waiting = setup([], { name: "wait-worker" });
+		const { reply, shown } = await waitedLaunch([
+			{ running: done.running, reply: publishedWait(done.running, done.result) },
+			{ running: waiting, reply: interruptedWait(waiting) },
+		]);
+		const text = replyText(reply);
+		// The typed reply: the interrupted child holds no finished report.
+		assert.equal(reply.details.children[1].status, "interrupted", JSON.stringify(reply.details.children[1]));
+		assert.match(text, /Waiting for sub-agent "wait-worker" was interrupted\./);
+		assert.doesNotMatch(text, /each report follows below/);
+		assert.match(shown, /wait-worker \(scout\) — interrupted/);
+		assert.doesNotMatch(shown, /wait-worker \(scout\) — completed/);
+		assert.ok(shown.includes(ANSWER), shown);
+	});
+});
 
 const DONE_CALL = [
 	toolCall(SUBAGENT_DONE_TOOL_NAME, { outcome: "done", summary: "All work finished." }, "done-1", "Here is the work."),
