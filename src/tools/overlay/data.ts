@@ -14,7 +14,14 @@ import type {
 	SessionMessageLike,
 	SessionUsage,
 } from "../../types.ts";
-import { newestRunsBySession, recoverResultDetails, recoverSummary } from "./recovered-runs.ts";
+import {
+	newestRecordsBySession,
+	newestRunsBySession,
+	recordStatus,
+	recoverResultDetails,
+	recoverSummary,
+	sessionRecords,
+} from "./recovered-runs.ts";
 import { compactCount, firstLine, formatElapsed, formatElapsedSeconds } from "./render-helpers.ts";
 import type { DetailSection, OverlayContext, OverlayItem } from "./render-types.ts";
 
@@ -413,6 +420,59 @@ export function buildRunningItems(ctx: OverlayContext): OverlayItem[] {
 	return items;
 }
 
+/** One Completed row, from a published record, a cache entry or a run-end message. */
+interface CompletedRow {
+	id: string;
+	name: string;
+	agent?: string;
+	status: "completed" | "cancelled" | "failed";
+	outcome?: string;
+	activity: string;
+	elapsed?: number;
+	exitCode?: number;
+	outputTokens?: number;
+	sessionFile?: string;
+}
+
+function completedItem(ctx: OverlayContext, row: CompletedRow): OverlayItem {
+	const visual = statusVisuals(row.status);
+	const shownOutcome = shownOutcomeOf(row.outcome);
+	const sessionStats = readCompletedSessionStats(row.sessionFile);
+	const meta = row.sessionFile ? safeMeta(row.sessionFile) : undefined;
+	const defs = row.agent ? safeDefs(row.agent, ctx.cwd) : null;
+	const sections = buildSections(defs, meta);
+	sections.push(
+		completedRuntimeSection({
+			status: row.status,
+			elapsed: row.elapsed,
+			exitCode: row.exitCode,
+			outputTokens: row.outputTokens,
+			sessionFile: row.sessionFile,
+			stats: sessionStats,
+		}),
+	);
+	return {
+		id: row.id,
+		icon: visual.icon,
+		iconColor: visual.color,
+		name: row.name,
+		agent: row.agent,
+		modelRef: meta?.modelRef,
+		status: shownOutcome ?? (row.status === "completed" ? undefined : visual.label),
+		statusColor: shownOutcome ? "warning" : row.status === "completed" ? undefined : visual.color,
+		stats: [
+			...(row.elapsed != null ? [formatElapsedSeconds(row.elapsed)] : []),
+			...compactStats(sessionStats, row.outputTokens),
+		],
+		activity: row.activity,
+		detailSections: sections,
+		canKill: false,
+		// An ephemeral run has no session to resume.
+		canResume: Boolean(row.sessionFile),
+		sessionFile: row.sessionFile,
+	};
+}
+
 export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayItem[]> {
 	const items: OverlayItem[] = [];
 	const seen = new Set<string>();
@@ -421,55 +481,58 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 		[...runningSubagents.values()].map((subagent) => subagent.sessionFile).filter(Boolean),
 	);
 
+	// Published records come first: the newest run of a session wins over an older cached one.
+	for (const record of newestRecordsBySession(sessionRecords(ctx))) {
+		seen.add(record.sessionFile ?? record.runId);
+		seen.add(record.runId);
+		const status = recordStatus(record.outcome);
+		items.push(
+			completedItem(ctx, {
+				id: record.runId,
+				name: record.name,
+				agent: record.agent,
+				status,
+				outcome: record.outcome,
+				activity:
+					status === "failed" && record.exit.error
+						? `error: ${firstLine(record.exit.error, 40)}`
+						: record.summary
+							? firstLine(record.summary, 40)
+							: `exit ${record.exit.code}`,
+				elapsed: record.elapsedSeconds,
+				exitCode: record.exit.code,
+				outputTokens: completedSubagentResults.get(record.runId)?.outputTokens,
+				sessionFile: record.sessionFile,
+			}),
+		);
+	}
+
 	for (const [id, r] of completedSubagentResults) {
 		latestCompleted.set(r.sessionFile ?? id, r);
 	}
 
 	for (const [dedupeKey, r] of latestCompleted) {
+		if (seen.has(dedupeKey) || seen.has(r.id)) continue;
 		seen.add(dedupeKey);
 		seen.add(r.id);
-
-		const visual = statusVisuals(r.status);
-		const shownOutcome = shownOutcomeOf(r.resultOutcome);
-
-		const summary = r.errorMessage
-			? `error: ${firstLine(r.errorMessage, 40)}`
-			: r.summary
-				? firstLine(r.summary, 40)
-				: `exit ${r.exitCode}`;
-
-		const sessionStats = readCompletedSessionStats(r.sessionFile);
-		const meta = r.sessionFile ? safeMeta(r.sessionFile) : undefined;
-		const defs = r.agent ? safeDefs(r.agent, ctx.cwd) : null;
-		const sections = buildSections(defs, meta);
-		sections.push(
-			completedRuntimeSection({
+		items.push(
+			completedItem(ctx, {
+				id: r.id,
+				name: r.name,
+				agent: r.agent,
 				status: r.status,
+				outcome: r.resultOutcome,
+				activity: r.errorMessage
+					? `error: ${firstLine(r.errorMessage, 40)}`
+					: r.summary
+						? firstLine(r.summary, 40)
+						: `exit ${r.exitCode}`,
 				elapsed: r.elapsed,
 				exitCode: r.exitCode,
 				outputTokens: r.outputTokens,
 				sessionFile: r.sessionFile,
-				stats: sessionStats,
 			}),
 		);
-
-		items.push({
-			id: r.id,
-			icon: visual.icon,
-			iconColor: visual.color,
-			name: r.name,
-			agent: r.agent,
-			modelRef: meta?.modelRef,
-			status: shownOutcome ?? (r.status === "completed" ? undefined : visual.label),
-			statusColor: shownOutcome ? "warning" : r.status === "completed" ? undefined : visual.color,
-			stats: [formatElapsedSeconds(r.elapsed), ...compactStats(sessionStats, r.outputTokens)],
-			activity: summary,
-			detailSections: sections,
-			canKill: false,
-			// An ephemeral run has no session to resume.
-			canResume: Boolean(r.sessionFile),
-			sessionFile: r.sessionFile,
-		});
 	}
 
 	const sf = ctx.sessionManager.getSessionFile?.();
@@ -480,45 +543,21 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 				if (seen.has(key) || seen.has(recovered.id)) continue;
 				if (recovered.sessionFile && runningSessionFiles.has(recovered.sessionFile)) continue;
 				seen.add(key);
-				const visual = statusVisuals(recovered.status);
-				const summary = recovered.errorMessage
-					? `error: ${firstLine(recovered.errorMessage, 80)}`
-					: recoverSummary(recovered.content, recovered.published);
-				const shownOutcome = shownOutcomeOf(recovered.outcome);
-				const sessionStats = readCompletedSessionStats(recovered.sessionFile);
-				const meta = recovered.sessionFile ? safeMeta(recovered.sessionFile) : undefined;
-				const defs = recovered.agent ? safeDefs(recovered.agent, ctx.cwd) : null;
-				const sections = buildSections(defs, meta);
-				sections.push(
-					completedRuntimeSection({
+				items.push(
+					completedItem(ctx, {
+						id: recovered.id,
+						name: recovered.name,
+						agent: recovered.agent,
 						status: recovered.status,
+						outcome: recovered.outcome,
+						activity: recovered.errorMessage
+							? `error: ${firstLine(recovered.errorMessage, 80)}`
+							: recoverSummary(recovered.content, recovered.published),
 						elapsed: recovered.elapsed,
 						exitCode: recovered.exitCode,
 						sessionFile: recovered.sessionFile,
-						stats: sessionStats,
 					}),
 				);
-
-				items.push({
-					id: recovered.id,
-					icon: visual.icon,
-					iconColor: visual.color,
-					name: recovered.name,
-					agent: recovered.agent,
-					modelRef: meta?.modelRef,
-					status: shownOutcome ?? (recovered.status === "completed" ? undefined : visual.label),
-					statusColor: shownOutcome ? "warning" : recovered.status === "completed" ? undefined : visual.color,
-					stats: [
-						...(recovered.elapsed != null ? [formatElapsedSeconds(recovered.elapsed)] : []),
-						...compactStats(sessionStats),
-					],
-					activity: summary,
-					detailSections: sections,
-					canKill: false,
-					// An ephemeral run has no session to resume.
-					canResume: Boolean(recovered.sessionFile),
-					sessionFile: recovered.sessionFile,
-				});
 			}
 		} catch {
 			/* ignore */
@@ -527,4 +566,3 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 
 	return items;
 }
-

@@ -27,7 +27,7 @@ const SubagentWaitParams = Type.Object({
 	recent: Type.Optional(
 		Type.Boolean({
 			description:
-				"true: return at once one line per ended run of this session (the last 20, newest first); ids, mode and timeout are ignored. Look up an older run by its run id.",
+				"true: return at once one line per ended run of this session (last 20, newest first), ignoring ids, mode and timeout; look up an older run by its run id.",
 		}),
 	),
 });
@@ -108,7 +108,7 @@ export function registerSubagentWaitTool(
 	pi.registerTool({
 		name: SUBAGENT_WAIT_TOOL_NAME,
 		label: "Wait for Subagents",
-		description: "Wait for subagent runs by id (default: all running or queued) and return their results.",
+		description: "Wait for subagent runs and return their results.",
 		parameters: SubagentWaitParams,
 		// T64: ids sent as a JSON string; Pi's coercion would wrap the string as one id.
 		prepareArguments: asPrepareArguments((args) => parseJsonFields(args, ["ids"])),

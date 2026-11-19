@@ -302,12 +302,15 @@ export function settleWaitReply(ids: readonly string[], reported: readonly strin
 
 /**
  * The runs whose finished report these launch or resume replies carry. A started or pending reply
- * and a wait error (interrupted, timed out) carry none, so they deliver nothing.
+ * and a wait error (interrupted, timed out) carry none, so they deliver nothing; nor does a lookup
+ * copy of an end that another wait already took (D16).
  */
 export function reportedRunIds(replies: readonly { details?: unknown }[]): string[] {
 	return replies.flatMap((reply) => {
-		const details = reply.details as { id?: unknown; status?: string } | undefined;
-		return typeof details?.id === "string" && isFinishedStatus(details.status) ? [details.id] : [];
+		const details = reply.details as { id?: unknown; status?: string; lookup?: boolean } | undefined;
+		return typeof details?.id === "string" && isFinishedStatus(details.status) && details.lookup !== true
+			? [details.id]
+			: [];
 	});
 }
 
