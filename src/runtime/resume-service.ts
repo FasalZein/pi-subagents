@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
 import { assertModelAllowed } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
@@ -15,6 +16,7 @@ import {
 	splitModelRefThinking,
 } from "../launch/child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
+import { dropMissingExtensionEntries } from "../launch/extension-entries.ts";
 import { parseEnvString } from "../launch/env.ts";
 import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
@@ -286,13 +288,25 @@ async function resumeSubagentSessionWithoutWidth(
 		runtime.modelRegistry,
 	);
 	const resumedAutoExit = metadata.mode === "background" ? true : invocationMetadata?.autoExit ?? metadata.autoExit ?? true;
-	const resumedInvocationMetadata =
-		metadata.mode === "background" && invocationMetadata
-			? { ...invocationMetadata, autoExit: resumedAutoExit }
+	const targetCwd = launchMetadata?.cwd ?? invocationMetadataSource?.cwd ?? process.cwd();
+	const savedList = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
+	// A resume keeps its saved list minus the entries that no longer resolve (D10). Skill discovery,
+	// the child arguments and the metadata a time-limit wrap-up restart reuses all take the filtered list.
+	const entryCheck = dropMissingExtensionEntries(savedList, {
+		cwd: targetCwd,
+		agentDir: invocationMetadata?.agentConfigDir ?? getAgentDir(),
+	});
+	const savedExtensions = entryCheck.kept;
+	const filteredInvocationMetadata =
+		invocationMetadata && invocationMetadata.extensions !== undefined
+			? { ...invocationMetadata, extensions: savedExtensions }
 			: invocationMetadata;
+	const resumedInvocationMetadata =
+		metadata.mode === "background" && filteredInvocationMetadata
+			? { ...filteredInvocationMetadata, autoExit: resumedAutoExit }
+			: filteredInvocationMetadata;
 	const shouldPersistInvocationMetadata = invocationMetadata && invocationMetadata !== invocationMetadataSource;
 	const targetAgent = launchMetadata?.agent ?? metadata.agent ?? input.agent;
-	const targetCwd = launchMetadata?.cwd ?? invocationMetadataSource?.cwd ?? process.cwd();
 	const targetDefs = targetAgent
 		? loadAgentDefaultsFromDefinitions(targetAgent, undefined, targetCwd, resolveSubagentCwd)
 		: null;
@@ -334,14 +348,13 @@ async function resumeSubagentSessionWithoutWidth(
 	const previousTimeout = readSubagentTimeoutSidecar(sessionFile);
 	const discardPreviousExitRecord = setAsidePreviousExitRecord(sessionFile, undo);
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
-	const savedExtensions = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
 	const extensionArgs =
 		invocationMetadata !== undefined || savedExtensions !== undefined
 			? getExtensionLaunchArgs(savedExtensions, subagentDonePath, narrowedSpawnBudget > 0)
 			: ["--no-extensions", "-e", subagentDonePath];
 	const parityArgs = [
 		...getPersistedPromptLaunchArgs(invocationMetadata),
-		...(await getPersistedSessionParityArgs(invocationMetadata, metadata.mode, narrowedSpawnBudget > 0)),
+		...(await getPersistedSessionParityArgs(filteredInvocationMetadata, metadata.mode, narrowedSpawnBudget > 0)),
 		...(invocationMetadata ? [] : ["--no-approve"]),
 	];
 	const resumeCwd = getResumeCwd(invocationMetadata);
@@ -462,6 +475,7 @@ async function resumeSubagentSessionWithoutWidth(
 		modelContextWindow: runtime.getContextWindow(invocationMetadata?.modelRef),
 		modelRef: invocationMetadata?.modelRef,
 		launchMetadata: resumedInvocationMetadata,
+		droppedExtensions: entryCheck.dropped,
 		resultTarget: { store: sessionResultStore(input.resultsDir), reservation, ...input.parent },
 	};
 

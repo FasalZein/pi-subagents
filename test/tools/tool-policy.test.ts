@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	assert,
 	describe,
@@ -355,10 +358,25 @@ describe("tool policy", () => {
 				"-e",
 				"npm:pi-subagents",
 			]);
-			assert.deepEqual(
-				getExtensionLaunchArgsForTest(["/home/u/.pi/agent/extensions/pi-subagents/src/index.ts"], "/tmp/done.ts", true),
-				["--no-extensions", "-e", "/tmp/done.ts", "-e", "/home/u/.pi/agent/extensions/pi-subagents/src/index.ts"],
-			);
+			// An installed copy counts by its manifest name (T29: exact match, not a path containing pi-subagents).
+			const copy = join(mkdtempSync(join(tmpdir(), "subagents-copy-")), "pi-subagents");
+			mkdirSync(copy, { recursive: true });
+			writeFileSync(join(copy, "package.json"), JSON.stringify({ name: "pi-subagents" }));
+			assert.deepEqual(getExtensionLaunchArgsForTest([copy], "/tmp/done.ts", true), [
+				"--no-extensions",
+				"-e",
+				"/tmp/done.ts",
+				"-e",
+				copy,
+			]);
+			const ownEntry = getSubagentsExtensionPathForTest();
+			assert.deepEqual(getExtensionLaunchArgsForTest([ownEntry], "/tmp/done.ts", true), [
+				"--no-extensions",
+				"-e",
+				"/tmp/done.ts",
+				"-e",
+				ownEntry,
+			]);
 		});
 
 		it("keeps inherited extensions untouched when the agent sets no extensions list", () => {

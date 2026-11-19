@@ -13,6 +13,11 @@ function getSubagentCompletionStatus(
 	result: SubagentResult,
 	running?: Pick<RunningSubagent, "mode" | "autoExit">,
 ): SubagentCompletionStatus {
+	// D14: a published record decided the end once; the exit facts below are only for runs without one.
+	if (result.resultOutcome) {
+		if (result.resultOutcome === "cancelled") return "cancelled";
+		return result.resultOutcome === "done" || result.resultOutcome === "partial" ? "completed" : "failed";
+	}
 	if (result.error === "cancelled") return "cancelled";
 	// A runaway the runtime had to kill is never a completion, whatever it
 	// managed to print before the signal. Without this an interactive child with

@@ -170,7 +170,8 @@ describe("child launch plan", () => {
 		assert.deepEqual(plan.capability.extensions, ["git:github.com/example/footer-extension@v1"]);
 	});
 
-	it("keeps temporary resolution when a configured npm package is not installed", async () => {
+	// D10 changes v2.9.2 on purpose: an uninstalled npm entry no longer reaches Pi as a temporary package.
+	it("drops a configured npm package that is not installed", async () => {
 		const cwd = createTestDir();
 		const agentDir = join(cwd, "agent-root");
 		mkdirSync(agentDir, { recursive: true });
@@ -192,7 +193,8 @@ describe("child launch plan", () => {
 			mode: "background",
 		});
 
-		assert.deepEqual(plan.capability.extensions, ["npm:missing-footer"]);
+		assert.deepEqual(plan.capability.extensions, []);
+		assert.deepEqual(plan.capability.droppedExtensions, ["npm:missing-footer"]);
 	});
 
 	it("does not reuse project packages for an untrusted background child", async () => {
