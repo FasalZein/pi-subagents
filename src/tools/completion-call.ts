@@ -52,7 +52,13 @@ export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry:
 }
 
 const OUTCOME_DESCRIPTION = "done, partial or blocked";
-const SUMMARY_DESCRIPTION = `What you accomplished, at most ${COMPLETION_LIMIT_TEXT}`;
+/**
+ * T66: one sentence for the brief and the summary field. The parent and keyed oracles (for example a
+ * line "FACT-1: value") read the answer at the start of the summary, so prose around it scores wrong.
+ */
+export const SUMMARY_ANSWER_FIRST =
+	"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, each keyed value on its own line.";
+const SUMMARY_DESCRIPTION = `${SUMMARY_ANSWER_FIRST} Then say what you accomplished. At most ${COMPLETION_LIMIT_TEXT}.`;
 const ARTIFACTS_DESCRIPTION = "Paths of the files you wrote";
 const DATA_ANY_DESCRIPTION = "Any JSON value for the caller";
 
