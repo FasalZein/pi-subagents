@@ -162,6 +162,8 @@ export interface RunningSubagent {
 	/** Set when closing a pane child's surface failed, so the kill may not have taken. */
 	timeoutKillFailed?: boolean;
 	resultOwner?: { kind: CompletedDelivery; ownerId: string };
+	/** Extension entries this start dropped because they do not resolve; the reply names them (D10). */
+	droppedExtensions?: readonly string[];
 	completionPromise?: Promise<SubagentResult>;
 	spawnWidthSlotAcquired?: boolean;
 	surface?: string;

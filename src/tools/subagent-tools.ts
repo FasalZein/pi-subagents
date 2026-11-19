@@ -28,6 +28,7 @@ import { launchVerifiedFanOut } from "../vf/run/launch.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 
 import { formatSubagentBatchLines, formatTaskPreview, isFinishedStatus, renderSubagentCompletionText } from "./message-renderers.ts";
+import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { renderLaunchReply } from "./launch-reply.ts";
 import { applySynchronousLaunchPolicy, getChildLaunchWarning } from "./policy.ts";
 import { registerSetTabTitleTool } from "./set-tab-title.ts";
@@ -423,7 +424,11 @@ export function registerSubagentCoreTools(
 					results.map((result, index) =>
 						delivered[index] ? { report: resultText(withToolWarning(result, prepared[index].warning)) } : null,
 					),
-					prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+					[
+						...prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+						// D10: outside every result frame, so each dropped entry is named once in this reply.
+						...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
+					],
 				);
 				if (launched.length === 1) {
 					return asSubagentToolResult({ ...results[0], content: [{ type: "text", text }] });

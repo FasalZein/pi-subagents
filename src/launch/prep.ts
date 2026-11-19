@@ -27,6 +27,7 @@ import { parseCommandWords } from "./child-command.ts";
 import { buildChildLaunchPlan, type ModelRegistryLike } from "./child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
+import { isSubagentsExtensionEntry } from "./extension-entries.ts";
 import { getLaunchEnvCollisions } from "./launch-overrides.ts";
 import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import {
@@ -80,6 +81,8 @@ export interface PreparedSubagentLaunch {
 	sessionTitle?: string;
 	denySet: Set<string>;
 	effectiveExtensions?: string[];
+	/** Extension entries dropped because they do not resolve; the launch reply names them (D10). */
+	droppedExtensions: string[];
 	identity: string;
 	identityInSystemPrompt: boolean;
 	/** Original agent-level auto-exit, preserved before any headless-mode override. */
@@ -150,6 +153,7 @@ export async function prepareSubagentLaunch(
 		injectSkills: effectiveInjectSkills,
 		denySet,
 		extensions: effectiveExtensions,
+		droppedExtensions,
 		skillLaunchPlan,
 	} = childLaunchPlan.capability;
 	const identity = buildIdentityBlock(agentDefs, params.systemPrompt);
@@ -170,6 +174,7 @@ export async function prepareSubagentLaunch(
 		sessionTitle,
 		denySet,
 		effectiveExtensions,
+		droppedExtensions,
 		identity,
 		identityInSystemPrompt,
 		agentAutoExit,
@@ -221,7 +226,7 @@ export function getSubagentsExtensionPath(): string {
  * force-loading it again would register its tools twice.
  */
 function includesSubagentsExtension(extensionSpecs: string[]): boolean {
-	return extensionSpecs.some((spec) => /(^|[/@:])pi-subagents(\b|[/@])/.test(spec.trim()));
+	return extensionSpecs.some((spec) => isSubagentsExtensionEntry(spec));
 }
 
 export function getExtensionLaunchArgs(
