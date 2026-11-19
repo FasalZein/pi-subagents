@@ -1,5 +1,3 @@
-import { MODEL_THINKING_LEVELS } from "@earendil-works/pi-ai/providers/model-schema";
-
 export function parseAllowedModels(raw: string | undefined): string[] {
 	if (!raw?.trim()) return [];
 	return raw
@@ -8,7 +6,13 @@ export function parseAllowedModels(raw: string | undefined): string[] {
 		.filter(Boolean);
 }
 
-const PI_THINKING_LEVELS: readonly string[] = MODEL_THINKING_LEVELS;
+/**
+ * Mirrors MODEL_THINKING_LEVELS of @earendil-works/pi-ai (dist/providers/model-schema.js).
+ * A local copy, because Pi's extension loader aliases the bare `@earendil-works/pi-ai` to one file,
+ * so the subpath import does not resolve in an installed extension, and the bare entry does not export it.
+ * test/agents/model-refs-thinking-levels.test.ts compares it with Pi's value.
+ */
+export const PI_THINKING_LEVELS: readonly string[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /**
  * Split Pi's provider/model[:thinking] syntax. Only a known Pi thinking level

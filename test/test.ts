@@ -154,6 +154,8 @@ import "./mux/zellij-placement.test.ts";
 import "./mux/zellij-owned-placement.test.ts";
 import "./agents/roster-filtering.test.ts";
 import "./agents/index-section.test.ts";
+import "./agents/model-refs-thinking-levels.test.ts";
+import "./agents/pi-loader-load.test.ts";
 import "./agents/agent-detail-limits.test.ts";
 import "./agents/registration-gating.test.ts";
 import "./agents/malformed-agent.test.ts";
