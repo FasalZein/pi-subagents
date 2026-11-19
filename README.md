@@ -346,7 +346,7 @@ A resumed run gets the same limits as the first run. A child that loops stops ag
 
 Use the `subagent_resume` tool to continue the work. A plain `pi --session` run is not a tracked child, so that run has no limit.
 
-Set `on-timeout: block-resume` when a second partial run is not safe. An example is an agent that writes to something outside the repository. Then `subagent_resume` refuses the session, and the result hides the session line from the model. You can still resume the session yourself from the `/subagents` overlay; that override applies only to that one resume.
+Set `on-timeout: block-resume` when a second partial run is not safe. An example is an agent that writes to something outside the repository. Then `subagent_resume` refuses the session, and the result footer says that the run cannot be resumed. You can still resume the session yourself from the `/subagents` overlay; that override applies only to that one resume.
 
 The block-resume verdict stays until the resumed run ends. The published outcome of that run decides, not its exit status: a done, partial or blocked result removes the verdict, and a new timeout replaces it. A cancelled resumed run leaves the verdict in force, so a non-idempotent agent stays blocked. A resume that fails before the child starts, a failed run, and a parent that exits during the run also leave the verdict in force, so a later `subagent_resume` is still refused.
 
