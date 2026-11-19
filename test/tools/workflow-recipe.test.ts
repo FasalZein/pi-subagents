@@ -409,7 +409,8 @@ describe("T51: the README workflow script recipe in a real Pi session", () => {
 			assert.equal(digest.ok, true, "an omitted value is complete in the record");
 			await parent.run("look up", [fauxToolCall("subagent_wait", { ids: [id] }, { id: "lookup-1" })]);
 			const [lookup] = parent.toolResults("subagent_wait");
-			const record = (lookup?.details as unknown as SubagentWaitStructured).results[0]?.record;
+			assert.ok(lookup, "the lookup ran");
+			const record = (lookup.details as unknown as SubagentWaitStructured).results[0]?.record;
 			assert.deepEqual(record?.data, { modules }, "the lookup returns the whole value");
 		} finally {
 			await parent.dispose();
