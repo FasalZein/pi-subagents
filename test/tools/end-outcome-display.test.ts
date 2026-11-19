@@ -113,6 +113,7 @@ async function renderedWaitingLaunch(running: RunningSubagent, result: SubagentR
 	const reply = result.ping
 		? await waitForSubagentResult({ id: running.id }, {
 				findTrackedSubagent: () => ({ running: { ...running, completionPromise: Promise.resolve(result) } }),
+				runningSubagents: new Map(),
 				updateWidget() {},
 			} as never)
 		: await waitForSubagentResult({ id: running.id }, {
@@ -209,6 +210,7 @@ function publishedWait(running: RunningSubagent, result: SubagentResult) {
 		result.ping
 			? waitForSubagentResult({ id: running.id }, {
 					findTrackedSubagent: () => ({ running: { ...running, completionPromise: Promise.resolve(result) } }),
+					runningSubagents: new Map(),
 					updateWidget() {},
 				} as never)
 			: waitForSubagentResult({ id: running.id }, {
