@@ -2,8 +2,8 @@ import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/del
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
 import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
-import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { runningSubagents } from "../../src/runtime/wiring.ts";
+import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,

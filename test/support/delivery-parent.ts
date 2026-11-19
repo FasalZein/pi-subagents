@@ -43,6 +43,8 @@ export interface Parent {
 	/** The parent's session file on disk. */
 	sessionFile(): string;
 	prompt(text: string): Promise<void>;
+	/** What Esc does: abort the running parent turn. */
+	abort(): Promise<void>;
 	dispose(): Promise<void>;
 }
 
@@ -187,6 +189,7 @@ export async function startParent(options: {
 		pendingReplies: () => faux.getPendingResponseCount(),
 		sessionFile: () => session.sessionManager.getSessionFile()!,
 		prompt: (text) => session.prompt(text),
+		abort: () => session.abort(),
 		async dispose() {
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 			session.dispose();

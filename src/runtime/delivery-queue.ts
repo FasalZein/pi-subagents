@@ -47,7 +47,13 @@ class DeliveryQueue {
 			return {
 				entries: [
 					...event.entries,
-					{ type: "custom_message", customType: message.customType, content: message.content, display: true, details: message.details },
+					{
+						type: "custom_message",
+						customType: message.customType,
+						content: message.content,
+						display: true,
+						details: message.details,
+					},
 				],
 				continue: true,
 			};
