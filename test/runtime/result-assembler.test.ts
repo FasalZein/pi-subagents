@@ -1,5 +1,7 @@
 import { assembleResult, NO_REPORT_LINE } from "../../src/runtime/result-assembler.ts";
 import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts";
+import type { SessionEntry } from "../../src/session/session.ts";
+import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../../src/tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import { assistant, facts, sessionHeader, syntheticReport, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 import { assert, describe, it } from "../support/index.ts";
@@ -134,14 +136,29 @@ describe("result assembler: typed and untyped", () => {
 	});
 
 	it("a call with a data error is typed with the error and no data", () => {
-		const { record } = assembleResult(
-			facts([sessionHeader(), toolCall(DONE, { outcome: "done", summary: "s", data: { bad: true } }, "c1"), toolResult(DONE, "c1", "ok")], {
-				dataError: "data/count: must be integer",
+		const args = { outcome: "done", summary: "s", data: { bad: true } };
+		const fromExit = assembleResult(
+			facts([sessionHeader(), toolCall(DONE, args, "c1"), toolResult(DONE, "c1", "ok")], {
+				acceptedCall: { toolCallId: "c1", args, dataError: "data/count: must be integer" },
 			}),
-		);
-		assert.equal(record.typed, true);
-		assert.equal(record.dataError, "data/count: must be integer");
-		assert.equal(record.data, undefined);
+		).record;
+		const fromSession = assembleResult(
+			facts([
+				sessionHeader(),
+				toolCall(DONE, args, "c1"),
+				{
+					type: "custom",
+					id: "acc-1",
+					customType: SUBAGENT_ACCEPTED_CALL_ENTRY,
+					data: { toolCallId: "c1", tool: DONE, args, autonomous: true, dataError: "data/count: must be integer" },
+				} as unknown as SessionEntry,
+			]),
+		).record;
+		for (const record of [fromExit, fromSession]) {
+			assert.equal(record.typed, true);
+			assert.equal(record.dataError, "data/count: must be integer");
+			assert.equal(record.data, undefined);
+		}
 	});
 
 	it("a call carries its data", () => {

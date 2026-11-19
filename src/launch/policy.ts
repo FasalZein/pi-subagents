@@ -176,5 +176,6 @@ export function enforceAgentFrontmatter(
 		blocking: resolveSubagentBlocking(params, agentDefs),
 		...(params.forcedCwd ? { forcedCwd: params.forcedCwd } : {}),
 		...(params.launchEnv ? { launchEnv: params.launchEnv } : {}),
+		...(params.dataSchemaFile ? { dataSchemaFile: params.dataSchemaFile } : {}),
 	};
 }

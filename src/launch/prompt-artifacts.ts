@@ -1,6 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { getSessionArtifactDir } from "../artifact-storage.ts";
+import type { DataSchema } from "../tools/data-schema.ts";
 
 interface ArtifactContext {
 	sessionManager: { getSessionId(): string };
@@ -16,16 +18,20 @@ function getArtifactDir(cwd: string, sessionId: string): string {
 	return getSessionArtifactDir(cwd, sessionId);
 }
 
-function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = ""): string {
-	const sessionId = ctx.sessionManager.getSessionId();
-	const artifactDir = getArtifactDir(ctx.cwd, sessionId);
-	const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-	const safeName = name
+function safeArtifactName(name: string): string {
+	return name
 		.toLowerCase()
 		.replace(/[^a-z0-9\s-]/g, "")
 		.replace(/\s+/g, "-")
 		.replace(/-+/g, "-")
 		.replace(/^-|-$/g, "");
+}
+
+function getSubagentArtifactPath(name: string, ctx: ArtifactContext, suffix = ""): string {
+	const sessionId = ctx.sessionManager.getSessionId();
+	const artifactDir = getArtifactDir(ctx.cwd, sessionId);
+	const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+	const safeName = safeArtifactName(name);
 	return join(artifactDir, `context/${safeName || "subagent"}${suffix ? `-${suffix}` : ""}-${ts}.md`);
 }
 
@@ -62,6 +68,20 @@ export function writeResumeTaskArtifact(name: string, task: string, sessionFile:
 		cwd: header.cwd ?? cwd,
 		sessionManager: { getSessionId: () => header.id },
 	});
+}
+
+/**
+ * D12: the checked launch schema of one child as JSON; the child's completion call reads it. Each
+ * launch gets its own file, created exclusively under a random name, so same-name siblings never
+ * share one; owner-only (0600 in a 0700 folder), because a schema can hold private values.
+ */
+export function writeDataSchemaArtifact(name: string, schema: DataSchema, ctx: ArtifactContext): string {
+	const folder = join(getArtifactDir(ctx.cwd, ctx.sessionManager.getSessionId()), "schemas");
+	mkdirSync(folder, { recursive: true, mode: 0o700 });
+	chmodSync(folder, 0o700);
+	const artifactPath = join(folder, `${safeArtifactName(name) || "subagent"}-${randomUUID()}.json`);
+	writeFileSync(artifactPath, JSON.stringify(schema.schema), { encoding: "utf8", flag: "wx", mode: 0o600 });
+	return artifactPath;
 }
 
 export function writeSystemPromptArtifact(name: string, systemPrompt: string, ctx: ArtifactContext): string {

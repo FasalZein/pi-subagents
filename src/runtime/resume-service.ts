@@ -57,6 +57,7 @@ import {
 import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
 import { assertResumeAllowed, reserveResumeSession, settleVerdictAfterRun } from "./resume-guards.ts";
 import { setAsidePreviousExitRecord, startResumedChild } from "./resume-start.ts";
+import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -465,6 +466,8 @@ async function resumeSubagentSessionWithoutWidth(
 	}
 	resumeEnvVars.PI_SUBAGENT_NAME = invocationMetadata?.name ?? name;
 	resumeEnvVars.PI_SUBAGENT_AGENT = resumedAgent ?? "";
+	// D12: a resume names no schema; never pass on the resuming process's own or a frontmatter value.
+	resumeEnvVars[DATA_SCHEMA_ENV] = "";
 	resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
 
 	const resumedAsync = invocationMetadata?.async ?? metadata.async ?? true;
