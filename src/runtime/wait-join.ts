@@ -117,7 +117,10 @@ function resolveTarget(query: string, session: SessionResults | undefined): Targ
 		return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: true };
 	// After a reload, a restart or a compaction: the record file, or the record kept in memory (D13).
 	const record = lookUpRecord(sessionStore, query);
-	if (record && session) return { kind: "ended", result: { id: query, text: renderLookup(record, session.cwd), record }, lookup: true };
+	if (record && session) {
+		const text = renderLookup(session.store, record, session.cwd);
+		return { kind: "ended", result: { id: query, text, record }, lookup: true };
+	}
 	return { id: query, error: noRecordText(sessionStore, query) };
 }
 

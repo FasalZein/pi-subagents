@@ -34,12 +34,15 @@ export function lookUpRecord(store: ResultStore | undefined, query: string): Res
 }
 
 /**
- * D14 and D16: a lookup renders the record again with the one renderer, so it is capped like every
- * copy. Launch warnings are not part of the record, so a lookup after a reload carries none.
+ * D14 and D16: a lookup returns the delivered rendering that the store kept with the record. A record
+ * published without one (before T25, or by verified fan-out) is rendered again with the one renderer,
+ * so it is still capped, but without the display facts of its delivery (warnings, context policy).
  */
-export function renderLookup(record: ResultRecord, cwd: string): string {
-	// Limit: launch warnings are not stored in the record, so this copy omits them; revisit if D13 stores them.
-	return renderResult(record, { cwd, homeDir: homedir(), showContextUsage: record.contextUsage !== undefined });
+export function renderLookup(store: ResultStore, record: ResultRecord, cwd: string): string {
+	return (
+		store.storedRendering(record) ??
+		renderResult(record, { cwd, homeDir: homedir(), showContextUsage: record.contextUsage !== undefined })
+	);
 }
 
 /**

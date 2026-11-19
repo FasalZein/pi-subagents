@@ -204,14 +204,17 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 		assembled = assemble(end);
 	}
 	const noText = hasNoText(assembled);
-	const record = target.store.publish(target.reservation, assembled);
 	const killUnconfirmed = end.kind === "timed_out" && running.timeoutKillFailed === true;
-	const text = renderResult(record, {
-		cwd: target.parentCwd,
-		homeDir: homedir(),
-		warnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING, ...target.warnings] : target.warnings,
-		showContextUsage: running.reportContextUsage !== false,
-	});
+	// D16: the store keeps this exact text with the record, so a lookup replays it.
+	const render = (published: ResultRecord) =>
+		renderResult(published, {
+			cwd: target.parentCwd,
+			homeDir: homedir(),
+			warnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING, ...target.warnings] : target.warnings,
+			showContextUsage: running.reportContextUsage !== false,
+		});
+	const record = target.store.publish(target.reservation, assembled, render);
+	const text = render(record);
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
 }
 

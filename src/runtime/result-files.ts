@@ -99,6 +99,17 @@ export function discardReservation(reservation: Reservation): void {
 	rmdirSync(reservation.folder);
 }
 
+/**
+ * D16: the capped rendering of one report revision, next to its report. It is written before the
+ * record commits that revision, so a lookup replays the delivered text, display facts included.
+ */
+export function renderingPathFor(reportPath: string): string {
+	return reportPath.replace(/\.md$/, ".rendering.txt");
+}
+
+/** Renders a published record into the parent's text (D14); the publisher stores the result. */
+export type RenderPublished = (record: ResultRecord) => string;
+
 /** Low-level file steps, replaceable in tests to fail one step. */
 export interface ResultFileIo {
 	rename(from: string, to: string): void;
@@ -143,7 +154,12 @@ function writeReport(folder: string, report: string): string {
  * old report or the new record with its new report. On a failure the old record and its report stay,
  * and the returned record says "report not saved" and names no path.
  */
-export function publishResult(reservation: Reservation, result: AssembledResult, io: ResultFileIo = NODE_IO): ResultRecord {
+export function publishResult(
+	reservation: Reservation,
+	result: AssembledResult,
+	io: ResultFileIo = NODE_IO,
+	render?: RenderPublished,
+): ResultRecord {
 	if (reservation.folder === undefined) return { ...result.record, report: { saved: false, error: reservation.error } };
 	const folder = reservation.folder;
 	let reportPath: string | undefined;
@@ -151,6 +167,7 @@ export function publishResult(reservation: Reservation, result: AssembledResult,
 	try {
 		reportPath = writeReport(folder, result.report);
 		const record: ResultRecord = { ...result.record, report: { saved: true, path: reportPath } };
+		if (render) writeNewFile(renderingPathFor(reportPath), render(record));
 		writeNewFile(temp, JSON.stringify(record));
 		io.rename(temp, join(folder, RECORD_FILE));
 		return record;
@@ -158,7 +175,10 @@ export function publishResult(reservation: Reservation, result: AssembledResult,
 		// The new report is not named by any record; the old record keeps its own report. Cleanup is
 		// best effort: its failure must not cost the caller the in-memory record.
 		removeQuietly(temp);
-		if (reportPath) removeQuietly(reportPath);
+		if (reportPath) {
+			removeQuietly(renderingPathFor(reportPath));
+			removeQuietly(reportPath);
+		}
 		const report: ReportStorage = { saved: false, error: errorText(error) };
 		return { ...result.record, report };
 	}
@@ -186,6 +206,8 @@ export function readResultRecord(folder: string): ResultRecord | undefined {
  */
 export class ResultStore {
 	private readonly memory = new Map<RunId, ResultRecord>();
+	/** The renderings of the in-memory records (D16). */
+	private readonly memoryRenderings = new Map<RunId, string>();
 	/** Session files of the runs this process launched (D16), also when the folder failed. */
 	private readonly launches = new Map<RunId, string>();
 	/** Every id this store handed out: without a folder on disk, only this set keeps ids exclusive. */
@@ -213,10 +235,11 @@ export class ResultStore {
 		return reservation;
 	}
 
-	publish(reservation: Reservation, result: AssembledResult): ResultRecord {
-		const record = publishResult(reservation, result, this.io);
+	publish(reservation: Reservation, result: AssembledResult, render?: RenderPublished): ResultRecord {
+		const record = publishResult(reservation, result, this.io, render);
 		if (!record.report.saved) {
 			this.memory.set(record.runId, record);
+			if (render) this.memoryRenderings.set(record.runId, render(record));
 			if (reservation.folder !== undefined) this.storageFailed(record.report.error);
 		}
 		return record;
@@ -272,6 +295,19 @@ export class ResultStore {
 			const record = this.read(id);
 			return record ? [record] : [];
 		});
+	}
+
+	/**
+	 * D16: the text that was delivered for this record, or undefined for a record published without
+	 * one (before T25, or by verified fan-out).
+	 */
+	storedRendering(record: ResultRecord): string | undefined {
+		if (!record.report.saved) return this.memoryRenderings.get(record.runId);
+		try {
+			return readFileSync(renderingPathFor(record.report.path), "utf8");
+		} catch {
+			return undefined;
+		}
 	}
 
 	/** The newest record of a run: its committed file, else the in-memory record. */
