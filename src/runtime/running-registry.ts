@@ -14,7 +14,6 @@ import {
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 
 export interface RunningRegistryRuntime {
-	formatElapsed(elapsed: number): string;
 	updateWidget(): void;
 	waitForSubagentResult(params: { id: string }, signal?: AbortSignal): Promise<unknown>;
 	asSubagentToolResult(result: unknown): any;
@@ -199,23 +198,20 @@ export function shouldAwaitSubagentLaunch(running: Pick<RunningSubagent, "blocki
 export function deliverCompletedSubagentResultViaSteer(
 	pi: Pick<ExtensionAPI, "sendMessage">,
 	cached: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): CompletedSubagentResult {
-	return deliverCompletedSubagentResult(pi, cached, formatElapsed);
+	return deliverCompletedSubagentResult(pi, cached);
 }
 
 export function routeDetachedSubagentCompletion(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): CompletedSubagentResult {
 	const routed = routeSubagentOutcome({
 		pi,
 		running,
 		result,
-		formatElapsed,
 		updateWidget,
 	});
 	if (routed.kind !== "completion") {
@@ -228,14 +224,12 @@ function handleDetachedSubagentOutcome(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): void {
 	routeSubagentOutcome({
 		pi,
 		running,
 		result,
-		formatElapsed,
 		updateWidget,
 	});
 }
@@ -244,12 +238,11 @@ export function wireSubagentSteerBack(
 	pi: ExtensionAPI,
 	running: RunningSubagent,
 	watchPromise: Promise<SubagentResult>,
-	formatElapsed: (elapsed: number) => string,
 	updateWidget: () => void,
 ): void {
 	watchPromise
 		.then((result) => {
-			handleDetachedSubagentOutcome(pi, running, result, formatElapsed, updateWidget);
+			handleDetachedSubagentOutcome(pi, running, result, updateWidget);
 		})
 		.catch((err) => {
 			releaseSpawnWidthSlot(running);

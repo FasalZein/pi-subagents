@@ -51,9 +51,9 @@ test("async launch publishes before yielding and keeps last result outstanding u
 		const result = new Promise<SubagentResult>((resolve) => { finish = resolve; });
 		const running = child("hidden-one");
 		runningSubagents.set(running.id, running);
-		wireSubagentSteerBack(pi, running, result, String, () => {});
+		wireSubagentSteerBack(pi, running, result, () => {});
 		const launch = await getLaunchedSubagentResult(running, {
-			formatElapsed: String, updateWidget() {}, waitForSubagentResult: async () => assert.fail("must remain async"),
+			updateWidget() {}, waitForSubagentResult: async () => assert.fail("must remain async"),
 			asSubagentToolResult: (value) => value,
 		});
 		await emit("tool_result", { toolName: "subagent" });
@@ -116,7 +116,7 @@ for (const outcome of ["completed", "cancelled", "ping", "watcher-error"] as con
 				...(outcome === "cancelled" ? { error: "cancelled" } : {}),
 				...(outcome === "ping" ? { ping: { name: first.name, message: "need help" } } : {}),
 			});
-			wireSubagentSteerBack(h.pi, first, result, String, () => {});
+			wireSubagentSteerBack(h.pi, first, result, () => {});
 			await new Promise<void>((resolve) => setImmediate(resolve));
 			await h.emit("context", { messages: h.messages.map((m) => ({ ...m, role: "custom" })) });
 			await h.emit("agent_settled");
@@ -137,7 +137,7 @@ test("awaited children and manual-close children count, foreign adopted observat
 		runningSubagents.set("foreign", { ...child("foreign"), verifiedRunCancelDenied: true });
 		await h.emit("tool_result");
 		assert.equal(h.counts.at(-1), 2);
-		wireSubagentSteerBack(h.pi, sync, Promise.resolve({ name: sync.name, task: sync.task, summary: "done", exitCode: 0, elapsed: 1 }), String, () => {});
+		wireSubagentSteerBack(h.pi, sync, Promise.resolve({ name: sync.name, task: sync.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		await h.emit("agent_settled");
 		assert.equal(h.counts.at(-1), 1);
@@ -158,7 +158,7 @@ test("a report parked for the operator's next prompt releases its lease on the s
 		await h.emit("tool_result");
 		assert.equal(h.counts.at(-1), 1);
 		requestSubagentBatchStop();
-		wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), String, () => {});
+		wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 		await new Promise<void>((resolve) => setImmediate(resolve));
 		assert.equal(h.deliveries.at(-1)?.deliverAs, "nextTurn");
 		assert.equal(runningSubagents.size, 0);
@@ -179,7 +179,7 @@ test("session stop detaches reporting before registry cleanup or late watcher ou
 	await h.stop();
 	const count = h.counts.length;
 	running.allowSteerDelivery = false;
-	wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), String, () => {});
+	wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	await h.emit("agent_settled");
 	assert.equal(h.counts.length, count);

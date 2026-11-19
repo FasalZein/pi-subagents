@@ -19,7 +19,6 @@ export interface RouteSubagentOutcomeOptions {
 	pi: ParentMessageSink;
 	running: RunningSubagent;
 	result: SubagentResult;
-	formatElapsed(elapsed: number): string;
 	updateWidget(): void;
 }
 
@@ -36,7 +35,7 @@ interface RoutedPingOutcome {
 export type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
 
 export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): RoutedSubagentOutcome {
-	const { pi, running, result, formatElapsed, updateWidget } = options;
+	const { pi, running, result, updateWidget } = options;
 	clearSubagentShutdownTimer(running);
 	if (result.ping) {
 		runningSubagents.delete(running.id);
@@ -44,7 +43,7 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 		if (running.allowSteerDelivery === false) {
 			return { kind: "ping", delivered: false };
 		}
-		deliverSubagentPing(pi, running, result, formatElapsed);
+		deliverSubagentPing(pi, running, result);
 		return { kind: "ping", delivered: true };
 	}
 	const completed =
@@ -59,14 +58,13 @@ export function routeSubagentOutcome(options: RouteSubagentOutcomeOptions): Rout
 	}
 	return {
 		kind: "completion",
-		completed: deliverCompletedSubagentResult(pi, completed, formatElapsed),
+		completed: deliverCompletedSubagentResult(pi, completed),
 	};
 }
 
 export function deliverCompletedSubagentResult(
 	pi: ParentMessageSink,
 	completed: CompletedSubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): CompletedSubagentResult {
 	if (completed.deliveryState !== "detached" || completed.deliveredTo) {
 		return completed;
@@ -134,7 +132,6 @@ function deliverSubagentPing(
 	pi: ParentMessageSink,
 	running: RunningSubagent,
 	result: SubagentResult,
-	formatElapsed: (elapsed: number) => string,
 ): void {
 	const ping = result.ping;
 	if (!ping) return;

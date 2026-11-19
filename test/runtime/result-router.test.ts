@@ -61,7 +61,6 @@ describe("result router", () => {
 				contextWindow: 200_000,
 				contextWarned: true,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -84,7 +83,6 @@ describe("result router", () => {
 			},
 			running,
 			result: makeResult({ contextTokens: 40_000, contextWindow: 200_000 }),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -111,7 +109,6 @@ describe("result router", () => {
 				contextWindow: 200_000,
 				contextWarned: true,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -143,7 +140,6 @@ describe("result router", () => {
 				contextWindow: 200_000,
 				contextExhausted: true,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -172,7 +168,6 @@ describe("result router", () => {
 				summary: "Partial findings so far.",
 				contextWarned: true,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -195,7 +190,6 @@ describe("result router", () => {
 			},
 			running,
 			result: makeResult(),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {
 				widgetUpdates += 1;
 			},
@@ -227,13 +221,13 @@ describe("result router", () => {
 		};
 
 		const awaited = buildCompletedSubagentResult(makeRunning({ deliveryState: "awaited" }), makeResult());
-		const deliveredAwaited = deliverCompletedSubagentResult(pi, awaited, (seconds) => `${seconds}s`);
+		const deliveredAwaited = deliverCompletedSubagentResult(pi, awaited);
 		assert.equal(deliveredAwaited, awaited);
 		assert.equal(sent.length, 0);
 
 		const alreadyDelivered = buildCompletedSubagentResult(makeRunning(), makeResult());
 		alreadyDelivered.deliveredTo = "steer";
-		const deliveredAgain = deliverCompletedSubagentResult(pi, alreadyDelivered, (seconds) => `${seconds}s`);
+		const deliveredAgain = deliverCompletedSubagentResult(pi, alreadyDelivered);
 		assert.equal(deliveredAgain, alreadyDelivered);
 		assert.equal(sent.length, 0);
 	});
@@ -258,7 +252,6 @@ describe("result router", () => {
 				timeoutWrapUp: { kind: "timeout", seconds: 20, threshold: 80 },
 				errorMessage: "provider unavailable",
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -284,7 +277,6 @@ describe("result router", () => {
 			},
 			running,
 			result: makeResult({ exitCode: 2, summary: "Child failed" }),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -308,7 +300,6 @@ describe("result router", () => {
 				contextTokens: 145_000,
 				contextWindow: 200_000,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -335,7 +326,6 @@ describe("result router", () => {
 				contextTokens: 145_000,
 				contextWindow: 200_000,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -362,7 +352,6 @@ describe("result router", () => {
 				contextTokens: 145_000,
 				contextWindow: 200_000,
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -388,7 +377,6 @@ describe("result router", () => {
 				summarySource: "runtime",
 				errorMessage: "Provider unavailable",
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {},
 		});
 
@@ -412,7 +400,6 @@ describe("result router", () => {
 				},
 				running: nextTurnRunning,
 				result: makeResult(),
-				formatElapsed: (seconds) => `${seconds}s`,
 				updateWidget: () => {},
 			});
 			assert.equal(nextTurnSent[0]?.options.deliverAs, "nextTurn");
@@ -431,7 +418,6 @@ describe("result router", () => {
 				},
 				running: autoExitRunning,
 				result: makeResult(),
-				formatElapsed: (seconds) => `${seconds}s`,
 				updateWidget: () => {},
 			});
 			assert.equal(steerSent[0]?.options.deliverAs, "steer");
@@ -460,7 +446,6 @@ describe("result router", () => {
 					message: "Need parent input.",
 				},
 			}),
-			formatElapsed: (seconds) => `${seconds}s`,
 			updateWidget: () => {
 				widgetUpdates += 1;
 			},

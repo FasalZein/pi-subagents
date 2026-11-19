@@ -206,7 +206,6 @@ describe("spawn width semaphore", () => {
 			pi: { sendMessage() {} },
 			running,
 			result: makeResult(),
-			formatElapsed: (elapsed) => `${elapsed}s`,
 			updateWidget: () => {},
 		});
 		assert.equal(getLiveSlotCount(), 0);

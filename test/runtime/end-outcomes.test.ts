@@ -100,7 +100,7 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 		(r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
 		{ mayLaunch: () => true },
 	);
-	wireSubagentSteerBack(pi as never, running, watch, String, () => {});
+	wireSubagentSteerBack(pi as never, running, watch, () => {});
 	try {
 		await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
 		assert.ok(ac.signal.aborted);

@@ -43,7 +43,6 @@ function deliver(running: RunningSubagent, result: SubagentResult): string {
 		},
 		running,
 		result,
-		formatElapsed: (seconds) => `${seconds}s`,
 		updateWidget: () => {},
 	});
 	return sent[0]?.content ?? "";
@@ -95,6 +94,16 @@ describe("timeout result delivery", () => {
 
 		assert.match(content, /not resumable: its agent does not allow a resume after a time limit stops it/);
 		assert.doesNotMatch(content, /Resume: pi --session/);
+	});
+
+	it("warns when the kill of a timed-out run could not be confirmed", () => {
+		const content = deliver(
+			makeRunning(),
+			makeResult({ timedOut: "timeout", timedOutAfter: 900, timeoutKillFailed: true }),
+		);
+
+		assert.match(content, /warning: the system could not confirm that this sub-agent stopped/);
+		assert.ok(content.length <= RESULT_TEXT_MAX_CHARS);
 	});
 
 	it("renders an ordinary completion as done", () => {
