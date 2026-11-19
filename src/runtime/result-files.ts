@@ -351,12 +351,11 @@ export class ResultStore {
 		const parsed = this.readJson(runId, RECORD_FILE);
 		// Identity and shape at the boundary: a record of another run, or one without a valid end
 		// time, is not this run's record and must not break the recent list.
-		const stored =
-			Value.Check(ResultRecordSchema, parsed) && parsed.runId === runId && Number.isFinite(parsed.endedAt)
-				? (parsed as ResultRecord)
-				: undefined;
 		const inMemory = this.memory.get(runId);
-		if (!stored) return inMemory;
+		if (!(Value.Check(ResultRecordSchema, parsed) && parsed.runId === runId && Number.isFinite(parsed.endedAt))) {
+			return inMemory;
+		}
+		const stored = parsed as ResultRecord;
 		return inMemory && inMemory.endedAt > stored.endedAt ? inMemory : stored;
 	}
 

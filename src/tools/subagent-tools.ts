@@ -374,7 +374,7 @@ export function registerSubagentCoreTools(
 					return {
 						child,
 						agentDefs,
-						dataSchema: schema?.ok ? schema.value : undefined,
+						dataSchema: schema?.value,
 						blocking: resolveSubagentBlocking(child, agentDefs),
 						warning: getChildLaunchWarning(child, agentDefs, shouldUseBackgroundLaunch(child, agentDefs, ctx.hasUI)),
 					};
