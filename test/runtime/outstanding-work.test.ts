@@ -10,6 +10,9 @@ import {
 	resetRuntimeStateForTest,
 } from "../../src/runtime/state.ts";
 import { getLaunchedSubagentResult, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { settleWaitReply } from "../../src/runtime/delivery-queue.ts";
+import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
+import { groupRunEnds, type RunEndMessage } from "../../src/runtime/run-end-message.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 
 function child(id: string): RunningSubagent {
@@ -125,6 +128,33 @@ for (const outcome of ["completed", "cancelled", "ping", "watcher-error"] as con
 		} finally { await h.stop(); }
 	});
 }
+
+test("a committed grouped message releases each run it carries; a running run whose wait was aborted still counts", async () => {
+	const h = await harness();
+	try {
+		const [first, second, third] = [child("first"), child("second"), child("third")];
+		for (const running of [first, second, third]) runningSubagents.set(running.id, running);
+		await h.emit("tool_result");
+		assert.equal(h.counts.at(-1), 3);
+		for (const running of [first, second]) {
+			wireSubagentSteerBack(h.pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
+		}
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		// A wait on the third run was aborted before its reply returned: nothing it held is delivered.
+		const aborted = new AbortController();
+		aborted.abort();
+		settleWaitReply([third.id], [], aborted.signal);
+		assert.equal(outstandingWork.count, 3, "two queued results and one running run");
+		const group = groupRunEnds(h.messages as RunEndMessage[]);
+		assert.deepEqual((group.details as { ids?: string[] }).ids, [first.id, second.id]);
+		await h.emit("message_end", { message: { ...group, role: "custom" } });
+		assert.equal(outstandingWork.count, 1, "the running run still counts");
+		assert.equal(h.counts.at(-1), 1);
+		// A second copy of a delivered run releases nothing.
+		await h.emit("message_end", { message: { ...h.messages[0], role: "custom" } });
+		assert.equal(outstandingWork.count, 1);
+	} finally { await h.stop(); }
+});
 
 test("awaited children and manual-close children count, foreign adopted observations do not", async () => {
 	const h = await harness();

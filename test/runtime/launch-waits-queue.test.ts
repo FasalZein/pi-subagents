@@ -262,18 +262,20 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(seen[0], abort.signal);
 	});
 
-	it("a tool result and a committed message both carry child 1: capped copies, released once by id", async () => {
+	it("a tool result and a committed message both carry child 1: capped copies, released once by id; a running sibling stays counted", async () => {
 		const parent = mockParent();
 		const counts: number[] = [];
 		const unsubscribe = outstandingWork.subscribe(() => counts.push(outstandingWork.count));
 		try {
 			const running = { ...blockingRunning("child-one"), blocking: false, async: true };
 			setRunningSubagentForTest(running as any);
+			// T22: a sibling that is still running counts through both copies.
+			setRunningSubagentForTest({ ...blockingRunning("sibling"), blocking: false, async: true } as any);
 			// The parent is idle, so the run end goes to Pi at once and Pi holds a copy.
 			routeDetachedSubagentCompletionForTest(parent.pi, running as any, endOf(running.name, LONG_REPORT));
 			assert.equal(parent.sent.length, 1);
-			// From here the run is outstanding only as a delivery lease.
-			assert.equal(outstandingWork.count, 1);
+			// From here child-one is outstanding only as a delivery lease.
+			assert.equal(outstandingWork.count, 2);
 			counts.length = 0;
 			const waited = await waitForSubagentForTest({ id: running.id });
 			const waitCopy = waited.content[0].text as string;
@@ -288,9 +290,9 @@ describe("T23: launches that wait use the delivery owner", () => {
 				assert.ok(copy.length <= COPY_CAP, `copy is ${copy.length} chars`);
 				assert.ok(!copy.includes(REPORT_TAIL));
 			}
-			const releases = counts.filter((count, index) => count === 0 && (counts[index - 1] ?? 1) > 0);
+			const releases = counts.filter((count, index) => count === 1 && (counts[index - 1] ?? 2) > 1);
 			assert.equal(releases.length, 1, `counts ${JSON.stringify(counts)}`);
-			assert.equal(outstandingWork.count, 0);
+			assert.equal(outstandingWork.count, 1, "the running sibling still counts");
 			assert.equal(pendingRunEndCount(), 0);
 		} finally {
 			unsubscribe();
