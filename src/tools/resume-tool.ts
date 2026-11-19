@@ -1,5 +1,6 @@
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { resolve } from "node:path";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
@@ -164,7 +165,8 @@ export function registerSubagentResumeTool(
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_RESUME_TOOL_NAME));
 			const resultsDir = getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId());
-			const sessionFile = resolveResumeSessionFile(params, resultsDir);
+			// A relative session file names a file of the parent session's project, as in Pi (D16).
+			const sessionFile = resolve(ctx.cwd, resolveResumeSessionFile(params, resultsDir));
 			const launchMetadata = readSubagentLaunchMetadata(sessionFile);
 			const warning =
 				getIgnoredModelOverrideWarning(launchMetadata?.agent, launchMetadata?.allowModelOverride, params) ?? "";
