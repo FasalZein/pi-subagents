@@ -10,6 +10,12 @@
 import { rerunDecision, sampleKeyId } from "./record.mjs";
 
 export const GATE_SCENARIOS = Object.freeze(["recon", "review", "review-fix"]);
+/** The candidate gate (T59): scenario (b) runs as a workflow script (G2.1). */
+export const CANDIDATE_SCENARIOS = Object.freeze([
+	"recon",
+	"review-workflow",
+	"review-fix",
+]);
 export const GATE_REPETITIONS = 3;
 /** Environment variables that hold the two owner-named model refs, in order. */
 export const MODEL_ENV = Object.freeze(["BENCH_MODEL_1", "BENCH_MODEL_2"]);
@@ -18,12 +24,13 @@ export const MODEL_ENV = Object.freeze(["BENCH_MODEL_1", "BENCH_MODEL_2"]);
  * Repetition-major order, so a stopped run still has every scenario and model
  * at the lowest repetitions.
  * @param {Array<{label: string, ref: string}>} models
+ * @param {readonly string[]} [scenarios]
  * @returns {Array<{label: string, ref: string, scenario: string, rep: number}>}
  */
-export function samplePlan(models) {
+export function samplePlan(models, scenarios = GATE_SCENARIOS) {
 	const plan = [];
 	for (let rep = 1; rep <= GATE_REPETITIONS; rep++)
-		for (const scenario of GATE_SCENARIOS)
+		for (const scenario of scenarios)
 			for (const { label, ref } of models)
 				plan.push({ label, ref, scenario, rep });
 	return plan;

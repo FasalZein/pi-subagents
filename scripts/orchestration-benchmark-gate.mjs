@@ -5,6 +5,13 @@
  *   BENCH_MODEL_1=<ref> BENCH_MODEL_2=<ref> node scripts/orchestration-benchmark-gate.mjs \\
  *     start --set baseline --checkout <detached clean worktree> --thinking high
  *   node scripts/orchestration-benchmark-gate.mjs report --set baseline
+ *   BENCH_MODEL_1=<ref> BENCH_MODEL_2=<ref> node scripts/orchestration-benchmark-gate.mjs \
+ *     start --set candidate --scenarios recon,review-workflow,review-fix --checkout <dir> --thinking high
+ *
+ * --scenarios: comma list of scenario folders (default recon,review,review-fix, the
+ *   v2.9.2 arm; the candidate gate names review-workflow for scenario (b)).
+ * plan: prints each planned sample (key id, file, label, scenario, rep, fixture and
+ *   settings hash, measured commit) and whether it would run; starts and writes nothing.
  *
  * start: launches one detached job runner (it survives the calling session) that
  *   runs the pending samples one at a time through the launcher; its log is
@@ -39,6 +46,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
 	assertDistinctKeys,
+	GATE_SCENARIOS,
 	MODEL_ENV,
 	pendingSamples,
 	samplePlan,
@@ -77,11 +85,17 @@ function parseCli() {
 			set: { type: "string", default: "" },
 			checkout: { type: "string" },
 			thinking: { type: "string" },
+			scenarios: { type: "string" },
 		},
 	});
 	const [command] = positionals;
-	if (!["start", "run", "report"].includes(command))
-		fail("usage: start | run | report (see the file header)");
+	if (!["start", "run", "report", "plan"].includes(command))
+		fail("usage: start | run | report | plan (see the file header)");
+	const scenarios = values.scenarios
+		? values.scenarios.split(",").map((name) => name.trim())
+		: [...GATE_SCENARIOS];
+	if (scenarios.some((name) => !/^[\w.-]+$/.test(name)))
+		fail("--scenarios must be a comma list of plain names");
 	// Same rule as the launcher's --set: the folder cannot leave the fixed root.
 	if (!/^[a-z0-9-]+$/.test(values.set))
 		fail("--set must be a plain lower-case name");
@@ -102,6 +116,7 @@ function parseCli() {
 		set: values.set,
 		checkout: values.checkout && realpathSync(resolve(values.checkout)),
 		thinking: values.thinking,
+		scenarios,
 		models,
 	};
 }
@@ -151,7 +166,7 @@ const launcherEnv = (sample) => ({
 
 /** Each planned sample with the launcher's full key and file name (launcher --plan). */
 function planSamples(cli) {
-	const planned = samplePlan(cli.models).map((sample) => {
+	const planned = samplePlan(cli.models, cli.scenarios).map((sample) => {
 		const result = spawnSync(
 			process.execPath,
 			[...launcherArgs(cli, sample), "--plan"],
@@ -203,6 +218,8 @@ function start(cli) {
 			cli.checkout,
 			"--thinking",
 			cli.thinking,
+			"--scenarios",
+			cli.scenarios.join(","),
 		],
 		{ detached: true, stdio: ["ignore", logFd, logFd] },
 	);
@@ -288,5 +305,31 @@ function report(cli) {
 	);
 }
 
+/** The dry part of a gate run: the planned keys and what would run, nothing started or written. */
+function plan(cli) {
+	const planned = planSamples(cli);
+	const readText = (file) => {
+		const path = join(cli.setDir, file);
+		return existsSync(path) ? readFileSync(path, "utf8") : null;
+	};
+	const pending = new Set(pendingSamples(planned, readText));
+	for (const sample of planned)
+		console.log(
+			JSON.stringify({
+				keyId: sampleKeyId(sample.key),
+				file: sample.file,
+				label: sample.label,
+				scenario: sample.scenario,
+				rep: sample.rep,
+				fixtureHash: sample.key.fixtureHash,
+				settingsHash: sample.key.settingsHash,
+				harnessHash: sample.key.harnessHash,
+				checkoutRevision: sample.key.checkoutRevision,
+				wouldRun: pending.has(sample),
+			}),
+		);
+	console.log(`${planned.length} planned, ${pending.size} would run`);
+}
+
 const cli = parseCli();
-({ start, run, report })[cli.command](cli);
+({ start, run, report, plan })[cli.command](cli);

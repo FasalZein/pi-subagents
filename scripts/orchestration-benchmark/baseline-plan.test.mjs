@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	assertDistinctKeys,
+	CANDIDATE_SCENARIOS,
 	pendingSamples,
 	samplePlan,
 } from "./baseline-plan.mjs";
@@ -116,3 +117,11 @@ for (const [part, value] of Object.entries({
 		const files = new Map([[now.file, recordText(old)]]);
 		assert.deepEqual(pendingSamples([now], folder(files)), [now]);
 	});
+
+test("[T59a] the candidate gate plans 18 samples with the workflow arm of scenario (b)", () => {
+	const plan = samplePlan(MODELS, CANDIDATE_SCENARIOS);
+	assert.equal(plan.length, 18);
+	assert.deepEqual([...new Set(plan.map((s) => s.scenario))], ["recon", "review-workflow", "review-fix"]);
+	assert.equal(samplePlan(MODELS).some((s) => s.scenario === "review-workflow"), false);
+});
+
