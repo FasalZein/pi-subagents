@@ -5,6 +5,7 @@ import { formatFinalContextUsage } from "../runtime/final-context-usage.ts";
 import { OUTCOME_WORDS } from "../runtime/result-render.ts";
 import { isFinishedStatus, type RunEndEntry, runEnds } from "../runtime/run-end-message.ts";
 import type { SubagentPingMessageDetails, SubagentResultMessageDetails } from "../types.ts";
+import { parseJsonContainer } from "./json-string-args.ts";
 
 type ThemeLike = Parameters<Parameters<ExtensionAPI["registerMessageRenderer"]>[1]>[2];
 type RenderOptions = { expanded: boolean; outputPad?: number };
@@ -87,7 +88,9 @@ function replyTextContent(result: AgentToolResult<unknown>): string {
 }
 
 function getChildArg(args: SubagentBatchArgs | undefined, index: number): BatchChildArgs | undefined {
-	return Array.isArray(args?.children) ? args.children[index] : undefined;
+	// T64: Pi renders the raw arguments, where children may be a JSON string.
+	const children = parseJsonContainer(args?.children);
+	return Array.isArray(children) ? (children[index] as BatchChildArgs | undefined) : undefined;
 }
 
 function getChildAgent(
