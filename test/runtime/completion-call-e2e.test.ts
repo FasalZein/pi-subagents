@@ -509,7 +509,6 @@ describe("one completion nudge, then an untyped result (D12)", () => {
 			if (savedPiCommand === undefined) delete process.env.PI_SUBAGENT_PI_COMMAND;
 			else process.env.PI_SUBAGENT_PI_COMMAND = savedPiCommand;
 		}
-		running.phase = "wrapping-up"; // as the watcher sets it after the restart
 		const replacement = await runChild({
 			autoExit: true,
 			wrapUp: true,

@@ -71,7 +71,6 @@ describe("timeout budget math", () => {
 			timeoutWarnThreshold: 80,
 			lastProgressAt: 1_000_000,
 			timeoutWrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 },
-			phase: "wrapping-up",
 			timeoutWrapUpDeadlineAt: 1_010_000,
 		});
 		observeSubagentProgress(running, 100, 1_000_000);

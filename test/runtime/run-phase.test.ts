@@ -169,16 +169,16 @@ describe("run phase", () => {
 					async closeRunningSurface() {
 						closes += 1;
 					},
-					async pollForExit(_surface: string, _signal: AbortSignal, options: { onTick?: () => void }) {
+					async pollForExit(_surface, _signal, options) {
 						// The pane stays open past both deadlines while the done record waits to be read.
 						for (let i = 0; i < 16; i += 1) {
-							options.onTick?.();
+							options?.onTick?.(i * 100);
 							await sleep(100);
 						}
 						closesBeforeExit = closes;
 						return { reason: "done", exitCode: 0 };
 					},
-				} as never,
+				},
 				new AbortController().signal,
 			),
 			5000,
