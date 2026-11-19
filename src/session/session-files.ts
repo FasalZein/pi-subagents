@@ -166,14 +166,14 @@ export function seedSubagentSessionFile(
 		activeLeafId?: string | null;
 	},
 ): void {
-	void cwd;
+	const sessionName = seedOptions?.sessionName;
 	mkdirSync(dirname(childSessionFile), { recursive: true });
 	// Write a session header for lineage-only so the session file exists before
 	// the background child starts. This prevents a race where the parent's
 	// writeSubagentLaunchMetadataEntryWhenReady fallback writes a header that
 	// the child then duplicates when Pi starts.
 	if (mode === "lineage-only") {
-		writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, seedOptions?.sessionName);
+		writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, sessionName);
 		return;
 	}
 
@@ -181,7 +181,7 @@ export function seedSubagentSessionFile(
 		const parentManager = SessionManager.open(parentSessionFile, undefined, cwd);
 		const leafId = seedOptions?.activeLeafId ?? parentManager.getLeafId();
 		if (!leafId) {
-			writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, seedOptions?.sessionName);
+			writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, sessionName);
 			return;
 		}
 		// Filter roster reminders out of the inherited branch, then re-chain the
@@ -205,7 +205,7 @@ export function seedSubagentSessionFile(
 			if (typeof e.id === "string") prevId = e.id;
 		}
 		if (branch.length === 0) {
-			writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, seedOptions?.sessionName);
+			writeHeaderOnlySubagentSessionFile(childSessionFile, cwd, parentSessionFile, sessionName);
 			return;
 		}
 		const header = {
@@ -214,7 +214,7 @@ export function seedSubagentSessionFile(
 			id: randomUUID(),
 			timestamp: new Date().toISOString(),
 			cwd,
-			...(seedOptions?.sessionName ? { name: seedOptions.sessionName } : {}),
+			...(sessionName ? { name: sessionName } : {}),
 			parentSession: parentSessionFile,
 		};
 		writeFileSync(

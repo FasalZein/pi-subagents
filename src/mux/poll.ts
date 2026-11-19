@@ -41,8 +41,7 @@ function withDefinedContextUsage(
 }
 
 function withDefinedAcceptedCall(obj: PollResult, call: unknown): PollResult {
-	if (typeof call !== "object" || call === null) return obj;
-	const { toolCallId, args } = call as { toolCallId?: unknown; args?: unknown };
+	const { toolCallId, args } = (call ?? {}) as { toolCallId?: unknown; args?: unknown };
 	if (typeof toolCallId === "string" && typeof args === "object" && args !== null && !Array.isArray(args)) {
 		obj.acceptedCall = { toolCallId, args: args as Record<string, unknown> };
 	}
@@ -64,18 +63,19 @@ function withDefinedCompletionReason(obj: PollResult, reason: unknown): PollResu
  * consumeSubagentExitSignal and pollForExit decode the same way.
  */
 function interpretExitSidecar(data: any): PollResult {
-	const tokens = typeof data?.outputTokens === "number" ? data.outputTokens : undefined;
-	const contextTokens = typeof data?.contextTokens === "number" ? data.contextTokens : undefined;
-	const contextWindow = typeof data?.contextWindow === "number" ? data.contextWindow : undefined;
+	data ??= {};
+	const tokens = typeof data.outputTokens === "number" ? data.outputTokens : undefined;
+	const contextTokens = typeof data.contextTokens === "number" ? data.contextTokens : undefined;
+	const contextWindow = typeof data.contextWindow === "number" ? data.contextWindow : undefined;
 	const withUsage = (result: PollResult) =>
 		withDefinedAcceptedCall(
 			withDefinedCompletionReason(
 				withDefinedContextUsage(withDefinedTokens(result, tokens), contextTokens, contextWindow),
-				data?.completionReason,
+				data.completionReason,
 			),
-			data?.acceptedCall,
+			data.acceptedCall,
 		);
-	if (data?.type === "ping") {
+	if (data.type === "ping") {
 		return withUsage({
 			reason: "ping" as const,
 			exitCode: 0,
@@ -85,7 +85,7 @@ function interpretExitSidecar(data: any): PollResult {
 			},
 		});
 	}
-	if (data?.type === "error") {
+	if (data.type === "error") {
 		const errorMessage =
 			typeof data.errorMessage === "string" && data.errorMessage.trim() !== ""
 				? data.errorMessage

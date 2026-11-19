@@ -148,7 +148,7 @@ function getLaunchError(
 	if (params.agent && !agentDefs) return getUnknownAgentError(params.agent, launchable);
 	const agentError = getSubagentAgentRequirementError(params, agentDefs);
 	if (agentError) return agentError.content[0]?.text ?? "Agent requirement error";
-	if (params.agent && currentAgent && params.agent === currentAgent) {
+	if (params.agent && params.agent === currentAgent) {
 		return `You are the ${currentAgent} agent — do not start another ${currentAgent}. You were spawned to do this work yourself. Complete the task directly.`;
 	}
 	const callerEnv = parseSpawnEnv(process.env);

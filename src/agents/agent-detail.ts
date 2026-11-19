@@ -89,14 +89,15 @@ function renderChild(entry: AgentListEntry, launch: IndexLaunchPolicy): string {
 function renderTimeout(entry: AgentListEntry): string[] {
 	const state = resolveSubagentTimeoutState(entry);
 	const { timeoutSeconds, idleTimeoutSeconds } = state.timeoutBudget ?? {};
-	if (!timeoutSeconds) return idleTimeoutSeconds ? [`idle-timeout ${formatTimeoutSeconds(idleTimeoutSeconds)}`] : [];
+	const idle = idleTimeoutSeconds ? [`idle-timeout ${formatTimeoutSeconds(idleTimeoutSeconds)}`] : [];
+	if (!timeoutSeconds) return idle;
 	const report =
 		state.timeoutWarnThreshold !== undefined
 			? ` (report at ${formatTimeoutSeconds(Math.floor((timeoutSeconds * state.timeoutWarnThreshold) / 100))})`
 			: "";
 	return [
 		`timeout ${formatTimeoutSeconds(timeoutSeconds)}${report}${state.timeoutBlocksResume ? ", no resume after it" : ""}`,
-		...(idleTimeoutSeconds ? [`idle-timeout ${formatTimeoutSeconds(idleTimeoutSeconds)}`] : []),
+		...idle,
 	];
 }
 

@@ -131,9 +131,11 @@ function timeLimitLine(record: ResultRecord): RequiredLine | undefined {
 	const limit = record.timeLimit;
 	if (record.outcome !== "timed_out" || !limit) return undefined;
 	const budget = limit.kind === "idle-timeout" ? `${limit.seconds}s without output` : `${limit.seconds}s for the whole run`;
-	const text = limit.wrapUp ? WRAP_UP_NOTICE : record.resume.resumable ? TIME_LIMIT_GUIDANCE : TIME_LIMIT_NO_RESUME_GUIDANCE;
+	const [label, text] = limit.wrapUp
+		? ["wrap-up", WRAP_UP_NOTICE]
+		: ["time limit", record.resume.resumable ? TIME_LIMIT_GUIDANCE : TIME_LIMIT_NO_RESUME_GUIDANCE];
 	return {
-		fact: `${limit.wrapUp ? "wrap-up" : "time limit"}: ${budget}`,
+		fact: `${label}: ${budget}`,
 		detail: { text, max: FACT_MAX_CHARS, priority: 1 },
 	};
 }
