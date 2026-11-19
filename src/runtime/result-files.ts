@@ -18,6 +18,13 @@ import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from ".
 /** The commit point of one run folder (D13). */
 export const RECORD_FILE = "record.json";
 
+/**
+ * Run folders and result files are private from the first write: a report holds the child's whole
+ * output. The temporary record is created private too, so the rename keeps the mode.
+ */
+export const PRIVATE_DIR_MODE = 0o700;
+export const PRIVATE_FILE_MODE = 0o600;
+
 /** A reservation that keeps drawing ids after this many collisions has a broken id source. */
 const MAX_RESERVE_ATTEMPTS = 16;
 
@@ -57,11 +64,11 @@ function hasCode(error: unknown, code: string): boolean {
 export function reserveRunId(resultsDir: string, draw: () => RunId = drawRunId): Reservation {
 	let runId = draw();
 	try {
-		mkdirSync(resultsDir, { recursive: true });
+		mkdirSync(resultsDir, { recursive: true, mode: PRIVATE_DIR_MODE });
 		for (let attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
 			const folder = join(resultsDir, runId);
 			try {
-				mkdirSync(folder);
+				mkdirSync(folder, { mode: PRIVATE_DIR_MODE });
 				return { runId, folder };
 			} catch (error) {
 				if (!hasCode(error, "EEXIST")) throw error;
@@ -95,7 +102,7 @@ const NODE_IO: ResultFileIo = { rename: renameSync };
  * partial file, so no folder keeps a cut report.
  */
 function writeNewFile(path: string, text: string): void {
-	const fd = openSync(path, "wx");
+	const fd = openSync(path, "wx", PRIVATE_FILE_MODE);
 	let written = false;
 	try {
 		writeFileSync(fd, text);
