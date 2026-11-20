@@ -522,7 +522,7 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 
 ### Launch children
 
-`subagent` takes one parameter, `children`: a list of 1 to the spawn width of children. Each child has these fields:
+`subagent` takes one child as top-level fields, or several in `children`: a list of up to the spawn width of children, each with the same fields. An empty `children` list starts the child of the top-level fields, as in v2.9.2. When a model sends `children` as a JSON string, the launch parses it. No other argument string is parsed: a JSON string in a launch field or in the `ids` of `subagent_wait` stays a string. The fields are:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -541,6 +541,8 @@ Each report arrives later, and this turn may stop after this call so the reports
 ```
 
 A launch waits for its results, and the reply holds them, when the agent has `async: false`, when the parent has no durable turn, or when the call shares a tool batch with a sync launch (see [Mixed sync and async batches](#mixed-sync-and-async-batches)). A direct launch next to a call of another tool, such as `read`, also waits, unless `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`. Inside codemode, a launch returns at once unless it waits by these rules.
+
+`Esc` during a launch or `subagent_resume` that waits stops the child it waits for, as in v2.9.2. A launch of an agent with `async: false` and a launch that waits because the parent has no durable turn ignore `Esc` and keep waiting. `subagent_wait` keeps its own `Esc`, which stops only the wait.
 
 An unknown agent name is refused as in v2.9.2, with the requested name and the search locations and no other agent name: `Error: agent "<name>" was not found in .pi/agents/ or <agent dir>/agents.` When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
 
@@ -584,7 +586,7 @@ Verified fan-out is the one exception to the watched-only rule: its supervisor d
 
 ### Delivery: at least once
 
-When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, with two exceptions. If you press `Esc` while the turn settles, the results of that aborted turn enter the next request when you type. If you press `Esc` during a `subagent_wait`, the results that the wait already held leave as one message that starts no turn. Runs that end later still start turns.
+When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, with two exceptions. If you press `Esc` while the turn settles, the results of that aborted turn enter the next request when you type. If you press `Esc` during a `subagent_wait` or a launch that waits, the results that the wait already held leave as one message that starts no turn. Runs that end later still start turns.
 
 Pi hands each result over once by itself and does not check whether the model read it. A copy can come from a lookup, from an interrupted wait that gives its results back as a message, or from a verified winner that Pi adopts again because no receipt confirmed the first delivery. Every copy has the same size limit. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
 
@@ -769,7 +771,7 @@ A result can arrive twice: once in a wait reply and once by message, for example
 - A cancelled worker keeps its slot until the worker exits.
 - A waiting script must not depend on another script. Two scripts that wait for each other hold both workers.
 - A script cannot be resumed from the middle. After a failure, recover as described above.
-- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops the script and its wait, not the children. The children keep running and report by message.
+- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops the script and its `subagent_wait`, not the children. The children keep running and report by message.
 - Time and random values come from outside the script if a rerun should repeat them. Write them into the inputs.
 - Each child runs in its own Pi process, so the scripts of a child do not take the workers of the parent.
 

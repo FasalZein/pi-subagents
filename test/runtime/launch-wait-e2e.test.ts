@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { pendingRunEndCount, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { runningSubagents } from "../../src/runtime/state.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
@@ -47,6 +48,7 @@ function launchRuntime(children: {
 	gate: Promise<void>;
 	finish: Map<string, (result: SubagentResult) => void>;
 	names: Set<string>;
+	explicitSync: boolean;
 }): SubagentToolRuntime {
 	return {
 		loadAgentDefaults: () => ({ spawning: true, async: false, mode: "background" }) as never,
@@ -63,7 +65,9 @@ function launchRuntime(children: {
 				phase: "running",
 				parentClosePolicy: "terminate",
 				blocking: true,
-				async: false,
+				// D04a: an explicitly synchronous run (async: false) ignores Esc; a run that waits by the
+				// batch rule (async: true, blocking) is stopped by it, as in v2.9.2 (cf6dbf4).
+				async: !children.explicitSync,
 				startTime: Date.now(),
 				sessionFile: `/tmp/${params.name}.jsonl`,
 			} as RunningSubagent;
@@ -95,7 +99,10 @@ interface Parent {
 	dispose(): Promise<void>;
 }
 
-async function startParent(replies: (requests: string[]) => FauxResponseStep[]): Promise<Parent> {
+async function startParent(
+	replies: (requests: string[]) => FauxResponseStep[],
+	explicitSync = true,
+): Promise<Parent> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
 	const faux = fauxProvider();
@@ -115,6 +122,7 @@ async function startParent(replies: (requests: string[]) => FauxResponseStep[]):
 		}),
 		finish: new Map<string, (result: SubagentResult) => void>(),
 		names: new Set<string>(),
+		explicitSync,
 	};
 	const extension: ExtensionFactory = (pi) => {
 		registerDeliveryQueue(pi);
@@ -235,8 +243,8 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 		}
 	});
 
-	it("R4: Esc while child 2 is still waited for: child 1's result reaches the first request after the batch", async () => {
-		const parent = await startParent((requests) => [launchBoth, recording(requests, "Read child 1.")]);
+	it("R4 and D04a: Esc while child 2 is still waited for stops child 2; child 1's result reaches the first request", async () => {
+		const parent = await startParent((requests) => [launchBoth, recording(requests, "Read child 1.")], false);
 		try {
 			const run = parent.session.prompt("delegate");
 			await until(() => parent.children.launched("child-one"), "child 1 launched");
@@ -247,6 +255,8 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 			await new Promise((resolve) => setTimeout(resolve, 20));
 			await parent.session.abort();
 			await run;
+			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child it waited for.
+			assert.equal(runningSubagents.get("id-child-two")?.stopRequestedBy, "parent", "child 2 was stopped");
 			// The queue hands child 1 over as its own message, so it does not depend on the aborted
 			// reply: a codemode bridge discards that reply after an abort.
 			const messages = parent.session.messages.filter(

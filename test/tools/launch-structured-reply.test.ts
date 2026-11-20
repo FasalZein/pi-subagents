@@ -179,7 +179,8 @@ async function startParent(
 				mode: "background",
 				phase: "running",
 				parentClosePolicy: "terminate",
-				blocking: params.agent === "worker-wait",
+				// worker-batch waits by the batch rule (blocking, not async: false), so Esc reaches its wait (D04a).
+				blocking: params.agent === "worker-wait" || params.agent === "worker-batch",
 				async: params.agent !== "worker-wait",
 				startTime: Date.now(),
 				sessionFile: join(root, `${params.name}.jsonl`),
@@ -390,6 +391,44 @@ describe("T28: structured launch replies", () => {
 	});
 });
 
+// D05 (T78): the cf6dbf4 input forms through a real Pi session, so Pi's prepareArguments and argument
+// validation run before execute. Expected values: cf6dbf4 getRequestedChildren and the D05 owner rule.
+describe("D05: launch input forms through Pi validation", () => {
+	const forms: Array<[string, unknown, string[]]> = [
+		["the top-level single form", child("solo-worker"), ["solo-worker"]],
+		["an empty children list with top-level fields", { ...child("solo-worker"), children: [] }, ["solo-worker"]],
+		["a children list sent as a JSON string", { children: JSON.stringify([child("child-one"), child("child-two")]) }, ["child-one", "child-two"]],
+	];
+	for (const [what, args, names] of forms) {
+		it(`${what} starts ${names.join(" and ")}`, async () => {
+			const harness = await startParent({ go: [fauxToolCall("subagent", args as never, { id: "launch-1" })] });
+			try {
+				await harness.session.prompt("go");
+				await harness.session.waitForIdle();
+				const [reply] = harness.toolResults("subagent");
+				assert.equal(reply?.isError, false, reply?.text);
+				for (const name of names) assert.ok(harness.launched(name), `${name} started`);
+			} finally {
+				await harness.dispose();
+			}
+		});
+	}
+
+	it("a JSON-looking task string reaches the child as the same string", async () => {
+		const task = '{"verdict":"approve"}';
+		const harness = await startParent({
+			go: [fauxToolCall("subagent", { children: JSON.stringify([{ ...child("child-one"), task }]) }, { id: "launch-1" })],
+		});
+		try {
+			await harness.session.prompt("go");
+			await harness.session.waitForIdle();
+			assert.equal(runOf(harness, "child-one").task, task);
+		} finally {
+			await harness.dispose();
+		}
+	});
+});
+
 describe("T28 fix round 1: a started reply does not deliver a queued result", () => {
 	it("P1: child one ends while child two launches; its report reaches the model by message and stays owed until then", async () => {
 		let releaseLaunch!: () => void;
@@ -437,7 +476,7 @@ describe("T28 fix round 1: a started reply does not deliver a queued result", ()
 describe("T28 fix round 1: launch facts and failure text", () => {
 	it("P2: an interrupted wait leaves the child started, not ended without a record", async () => {
 		const harness = await startParent({
-			go: [fauxToolCall("subagent", { children: [child("child-wait", "worker-wait")] }, { id: "launch-1" })],
+			go: [fauxToolCall("subagent", { children: [child("child-wait", "worker-batch")] }, { id: "launch-1" })],
 		});
 		const structured: unknown[] = [];
 		harness.session.subscribe((event) => {
@@ -452,6 +491,8 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			const value = structured[0] as { children: ScriptChild[] } | undefined;
 			assert.equal(value?.children[0]?.state, "started");
 			assert.equal(value?.children[0]?.runId, runOf(harness, "child-wait").id);
+			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child.
+			assert.equal(runOf(harness, "child-wait").stopRequestedBy, "parent");
 		} finally {
 			await harness.dispose();
 		}

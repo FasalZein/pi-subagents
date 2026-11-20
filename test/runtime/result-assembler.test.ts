@@ -169,15 +169,16 @@ describe("result assembler: typed and untyped", () => {
 		}
 	});
 
-	// T64 review P2: Pi coerces after prepareArguments, so the executed arguments are the source.
-	it("a call's executed arguments win over its raw JSON-string arguments; raw ones are parsed as fallback", () => {
+	// T64 review P2: Pi coerces before execute, so the executed arguments are the source. D05: the raw
+	// fallback keeps a JSON string as a string, as the child's tool saw it (no argument parsing in cf6dbf4).
+	it("a call's executed arguments win over its raw arguments; a raw JSON string stays a string", () => {
 		const raw = { outcome: "done", summary: "s", data: '{"count":2}', artifacts: '["report.md",42]' };
 		const call = [sessionHeader(), toolCall(DONE, raw, "c1"), toolResult(DONE, "c1", "ok")];
 		const executed = { ...raw, data: { count: 2 }, artifacts: ["report.md", "42"] };
 		const accepted = assembleResult(facts(call, { acceptedCall: { toolCallId: "c1", args: executed } })).record;
 		assert.deepEqual(accepted.artifacts, ["report.md", "42"]);
 		const fallback = assembleResult(facts(call)).record;
-		assert.deepEqual(fallback.data, { count: 2 });
+		assert.equal(fallback.data, '{"count":2}');
 	});
 
 	it("a call carries its data", () => {
