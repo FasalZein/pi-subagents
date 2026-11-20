@@ -84,7 +84,6 @@ function registerResumeTool(runtime: ReturnType<typeof createResumeRuntime>) {
 		} as any,
 		() => true,
 		runtime as any,
-		{ mayLaunch: () => true },
 	);
 	return tools.get("subagent_resume");
 }

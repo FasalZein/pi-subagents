@@ -5,7 +5,12 @@ import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
-import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
+import {
+	CONTEXT_PRESSURE_RESUME_REASON,
+	isRenderedResult,
+	launchWarningLines,
+	TIME_LIMIT_RESUME_REASON,
+} from "../runtime/run-result.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { parseRunId, type RunId } from "../runtime/result-record.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
@@ -19,7 +24,6 @@ import { type ChildDelivery, renderLaunchReply } from "./launch-reply.ts";
 import { asStructuredContent, launchedChildData, SubagentLaunchOutput } from "./launch-structured.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
-import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
 
 interface ResumeToolRuntime extends ResumeServiceRuntime {
@@ -28,8 +32,16 @@ interface ResumeToolRuntime extends ResumeServiceRuntime {
 }
 
 /**
+ * Record reasons that the session file itself carries (the timeout verdict, the context-pressure
+ * end). A later resume can remove them, so the record only reports them; the guards inside the
+ * resume read the session's current state (parity D14).
+ */
+const SESSION_VERDICT_REASONS: ReadonlySet<string> = new Set([TIME_LIMIT_RESUME_REASON, CONTEXT_PRESSURE_RESUME_REASON]);
+
+/**
  * D8: a resume names a run id or a session file. A run id resolves through the parent session's
- * result record; a record that says the run is not resumable refuses with its own reason.
+ * result record. A record refuses with its own reason only for a fact no later run changes (no
+ * session file, a verified fan-out attempt); a session verdict is left to the resume's guards.
  */
 function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string }, resultsDir: string): string {
 	if (params.runId && params.sessionFile) throw new Error("Give a run id or a session file, not both.");
@@ -43,7 +55,7 @@ function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string
 	}
 	const record = sessionResultStore(resultsDir).read(runId);
 	if (!record) throw new Error(`No result with run id "${params.runId}" in this session.`);
-	if (!record.resume.resumable) throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
+	if (!record.resume.resumable && !SESSION_VERDICT_REASONS.has(record.resume.reason)) throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
 	if (!record.sessionFile) throw new Error(`Run ${runId} cannot be resumed: its record names no session file.`);
 	return record.sessionFile;
 }
@@ -69,8 +81,8 @@ export function registerSubagentResumeTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
 	runtime: ResumeToolRuntime,
-	grant: ManagementToolGrant,
 ): void {
+	// D07: resume has its own grant. Only its deny-tools entry removes it, not a denied launch tool.
 	if (!shouldRegister(SUBAGENT_RESUME_TOOL_NAME)) return;
 	pi.registerTool({
 		name: SUBAGENT_RESUME_TOOL_NAME,
@@ -163,7 +175,6 @@ export function registerSubagentResumeTool(
 			return component;
 		},
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_RESUME_TOOL_NAME));
 			const resultsDir = getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId());
 			// A relative session file names a file of the parent session's project, as in Pi (D16).
 			const sessionFile = resolve(ctx.cwd, resolveResumeSessionFile(params, resultsDir));

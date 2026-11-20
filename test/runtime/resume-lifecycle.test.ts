@@ -97,9 +97,8 @@ function realTools() {
 		runningSubagents,
 		getContextWindow: () => undefined,
 	};
-	const grant = { mayLaunch: () => true };
-	registerSubagentKillTool(pi as never, () => true, stopRunningSubagent, grant);
-	registerSubagentResumeTool(pi as never, () => true, runtime as never, grant);
+	registerSubagentKillTool(pi as never, () => true, stopRunningSubagent);
+	registerSubagentResumeTool(pi as never, () => true, runtime as never);
 	return {
 		resume: tools.get("subagent_resume") as Tool,
 		kill: tools.get("subagent_kill") as Tool,
@@ -173,10 +172,8 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(limitedRecord?.outcome, "timed_out");
 			assert.deepEqual(limitedRecord?.resume, { resumable: false, reason: TIME_LIMIT_RESUME_REASON });
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);
-			await assert.rejects(
-				() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx),
-				new RegExp(`Run ${limited.id} cannot be resumed: ${TIME_LIMIT_RESUME_REASON}`),
-			);
+			// The live verdict refuses by run id and by session file alike.
+			await assert.rejects(() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx), BLOCKED);
 			await assert.rejects(() => resume.execute("c", { sessionFile }, undefined, undefined, ctx), BLOCKED);
 
 			// 2. The operator override resumes it; subagent_kill stops it by run id. The record is
@@ -195,6 +192,13 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(record(answered.id)?.outcome, "done");
 			assert.deepEqual(record(answered.id)?.resume, { resumable: true });
 			assert.equal(readSubagentTimeoutSidecar(sessionFile), null);
+
+			// 3b. D14 (parity decisions): the old time-limit record is history, not authority. After the
+			// operator's successful resume removed the verdict, its run id resumes the session.
+			const fromOldRecord = await toolResume({ runId: limited.id });
+			await settled(fromOldRecord);
+			assert.equal(record(fromOldRecord.id)?.outcome, "done");
+			assert.equal(record(fromOldRecord.id)?.sessionFile, sessionFile);
 
 			// 4. A retry by the new run id agrees with its record: the plain tool resumes it.
 			const retried = await toolResume({ runId: answered.id });

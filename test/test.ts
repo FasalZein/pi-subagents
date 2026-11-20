@@ -139,7 +139,7 @@ import "./runtime/end-outcome-order.test.ts";
 import "./tools/end-outcome-display.test.ts";
 import "./runtime/resume-grant.test.ts";
 import "./runtime/spawn-width.test.ts";
-import "./runtime/launch-cap.test.ts";
+import "./runtime/launch-admission.test.ts";
 import "./runtime/mixed-batch-classifier.test.ts";
 import "./launch/helpers.test.ts";
 import "./mux/mux.test.ts";

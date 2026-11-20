@@ -217,7 +217,6 @@ async function startParent(
 				stopped.push(running.id);
 				finishWithCall(running.name, `STOPPED ${running.name}`);
 			},
-			{ mayLaunch: () => true },
 		);
 	};
 	const resourceLoader = new DefaultResourceLoader({
@@ -590,7 +589,7 @@ describe("T28: a batch whose later child fails to launch", () => {
 });
 
 describe("g3 P1: a launch refused before any child starts", () => {
-	const ENV_KEYS = ["PI_SUBAGENT_LAUNCH_CAP", "PI_SUBAGENT_SPAWN_WIDTH"] as const;
+	const ENV_KEYS = ["PI_SUBAGENT_SPAWN_WIDTH"] as const;
 
 	/** Runs the second launch of a script; the first launch takes the only slot when one is given. */
 	async function refusedInScript(
@@ -626,12 +625,6 @@ describe("g3 P1: a launch refused before any child starts", () => {
 
 	const one = { children: [child("child-one")] };
 	const two = { children: [child("child-two")] };
-
-	it("rejects the script call over the launch cap", async () => {
-		const value = await refusedInScript({ PI_SUBAGENT_LAUNCH_CAP: "1" }, one, two);
-		assert.equal(value.resolved, undefined, "the refusal is not a successful value");
-		assert.match(value.rejected ?? "", /1 of 1/);
-	});
 
 	it("rejects the script call for a batch wider than the spawn width", async () => {
 		const value = await refusedInScript({ PI_SUBAGENT_SPAWN_WIDTH: "1" }, undefined, {
