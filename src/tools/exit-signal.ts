@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import {
 	SUBAGENT_COMPLETION_ENTRY,
@@ -11,6 +11,33 @@ interface ExitSignalWriterDeps {
 	pi: Pick<ExtensionAPI, "appendEntry">;
 	getFinalContextUsage(): FinalContextSnapshot | undefined;
 	hasDeliveredFinalWarning(): boolean;
+	/** T73: the final text of an in-memory child (inMemoryFinalOutput); undefined for a persisted one. */
+	getFinalOutput(): string | undefined;
+}
+
+/**
+ * T73 (D13): the final text of a child that runs with Pi --no-session, as Pi print mode writes it to
+ * stdout (print-mode.js): each text block of the last message, when that message is an assistant
+ * answer that did not fail. A pane or a headless child with ignored stdio has no stdout that the
+ * parent reads, so the exit record carries this text. Undefined for a persisted session: the parent
+ * reads its transcript.
+ */
+export function inMemoryFinalOutput(
+	session: Pick<ExtensionContext["sessionManager"], "getSessionFile" | "getBranch"> | undefined,
+): string | undefined {
+	if (!session || session.getSessionFile() !== undefined) return undefined;
+	const branch = session.getBranch();
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type !== "message") continue;
+		const message = entry.message;
+		if (message.role !== "assistant" || message.stopReason === "error" || message.stopReason === "aborted") {
+			return undefined;
+		}
+		const text = message.content.flatMap((block) => (block.type === "text" ? [`${block.text}\n`] : [])).join("");
+		return text || undefined;
+	}
+	return undefined;
 }
 
 /**
@@ -57,11 +84,13 @@ export function createExitSignalWriter(deps: ExitSignalWriterDeps) {
 		const sessionFile = process.env.PI_SUBAGENT_SESSION;
 		if (!sessionFile) return "no-session" as const;
 		const { isNormalCompletion, contextPressure, failedWhileSpent } = classifyExitPayload(deps, payload, opts);
+		const output = deps.getFinalOutput();
 		const accepted = writeSubagentExitSidecar(
 			sessionFile,
 			{
 				...payload,
 				...deps.getFinalContextUsage(),
+				...(output ? { output } : {}),
 				...(contextPressure ? { completionReason: SUBAGENT_CONTEXT_PRESSURE_REASON } : {}),
 				...(failedWhileSpent ? { completionReason: SUBAGENT_CONTEXT_PRESSURE_FAILURE_REASON } : {}),
 			},

@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { ChildSessionStorage } from "../session/child-session-storage.ts";
 import type { SubagentSessionMode } from "../session/session-files.ts";
 import type { SubagentParamsInput } from "../types.ts";
@@ -36,6 +38,9 @@ export function seedPreparedSubagentSession(
 } {
 	const seedMode = getChildSeedMode(sessionMode, noSession);
 	const boundarySystemPrompt = shouldWriteChildContextBoundary(seedMode);
+	// The child's exit record lands beside its session file; an in-memory standalone child writes no
+	// file there, so its directory must exist before the first exit record (T73).
+	mkdirSync(dirname(prepared.subagentSessionFile), { recursive: true });
 	const storage = new ChildSessionStorage(prepared.subagentSessionFile);
 	// The header's cwd becomes the child pi's project root when it continues the session (see below).
 	const sessionCwd = forcedCwd ?? prepared.runtimePaths.effectiveCwd ?? ctx.cwd;

@@ -348,6 +348,8 @@ async function watchInteractiveGeneration(
 			ping: ping ?? (!stopped && end.reason === "ping" ? { message: "" } : undefined),
 			errorMessage,
 			exitSignal: end.acceptedCall ? end : exitSignal,
+			// T73: a pane has no stdout that the parent reads; an in-memory child's exit record carries its final text.
+			processOutput: { stdout: end.output ?? exitSignal?.output },
 			contextUsage: finalContextUsage,
 		});
 		// The published record already read this run's transcript; only an unpublished end reads it here.

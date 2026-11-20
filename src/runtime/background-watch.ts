@@ -400,7 +400,11 @@ function watchBackgroundGeneration(
 				ping,
 				errorMessage,
 				exitSignal,
-				processOutput: { stdout: running.stdoutTail, stderr: running.stderrTail },
+				// T73: a continue child's stdio is ignored; its exit record carries its final text.
+				processOutput: {
+					stdout: running.stdoutTail?.trim() ? running.stdoutTail : exitSignal?.output,
+					stderr: running.stderrTail,
+				},
 				contextUsage: finalContextUsage,
 			});
 			const stderr = running.stderrTail?.trim();

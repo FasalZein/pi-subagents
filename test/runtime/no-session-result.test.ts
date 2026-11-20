@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupNoSessionSessionFile } from "../../src/launch/prep.ts";
+import { seedPreparedSubagentSession } from "../../src/launch/seed-child-session.ts";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
@@ -319,11 +320,13 @@ describe("in-memory no-session child results", () => {
 		return made;
 	}
 
+	// The launcher pipes stdout only for terminate; a continue child's stdio is ignored, so its final
+	// text arrives in its exit record (the child writes Pi print mode's stdout text there).
 	for (const policy of ["terminate", "continue"] as const) {
-		it(`background / ${policy}: the report is the process output, the record cannot resume`, async () => {
+		it(`background / ${policy}: the report is the child's final output, the record cannot resume`, async () => {
 			const { running, store, runId } = makeInMemoryRun("background", policy);
-			running.stdoutTail = `${ANSWER}\n`;
-			const result = await finishNoSessionRun(running);
+			if (policy === "terminate") running.stdoutTail = `${ANSWER}\n`;
+			const result = await finishNoSessionRun(running, policy === "continue" ? { output: `${ANSWER}\n` } : {});
 
 			assert.ok(result.reportFile, "the result names its report file");
 			const report = readFileSync(result.reportFile, "utf8");
@@ -336,6 +339,61 @@ describe("in-memory no-session child results", () => {
 			assert.deepEqual(record.resume, { resumable: false, reason: NO_SESSION_RESUME_REASON });
 		});
 	}
+
+	it("pane: the report is the final text from the child's exit record", async () => {
+		const { running, store, runId } = makeInMemoryRun("interactive", "terminate");
+		const result = await finishNoSessionRun(running, { output: `${ANSWER}\n` });
+		assert.ok(result.reportFile, "the result names its report file");
+		const report = readFileSync(result.reportFile, "utf8");
+		assert.ok(report.includes(START_MARKER) && report.includes(END_MARKER), "the report is the final text");
+		assert.equal(store.read(runId)?.outcome, "done");
+	});
+
+	it("pane: a manual close with a nonzero status keeps the final text that the exit record carries", async () => {
+		const { running, store, runId } = makeInMemoryRun("interactive", "terminate");
+		running.autoExit = false;
+		writeSubagentExitSidecar(running.sessionFile, { type: "done", endedBy: "operator", output: ANSWER });
+		const result = await watchSubagent(
+			running,
+			{
+				cleanupNoSessionSessionFile,
+				async closeRunningSurface() {},
+				async pollForExit() {
+					return { reason: "sentinel", exitCode: 130 };
+				},
+			} as never,
+			new AbortController().signal,
+		);
+		assert.ok(result.reportFile, "the result names its report file");
+		assert.ok(readFileSync(result.reportFile, "utf8").includes(END_MARKER), "the report is the final text");
+		assert.notEqual(store.read(runId)?.outcome, "failed");
+	});
+
+	it("background / terminate: a failed launch keeps its stderr diagnostic (cf6dbf4 background-watch)", async () => {
+		const DIAGNOSTIC = "Error: --fork cannot be combined with --session";
+		const { running, store, runId } = makeInMemoryRun("background", "terminate");
+		running.stderrTail = `${DIAGNOSTIC}\n`;
+		const promise = watchBackgroundSubagent(
+			running,
+			{ cleanupNoSessionSessionFile, terminateBackgroundChildProcess() {} },
+			new AbortController().signal,
+		);
+		running.childProcess!.emit("exit", 1);
+		const result = await promise;
+		assert.equal(store.read(runId)?.outcome, "failed");
+		assert.match(result.summary, /--fork cannot be combined with --session/);
+		assert.ok(result.reportFile && readFileSync(result.reportFile, "utf8").includes(DIAGNOSTIC));
+	});
+
+	it("standalone: the first launch under an empty temporary root can write its exit record, with no transcript", () => {
+		const root = createTestDir();
+		dirs.push(root);
+		const sessionFile = join(root, "pi-subagents", "sessions", "child.jsonl");
+		const prepared = { subagentSessionFile: sessionFile, runtimePaths: {}, sessionFile: null };
+		seedPreparedSubagentSession(prepared as never, { name: "child" }, { cwd: root } as never, "standalone", true);
+		assert.equal(existsSync(sessionFile), false, "no transcript file is created");
+		assert.equal(writeSubagentExitSidecar(sessionFile, { type: "done" }), true, "the exit record lands");
+	});
 
 	it("pane: the seeded history is no report, the record cannot resume", async () => {
 		const { running, store, runId } = makeInMemoryRun("interactive", "terminate");
@@ -363,6 +421,8 @@ describe("in-memory no-session child results", () => {
 		const started = Date.now();
 		await shutdownSubagentsForParentExit(shutdownRuntime(running, 2000));
 		assert.ok(Date.now() - started < 1000, `shutdown waited ${Date.now() - started} ms`);
+		// The parent process may exit here: no watcher removes the seed with the parent conversation later.
+		assert.equal(existsSync(running.sessionFile), false, "the seed is gone when shutdown returns");
 	});
 
 	it("continue: a detach marks no file for deletion and delivers no result", async () => {
@@ -373,6 +433,8 @@ describe("in-memory no-session child results", () => {
 		assert.deepEqual(actions, [{ id: running.id, policy: "continue", action: "continue" }]);
 		assert.equal(running.resultTarget, undefined, "no result is delivered for a detached child");
 		assert.equal(existsSync(`${running.sessionFile}.delete-on-exit`), false, "no deletion marker");
+		// The child runs in memory and never reads the seed; it holds the parent conversation.
+		assert.equal(existsSync(running.sessionFile), false, "the seed is gone when shutdown returns");
 		assert.equal(store.read(runId), undefined);
 	});
 });
