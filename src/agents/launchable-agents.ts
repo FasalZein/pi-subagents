@@ -1,7 +1,7 @@
+import { join } from "node:path";
 import type { ParsedSpawnEnv } from "../spawn/policy.ts";
 import { type AgentDetailContext, renderAgentDetail } from "./agent-detail.ts";
 import { type AgentListEntry, type ResolveSubagentSessionMode, toAgentListEntry } from "./agent-list.ts";
-import { join } from "node:path";
 import {
 	type AgentCatalog,
 	getAgentConfigDir,

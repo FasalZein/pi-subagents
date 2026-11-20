@@ -19,5 +19,7 @@ export function upstreamUnknownAgentError(agent: string, agentConfigDir: string)
 		showBaseline("src/launch/policy.ts"),
 	)?.[1];
 	if (!template) throw new Error(`no unknown-agent error in ${BASELINE}:src/launch/policy.ts`);
-	return template.replace("${params.agent}", agent).replace("${globalDir}", join(agentConfigDir, "agents"));
+	return template
+		.replace(/\$\{params\.agent\}/, () => agent)
+		.replace(/\$\{globalDir\}/, () => join(agentConfigDir, "agents"));
 }

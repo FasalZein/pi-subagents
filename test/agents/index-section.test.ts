@@ -185,7 +185,10 @@ describe("agent index section", () => {
 		const lines = section?.split("\n") ?? [];
 		assert.equal(lines[2], "More tools: subagent_wait, subagent_kill.");
 		assert.ok(!section?.includes("subagent_agents"), section);
-		assert.match(lines.at(-1) ?? "", new RegExp(`^\\+\\d+ more: agent files in ${dirs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+		assert.match(
+			lines.at(-1) ?? "",
+			new RegExp(`^\\+\\d+ more: agent files in ${dirs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+		);
 		assert.ok(renderAgentIndexRequestText(section ?? "").length <= AGENT_INDEX_MAX_CHARS);
 		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set(), agentDirs: dirs });
 		assert.ok(!none?.includes("More tools"), none);

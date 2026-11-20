@@ -31,8 +31,10 @@ const FORCED_WAIT_LINE = "Launches wait.";
 
 const DESCRIPTION_CHARS = 100;
 
-const LAUNCH_LINE =
-	"Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].";
+function renderLaunchLine(tools: IndexToolAccess): string {
+	const wait = tools.callable.has("subagent_wait") ? "; subagent_wait joins now or looks up a run id" : "";
+	return `Helpers: launch with subagent (a children list). A result arrives as a message${wait}. A helper sees only its task text unless marked [fork].`;
+}
 
 // The routing rules of the v2.9.2 launch tool and roster (cf6dbf4
 // src/tools/subagent-tools.ts promptSnippet, src/agents/agent-list.ts rules),
@@ -132,14 +134,17 @@ export function renderAgentIndexSection(
 	if (described.length === 0) return undefined;
 	const lines = [...described].sort(compareIndexOrder).map((entry) => renderAgentLine(entry, policy));
 	const fixed = [
-		LAUNCH_LINE,
+		renderLaunchLine(tools),
 		RULES_LINE,
 		...renderMoreToolsLine(tools),
 		...(policy.forcesWait ? [FORCED_WAIT_LINE] : []),
 	].join("\n");
 	// Length with the first k agent lines: each line adds itself and one newline.
 	const lengthWith = (k: number, prefix: number) =>
-		WRAPPER_CHARS + fixed.length + prefix + (k < lines.length ? 1 + renderCountLine(lines.length - k, tools).length : 0);
+		WRAPPER_CHARS +
+		fixed.length +
+		prefix +
+		(k < lines.length ? 1 + renderCountLine(lines.length - k, tools).length : 0);
 	// The fixed lines and a count line alone fit, so zero agent lines always fit.
 	let shown = 0;
 	let prefix = 0;

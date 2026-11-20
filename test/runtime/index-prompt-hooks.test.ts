@@ -4,6 +4,7 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js";
 import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
+import { tmuxBackend } from "../../src/mux/tmux.ts";
 import subagentsExtension from "../../src/subagents.ts";
 import { applyChildSystemPromptOverrides } from "../../src/tools/child-system-prompt.ts";
 import {
@@ -35,6 +36,7 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE",
 	"PI_SUBAGENT_APPEND_SYSTEM_PROMPT",
 	"PI_SUBAGENT_SKILL_VISIBILITY",
+	"PI_SUBAGENT_MUX",
 ] as const;
 
 function writeAgent(agentsDir: string, name: string, frontmatter: string) {
@@ -302,6 +304,56 @@ describe("agent index at prompt start", () => {
 			assert.equal(run.section !== undefined, shown, label);
 			resetSubagentStateForTest();
 		}
+	});
+
+	it("runs no multiplexer probe at prompt start in a UI session (D06)", async () => {
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		const probe = tmuxBackend.isAvailable;
+		let probes = 0;
+		tmuxBackend.isAvailable = () => {
+			probes++;
+			return true;
+		};
+		try {
+			const { agentsDir, handlers, ctx } = setup();
+			writeAgent(agentsDir, "design", "description: Design the change\nmode: interactive\nauto-exit: true");
+			const uiCtx = { ...ctx, hasUI: true, mode: "tui" };
+			const run = await promptStart(handlers.get("before_agent_start") ?? [], uiCtx);
+			assert.equal(probes, 0, "prompt start probed the multiplexer");
+			assert.match(run.section ?? "", /\n- design: Design the change \[pane\]\n/);
+		} finally {
+			tmuxBackend.isAvailable = probe;
+		}
+	});
+
+	it("keeps the index in a parent whose prompt an earlier handler composed whole (D06)", async () => {
+		const { handlers, ctx } = setup();
+		const composeWhole: Handler = () => ({ systemPrompt: "WHOLE PARENT PROMPT" });
+		const run = await promptStart([composeWhole, ...(handlers.get("before_agent_start") ?? [])], ctx);
+		assert.match(run.prompt, /^WHOLE PARENT PROMPT\n\n<index>\nHelpers: launch with subagent/);
+		assert.match(
+			run.prompt,
+			/\n- reviewer: Review changes for regressions\n- scout: Map the code before a change\n<\/index>$/,
+		);
+	});
+
+	it("points to the agent files instead of a denied subagent_agents (D06)", async () => {
+		process.env.PI_DENY_TOOLS = "subagent_agents,subagent_wait";
+		const { agentsDir, handlers, ctx } = setup();
+		for (let i = 0; i < 40; i++)
+			writeAgent(
+				agentsDir,
+				`agent-${String(i).padStart(3, "0")}`,
+				`description: Agent ${i} does one kind of work and reports back.\nmode: background`,
+			);
+		const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
+		assert.ok(!section.includes("subagent_agents") && !section.includes("subagent_wait"), section);
+		assert.match(section, /^Helpers: launch with subagent \(a children list\)\. A result arrives as a message\. /);
+		assert.match(section, /\nMore tools: subagent_resume, subagent_kill\.\n/);
+		const dirs = `.pi/agents/ or ${join(process.env.PI_CODING_AGENT_DIR ?? "", "agents")}`;
+		const last = section.split("\n").at(-1) ?? "";
+		assert.match(last, /^\+\d+ more: agent files in /);
+		assert.ok(last.endsWith(` in ${dirs}`), last);
 	});
 
 	it("flags lines by the launch policy of a print session", async () => {
