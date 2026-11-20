@@ -342,7 +342,8 @@ describe("in-memory no-session child results", () => {
 		const result = await finishNoSessionRun(running);
 		const record = store.read(runId);
 		assert.ok(record, "the record is published");
-		assert.ok(!readFileSync(result.reportFile!, "utf8").includes(SEED_TEXT));
+		assert.ok(result.reportFile, "the result names its report file");
+		assert.ok(!readFileSync(result.reportFile, "utf8").includes(SEED_TEXT));
 		assert.deepEqual(record.resume, { resumable: false, reason: NO_SESSION_RESUME_REASON });
 	});
 

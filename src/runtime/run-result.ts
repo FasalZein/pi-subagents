@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import type { PollResult } from "../mux/poll.ts";
 import { runsInMemory } from "../launch/policy.ts";
+import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
