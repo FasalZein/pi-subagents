@@ -307,16 +307,24 @@ esac
 			mkdirSync(capsuleRoot, { recursive: true });
 			const tmuxLog = join(dir, "tmux.log");
 			writeFileSync(tmuxLog, "");
-			writeExecutable(dir, "tmux", `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${tmuxLog}"\ncase "$1" in new-window) printf '%%42\\n' ;; esac\n`);
-			const saved = Object.fromEntries(
-				["PATH", "PI_SUBAGENT_MUX", "TMUX", "SHELL", "PI_SUBAGENT_ENV_CAPSULE_DIR"].map((key) => [key, process.env[key]]),
+			writeExecutable(
+				dir,
+				"tmux",
+				`#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${tmuxLog}"\ncase "$1" in new-window) printf '%%42\\n' ;; esac\n`,
 			);
+			const envKeys = ["PATH", "PI_SUBAGENT_MUX", "TMUX", "SHELL", "PI_SUBAGENT_ENV_CAPSULE_DIR"];
+			const saved = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 			process.env.PATH = `${dir}:${saved.PATH ?? ""}`;
 			process.env.PI_SUBAGENT_MUX = "tmux";
 			process.env.TMUX = "fake-tmux-socket";
 			process.env.SHELL = "/bin/sh";
 			process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = capsuleRoot;
-			const childKeys = ["PI_DENY_TOOLS", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_SUBAGENT_TIMEOUT_WRAP_UP"];
+			const childKeys = [
+				"PI_DENY_TOOLS",
+				"PI_SUBAGENT_AUTO_EXIT",
+				"PI_SUBAGENT_SURFACE",
+				"PI_SUBAGENT_TIMEOUT_WRAP_UP",
+			];
 			try {
 				const sessionFile = join(dir, "pane-child.jsonl");
 				writeFileSync(
