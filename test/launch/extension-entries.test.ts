@@ -35,7 +35,6 @@ function planFor(cwd: string, extensions: string | undefined, agentDir = join(cw
 	});
 }
 
-
 async function resumeSavedSession(
 	dir: string,
 	extensions: string[],
@@ -106,7 +105,6 @@ async function resumeSavedSession(
 		else process.env.PI_ARTIFACT_PROJECT_ROOT = originalRoot;
 	}
 }
-
 
 /** The extension arguments cf6dbf4 (v2.9.2) gives a list: no pruning, every entry in order after the mandatory one. */
 function cf6dbf4ExtensionArgs(entries: string[], mandatory: string): string[] {

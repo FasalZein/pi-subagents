@@ -59,4 +59,3 @@ export function isSubagentsExtensionEntry(entry: string, cwd = process.cwd()): b
 	const path = realPath(localEntryPath(trimmed, cwd));
 	return PACKAGE_PATHS.has(path) || packageNameAt(path) === PACKAGE_MANIFEST.name;
 }
-
