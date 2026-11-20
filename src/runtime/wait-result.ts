@@ -191,8 +191,8 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		}
 
 		if (outcome.kind === "interrupted") {
-			// D16: Esc stops only the wait. The run keeps running and reports by message, for
-			// subagent_wait and for a launch that waits alike.
+			// D16: Esc stops only this wait. A launch or resume that waits then stops the child (D04a,
+			// in getLaunchedSubagentResult); for subagent_wait the run keeps running and reports by message.
 			return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 				id: running.id,
 			});

@@ -1,7 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CALL_OUTCOMES, SUMMARY_MAX_CHARS } from "../runtime/result-record.ts";
 import { createDataCheck, type DataSchemaParse, readLaunchDataSchema } from "./data-schema.ts";
-import { asPrepareArguments, parseJsonFields } from "./json-string-args.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
@@ -61,9 +60,6 @@ export const SUMMARY_ANSWER_FIRST =
 const SUMMARY_DESCRIPTION = `${SUMMARY_ANSWER_FIRST} Then say what you accomplished. At most ${COMPLETION_LIMIT_TEXT}.`;
 const ARTIFACTS_DESCRIPTION = "Paths of the files you wrote";
 const DATA_ANY_DESCRIPTION = "Any JSON value for the caller";
-
-/** T64: the subagent_done fields a model may send as a JSON string. */
-export const COMPLETION_JSON_FIELDS = ["artifacts", "data"] as const;
 
 /**
  * D12 parameters. All optional and loose: a call without a valid outcome and a non-empty summary
@@ -128,8 +124,6 @@ export function registerSubagentDoneTool(
 			"When your task is complete, close this session and return your result to the caller: outcome (done, partial or blocked), " +
 			`a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of files you wrote, and optional JSON data.`,
 		parameters: buildSubagentDoneParams(launchSchema),
-		// T64: before Pi's validation, so the size and schema checks see the parsed JSON.
-		prepareArguments: asPrepareArguments((args) => parseJsonFields(args, COMPLETION_JSON_FIELDS)),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			refuseOversizeSummary((params as { summary?: unknown }).summary);
 			const args = params as Record<string, unknown>;

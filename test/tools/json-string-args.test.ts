@@ -1,5 +1,5 @@
 import { createDataCheck, DATA_MAX_CHARS } from "../../src/tools/data-schema.ts";
-import { parseJsonContainer, parseJsonFields, parseLaunchJsonFields } from "../../src/tools/json-string-args.ts";
+import { parseJsonContainer, parseLaunchJsonFields } from "../../src/tools/json-string-args.ts";
 import { assert, describe, it } from "../support/index.ts";
 
 // T64: the expected values follow the brief's rule: a string that parses as a JSON object or array is
@@ -31,24 +31,16 @@ describe("JSON string arguments (T64)", () => {
 		assert.equal(parseJsonContainer(object), object);
 	});
 
-	it("parses only the named fields and returns the same object when nothing changed", () => {
-		const args = { data: '{"a":1}', summary: '{"b":2}' };
-		assert.deepEqual(parseJsonFields(args, ["data"]), { data: { a: 1 }, summary: '{"b":2}' });
-		assert.deepEqual(args.data, '{"a":1}', "the input is not modified");
-		const plain = { data: { a: 1 }, summary: "s" };
-		assert.equal(parseJsonFields(plain, ["data", "artifacts"]), plain);
-		assert.equal(parseJsonFields("text", ["data"]), "text");
-	});
-
-	it("parses launch children and each child's schema", () => {
-		const schema = { type: "object" };
-		const child = { name: "a", schema: JSON.stringify(schema) };
-		assert.deepEqual(parseLaunchJsonFields({ children: JSON.stringify([child]) }), {
-			children: [{ name: "a", schema }],
-		});
-		assert.deepEqual(parseLaunchJsonFields({ children: [child] }), { children: [{ name: "a", schema }] });
-		const plain = { children: [{ name: "a", schema }] };
-		assert.equal(parseLaunchJsonFields(plain), plain);
+	// D05 (owner 2026-11-20T12:00Z): only children is parsed; a JSON string anywhere else keeps its type.
+	it("parses launch children only; a schema string, in a child or top-level, stays a string", () => {
+		const schema = JSON.stringify({ type: "object" });
+		const child = { name: "a", schema };
+		assert.deepEqual(parseLaunchJsonFields({ children: JSON.stringify([child]) }), { children: [child] });
+		const native = { children: [child] };
+		assert.equal(parseLaunchJsonFields(native), native, "a native list is the same object");
+		const single = { name: "a", schema, task: '{"x":1}' };
+		assert.equal(parseLaunchJsonFields(single), single, "the top-level form is not parsed");
+		assert.equal(parseLaunchJsonFields("text"), "text");
 	});
 
 	it("the data size limit counts the parsed JSON, not the string the model sent", () => {

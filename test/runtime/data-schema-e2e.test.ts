@@ -439,25 +439,21 @@ describe("T37: data checked against a launch schema, end to end", () => {
 	}
 });
 
-// T64: Claude-family models send object and array arguments as JSON strings. A string that parses as
-// a JSON object or array is that value; any other string stays a string and is checked as one.
-describe("T64: object and array arguments sent as JSON strings, end to end", () => {
-	// The model's raw arguments: children, each child's schema and the wait ids as JSON strings.
-	const children = [
-		{
-			name: "diff-reviewer",
-			task: "Review the change.",
-			title: "Review the change",
-			agent: "reviewer",
-			schema: JSON.stringify(VERDICT_SCHEMA),
-		},
-	];
-	const launchAsStrings = (replies: FauxResponseStep[]) =>
+// D05 (owner 2026-11-20T12:00Z): only a children list sent as a JSON string is parsed, as T64 added it.
+// Any other JSON-looking string (a schema, wait ids, data, artifacts) keeps its string type, as in v2.9.2
+// (cf6dbf4), which parsed no argument string. Expected values: the D05 rule and the schema check's own refusals.
+describe("D05: only children sent as a JSON string is parsed, end to end", () => {
+	const child = {
+		name: "diff-reviewer",
+		task: "Review the change.",
+		title: "Review the change",
+		agent: "reviewer",
+		schema: VERDICT_SCHEMA,
+	};
+	const launchWithChildrenString = (replies: FauxResponseStep[]) =>
 		launchAndRunChild(replies, {
-			delegate: [fauxToolCall("subagent", { children: JSON.stringify(children) } as ToolArgs, { id: "launch-1" })],
-			join: [
-				fauxToolCall("subagent_wait", { ids: JSON.stringify(["id-diff-reviewer"]) } as ToolArgs, { id: "wait-1" }),
-			],
+			delegate: [fauxToolCall("subagent", { children: JSON.stringify([child]) } as ToolArgs, { id: "launch-1" })],
+			join: [fauxToolCall("subagent_wait", { ids: ["id-diff-reviewer"] } as ToolArgs, { id: "wait-1" })],
 		});
 
 	const doneWith = (args: Record<string, unknown>, id: string) =>
@@ -466,40 +462,35 @@ describe("T64: object and array arguments sent as JSON strings, end to end", () 
 			{ stopReason: "toolUse" },
 		);
 
-	it("children, schema, ids, data and artifacts as JSON strings: data is an object in the wait reply's record", async () => {
-		const { parent, child, record } = await launchAsStrings([
-			doneWith({ data: JSON.stringify(GOOD_DATA), artifacts: JSON.stringify(["/tmp/review.md"]) }, "c1"),
+	it("children as a JSON string starts the child; data as a JSON string stays a string and is refused", async () => {
+		const { parent, child: run, record } = await launchWithChildrenString([
+			doneWith({ data: JSON.stringify(GOOD_DATA) }, "c1"),
+			doneWith({ data: JSON.stringify(GOOD_DATA) }, "c2"),
 			fauxAssistantMessage("late"),
 		]);
 		try {
 			assert.deepEqual(
-				child.doneResults.map((r) => r.isError),
-				[false],
-				child.doneResults.map((r) => r.text).join("\n"),
+				run.doneResults.map((r) => r.isError),
+				[true, false],
 			);
-			assert.equal(record.typed, true);
-			assert.deepEqual(record.data, GOOD_DATA);
-			assert.equal(record.dataError, undefined);
-			assert.deepEqual(record.artifacts, ["/tmp/review.md"]);
+			assert.match(run.doneResults[0]!.text, /- data: expected object, got string/);
+			assert.equal(record.data, undefined);
+			assert.match(String(record.dataError), /expected object, got string/);
 		} finally {
 			await parent.dispose();
 		}
 	});
 
-	it("a data string that is not JSON stays a string and is refused by the schema check", async () => {
-		const { parent, child, record } = await launchAsStrings([
-			doneWith({ data: "verdict: approve" }, "c1"),
-			doneWith({ data: "verdict: approve" }, "c2"),
-			fauxAssistantMessage("late"),
-		]);
+	it("a schema sent as a JSON string stays a string and refuses the launch before any child starts", async () => {
+		const asString = { ...child, schema: JSON.stringify(VERDICT_SCHEMA) };
+		const parent = await startParent({
+			delegate: [fauxToolCall("subagent", { children: JSON.stringify([asString]) } as ToolArgs, { id: "launch-1" })],
+		});
 		try {
-			assert.deepEqual(
-				child.doneResults.map((r) => r.isError),
-				[true, false],
-			);
-			assert.match(child.doneResults[0]!.text, /- data: expected object, got string/);
-			assert.equal(record.data, undefined);
-			assert.match(String(record.dataError), /expected object, got string/);
+			await parent.session.prompt("delegate");
+			await parent.session.waitForIdle();
+			assert.equal(parent.launches.size, 0, "no child started");
+			assert.match(parent.toolReplies("subagent")[0]!.text, /schema must be a JSON Schema object or a boolean/);
 		} finally {
 			await parent.dispose();
 		}

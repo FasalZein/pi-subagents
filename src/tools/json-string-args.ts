@@ -17,28 +17,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The arguments with each named field parsed by parseJsonContainer; the same value when no field changed. */
-export function parseJsonFields(args: unknown, fields: readonly string[]): unknown {
-	if (!isRecord(args)) return args;
-	let changed: Record<string, unknown> | undefined;
-	for (const field of fields) {
-		const parsed = parseJsonContainer(args[field]);
-		if (parsed !== args[field]) {
-			changed ??= { ...args };
-			changed[field] = parsed;
-		}
-	}
-	return changed ?? args;
-}
-
-/** T64: launch arguments with children, and each child's schema, parsed when sent as a JSON string. */
+/**
+ * D05: launch arguments with children parsed when sent as a JSON string; the same value otherwise.
+ * Only children is parsed: a JSON-looking string anywhere else (a schema, data) keeps its string type.
+ */
 export function parseLaunchJsonFields(args: unknown): unknown {
-	const parsed = parseJsonFields(args, ["children"]);
-	const children = isRecord(parsed) ? parsed.children : undefined;
-	if (!Array.isArray(children)) return parsed;
-	const parsedChildren = children.map((child) => parseJsonFields(child, ["schema"]));
-	if (parsedChildren.every((child, i) => child === children[i])) return parsed;
-	return { ...(parsed as Record<string, unknown>), children: parsedChildren };
+	if (!isRecord(args)) return args;
+	const children = parseJsonContainer(args.children);
+	return children === args.children ? args : { ...args, children };
 }
 
 /**

@@ -47,12 +47,19 @@ type SubagentChildLike = {
 	blocking?: unknown;
 };
 
-/** D21: the launch tool's input is only its children list; each entry is one launch. */
-export function getLaunchCallChildren(args: unknown): SubagentChildLike[] {
+/**
+ * D05: the launches of one launch call, normalized as v2.9.2 (cf6dbf4) did: each entry of a nonempty
+ * children list, otherwise the top-level fields as one launch (an empty list falls back to them).
+ */
+export function getLaunchCallChildren<T extends object = SubagentChildLike>(args: unknown): T[] {
+	if (!args || typeof args !== "object") return [];
 	// T64: message_end passes the raw arguments; parse a JSON-string list as the launch tool's prepareArguments does.
-	const children = parseJsonContainer((args as { children?: unknown } | null | undefined)?.children);
-	if (!Array.isArray(children)) return [];
-	return children.filter((c): c is SubagentChildLike => !!c && typeof c === "object");
+	const children = parseJsonContainer((args as { children?: unknown }).children);
+	if (Array.isArray(children) && children.length > 0) {
+		return children.filter((c): c is T => !!c && typeof c === "object");
+	}
+	const { children: _children, ...single } = args as Record<string, unknown>;
+	return [single as T];
 }
 
 function isAsyncSubagentChildLaunch(child: SubagentChildLike, loadAgentDefaults: AgentDefaultsLoader): boolean {
