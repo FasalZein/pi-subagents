@@ -3,6 +3,8 @@ import { afterEach, beforeEach } from "node:test";
 import { launchInteractiveSubagent } from "../../src/launch/interactive.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
 import { LaunchUndo } from "../../src/launch/launch-undo.ts";
+import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
+import { testResultsDir } from "../support/result-fixtures.ts";
 import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION, readRexCalls } from "../mux/fake-rex.ts";
 import {
 	ASSISTANT_MSG,
@@ -19,6 +21,7 @@ import {
 	USER_MSG,
 	writeExecutable,
 	writeFileSync,
+	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
 
 /** Every name that detection or placement reads; restored after each test. */
@@ -148,4 +151,60 @@ describe("Rex placement at launch (T71, D28)", () => {
 			assert.equal(metadata?.rexPlacementPolicy, expected === "split" ? "split" : "window");
 		});
 	}
+
+	/** Resumes an interactive child whose launch stored the given env and policy; returns the create verbs. */
+	async function resumeWith(stored: { env?: string; rexPlacementPolicy?: "window" | "split" }): Promise<string[]> {
+		const sessionFile = join(cwd, "child.jsonl");
+		const header = { type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd };
+		writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
+		await writeSubagentLaunchMetadataEntryForTest(sessionFile, {
+			version: 1,
+			timestamp: new Date().toISOString(),
+			name: "rex-resume-child",
+			mode: "interactive",
+			sessionMode: "fork",
+			autoExit: true,
+			parentClosePolicy: "terminate",
+			blocking: false,
+			async: true,
+			denyTools: [],
+			noContextFiles: false,
+			noSession: false,
+			agentConfigDir: cwd,
+			cwd,
+			boundarySystemPrompt: false,
+			...stored,
+		});
+		const result = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
+		await resumeSubagentSession(
+			{ resultsDir: testResultsDir(), parent: { parentCwd: cwd, warnings: [] }, sessionFile, task: "resume" },
+			{
+				isMuxAvailable: () => true,
+				getShellReadyDelayMs: () => 0,
+				watchBackgroundSubagent: result,
+				watchSubagent: result,
+				getWatcherSignal: (_running: unknown, controller: AbortController) => controller.signal,
+				startWidgetRefresh: () => {},
+				getContextWindow: () => undefined,
+				runningSubagents: new Map(),
+			} as unknown as Parameters<typeof resumeSubagentSession>[1],
+		);
+		return creates();
+	}
+
+	it("resume: the persisted agent env value wins over the current parent default", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
+		assert.deepEqual(await resumeWith({ env: "PI_SUBAGENT_REX_PLACEMENT=split", rexPlacementPolicy: "split" }), [
+			"split",
+		]);
+	});
+
+	it("resume: the current parent default wins over a persisted policy without agent env", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
+		assert.deepEqual(await resumeWith({ rexPlacementPolicy: "split" }), ["window new"]);
+	});
+
+	it("resume: the persisted policy applies when the parent sets nothing", async () => {
+		assert.deepEqual(await resumeWith({ rexPlacementPolicy: "split" }), ["split"]);
+	});
 });
