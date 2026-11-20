@@ -532,7 +532,6 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 | `task` | yes | The work for this child |
 | `model` | no | A model for this launch. See [Model names](#model-names) |
 | `thinking` | no | A thinking level for this launch, such as `high` |
-| `schema` | no | JSON Schema (draft 2020-12 or 7) that the `data` of the child's completion call must match. Every `$ref` stays inside the schema |
 
 The launch reply has one line per child, then one line that says how the results return, then warnings:
 
@@ -565,7 +564,7 @@ A parent starts at most 64 runs between two session starts. `PI_SUBAGENT_LAUNCH_
 
 Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself.
 
-The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. `endedBy` says who ended the run: `child` (its completion call, `caller_ping`, its own exit, or a crash), `operator` (a person closed the pane, also after a takeover, or stopped the run from the `/subagents` overlay), `parent` (`subagent_kill` or another stop of the parent), or `time_limit` (a hard kill or a report-only wrap-up). The header of the rendering names the ender only when it is not `child`, for example `· ended by operator`. A run is typed only when the child made a valid completion call (see [`subagent_done`](#subagent_done)). An untyped summary is the start of the report, cut at a line end. A typed run's artifacts are the paths the child listed in its call. An untyped run's artifacts are the paths of the child's successful `write` and `edit` calls of this run, direct or from a script, as absolute paths against the child's working directory, without duplicates, in the order of the first write.
+The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. `endedBy` says who ended the run: `child` (its completion call, `caller_ping`, its own exit, or a crash), `operator` (a person closed the pane, also after a takeover, or stopped the run from the `/subagents` overlay), `parent` (`subagent_kill` or another stop of the parent), or `time_limit` (a hard kill or a report-only wrap-up). The header of the rendering names the ender only when it is not `child`, for example `· ended by operator`. A run is typed only when the child made a valid completion call: a `caller_ping`, or a typed `subagent_done` in a session from before auto-exit children lost that tool (see [`subagent_done`](#subagent_done)). An untyped summary is the start of the report, cut at a line end. A typed run's artifacts are the paths the child listed in its call. An untyped run's artifacts are the paths of the child's successful `write` and `edit` calls of this run, direct or from a script, as absolute paths against the child's working directory, without duplicates, in the order of the first write.
 
 The rendering has a header line, the summary, and a footer:
 
@@ -637,15 +636,15 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
 The script launches the batch, prints the run ids, and waits with a time limit. For each run it checks three fields of the record:
 
 - `outcome`: `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`.
-- `typed`: `false` when the run ended without a valid completion call. A valid call is `subagent_done` with an `outcome` and a `summary`, or `caller_ping`. An untyped result has no data, and its report is the last text of the child, which can be empty. Its `artifacts` list the files the child wrote with `write` and `edit` in this run. A `caller_ping` result is typed and `blocked`. The record's `endedBy` tells a person's close (`operator`) from the child's own end (`child`).
-- `dataError`: set when the child's `data` did not match the `schema` of its launch. The record then has no data.
+- `typed`: `false` when the run ended without a valid completion call. A valid call is `caller_ping`, or in an older session a `subagent_done` with an `outcome` and a `summary`. An untyped result has no data, and its report is the last text of the child, which can be empty. Its `artifacts` list the files the child wrote with `write` and `edit` in this run. A `caller_ping` result is typed and `blocked`. The record's `endedBy` tells a person's close (`operator`) from the child's own end (`child`).
+- `dataError`: only in records of older sessions, whose child's `data` did not match the `schema` of its launch. The record then has no data.
 
 The script returns about 1,500 tokens or less: one entry per run with the run id, the outcome, a cut summary, the report file path, and the data or the reason for no data. A data value longer than 300 characters is left out whole, and the entry names the `subagent_wait` call that returns it. The script measures the digest. If the digest is too long, it leaves out summaries and data, and then everything except the run id, the outcome, and the check. A `note` field then says so. On the time limit the script returns the pending run ids and says that their work must not be redone.
 
@@ -733,8 +732,6 @@ for (const [level, shape] of shorter.entries()) {
 return JSON.stringify({ ok: digest.ok, pending, runIds: runs.map((run) => run.id), note: "Too many runs for a digest: read each result with subagent_wait({ ids: [id] })." });
 ```
 
-To type the data of a child, add a `schema` (JSON Schema) to its entry in `BATCH`. When the data of a child does not match, its record has a `dataError` instead of data.
-
 ### Recover after a failed script
 
 A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Recover with this script instead. It launches nothing.
@@ -797,14 +794,14 @@ You coordinate one batch. You do not do the work of the batch yourself.
 
 1. Launch every child that the task names in one subagent call. Give each child a name, a title, and a task.
 2. Read the result of each child: outcome, summary, and report path.
-3. Call subagent_done once. Set outcome to done only when every child is done. Put one line per child in the summary: its name, outcome, and report path. Put the digest in data, in the shape that the task asks for.
+3. End with one final message. Start it with one line per child: its name, outcome, and report path. Then give the digest in the shape that the task asks for.
 
-Do not launch a child again after it fails. Name the failure in your summary.
+Do not launch a child again after it fails. Name the failure in your final message.
 ```
 
 A background child is a `pi -p` process, so its `subagent` call waits for every child and returns their reports in the tool result. `spawning: worker` lets the coordinator launch only the `worker` agent. `extensions: none` loads no other extension into the coordinator. Because the agent has `spawning`, Pi still loads pi-subagents into it, and the coordinator gets the `subagent` tool. That also holds when the parent loaded pi-subagents with `-e` instead of as an installed package. With `extensions: all`, the coordinator gets the `subagent` tool only from an installed pi-subagents package. With the default `spawn-depth: 1`, the workers cannot launch children. `spawn-width` limits how many children run at the same time, up to the hard ceiling of 16.
 
-The parent launches the coordinator with the workflow script above. Put one entry in `BATCH`, and add a `schema` for the digest:
+The parent launches the coordinator with the workflow script above. Put one entry in `BATCH`:
 
 ```js
 const BATCH = [
@@ -812,12 +809,7 @@ const BATCH = [
 		agent: "batch-coordinator",
 		name: "audit-coordinator",
 		title: "Coordinate the module audits",
-		task: "Launch three worker children to audit src/auth, src/billing, and src/search. Return data as { modules: [{ name, outcome, report }] }.",
-		schema: {
-			type: "object",
-			required: ["modules"],
-			properties: { modules: { type: "array", items: { type: "object", required: ["name", "outcome", "report"] } } },
-		},
+		task: "Launch three worker children to audit src/auth, src/billing, and src/search. Return the digest as { modules: [{ name, outcome, report }] }.",
 	},
 ];
 ```
@@ -882,28 +874,15 @@ Once the operator interrupts (Escape) or sends input to the child, auto-exit is 
 
 ### `subagent_done`
 
-`subagent_done` is the completion call. A child calls it to end its run and return its result. Its parameters are all optional:
+`subagent_done` closes a headless child whose agent has `auto-exit` off. It has no parameters. The last assistant message before the call is the result, so the child writes its final report first and then makes the call. The result is untyped.
 
-| Parameter | Meaning |
-| --- | --- |
-| `outcome` | `done`, `partial`, or `blocked` |
-| `summary` | What the child did, at most 1,500 characters |
-| `artifacts` | Paths of the files the child wrote |
-| `data` | Any JSON value. With a launch `schema`, the data must match it |
+An auto-exit child, in a pane or headless, has no `subagent_done`: it exits after its answer and any pending work, and its result is untyped and built from its last message. A pane child with `auto-exit` off never has it, also after a resume: only a person closes its pane, and its result is untyped. Its brief tells it to stay in the pane and not to exit. An agent that lists `subagent_done` in `deny-tools` never has it.
 
-The child's brief states the 1,500-character limit and the call. A result is typed only when the call has a valid `outcome` and a non-empty `summary`. Any other call, for example the old call with no arguments, still ends the child, and the result is untyped.
-
-A summary over the limit is refused once. A second one is accepted: its first 1,500 characters become the summary with a cut mark, and the full text goes into the report. Data that fails the launch `schema` gets one tool error with at most 10 violations. A second failure ends the run typed, with a data error and no data. Data over 32,000 characters as JSON is refused with a hint to write a file. An untyped result has no data and no data error.
-
-The report is the last assistant text of this run, before the completion call. It is never the output of another tool, fork history, or the text of an earlier run. A run with no assistant text gets its summary and the line `no report beyond the summary`. After a person takes over the pane, a completion call does not end the run: the parent still shows it running. When the pane closes, the result uses the last completion call if no assistant text came after it, else it is untyped and built from the last text.
-
-Every child that can end by itself, an auto-exit pane child or a headless child, has `subagent_done` unless its agent lists `subagent_done` in `deny-tools`. A pane child with `auto-exit` off never has it, also after a resume: only a person closes its pane, and its result is untyped. Its brief tells it to stay in the pane and not to exit.
-
-An auto-exit child that is about to exit without calling `subagent_done` or `caller_ping` gets one nudge per run (launch or resume) to make the call. If it still makes no call, it exits and the parent builds an untyped result; the report keeps the text the child wrote before the nudge. After a person takes over the pane, the report is the last text instead. A child in time-limit wrap-up, or one with `subagent_done` denied, gets no nudge.
+The report is the last assistant text of this run. It is never the output of another tool, fork history, or the text of an earlier run. Sessions from before this change can hold a typed `subagent_done` call with `outcome`, `summary`, `artifacts` and `data`; the parent still reads them and renders those results typed.
 
 ### `caller_ping`
 
-Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume. Only background children and auto-exit pane children get the tool; a pane child with `auto-exit` off does not. After a person takes over an auto-exit pane, `caller_ping` records the question in the session, but the pane stays open and the parent gets nothing until the person closes the pane. The result is typed with outcome `blocked`. The full message is the report, and only the summary is cut to 1,500 characters. A refused ping does not use up the session's one ping.
+Use `caller_ping` when the child needs the parent. The child sends a message up, exits, and leaves a session file that the parent can resume. Only background children and auto-exit pane children get the tool; a pane child with `auto-exit` off does not. After a person takes over an auto-exit pane, `caller_ping` records the question in the session, but the pane stays open and the parent gets nothing until the person closes the pane. The result is typed with outcome `blocked`. The full message is the report, and only the summary is cut to 1,500 characters. A ping that comes after the child already recorded its end fails and does not change the result.
 
 ## Resuming child sessions
 
