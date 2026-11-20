@@ -3,14 +3,20 @@ import { EventEmitter } from "node:events";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
-import { assembleResult } from "../../src/runtime/result-assembler.ts";
+import { assembleResult, selectUntypedReport } from "../../src/runtime/result-assembler.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
-import { publishRunResult, UNSAVED_REPORT_HEADING, type WatchedEnd } from "../../src/runtime/run-result.ts";
+import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
+import { publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { resultTextOf } from "../../src/runtime/unpublished-result.ts";
+import { joinRuns } from "../../src/runtime/wait-join.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
+import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
 import { assistant, facts, syntheticReport, toolCall, toolResult, user } from "../support/result-fixtures.ts";
+
+/** The documented heading of a recovered unsaved report (README, spec D13). */
+const UNSAVED_REPORT_HEADING = "Full report (not saved to a file):";
 
 /**
  * T77 (D12, D21): report source, storage failure and wrap-up outcome. Every expected value is the
@@ -64,17 +70,39 @@ function watchedEnd(overrides: Partial<WatchedEnd> = {}): WatchedEnd {
 }
 
 describe("D12 untyped report source (cf6dbf4)", () => {
-	it("uses a terminating tool's result when it is the only final output", () => {
+	it("keeps the only tool output of a run that ends with a zero-argument subagent_done", () => {
+		// cf6dbf4 findLastSubagentOutputWithSource skips the subagent_done result and reports the bash result.
 		const entries = [
 			user("Run the check."),
-			assistant("Starting the check now."),
 			toolCall("bash", { command: "check" }, "c1"),
 			toolResult("bash", "c1", "check passed: 12 of 12"),
+			toolCall(SUBAGENT_DONE_TOOL_NAME, {}, "d1"),
+			toolResult(SUBAGENT_DONE_TOOL_NAME, "d1", "ok"),
 		];
-		const { record, report } = assembleResult(facts(entries));
+		const { record, report } = assembleResult(facts(entries, { acceptedCall: { toolCallId: "d1", args: {} } }));
+		assert.equal(record.typed, false);
 		assert.equal(record.outcome, "done");
 		assert.equal(report, "check passed: 12 of 12");
-		assert.equal(record.summary, "check passed: 12 of 12");
+	});
+
+	it("keeps the text of the subagent_done message as the report", () => {
+		const entries = [
+			user("Run the check."),
+			toolCall("bash", { command: "check" }, "c1"),
+			toolResult("bash", "c1", "raw output"),
+			toolCall(SUBAGENT_DONE_TOOL_NAME, {}, "d1", "Final report."),
+			toolResult(SUBAGENT_DONE_TOOL_NAME, "d1", "ok"),
+		];
+		assert.equal(assembleResult(facts(entries)).report, "Final report.");
+	});
+
+	it("selects stdout on any end when the child kept no transcript (T73 in-memory)", () => {
+		const failed = { kind: "failed" as const, error: "exited with code 2", code: 2 };
+		assert.deepEqual(selectUntypedReport(undefined, failed, { stdout: "answer\n", stderr: "err" }), {
+			text: "answer",
+			end: failed,
+		});
+		assert.deepEqual(selectUntypedReport(undefined, failed, { stderr: "err" }), { diagnostic: "err", end: failed });
 	});
 
 	it("fails a clean exit whose final turn is an empty terminal stop", () => {
@@ -97,8 +125,8 @@ describe("D12 untyped report source (cf6dbf4)", () => {
 		assert.equal(report, "stdout answer");
 	});
 
-	it("keeps headless stderr in the report of a failed exit", () => {
-		const { record, report } = assembleResult(
+	it("puts headless stderr into the runtime-owned summary of a failed exit", () => {
+		const { record, report, summarySource } = assembleResult(
 			facts([user("Go.")], {
 				end: { kind: "failed", error: "exited with code 2", code: 2 },
 				processOutput: { stderr: "fatal: no such file" },
@@ -106,11 +134,13 @@ describe("D12 untyped report source (cf6dbf4)", () => {
 		);
 		assert.equal(record.outcome, "failed");
 		assert.ok(report.endsWith("fatal: no such file"));
+		assert.ok(record.summary.endsWith("fatal: no such file"), "cf6dbf4: stderr is in the summary");
+		assert.equal(summarySource, "runtime");
 	});
 });
 
 describe("D12 report storage failure", () => {
-	it("delivers the full long report when the report cannot be saved", () => {
+	it("keeps every delivery capped and returns the full report only to a lookup by run id", async () => {
 		const long = syntheticReport(6000);
 		const root = createTestDir();
 		dirs.push(root);
@@ -119,9 +149,16 @@ describe("D12 report storage failure", () => {
 		const { running, store, reservation } = setup([user("Go."), assistant(long)], {}, blocked);
 		const published = publishRunResult(running, watchedEnd());
 		assert.equal(published?.record.report.saved, false);
-		assert.ok(published?.text.includes(`${UNSAVED_REPORT_HEADING}\n${long}`), "the full report is readable");
+		const delivered = published?.text ?? "";
+		assert.ok(delivered.length <= RESULT_TEXT_MAX_CHARS, "the delivered copy stays capped");
+		assert.ok(!delivered.includes(UNSAVED_REPORT_HEADING));
 		const record = store.read(reservation.runId);
-		assert.ok(record && store.storedRendering(record)?.includes(long), "the in-memory lookup keeps the full text");
+		assert.ok(record);
+		assert.ok((store.storedRendering(record) ?? "").length <= RESULT_TEXT_MAX_CHARS, "a replayed copy stays capped");
+		const lookup = await joinRuns({ ids: [reservation.runId] }, undefined, { store, cwd: root });
+		const text = lookup.results[0]?.text ?? "";
+		assert.ok(text.startsWith(delivered), "the lookup starts with the delivered rendering");
+		assert.ok(text.endsWith(`${UNSAVED_REPORT_HEADING}\n${long}`), "the lookup recovers the full report");
 	});
 });
 
@@ -158,11 +195,94 @@ describe("D21 completed wrap-up", () => {
 		assert.ok(text.includes("wrap-up: 100s for the whole run"));
 	});
 
-	it("fails a wrap-up that exits nonzero without a child error", () => {
-		const { running } = setup([user("Report now.")], wrapUp);
-		const published = publishRunResult(running, watchedEnd({ exitCode: 3 }));
+	for (const [label, end, expected] of [
+		["a nonzero exit", { exitCode: 3 }, { code: 3, error: "exited with code 3" }],
+		[
+			"a child error",
+			{ exitCode: 0, errorMessage: "provider quota exhausted" },
+			{ code: 0, error: "provider quota exhausted" },
+		],
+	] as const) {
+		it(`fails a wrap-up after ${label} and keeps its time limit and ender`, () => {
+			const { running } = setup([user("Report now.")], wrapUp);
+			const published = publishRunResult(running, watchedEnd(end));
+			assert.equal(published?.record.outcome, "failed");
+			assert.equal(published?.record.exit.code, expected.code);
+			assert.equal(published?.record.exit.error, expected.error);
+			assert.equal(published?.record.endedBy, "time_limit");
+			assert.deepEqual(published?.record.timeLimit, { kind: "timeout", seconds: 100, wrapUp: true });
+			assert.ok(published?.text.includes("wrap-up: 100s for the whole run"));
+		});
+	}
+
+	it("fails a wrap-up whose final turn is an empty terminal stop and keeps its time limit", () => {
+		const { running } = setup([user("Report now."), emptyStop("length")], wrapUp);
+		const published = publishRunResult(running, watchedEnd());
 		assert.equal(published?.record.outcome, "failed");
-		assert.equal(published?.record.exit.code, 3);
+		assert.equal(published?.record.endedBy, "time_limit");
+		assert.deepEqual(published?.record.timeLimit, { kind: "timeout", seconds: 100, wrapUp: true });
+	});
+
+	it("does not inherit the verdict of a ping recorded before the restart", () => {
+		// A taken-over pane records caller_ping without an exit record; the soft limit restarts it.
+		const message = "Need the API key location.";
+		const { running } = setup(
+			[
+				user("Work."),
+				toolCall(CALLER_PING_TOOL_NAME, { message }, "p1"),
+				toolResult(CALLER_PING_TOOL_NAME, "p1", "ok"),
+			],
+			wrapUp,
+		);
+		const published = publishRunResult(running, watchedEnd({ exitCode: 1 }));
+		assert.equal(published?.record.typed, false);
+		assert.equal(published?.record.outcome, "failed");
+		assert.deepEqual(published?.record.timeLimit, { kind: "timeout", seconds: 100, wrapUp: true });
+	});
+
+	it("keeps a finished wrap-up untyped even after an earlier completion call", () => {
+		const { running } = setup(
+			[
+				user("Work."),
+				toolCall(SUBAGENT_DONE_TOOL_NAME, { outcome: "done", summary: "Old." }, "d1", "Old report."),
+				toolResult(SUBAGENT_DONE_TOOL_NAME, "d1", "ok"),
+				user("Report now."),
+				assistant("Wrap-up report."),
+			],
+			wrapUp,
+		);
+		const published = publishRunResult(running, watchedEnd());
+		assert.equal(published?.record.typed, false);
+		assert.equal(published?.record.outcome, "done");
+		assert.equal(published?.record.summary, "Wrap-up report.");
+	});
+
+	it("keeps the time limit of an unpublished wrap-up that failed", () => {
+		const text = resultTextOf({
+			name: "worker",
+			agent: "scout",
+			task: "Work",
+			summary: "",
+			summarySource: "runtime",
+			exitCode: 3,
+			elapsed: 5,
+			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
+		});
+		assert.match(text, /^worker · scout · failed · .* · ended by time limit/);
+		assert.ok(text.includes("wrap-up: 100s for the whole run"));
+	});
+
+	it("fails an unpublished clean exit whose summary is an empty terminal stop (cf6dbf4 state.ts)", () => {
+		const text = resultTextOf({
+			name: "worker",
+			agent: "scout",
+			task: "Work",
+			summary: "Subagent stopped before producing a result (stopReason: length)",
+			summarySource: "runtime",
+			exitCode: 0,
+			elapsed: 5,
+		});
+		assert.match(text, /^worker · scout · failed · /);
 	});
 });
 

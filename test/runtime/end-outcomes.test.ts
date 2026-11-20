@@ -238,9 +238,9 @@ describe("end outcomes (T09)", () => {
 			phase: "wrapping-up",
 		});
 		const published = publishRunResult(running, watchedEnd());
-		// T77 (D21): cf6dbf4 filed a finished wrap-up as completed; its accepted call gives the outcome.
+		// T77 (D21): cf6dbf4 filed a finished wrap-up as completed; a report-only wrap-up stays untyped.
 		assert.equal(published?.record.outcome, "done");
-		assert.equal(published?.record.typed, true);
+		assert.equal(published?.record.typed, false);
 		assert.deepEqual(published?.record.timeLimit, { kind: "timeout", seconds: 100, wrapUp: true });
 		assert.ok(published!.text.includes(`wrap-up: 100s for the whole run: ${WRAP_UP_NOTICE}`));
 	});

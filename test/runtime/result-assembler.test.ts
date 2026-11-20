@@ -237,6 +237,7 @@ describe("result assembler: report source (D12)", () => {
 		);
 		assert.equal(report, "BASH OUTPUT");
 		assert.equal(record.summary, "BASH OUTPUT");
+		assert.equal(record.outcome, "done");
 	});
 
 	it("text from before the launch entry count never counts", () => {
