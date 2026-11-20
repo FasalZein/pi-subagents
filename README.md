@@ -71,7 +71,7 @@ Normal launches use a backend-specific surface:
 - The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
 - Other backends may use windows, splits, or stacked panes.
 
-In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it.
+In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it. Old Herdr keeps its pane metadata count, where a delivered result counts until the parent has read it and settled idle.
 
 ### Removed: orchestrator mode and ambient awareness
 

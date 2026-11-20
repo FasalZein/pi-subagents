@@ -78,6 +78,8 @@ function makeReporter(pane: string, session: string, call: (args: string[]) => P
 	}
 
 	return {
+		// D11: old Herdr keeps the cf6dbf4 rule; a report counts until the parent read it and settled idle.
+		releaseAfterSettle: true,
 		publish(value) {
 			if (stopped) return pending;
 			count = value;

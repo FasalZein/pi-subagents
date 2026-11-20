@@ -21,7 +21,7 @@ function child(id: string): RunningSubagent {
 		parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
 }
 
-test("async launch publishes before yielding and keeps last result outstanding until the parent commits its message", async () => {
+test("old Herdr: async launch publishes before yielding and keeps last result outstanding until the parent settles idle after reading it (D11, cf6dbf4)", async () => {
 	resetRuntimeStateForTest(() => {});
 	const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const messages: object[] = [];
@@ -31,7 +31,8 @@ test("async launch publishes before yielding and keeps last result outstanding u
 	const pi = { on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => events.set(name, handler),
 		sendMessage: (message: object, options: { deliverAs?: string }) => { messages.push(message); deliveries.push(options); } } as unknown as ExtensionAPI;
 	// SAFETY: The reporting lifecycle only reads mode and session identity from this context.
-	const ctx = { mode: "tui", sessionManager: { getSessionFile: () => "session.jsonl" }, isIdle: () => true } as unknown as ExtensionContext;
+	let idle = true;
+	const ctx = { mode: "tui", sessionManager: { getSessionFile: () => "session.jsonl" }, isIdle: () => idle } as unknown as ExtensionContext;
 	const reporting = registerOutstandingWorkReporting(pi, async () => createHerdrWorkReporter(ctx,
 		{ HERDR_ENV: "1", HERDR_PANE_ID: "owned-parent" }, async (args) => {
 			if (args[0] === "status") return { running: true, compatible: true, protocol: 22 };
@@ -74,8 +75,18 @@ test("async launch publishes before yielding and keeps last result outstanding u
 		assert.equal(deliveries.at(-1)?.deliverAs, "steer");
 		await emit("agent_settled");
 		assert.equal(counts.at(-1), 1, "queued delivery is still work");
-		// D30: the run counts until the message that carries its result is committed.
+		// D11: old Herdr keeps the cf6dbf4 rule (test/runtime/outstanding-work.test.ts there): a committed or
+		// read message keeps its lease throughout the continuation; an idle settle after reading releases it.
 		await emit("message_end", { message: { ...messages[0], role: "custom" } });
+		await emit("tool_result");
+		assert.equal(counts.at(-1), 1, "a committed message is not yet processed");
+		await emit("context", { messages: messages.map((m: object) => ({ ...m, role: "custom" })) });
+		assert.equal(counts.at(-1), 1, "keep the lease throughout the continuation");
+		idle = false;
+		await emit("agent_settled");
+		assert.equal(counts.at(-1), 1, "a settle while the parent is not idle releases nothing");
+		idle = true;
+		await emit("agent_settled");
 		assert.equal(counts.at(-1), 0);
 	} finally {
 		if (savedAutoExit === undefined) delete process.env.PI_SUBAGENT_AUTO_EXIT;
