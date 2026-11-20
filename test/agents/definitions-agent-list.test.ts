@@ -1,3 +1,4 @@
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import {
 	afterEach,
 	assert,
@@ -467,7 +468,7 @@ describe("agent definitions and catalog", () => {
 		assert.deepEqual([...resolveDenyToolsForTest(coordinator ?? null)], []);
 	});
 
-	it("declares the launch tool with one children-only shape and one-sentence descriptions (D21)", () => {
+	it("declares the launch tool with both v2.9.2 forms and one-sentence descriptions (D21, D05)", () => {
 		const tools = new Map<string, any>();
 
 		subagentsExtension({
@@ -483,8 +484,31 @@ describe("agent definitions and catalog", () => {
 
 		const tool = tools.get("subagent");
 		assert.ok(tool);
-		assert.deepEqual(Object.keys(tool.parameters.properties), ["children"]);
-		assert.deepEqual(tool.parameters.required, ["children"]);
+		// D05: cf6dbf4's top-level single form (T72 removed schema) beside an optional children list.
+		assert.deepEqual(Object.keys(tool.parameters.properties).sort(), [
+			"agent",
+			"children",
+			"model",
+			"name",
+			"task",
+			"thinking",
+			"title",
+		]);
+		assert.equal(tool.parameters.required, undefined, "no field is required by the declaration");
+		// Through Pi's own argument path: prepareArguments, then validateToolArguments.
+		const single = { agent: "worker", name: "solo-worker", title: "Solo work", task: "t" };
+		const validate = (args: unknown) =>
+			validateToolArguments(tool, {
+				type: "toolCall",
+				id: "c",
+				name: "subagent",
+				arguments: tool.prepareArguments(args),
+			} as never);
+		assert.deepEqual(validate(single), single, "the top-level single form validates");
+		assert.deepEqual(validate({ ...single, children: [] }), { ...single, children: [] }, "an empty list validates");
+		assert.deepEqual(validate({ children: [single] }), { children: [single] });
+		assert.deepEqual(validate({ children: JSON.stringify([single]) }), { children: [single] });
+		assert.throws(() => validate({ children: [{ agent: "worker" }] }), /name|task|title/);
 		for (const registered of tools.values()) {
 			assert.equal(registered.promptSnippet, undefined, `${registered.name} has no prompt snippet`);
 			const sentences = registered.description.split(/[.!?](?:\s|$)/).filter((part: string) => part.trim());
