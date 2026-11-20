@@ -121,6 +121,16 @@ export function resolveSubagentTimeoutState(
 	};
 }
 
+/**
+ * D13 (T73): a no-session run outside strict wrap-up runs with Pi's --no-session and writes no
+ * transcript; its report comes from its process output and exit record. A strict wrap-up needs the
+ * transcript after the parent kills the first process, so it persists to the temporary path. Launch
+ * args and watchers use this one predicate.
+ */
+export function runsInMemory(running: Pick<RunningSubagent, "noSession" | "timeoutWarnThreshold">): boolean {
+	return running.noSession === true && running.timeoutWarnThreshold === undefined;
+}
+
 export function resolveSubagentParentClosePolicy(agentDefs: AgentDefaults | null): ParentClosePolicy {
 	return agentDefs?.parentClosePolicy ?? "terminate";
 }

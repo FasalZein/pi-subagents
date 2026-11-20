@@ -17,6 +17,8 @@ export interface PollResult {
 	acceptedCall?: { toolCallId: string; args: Record<string, unknown>; dataError?: string };
 	/** T70: the child's shutdown record says a person closed its pane (the child did not end itself). */
 	closedByOperator?: true;
+	/** T73: the final text of an in-memory child, as Pi print mode writes it to stdout (ProcessOutput.stdout). */
+	output?: string;
 }
 
 /**
@@ -61,8 +63,9 @@ function withDefinedCompletionReason(obj: PollResult, reason: unknown): PollResu
 	return obj;
 }
 
-function withOperatorClose(obj: PollResult, endedBy: unknown): PollResult {
+function withOperatorClose(obj: PollResult, endedBy: unknown, output: unknown): PollResult {
 	if (endedBy === "operator") obj.closedByOperator = true;
+	if (typeof output === "string" && output.trim() !== "") obj.output = output;
 	return obj;
 }
 
@@ -85,6 +88,7 @@ function interpretExitSidecar(data: any): PollResult {
 				data.acceptedCall,
 			),
 			data.endedBy,
+			data.output,
 		);
 	if (data.type === "ping") {
 		return withUsage({

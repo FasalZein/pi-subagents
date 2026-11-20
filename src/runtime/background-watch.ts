@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { getTerminalAssistantSummary, shouldReapStableTerminalSummary } from "../agents/titles.ts";
+import { runsInMemory } from "../launch/policy.ts";
 import { consumeSubagentExitSignal } from "../mux.ts";
 import { hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { findLastSubagentOutputWithSource, getEntries, getEntryCount, getNewEntries } from "../session/session.ts";
@@ -399,7 +400,11 @@ function watchBackgroundGeneration(
 				ping,
 				errorMessage,
 				exitSignal,
-				processOutput: { stdout: running.stdoutTail, stderr: running.stderrTail },
+				// T73: a continue child's stdio is ignored; its exit record carries its final text.
+				processOutput: {
+					stdout: running.stdoutTail?.trim() ? running.stdoutTail : exitSignal?.output,
+					stderr: running.stderrTail,
+				},
 				contextUsage: finalContextUsage,
 			});
 			const stderr = running.stderrTail?.trim();
@@ -411,9 +416,7 @@ function watchBackgroundGeneration(
 				({ summary, summarySource } = published);
 			} else if (stopped) {
 				summary = CANCELLED_SUMMARY;
-			} else if (
-				existsSync(running.sessionFile)
-			) {
+			} else if (!runsInMemory(running) && existsSync(running.sessionFile)) {
 				const allEntries = getNewEntries(running.sessionFile, running.launchEntryCount ?? 0);
 				const output = findLastSubagentOutputWithSource(allEntries);
 				if (output) {

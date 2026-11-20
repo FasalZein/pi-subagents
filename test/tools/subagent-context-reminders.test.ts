@@ -383,7 +383,7 @@ describe("subagent context reminders", () => {
 			} as any);
 
 			const ctx = {
-				sessionManager: { getEntries: () => entries },
+				sessionManager: { getEntries: () => entries, getSessionFile: () => sessionFile },
 				getContextUsage: () => ({ tokens: 182_000, contextWindow: 200_000, percent: 91 }),
 				hasPendingMessages: () => hasPendingMessages,
 				ui: { setWidget() {}, setStatus() {} },
@@ -504,7 +504,7 @@ describe("subagent context reminders", () => {
 			} as any);
 
 			const ctx = {
-				sessionManager: { getEntries: () => entries },
+				sessionManager: { getEntries: () => entries, getSessionFile: () => sessionFile },
 				getContextUsage: () => usage,
 				hasPendingMessages: () => hasPendingMessages,
 				ui: { setWidget() {}, setStatus() {} },

@@ -34,6 +34,8 @@ import {
 	resolveSubagentNoSession,
 	resolveSubagentParentClosePolicy,
 	resolveSubagentReportContextUsage,
+	resolveSubagentTimeoutState,
+	runsInMemory,
 } from "./policy.ts";
 import type { ResumeMode } from "./resume.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentCwd } from "./runtime-paths.ts";
@@ -280,9 +282,14 @@ export function getPreparedExtensionLaunchArgs(
 export function getPreparedSessionLaunchArgs(
 	prepared: Pick<PreparedSubagentLaunch, "agentDefs" | "subagentSessionFile" | "sessionTitle">,
 ): string[] {
-	// D13: a no-session child also persists, to its private temporary session file, never Pi's
-	// in-memory mode: the watcher reads the report from it and deletes it after publication.
-	const args = ["--session", prepared.subagentSessionFile];
+	// D13 (T73): a no-session child runs in Pi's in-memory mode unless a strict wrap-up needs its transcript.
+	const useInMemorySession = runsInMemory({
+		noSession: resolveSubagentNoSession(prepared.agentDefs),
+		...resolveSubagentTimeoutState(prepared.agentDefs),
+	});
+	const args = useInMemorySession
+		? ["--session", prepared.subagentSessionFile, "--no-session"]
+		: ["--session", prepared.subagentSessionFile];
 	if (prepared.sessionTitle) args.push("--name", prepared.sessionTitle);
 	return args;
 }

@@ -19,7 +19,13 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_PROVIDER_RECOVERY_DELAYS_MS",
 ];
 
-export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNotice?: (message: string) => void }) {
+export function loadPaneChild(options: {
+	autoExit: boolean;
+	pane: boolean;
+	onNotice?: (message: string) => void;
+	/** The child's session as Pi hands it to extensions (T73: an in-memory one). */
+	sessionManager?: unknown;
+}) {
 	const handlers = new Map<string, any>();
 	const tools = new Map<string, any>();
 	const notices: string[] = [];
@@ -76,6 +82,7 @@ export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNot
 		shutdown() {
 			shutdowns += 1;
 		},
+		...(options.sessionManager ? { sessionManager: options.sessionManager } : {}),
 	};
 	const exitFile = `${sessionFile}.exit`;
 	handlers.get("session_start")?.({ reason: "startup" }, ctx);

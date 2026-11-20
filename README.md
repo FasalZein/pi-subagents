@@ -134,7 +134,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `inject-skills` | unset | Comma-separated skills to load into the child prompt before the task |
 | `no-context-files` | `false` | Skip project context-file discovery in the child, including `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md`. Pi loads these files independently of project approval. |
 | `inherit-append-system` | `false` | Let Pi load the child's applicable global or trusted-project `APPEND_SYSTEM.md` file |
-| `no-session` | `false` | Use an ephemeral child session file and delete it after completion. When the parent watches the run to its end, the report is kept in the result files. The run cannot be resumed |
+| `no-session` | `false` | Run the child in Pi's in-memory mode (`--no-session`), except under a strict time-limit wrap-up. When the parent watches the run to its end, the report (from the child's output or the final text in its exit record) is kept in the result files. The run cannot be resumed |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
 | `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
@@ -161,7 +161,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `visible-to` | `all` | Who may launch this agent: `all` (anyone), `root` (only the top-level session), or a comma-separated list of agent names. |
 | `async` | `true` | `false` makes the launch sync |
 | `mode` | `interactive` | `interactive` pane or `background` process |
-| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running). A `continue` child that ends after its parent exits gets no result record. With `no-session: true` it also keeps no session file and no exit record |
+| `parent-close-policy` | `terminate` | What happens to the child when the parent session exits: `terminate` (kill) or `continue` (leave running). A `continue` child that ends after its parent exits gets no result record. With `no-session: true` it also keeps no transcript to resume |
 
 Use YAML block syntax for more than one env var:
 
@@ -310,7 +310,7 @@ unfinished.
 
 For `idle-timeout`, the hard deadline that triggered the wrap-up is pinned. Output from the report-only continuation does not buy a fresh full idle interval.
 
-`no-session: true` remains ephemeral. The child always writes its private temporary session file, so the wrap-up restart reads the interrupted transcript from it. The parent deletes the file after the final result and does not expose a resumable session.
+`no-session: true` remains ephemeral. When this policy is enabled, Pi temporarily persists that child to its private session path so it can restart after the interrupt, then deletes the file after the final result. The parent still does not expose a resumable session.
 
 If the wrap-up completes, the parent receives a result such as:
 
@@ -580,7 +580,7 @@ The summary has at most 1,500 characters. The header and the footer together hav
 
 Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
 
-Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand, unless the child has `no-session: true`: then Pi deletes both when the child exits, and nothing is left to resume.
+Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand, unless the child has `no-session: true`: then the child keeps no transcript, and nothing is left to resume.
 
 Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. `subagent_wait` with `recent` does not list it, and after a restart a lookup by its run id can answer `No result record`. In a codemode script, an ended verified child can carry `record: null`. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
 
@@ -856,9 +856,11 @@ PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY=1
 
 ### `no-session: true`
 
-`no-session: true` gives the child a private temporary session file instead of Pi's in-memory mode, under both `parent-close-policy` values. The watching parent reads the report from that file, publishes the result, then deletes the file. An orderly detach (the parent session closes while a `continue` child still runs) deletes the file too, and that child gets no result. A parent crash can leave the file. The result record says the run cannot be resumed.
+`no-session: true` runs the child in Pi's in-memory mode (`--no-session`). It writes no transcript. The watching parent takes the report from the child's output: a headless child's captured output (its last 4,000 characters), else the final text that the child writes into its exit record (the text Pi print mode prints). A pane child and a `continue` child have no captured output, so their report is that final text. A failed headless child without output keeps its error output in the report. Only a strict time-limit wrap-up (`timeout-warn-threshold`) persists the child to its temporary session file, as described under time limits. An orderly detach (the parent session closes while a `continue` child still runs) gives that child no result. The result record says the run cannot be resumed.
 
-For `fork`, Pi seeds that temporary file with the parent session content. For `lineage-only`, Pi also gives the child inherited context because there is no persistent child file where it can store lineage metadata.
+The launcher writes a temporary seed file with the parent's active branch for `fork` and `lineage-only`. In-memory mode ignores that file, so the child starts without the parent conversation, as in upstream v2.9.2. Only a strict time-limit wrap-up loads the seed, and then the child starts with the parent conversation. The seed is deleted after the result, and at once when the parent session exits.
+
+An in-memory child writes no session file, so `idle-timeout` sees no output from it: the idle clock runs from the launch and acts as a hard limit (upstream limitation).
 
 Use `no-session: true` for disposable children. Do not use it when you need resume, `caller_ping`, or durable child history.
 

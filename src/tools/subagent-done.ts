@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	endedAtToolUseBoundary,
 	findLatestAssistantError,
@@ -9,7 +9,7 @@ import {
 import { applyChildSystemPromptOverrides } from "./child-system-prompt.ts";
 import { getPublishedRunningSubagentCount } from "../runtime/nested-lifecycle.ts";
 import { installSubagentContextReminders } from "./context-reminders.ts";
-import { createExitSignalWriter } from "./exit-signal.ts";
+import { createExitSignalWriter, inMemoryFinalOutput } from "./exit-signal.ts";
 import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
@@ -64,10 +64,13 @@ export default function (pi: ExtensionAPI) {
 	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
 	deleteMarkedSessionFileOnProcessExit(process.env.PI_SUBAGENT_SESSION);
 
+	// T73: the session that inMemoryFinalOutput reads; set at session start.
+	let childSession: ExtensionContext["sessionManager"] | undefined;
 	const writeExitSignal = createExitSignalWriter({
 		pi,
 		getFinalContextUsage: () => finalContextUsage,
 		hasDeliveredFinalWarning: () => contextReminders.hasDeliveredFinalWarning(),
+		getFinalOutput: () => inMemoryFinalOutput(childSession),
 	});
 
 	// D11: set when a person types or presses Escape in the pane after the run
@@ -167,6 +170,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", (_event, ctx) => {
+		childSession = ctx.sessionManager;
 		enforceDeniedTools();
 		if (isInteractive) takeover.watchPaneKeys(ctx.ui, () => onOperatorKeystroke(ctx));
 		setTimeout(() => enforceDeniedTools(), 0);

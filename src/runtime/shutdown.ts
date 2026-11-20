@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { runsInMemory } from "../launch/policy.ts";
 import { markSessionFileForDeletionOnExit } from "../session/delete-on-exit.ts";
 import { getInteractiveProcessFile, isProcessGone } from "../session/interactive-process.ts";
 import type { CompletedSubagentResult, ParentClosePolicy, ParentShutdownAction, RunningSubagent } from "../types.ts";
@@ -61,12 +62,17 @@ function hasChildExited(running: RunningSubagent): boolean {
 }
 
 /**
- * D13, continue detach: the child keeps running and appending, so the parent hands the last
- * deletion to the child's own exit path and deletes now only a file whose writer is already gone.
- * The marker goes first, so a child that exits in between still finds it.
+ * D13, continue detach: a strict wrap-up child keeps running and appending, so the parent hands the
+ * last deletion to the child's own exit path and deletes now only a file whose writer is already gone.
+ * The marker goes first, so a child that exits in between still finds it. An in-memory child never
+ * reads its launch seed, which can hold the parent conversation, so the seed goes now (T73).
  */
 function detachNoSessionChild(running: RunningSubagent, runtime: ShutdownRuntime): void {
 	running.resultTarget = undefined;
+	if (runsInMemory(running)) {
+		runtime.cleanupNoSessionSessionFile(running);
+		return;
+	}
 	try {
 		markSessionFileForDeletionOnExit(running.sessionFile);
 	} catch {}
@@ -74,7 +80,7 @@ function detachNoSessionChild(running: RunningSubagent, runtime: ShutdownRuntime
 }
 
 /**
- * D13, terminate: the parent process may exit as soon as shutdown returns, so a no-session child's
+ * D13, terminate: the parent process may exit as soon as shutdown returns, so a strict wrap-up no-session child's
  * watcher must have seen the child exit and deleted its file first. Bounded by the escalation
  * delay; a headless child still alive then gets SIGKILL, so no write follows the deletion.
  */
@@ -151,7 +157,10 @@ export async function shutdownSubagentsForParentExit(
 		} else {
 			abortBackgroundSubagent(agent, escalationMs);
 		}
-		if (agent.noSession) cleanups.push(awaitNoSessionCleanup(agent, runtime, escalationMs));
+		// T73: an in-memory child leaves no transcript to wait for; its seed goes now, as no watcher may
+		// run after the parent exits.
+		if (runsInMemory(agent)) runtime.cleanupNoSessionSessionFile(agent);
+		else if (agent.noSession) cleanups.push(awaitNoSessionCleanup(agent, runtime, escalationMs));
 	}
 	await Promise.all(cleanups);
 

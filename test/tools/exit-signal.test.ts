@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { createExitSignalWriter } from "../../src/tools/exit-signal.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { createExitSignalWriter, inMemoryFinalOutput } from "../../src/tools/exit-signal.ts";
 import { assert, createTestDir, readFileSync, rmSync, writeFileSync } from "../support/index.ts";
+import { cleanupPaneChild, loadPaneChild } from "../support/pane-child.ts";
 
 function setup() {
 	const dir = createTestDir();
@@ -16,6 +18,7 @@ function setup() {
 		} as never,
 		getFinalContextUsage: () => undefined,
 		hasDeliveredFinalWarning: () => true,
+		getFinalOutput: () => undefined,
 	});
 	const readSidecar = () => JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8"));
 	return { dir, sessionFile, entries, writeExitSignal, readSidecar };
@@ -144,6 +147,27 @@ describe("child exit signal", () => {
 		}
 	});
 
+	it("carries the final text of an in-memory child in its exit record (T73)", () => {
+		const dir = createTestDir();
+		const sessionFile = join(dir, "child.jsonl");
+		const originalSession = process.env.PI_SUBAGENT_SESSION;
+		process.env.PI_SUBAGENT_SESSION = sessionFile;
+		try {
+			const writeExitSignal = createExitSignalWriter({
+				pi: { appendEntry() {} } as never,
+				getFinalContextUsage: () => undefined,
+				hasDeliveredFinalWarning: () => false,
+				getFinalOutput: () => "final answer\n",
+			});
+			writeExitSignal({ type: "done", outputTokens: 1 });
+			assert.equal(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")).output, "final answer\n");
+		} finally {
+			if (originalSession == null) delete process.env.PI_SUBAGENT_SESSION;
+			else process.env.PI_SUBAGENT_SESSION = originalSession;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("still lets a genuine completion supersede an earlier error", () => {
 		const { dir, sessionFile, entries, writeExitSignal, readSidecar } = setup();
 		const originalSession = process.env.PI_SUBAGENT_SESSION;
@@ -158,6 +182,94 @@ describe("child exit signal", () => {
 		} finally {
 			if (originalSession == null) delete process.env.PI_SUBAGENT_SESSION;
 			else process.env.PI_SUBAGENT_SESSION = originalSession;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+function assistant(content: object[], stopReason = "stop") {
+	return {
+		role: "assistant",
+		content,
+		api: "test",
+		provider: "test",
+		model: "test",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		timestamp: Date.now(),
+	} as never;
+}
+
+/**
+ * T73: the text Pi print mode writes to stdout (print-mode.js: each text block of the last message
+ * plus a newline, nothing for a failed or non-assistant last message), read from the child's session.
+ */
+describe("in-memory final output", () => {
+	it("is each text block of the last assistant message, as print mode writes it", () => {
+		const session = SessionManager.inMemory(process.cwd());
+		session.appendMessage(assistant([{ type: "text", text: "early note" }]));
+		session.appendMessage(
+			assistant([
+				{ type: "text", text: "first" },
+				{ type: "toolCall", id: "t1", name: "read", arguments: {} },
+				{ type: "text", text: "second" },
+			]),
+		);
+		assert.equal(inMemoryFinalOutput(session), "first\nsecond\n");
+	});
+
+	it("is nothing for a failed or aborted last answer, a last tool result, or no session", () => {
+		for (const stopReason of ["error", "aborted"]) {
+			const session = SessionManager.inMemory(process.cwd());
+			session.appendMessage(assistant([{ type: "text", text: "partial" }], stopReason));
+			assert.equal(inMemoryFinalOutput(session), undefined, stopReason);
+		}
+		const session = SessionManager.inMemory(process.cwd());
+		session.appendMessage(assistant([{ type: "text", text: "calling" }]));
+		session.appendMessage({
+			role: "toolResult",
+			toolCallId: "t1",
+			toolName: "read",
+			content: [{ type: "text", text: "tool output" }],
+			isError: false,
+			timestamp: Date.now(),
+		} as never);
+		assert.equal(inMemoryFinalOutput(session), undefined);
+		assert.equal(inMemoryFinalOutput(undefined), undefined);
+	});
+
+	// The child extension end to end: the exit record of an auto-exit end and of a manual pane close.
+	for (const autoExit of [true, false]) {
+		it(`a pane child's exit record carries its final text (auto-exit ${autoExit})`, () => {
+			const session = SessionManager.inMemory(process.cwd());
+			const child = loadPaneChild({ autoExit, pane: true, sessionManager: session });
+			try {
+				const answer = assistant([{ type: "text", text: "FINAL-ANSWER-9c2e" }]);
+				session.appendMessage(answer);
+				child.emit("agent_end", { messages: [answer] });
+				child.emit("session_shutdown", { reason: "quit" });
+				assert.equal(child.readExit()?.output, "FINAL-ANSWER-9c2e\n");
+			} finally {
+				cleanupPaneChild(child.dir);
+			}
+		});
+	}
+
+	it("is nothing for a persisted session, whose transcript the parent reads", () => {
+		const dir = createTestDir();
+		try {
+			const session = SessionManager.create(dir, dir);
+			session.appendMessage(assistant([{ type: "text", text: "answer" }]));
+			assert.notEqual(session.getSessionFile(), undefined);
+			assert.equal(inMemoryFinalOutput(session), undefined);
+		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});

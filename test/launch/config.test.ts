@@ -571,8 +571,8 @@ describe("agent launch configuration", () => {
 		assert.equal(defs?.noSession, true);
 		assert.equal(resolveSubagentNoSessionForTest(defs), true);
 		assert.equal(resolveSubagentNoSessionForTest(null), false);
-		// D13 (T08b): a no-session child persists to its temporary session file, not Pi's in-memory mode.
-		assert.deepEqual(getPreparedSessionLaunchArgsForTest(defs), ["--session", "child.jsonl"]);
+		// D13 (T73): as cf6dbf4, a no-session child runs in Pi's in-memory mode.
+		assert.deepEqual(getPreparedSessionLaunchArgsForTest(defs), ["--session", "child.jsonl", "--no-session"]);
 
 		writeFileSync(join(agentsDir, "tester.md"), `---\nname: tester\n---\n\nYou are the tester.`);
 
@@ -608,7 +608,7 @@ describe("agent launch configuration", () => {
 				sessionTitle: "[reviewer] Disposable review",
 				agentDefs: { noSession: true },
 			}),
-			["--session", "child.jsonl", "--name", "[reviewer] Disposable review"],
+			["--session", "child.jsonl", "--no-session", "--name", "[reviewer] Disposable review"],
 		);
 	});
 
@@ -675,17 +675,22 @@ describe("agent launch configuration", () => {
 		process.env.PI_CODING_AGENT_DIR = "/tmp";
 	});
 
-	it("launches no-session children on their temporary session file without --no-session, under both close policies", () => {
-		// D13 (T08b): the watcher reads the report from that file, so Pi must write it.
+	it("launches no-session children in memory, and on their temporary session file only under strict wrap-up", () => {
+		// D13 (T73): expected values from cf6dbf4 (src/launch/prep.ts getPreparedSessionLaunchArgs).
 		for (const parentClosePolicy of ["terminate", "continue"] as const) {
 			for (const sessionMode of ["fork", "lineage-only"] as const) {
 				assert.deepEqual(
 					getPreparedSessionLaunchArgsForTest({ noSession: true, sessionMode, parentClosePolicy }),
-					["--session", "child.jsonl"],
+					["--session", "child.jsonl", "--no-session"],
 					`${parentClosePolicy} / ${sessionMode}`,
 				);
 			}
 		}
+		assert.deepEqual(
+			getPreparedSessionLaunchArgsForTest({ noSession: true, timeout: 60, timeoutWarnThreshold: "80%" }),
+			["--session", "child.jsonl"],
+			"a strict wrap-up keeps the transcript for its restart",
+		);
 		assert.equal(getNoSessionSeedModeForTest("standalone"), null);
 		assert.equal(getNoSessionSeedModeForTest("fork"), "fork");
 		assert.equal(getNoSessionSeedModeForTest("lineage-only"), "fork");
