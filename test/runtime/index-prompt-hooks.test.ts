@@ -4,6 +4,9 @@ import {
 	normalizeBuildSystemPromptOptions,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js";
 import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
+import { shouldUseBackgroundLaunch } from "../../src/launch/policy.ts";
+import { forgetMuxDetectionForTest } from "../../src/mux/core.ts";
+import { tmuxBackend } from "../../src/mux/tmux.ts";
 import subagentsExtension from "../../src/subagents.ts";
 import { applyChildSystemPromptOverrides } from "../../src/tools/child-system-prompt.ts";
 import {
@@ -35,6 +38,7 @@ const ENV_KEYS = [
 	"PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE",
 	"PI_SUBAGENT_APPEND_SYSTEM_PROMPT",
 	"PI_SUBAGENT_SKILL_VISIBILITY",
+	"PI_SUBAGENT_MUX",
 ] as const;
 
 function writeAgent(agentsDir: string, name: string, frontmatter: string) {
@@ -42,7 +46,13 @@ function writeAgent(agentsDir: string, name: string, frontmatter: string) {
 }
 
 type ToolInfoStub = { name: string; exposure?: string };
-const LOADOUT: ToolInfoStub[] = [{ name: "read" }, { name: "bash" }, { name: "subagent" }];
+const MANAGEMENT = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"];
+const LOADOUT: ToolInfoStub[] = [
+	{ name: "read" },
+	{ name: "bash" },
+	{ name: "subagent" },
+	...MANAGEMENT.map((name) => ({ name })),
+];
 const FIXTURE_AGENTS = join(
 	import.meta.dirname,
 	"..",
@@ -54,7 +64,7 @@ const FIXTURE_AGENTS = join(
 );
 
 function setup(
-	tools: { all: ToolInfoStub[]; active: string[] } = { all: LOADOUT, active: ["read", "bash", "subagent"] },
+	tools: { all: ToolInfoStub[]; active: string[] } = { all: LOADOUT, active: LOADOUT.map((tool) => tool.name) },
 ) {
 	const dir = createTestDir();
 	const configDir = join(dir, "agent-root");
@@ -136,6 +146,18 @@ async function promptStart(handlers: Handler[], ctx: { cwd: string }) {
 	};
 }
 
+/** The messages of one provider request after every context handler, with the prompt Pi sends. */
+async function requestMessages(handlers: Map<string, Handler[]>, systemPrompt: string, messages: unknown[]) {
+	let current = messages;
+	for (const handler of handlers.get("context") ?? []) {
+		const result = (await handler({ type: "context", messages: current }, { getSystemPrompt: () => systemPrompt })) as
+			| { messages?: unknown[] }
+			| undefined;
+		current = result?.messages ?? current;
+	}
+	return current;
+}
+
 async function sessionStart(handlers: Map<string, Handler[]>, ctx: unknown, reason: string) {
 	for (const handler of handlers.get("session_start") ?? []) await handler({ type: "session_start", reason }, ctx);
 }
@@ -151,6 +173,7 @@ describe("agent index at prompt start", () => {
 			else process.env[key] = value;
 		}
 		resetSubagentStateForTest();
+		forgetMuxDetectionForTest();
 	});
 
 	it("writes the same section on two prompt starts and sends no roster message on startup, reload or resume", async () => {
@@ -302,6 +325,133 @@ describe("agent index at prompt start", () => {
 			assert.equal(run.section !== undefined, shown, label);
 			resetSubagentStateForTest();
 		}
+	});
+
+	it("runs no multiplexer probe at prompt start in a UI session (D06)", async () => {
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		const probe = tmuxBackend.isAvailable;
+		let probes = 0;
+		tmuxBackend.isAvailable = () => {
+			probes++;
+			return true;
+		};
+		try {
+			const { agentsDir, handlers, ctx } = setup();
+			writeAgent(agentsDir, "design", "description: Design the change\nmode: interactive\nauto-exit: true");
+			const uiCtx = { ...ctx, hasUI: true, mode: "tui" };
+			const run = await promptStart(handlers.get("before_agent_start") ?? [], uiCtx);
+			assert.equal(probes, 0, "prompt start probed the multiplexer");
+			assert.match(run.section ?? "", /\n- design: Design the change \[pane\]\n/);
+		} finally {
+			tmuxBackend.isAvailable = probe;
+		}
+	});
+
+	it("states pane flags by the launch policy of a UI session without a multiplexer (D06)", async () => {
+		// The forced backend is unavailable without TMUX (src/mux/tmux.ts), so the launch runs headless
+		// (launch/policy.ts) and the child closes itself (tools/policy.ts).
+		process.env.PI_SUBAGENT_MUX = "tmux";
+		const tmux = process.env.TMUX;
+		delete process.env.TMUX;
+		try {
+			const { agentsDir, handlers, ctx } = setup();
+			writeAgent(agentsDir, "design", "description: Design the change\nmode: interactive\nauto-exit: false");
+			const uiCtx = { ...ctx, hasUI: true, mode: "tui" };
+			const start = handlers.get("before_agent_start") ?? [];
+			// Before any launch: the flags hold only with a multiplexer, and the index says so.
+			const before = (await promptStart(start, uiCtx)).section ?? "";
+			assert.match(before, /\n- design: Design the change \[pane\] \[manual\]\n/);
+			assert.match(before, /\n\[pane\] and \[manual\] need a multiplexer; without one a helper runs headless/);
+			// A launch detects the multiplexer; the next prompt states what the launch does.
+			assert.equal(
+				shouldUseBackgroundLaunch({ agent: "design" } as never, { mode: "interactive" } as never, true),
+				true,
+			);
+			const after = (await promptStart(start, uiCtx)).section ?? "";
+			assert.ok(after.split("\n").includes("- design: Design the change"), after);
+			assert.doesNotMatch(after, /\[pane\]|\[manual\]/);
+		} finally {
+			if (tmux !== undefined) process.env.TMUX = tmux;
+		}
+	});
+
+	for (const order of ["earlier", "later"] as const)
+		it(`keeps the index in a parent whose prompt ${order === "earlier" ? "an earlier" : "a later"} handler replaces with literal text (D06)`, async () => {
+			const { handlers, ctx } = setup();
+			const composeWhole: Handler = () => ({ systemPrompt: "WHOLE PARENT PROMPT" });
+			const index = handlers.get("before_agent_start") ?? [];
+			const run = await promptStart(order === "earlier" ? [composeWhole, ...index] : [...index, composeWhole], ctx);
+			assert.equal(run.prompt, "WHOLE PARENT PROMPT", "the parent's chosen prompt stays as it is");
+			const history = [{ role: "user", content: "hello", timestamp: 1 }];
+			const request = await requestMessages(handlers, run.prompt, history);
+			assert.equal(request.length, 2);
+			const [first] = request as Array<{ role: string; content: string }>;
+			assert.equal(first.role, "custom");
+			assert.match(
+				first.content,
+				/^<index>\nHelpers: launch with subagent[\s\S]*\n- scout: Map the code before a change\n<\/index>$/,
+			);
+			assert.deepEqual(request[1], history[0]);
+		});
+
+	it("adds no index message when the system prompt carries the section", async () => {
+		const { handlers, ctx } = setup();
+		const run = await promptStart(handlers.get("before_agent_start") ?? [], ctx);
+		const history = [{ role: "user", content: "hello", timestamp: 1 }];
+		assert.deepEqual(await requestMessages(handlers, run.prompt, history), history);
+	});
+
+	it("names only management tools that Pi lets the session call (D06)", async () => {
+		const cases: Array<[string, ToolInfoStub[], string[], string]> = [
+			[
+				"direct",
+				LOADOUT,
+				["subagent", ...MANAGEMENT],
+				"More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).",
+			],
+			[
+				"excluded by Pi",
+				LOADOUT.filter((t) => t.name !== "subagent_agents" && t.name !== "subagent_wait"),
+				["subagent", ...MANAGEMENT],
+				"More tools: subagent_resume, subagent_kill.",
+			],
+			["inactive", LOADOUT, ["subagent", "subagent_kill"], "More tools: subagent_kill."],
+			[
+				"deferred",
+				[{ name: "subagent" }, ...MANAGEMENT.map((name) => ({ name, exposure: "deferred" }))],
+				["subagent"],
+				"More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).",
+			],
+		];
+		for (const [label, all, active, line] of cases) {
+			const { handlers, ctx } = setup({ all, active });
+			const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
+			assert.ok(section.split("\n").includes(line), `${label}\n${section}`);
+			assert.equal(section.includes("subagent_wait joins"), line.includes("subagent_wait"), label);
+			resetSubagentStateForTest();
+		}
+	});
+
+	it("lets a coordinator without file tools or subagent_agents find an agent the index has no line for (D06)", async () => {
+		// tools: none, extensions: none and deny-tools: subagent_agents leave only the launch tool.
+		process.env.PI_SUBAGENT_AGENT = "coordinator";
+		process.env.PI_SUBAGENT_SPAWNABLE = "true";
+		process.env.PI_DENY_TOOLS = "subagent_agents";
+		const { agentsDir, handlers, ctx } = setup({ all: [{ name: "subagent" }], active: ["subagent"] });
+		for (let i = 0; i < 40; i++)
+			writeAgent(
+				agentsDir,
+				`agent-${String(i).padStart(3, "0")}`,
+				`description: Agent ${i} does one kind of work and reports back.\nmode: background`,
+			);
+		writeAgent(agentsDir, "hidden", "description: Not for this caller\nmode: background\nvisible-to: root");
+		const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
+		assert.ok(section.length + 15 <= 1_600, `${section.length}`);
+		assert.ok(!/subagent_agents|subagent_wait|More tools|agent files|\.pi\/agents/.test(section), section);
+		const lines = section.split("\n");
+		assert.ok(!lines.some((line) => line.startsWith("- agent-039: ")), "agent-039 has no line");
+		assert.match(lines.at(-1) ?? "", /^More agents: .*\bagent-039\b.*\.$/);
+		assert.doesNotMatch(section, /\bhidden\b/);
 	});
 
 	it("flags lines by the launch policy of a print session", async () => {

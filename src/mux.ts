@@ -9,6 +9,7 @@ export {
 	isMuxAvailable,
 	isTmuxAvailable,
 	isZellijAvailable,
+	lastMuxDetection,
 	muxSetupHint,
 	shellEscape,
 } from "./mux/core.ts";

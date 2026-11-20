@@ -6,7 +6,9 @@ import type { AgentListEntry } from "./agents/agent-list.ts";
 import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
 import {
 	applyAgentIndexSection,
+	INDEX_MORE_TOOLS,
 	type IndexLaunchPolicy,
+	indexFallbackMessages,
 	renderAgentIndexSection,
 	selectIndexTargets,
 } from "./agents/index-section.ts";
@@ -31,7 +33,7 @@ import { parseSpawnEnv } from "./spawn/policy.ts";
 export { resolveSubagentConfigDir } from "./launch/runtime-paths.ts";
 export { buildSkillLaunchPlan as buildSkillLaunchPlanForTest } from "./launch/skills.ts";
 
-import { isMuxAvailable, muxSetupHint } from "./mux.ts";
+import { isMuxAvailable, lastMuxDetection, muxSetupHint } from "./mux.ts";
 import {
 	formatElapsed,
 	getLaunchedSubagentResult,
@@ -258,16 +260,30 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// The index is written at every prompt start from the current files, so a
 	// changed agent file shows in the next request. Pi keeps the section with
 	// the session and patches it only when its text changed (D19).
+	// The section of the current prompt, for the fallback when another
+	// extension's whole prompt replaces the sections.
+	let indexSection: string | undefined;
 	pi.on("before_agent_start", (event, ctx) => {
 		managementToolExposure.finalize(ctx.sessionManager.getBranch());
+		indexSection = undefined;
 		if (!mayLaunch()) return undefined;
 		const spawnEnv = parseSpawnEnv(process.env);
-		const section = renderAgentIndexSection(
+		// No multiplexer probe here: a prompt start without a launch stays as cheap
+		// as in v2.9.2. The pane flags use the detection of an earlier launch (D06).
+		indexSection = renderAgentIndexSection(
 			selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv),
-			getSoloLaunchPolicy(ctx.hasUI),
+			{ paneAvailable: ctx.hasUI && lastMuxDetection(), forcesWait: shouldForceSynchronousLaunch(ctx.hasUI) },
+			// Pi's live tool surface after the exposure step: excluded, inactive and hidden tools are not named.
+			{ callable: new Set(INDEX_MORE_TOOLS.filter((name) => isToolCallable(pi, name))) },
 		);
-		if (!section) return undefined;
-		return applyAgentIndexSection(event, section, spawnEnv.callerAgent !== null);
+		if (!indexSection) return undefined;
+		return applyAgentIndexSection(event, indexSection, spawnEnv.callerAgent !== null);
+	});
+
+	pi.on("context", (event, ctx) => {
+		if (!indexSection) return undefined;
+		const messages = indexFallbackMessages(event.messages, ctx.getSystemPrompt(), indexSection);
+		return messages ? { messages: messages as typeof event.messages } : undefined;
 	});
 
 	pi.on("input", () => {
