@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { EventEmitter, once } from "node:events";
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -24,7 +24,6 @@ import {
 	it,
 	resetSubagentStateForTest,
 	subagentDoneExtension,
-	writeExecutable,
 } from "../support/index.ts";
 
 // T72 (D01 revert) end to end: a real Pi session with a faux provider runs the child extension; the
@@ -94,7 +93,8 @@ async function runChild(options: {
 	const sessionManager = options.sessionFile
 		? SessionManager.open(options.sessionFile, join(root, "sessions"))
 		: SessionManager.create(root, join(root, "sessions"));
-	const sessionFile = sessionManager.getSessionFile()!;
+	const sessionFile = sessionManager.getSessionFile();
+	assert.ok(sessionFile, "the session has a file");
 	process.env.PI_SUBAGENT_SESSION = sessionFile;
 	if (options.autoExit) process.env.PI_SUBAGENT_AUTO_EXIT = "1";
 	if (options.pane) process.env.PI_SUBAGENT_SURFACE = "fake-pane";
@@ -182,7 +182,6 @@ async function watchAndPublish(sessionFile: string, runningFields: Partial<Runni
 	return { record, report };
 }
 
-
 /** Records the active tools and the registered tool definitions as the model run ends. */
 function toolProbe(seen: { active: string[]; params: Record<string, unknown>; descriptions: Record<string, string> }) {
 	return ((pi) => {
@@ -196,7 +195,11 @@ function toolProbe(seen: { active: string[]; params: Record<string, unknown>; de
 	}) as ExtensionFactory;
 }
 
-const newProbe = () => ({ active: [] as string[], params: {} as Record<string, unknown>, descriptions: {} as Record<string, string> });
+const newProbe = () => ({
+	active: [] as string[],
+	params: {} as Record<string, unknown>,
+	descriptions: {} as Record<string, string>,
+});
 
 // cf6dbf4 caller_ping description, verbatim.
 const UPSTREAM_PING_DESCRIPTION =

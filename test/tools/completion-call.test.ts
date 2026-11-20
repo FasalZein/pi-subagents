@@ -24,7 +24,6 @@ import { assistant, facts, sessionHeader, toolCall, toolResult, user } from "../
 // sessions: typed only with a valid outcome and a non-empty summary, the full text in the report.
 const DONE = SUBAGENT_DONE_TOOL_NAME;
 const PING = CALLER_PING_TOOL_NAME;
-const LIMIT = /1,500 characters/;
 
 type Child = ReturnType<typeof loadChild>;
 
@@ -162,7 +161,13 @@ describe("completion call (T72, D12 records)", () => {
 		const args = { outcome: "partial", summary: "Half of the files are fixed." };
 		const { record, report } = assembleResult(
 			facts(
-				[sessionHeader(), user("task"), assistant("Details."), toolCall(DONE, args, "c1"), toolResult(DONE, "c1", "ok")],
+				[
+					sessionHeader(),
+					user("task"),
+					assistant("Details."),
+					toolCall(DONE, args, "c1"),
+					toolResult(DONE, "c1", "ok"),
+				],
 				{ acceptedCall: { toolCallId: "c1", args } },
 			),
 		);

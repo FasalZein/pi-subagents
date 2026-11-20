@@ -45,5 +45,4 @@ describe("JSON string arguments (T64)", () => {
 		const plain = { children: [child] };
 		assert.equal(parseLaunchJsonFields(plain), plain);
 	});
-
 });
