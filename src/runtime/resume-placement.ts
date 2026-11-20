@@ -16,11 +16,12 @@ export function resolveResumeHerdrPlacementPolicy(
 export function resolveResumeRexPlacementPolicy(
 	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
 	parentPolicy: string | undefined,
-): ReturnType<typeof resolveRexPlacementPolicy> | undefined {
+): ReturnType<typeof resolveRexPlacementPolicy> {
 	const agentPolicy = parseEnvString(launchMetadata?.env).PI_SUBAGENT_REX_PLACEMENT;
 	if (agentPolicy !== undefined) return resolveRexPlacementPolicy(agentPolicy);
 	if (parentPolicy !== undefined) return resolveRexPlacementPolicy(parentPolicy);
-	return launchMetadata?.rexPlacementPolicy;
+	// The saved value is checked too, and old metadata without one gets the default.
+	return resolveRexPlacementPolicy(launchMetadata?.rexPlacementPolicy);
 }
 
 export function resolveResumeZellijPlacementPolicy(

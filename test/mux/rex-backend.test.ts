@@ -201,6 +201,15 @@ describe("Rex placement (T71, D28)", () => {
 		assert.deepEqual(readRexCalls(stateDir).filter(isCreate).map(verb), ["split", "split", "window new"]);
 	});
 
+	it("an unknown value in the create options fails before any create", async () => {
+		const policy = "tab" as unknown as "window";
+		await assert.rejects(
+			rexBackend.createSurface("Bad", { rex: { policy } }),
+			/Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/,
+		);
+		assert.ok(!readRexCalls(stateDir).some(isCreate), "no create after an unknown value");
+	});
+
 	it("an unknown value fails before any create and names the variable", async () => {
 		process.env.PI_SUBAGENT_REX_PLACEMENT = "tab";
 		await assert.rejects(rexBackend.createSurface("Bad"), /Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/);

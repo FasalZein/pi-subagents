@@ -1,6 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import type { ResultOutcome } from "./runtime/result-record.ts";
 import type { ResultTarget } from "./runtime/run-result.ts";
+import type { RexPlacementPolicy } from "./mux/rex.ts";
 import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts";
 
 /** What the rendered result needs from the receiving parent (D14); a resume passes it in. */
@@ -215,6 +216,8 @@ export interface RunningSubagent {
 	 * authorized recipient, so it may not cancel the run. */
 	verifiedRunCancelDenied?: boolean;
 	zellijTarget?: { sessionName: string; parentPaneId: number };
+	/** The Rex placement this run's surface used (launch or resume); a timeout replacement reuses it (T71). */
+	rexPlacementPolicy?: RexPlacementPolicy;
 	surfaceClosePromise?: Promise<void>;
 }
 

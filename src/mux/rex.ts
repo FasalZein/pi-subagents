@@ -176,7 +176,7 @@ export const rexBackend: MuxBackendAdapter = {
 	// window (default): a new window per child. split: a split right of the parent while its window holds
 	// fewer than SPLITS_PER_WINDOW children, else a new window.
 	createSurface: async (_name, options) => {
-		const policy = options?.rex?.policy ?? resolveRexPlacementPolicy();
+		const policy = resolveRexPlacementPolicy(options?.rex?.policy ?? process.env.PI_SUBAGENT_REX_PLACEMENT);
 		const session = parentSession();
 		const blocks = listBlocks(session);
 		const parent = liveParent(session, blocks);

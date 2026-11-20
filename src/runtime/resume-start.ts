@@ -119,6 +119,7 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 				zellij: zellijContext,
 			});
 	if (ordinarySurface) undo.add(() => closeSurface(ordinarySurface));
+	running.rexPlacementPolicy = rexContext?.policy;
 	const doneSentinelFile = getDoneSentinelFile(sessionFile, running.id);
 	const piArgs = buildResumePiArgs(sessionFile, "interactive");
 	piArgs.push(...start.extensionArgs, ...start.parityArgs);

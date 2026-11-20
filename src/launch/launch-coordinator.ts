@@ -79,13 +79,12 @@ export async function coordinateSubagentLaunch(
 	);
 	const systemPrompt = getCoordinatedSystemPrompt(prepared);
 	const agentEnv = parseEnvString(prepared.agentDefs?.env);
-	const resolveHerdrPolicy =
-		options.mode === "interactive" ? currentMuxAdapter()?.resolveHerdrPlacementPolicy : undefined;
-	const herdrPlacementPolicy = resolveHerdrPolicy?.(
+	// One detection for both placement resolvers.
+	const adapter = options.mode === "interactive" ? currentMuxAdapter() : undefined;
+	const herdrPlacementPolicy = adapter?.resolveHerdrPlacementPolicy?.(
 		agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT,
 	);
-	const resolveRexPolicy = options.mode === "interactive" ? currentMuxAdapter()?.resolveRexPlacementPolicy : undefined;
-	const rexPlacementPolicy = resolveRexPolicy?.(
+	const rexPlacementPolicy = adapter?.resolveRexPlacementPolicy?.(
 		agentEnv.PI_SUBAGENT_REX_PLACEMENT ?? process.env.PI_SUBAGENT_REX_PLACEMENT,
 	);
 	const zellijPlacementPolicy =

@@ -273,6 +273,7 @@ async function startInteractiveSubagent(
 		modelContextWindow: runtime.getContextWindow(prepared.effectiveModelRef),
 		modelRef: prepared.effectiveModelRef,
 		launchMetadata: launch.launchMetadata,
+		rexPlacementPolicy: launch.launchMetadata.rexPlacementPolicy,
 		droppedExtensions: prepared.droppedExtensions,
 		doneSentinelFile,
 		zellijTarget: programSession?.target,
