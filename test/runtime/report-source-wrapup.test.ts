@@ -6,6 +6,7 @@ import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishRunResult, UNSAVED_REPORT_HEADING, type WatchedEnd } from "../../src/runtime/run-result.ts";
+import { resultTextOf } from "../../src/runtime/unpublished-result.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
@@ -140,6 +141,21 @@ describe("D21 completed wrap-up", () => {
 		assert.match(text, /^worker · scout · done · /);
 		assert.ok(text.includes("wrap-up: 100s for the whole run"));
 		assert.ok(!text.includes("timed out"));
+	});
+
+	it("shows the same outcome for a finished wrap-up without a published record", () => {
+		const text = resultTextOf({
+			name: "worker",
+			agent: "scout",
+			task: "Work",
+			summary: "Final report: two of three steps done.",
+			summarySource: "subagent",
+			exitCode: 0,
+			elapsed: 5,
+			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
+		});
+		assert.match(text, /^worker · scout · done · /);
+		assert.ok(text.includes("wrap-up: 100s for the whole run"));
 	});
 
 	it("fails a wrap-up that exits nonzero without a child error", () => {

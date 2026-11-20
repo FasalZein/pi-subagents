@@ -32,12 +32,12 @@ function resultEnd(result: UnpublishedResult): RunEnd {
 		return { kind: "timed_out", budget: result.timedOut, seconds: result.timedOutAfter ?? 0, wrapUp: false };
 	}
 	if (result.errorMessage) return { kind: "failed", error: result.errorMessage, code: result.exitCode };
+	// D21 (cf6dbf4): a wrap-up that ended on its own is a completed run that keeps its time limit.
 	if (result.exitCode === 0 && result.timeoutWrapUp) {
 		return {
-			kind: "timed_out",
-			budget: result.timeoutWrapUp.kind,
-			seconds: result.timeoutWrapUp.seconds,
-			wrapUp: true,
+			kind: "exited",
+			code: 0,
+			wrapUp: { budget: result.timeoutWrapUp.kind, seconds: result.timeoutWrapUp.seconds },
 		};
 	}
 	if (result.exitCode !== 0)
