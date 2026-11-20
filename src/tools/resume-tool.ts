@@ -1,27 +1,27 @@
+import { resolve } from "node:path";
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { resolve } from "node:path";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
+import { sessionResultStore } from "../runtime/result-files.ts";
+import { parseRunId, type RunId } from "../runtime/result-record.ts";
+import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
+import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import {
 	CONTEXT_PRESSURE_RESUME_REASON,
 	isRenderedResult,
 	launchWarningLines,
 	TIME_LIMIT_RESUME_REASON,
 } from "../runtime/run-result.ts";
-import { sessionResultStore } from "../runtime/result-files.ts";
-import { parseRunId, type RunId } from "../runtime/result-record.ts";
-import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { shouldAwaitSubagentLaunch } from "../runtime/running-registry.ts";
 import { getSubagentBatchStopMetadata, markSubagentBatchBlocking, requestSubagentBatchStop } from "../runtime/state.ts";
-import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { readSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent, SubagentResult } from "../types.ts";
-import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { type ChildDelivery, renderLaunchReply } from "./launch-reply.ts";
 import { asStructuredContent, launchedChildData, SubagentLaunchOutput } from "./launch-structured.ts";
+import { formatTaskPreview, renderSubagentCompletionText } from "./message-renderers.ts";
 import { getIgnoredModelOverrideWarning } from "./policy.ts";
 import { shouldForceSynchronousLaunch } from "./subagent-tools.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "./tool-names.ts";
@@ -36,7 +36,10 @@ interface ResumeToolRuntime extends ResumeServiceRuntime {
  * end). A later resume can remove them, so the record only reports them; the guards inside the
  * resume read the session's current state (parity D14).
  */
-const SESSION_VERDICT_REASONS: ReadonlySet<string> = new Set([TIME_LIMIT_RESUME_REASON, CONTEXT_PRESSURE_RESUME_REASON]);
+const SESSION_VERDICT_REASONS: ReadonlySet<string> = new Set([
+	TIME_LIMIT_RESUME_REASON,
+	CONTEXT_PRESSURE_RESUME_REASON,
+]);
 
 /**
  * D8: a resume names a run id or a session file. A run id resolves through the parent session's
@@ -55,7 +58,8 @@ function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string
 	}
 	const record = sessionResultStore(resultsDir).read(runId);
 	if (!record) throw new Error(`No result with run id "${params.runId}" in this session.`);
-	if (!record.resume.resumable && !SESSION_VERDICT_REASONS.has(record.resume.reason)) throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
+	if (!record.resume.resumable && !SESSION_VERDICT_REASONS.has(record.resume.reason))
+		throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
 	if (!record.sessionFile) throw new Error(`Run ${runId} cannot be resumed: its record names no session file.`);
 	return record.sessionFile;
 }

@@ -1,4 +1,3 @@
-import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
@@ -12,6 +11,7 @@ import {
 	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
+import { parentToolCtx, testResultsDir } from "../support/result-fixtures.ts";
 
 const SPAWN_GRANT_VARS = [
 	"PI_SUBAGENT_SPAWNABLE",
@@ -101,7 +101,11 @@ describe("context-exhausted resume guard", () => {
 	it("refuses an agent-initiated resume and never starts the child", async () => {
 		const dir = createTestDir();
 		const spawnMarker = join(dir, "child-started.txt");
-		const bin = writeExecutable(dir, "marker-pi", `#!/usr/bin/env bash\nprintf started > ${JSON.stringify(spawnMarker)}\n`);
+		const bin = writeExecutable(
+			dir,
+			"marker-pi",
+			`#!/usr/bin/env bash\nprintf started > ${JSON.stringify(spawnMarker)}\n`,
+		);
 		const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
 		process.env.PI_SUBAGENT_PI_COMMAND = bin;
 		try {
@@ -125,7 +129,12 @@ describe("context-exhausted resume guard", () => {
 		await assert.rejects(
 			() =>
 				resumeSubagentSession(
-					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background" },
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						mode: "background",
+					},
 					createResumeRuntime() as any,
 				),
 			/stopped early as instructed by its context-warning policy/,
@@ -143,7 +152,17 @@ describe("context-exhausted resume guard", () => {
 
 			// The overlay controller passes the operator's override for its own attempt (D8).
 			const running = await withoutAmbientSpawnGrant(() =>
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, mode: "background", agent, operatorOverride: true }, createResumeRuntime() as any),
+				resumeSubagentSession(
+					{
+						resultsDir: testResultsDir(),
+						parent: { parentCwd: process.cwd(), warnings: [] },
+						sessionFile,
+						mode: "background",
+						agent,
+						operatorOverride: true,
+					},
+					createResumeRuntime() as any,
+				),
 			);
 
 			assert.equal(running.sessionFile, sessionFile);
@@ -179,7 +198,13 @@ describe("context-exhausted resume guard", () => {
 			// Without an explicit mode this session has no launch metadata, so the
 			// resume falls back to interactive and would open a real mux pane.
 			const result = await withoutAmbientSpawnGrant(() =>
-				tool.execute("call-2", { sessionFile, mode: "background", agent }, undefined, undefined, parentToolCtx(dir, { hasUI: true })),
+				tool.execute(
+					"call-2",
+					{ sessionFile, mode: "background", agent },
+					undefined,
+					undefined,
+					parentToolCtx(dir, { hasUI: true }),
+				),
 			);
 
 			assert.equal(result.details.status, "started");

@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync } from "node:fs";
 import { once } from "node:events";
+import { mkdirSync, readdirSync } from "node:fs";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -11,8 +11,8 @@ import {
 	existsSync,
 	it,
 	join,
-	rmSync,
 	readFileSync,
+	rmSync,
 	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
@@ -244,7 +244,11 @@ esac
 			const capsuleMatch = log.match(/run-child\.mjs' '([^']+)'/);
 			assert.ok(capsuleMatch, "expected the wrap-up command to invoke the capsule launcher");
 			const capsule = JSON.parse(readFileSync(capsuleMatch[1], "utf8"));
-			assert.equal(capsule.parentEnv.WRAP_TEST_DENIED, undefined, "persisted deny-env must filter the wrap-up child env");
+			assert.equal(
+				capsule.parentEnv.WRAP_TEST_DENIED,
+				undefined,
+				"persisted deny-env must filter the wrap-up child env",
+			);
 			assert.equal(capsule.parentEnv.WRAP_TEST_KEEP, "kept", "non-denied env must still flow");
 			assert.equal(capsule.overrides.PI_SUBAGENT_AUTO_EXIT, "1", "wrap-up overrides must survive");
 		} finally {
