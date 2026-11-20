@@ -378,7 +378,7 @@ describe("in-memory no-session child results", () => {
 			{ cleanupNoSessionSessionFile, terminateBackgroundChildProcess() {} },
 			new AbortController().signal,
 		);
-		running.childProcess!.emit("exit", 1);
+		running.childProcess?.emit("exit", 1);
 		const result = await promise;
 		assert.equal(store.read(runId)?.outcome, "failed");
 		assert.match(result.summary, /--fork cannot be combined with --session/);
