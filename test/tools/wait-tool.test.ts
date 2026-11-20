@@ -217,7 +217,7 @@ async function startParent(
 			writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 			const end: WatchedEnd = {
 				exitCode: 0,
-				operatorClosed: false,
+				operatorClosed: false, closedByPerson: false,
 				stopped: false,
 				exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "done-1", args } },
 				contextUsage: {},

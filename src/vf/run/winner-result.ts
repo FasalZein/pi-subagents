@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { assembleResult, cutText, type RunEnd } from "../../runtime/result-assembler.ts";
+import { assembleResult, cutText, endedByOf, type RunEnd } from "../../runtime/result-assembler.ts";
 import { publishResult, type Reservation, readResultRecord } from "../../runtime/result-files.ts";
 import { parseRunId, type ResultRecord, SUMMARY_MAX_CHARS } from "../../runtime/result-record.ts";
 import { renderResult, type VerifierFooter } from "../../runtime/result-render.ts";
@@ -124,6 +124,7 @@ export function verifiedRunToSubagentResult(
 		startedAt,
 		endedAt,
 		end: text.end,
+		endedBy: endedByOf(text.end, { closedByPerson: false }),
 		entries: reportEntries(text.report),
 		launchEntryCount: 0,
 		resume: { resumable: false, reason: NO_ATTEMPT_RESUME_REASON },
@@ -142,6 +143,7 @@ export function verifiedRunToSubagentResult(
 		resultText: rendered,
 		resultRunId: record.runId,
 		resultOutcome: record.outcome,
+		resultEndedBy: record.endedBy,
 		...(record.report.saved ? { reportFile: record.report.path } : {}),
 	};
 }
@@ -169,6 +171,7 @@ export function verifiedRunNotice(
 			startedAt: startTime,
 			endedAt,
 			end: { kind: "exited", code: 0 },
+			endedBy: "child",
 			entries: reportEntries(notice),
 			launchEntryCount: 0,
 			resume: { resumable: false, reason: NO_ATTEMPT_RESUME_REASON },
@@ -191,6 +194,7 @@ export function verifiedRunNotice(
 		resultText: rendered,
 		resultRunId: record.runId,
 		resultOutcome: record.outcome,
+		resultEndedBy: record.endedBy,
 		...(record.report.saved ? { reportFile: record.report.path } : {}),
 	};
 }

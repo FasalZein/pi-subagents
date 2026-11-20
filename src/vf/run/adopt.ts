@@ -320,6 +320,7 @@ function deliverVerifiedRunResult(
 				deliveryId,
 				...(result.resultRunId ? { runId: result.resultRunId } : {}),
 				...(result.resultOutcome ? { outcome: result.resultOutcome } : {}),
+				...(result.resultEndedBy ? { endedBy: result.resultEndedBy } : {}),
 				...(result.reportFile ? { reportFile: result.reportFile } : {}),
 				errorMessage: result.errorMessage,
 			},

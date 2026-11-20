@@ -89,6 +89,7 @@ export function facts(entries: SessionEntry[], overrides: Partial<RunFacts> = {}
 		startedAt: 1_000,
 		endedAt: 66_000,
 		end,
+		endedBy: "child",
 		entries,
 		launchEntryCount: 0,
 		resume: { resumable: true },

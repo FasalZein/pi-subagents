@@ -30,6 +30,13 @@ export type ResultTyping =
 	| { typed: true; data?: undefined; dataError: string }
 	| { typed: false; data?: undefined; dataError?: undefined };
 
+/**
+ * T70: who ended the run. child: its completion call, caller_ping, its own exit or a crash. operator: a
+ * person closed the pane (also after a takeover) or stopped the run from the overlay. parent: subagent_kill
+ * or another stop of the parent. time_limit: a hard kill or a report-only wrap-up.
+ */
+export type EndedBy = "child" | "operator" | "parent" | "time_limit";
+
 export type ResumeFacts = { resumable: true } | { resumable: false; reason: string };
 
 export interface ExitFacts {
@@ -59,6 +66,7 @@ export type AssembledRecord = ResultTyping & {
 	title?: string;
 	modelRef?: string;
 	outcome: ResultOutcome;
+	endedBy: EndedBy;
 	/** At most SUMMARY_MAX_CHARS characters. */
 	summary: string;
 	sessionFile?: string;

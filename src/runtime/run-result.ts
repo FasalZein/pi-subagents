@@ -4,7 +4,7 @@ import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
-import { assembleResult, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
+import { assembleResult, endedByOf, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
@@ -74,6 +74,11 @@ export interface WatchedEnd {
 	 * without a child error: a successful end when the child answered, a failure when it did not.
 	 */
 	operatorClosed: boolean;
+	/**
+	 * T70: a person closed the pane: an operator close, or a manual pane's end with no completion call,
+	 * ping or error of the child. A headless child never has one.
+	 */
+	closedByPerson: boolean;
 	/** D7: the parent asked this run to stop; it ends cancelled whatever the dying child wrote. */
 	stopped: boolean;
 	/** The hard budget the runtime killed the child on; unset when the child's own outcome beat it. */
@@ -174,6 +179,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		contextWarned: contextUsage.contextWarned === true,
 		// A nonzero operator close without an answer is a failure, not the child's own end.
 		failWithoutText: runEnd.kind === "exited" && end.exitCode !== 0,
+		closedByPerson: end.closedByPerson || end.operatorClosed,
 	});
 }
 
@@ -183,7 +189,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
  * runtime-built SubagentResult with the published record's summary.
  */
 export function withRuntimeEnd(running: RunningSubagent, result: SubagentResult, end: RunEnd): SubagentResult {
-	const published = publishEnd(running, end, { contextWarned: false, failWithoutText: false });
+	const published = publishEnd(running, end, { contextWarned: false, failWithoutText: false, closedByPerson: false });
 	if (!published) return result;
 	return {
 		...result,
@@ -199,6 +205,8 @@ interface PublishOptions {
 	contextWarned: boolean;
 	/** Publish a failed end instead when the run left no text (a nonzero operator close). */
 	failWithoutText: boolean;
+	/** T70: a person closed the pane (WatchedEnd.closedByPerson). */
+	closedByPerson: boolean;
 }
 
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
@@ -217,6 +225,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			startedAt: running.startTime,
 			endedAt: Date.now(),
 			end: runEnd,
+			endedBy: endedByOf(runEnd, { stoppedBy: running.stopRequestedBy, closedByPerson: options.closedByPerson }),
 			entries,
 			launchEntryCount,
 			nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
@@ -271,11 +280,12 @@ function resumeFact(running: RunningSubagent, end: RunEnd, contextWarned: boolea
 /** The SubagentResult fields that carry a published rendering to the message and wait paths. */
 export function publishedResultFields(
 	published: PublishedResult | undefined,
-): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile" | "resultOutcome"> {
+): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile" | "resultOutcome" | "resultEndedBy"> {
 	if (!published) return {};
 	return {
 		resultText: published.text,
 		resultOutcome: published.record.outcome,
+		resultEndedBy: published.record.endedBy,
 		resultRunId: published.record.runId,
 		...(published.record.report.saved ? { reportFile: published.record.report.path } : {}),
 	};

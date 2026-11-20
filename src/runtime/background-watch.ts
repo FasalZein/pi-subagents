@@ -392,6 +392,7 @@ function watchBackgroundGeneration(
 			const published = publishRunResult(running, {
 				exitCode,
 				operatorClosed: false,
+				closedByPerson: false,
 				stopped,
 				timedOut,
 				ping,

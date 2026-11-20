@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import type { SessionEntry } from "../session/session.ts";
 import type { SubagentResult } from "../types.ts";
-import { assembleResult, type RunEnd } from "./result-assembler.ts";
+import { assembleResult, endedByOf, type RunEnd } from "./result-assembler.ts";
 import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
 import {
@@ -72,6 +72,7 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 	const entries: SessionEntry[] = text
 		? [{ type: "message", id: "result-summary", message: { role: "assistant", content: [{ type: "text", text }] } }]
 		: [];
+	const end = resultEnd(result);
 	const assembled = assembleResult({
 		runId: runIdOf(result),
 		name: result.name,
@@ -79,7 +80,9 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 		sessionFile: result.sessionFile,
 		startedAt: endedAt - result.elapsed * 1000,
 		endedAt,
-		end: resultEnd(result),
+		end,
+		// No watcher facts reach this path, so a stop names the parent and a close stays the child's.
+		endedBy: endedByOf(end, { closedByPerson: false }),
 		entries,
 		launchEntryCount: 0,
 		contextUsage:

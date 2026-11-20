@@ -210,6 +210,7 @@ function lookUpEnded(running: RunningSubagent) {
 			agent: running.agent,
 			status,
 			outcome: record.outcome,
+			endedBy: record.endedBy,
 			runId: record.runId,
 			sessionFile: record.sessionFile,
 			lookup: true,

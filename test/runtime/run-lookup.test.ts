@@ -108,7 +108,7 @@ function startRun(session: ReturnType<typeof parentSession>, name: string, deliv
 		};
 		const published = publishRunResult(running, {
 			exitCode: 0,
-			operatorClosed: false,
+			operatorClosed: false, closedByPerson: false,
 			stopped: false,
 			exitSignal,
 			contextUsage: {},
