@@ -132,7 +132,7 @@ const exitBySignal = (child: ChildProcess) => {
 };
 
 function watchedEnd(overrides: Partial<WatchedEnd> = {}): WatchedEnd {
-	return { exitCode: 0, operatorClosed: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
+	return { exitCode: 0, operatorClosed: false, closedByPerson: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
 }
 
 describe("end outcomes (T09)", () => {

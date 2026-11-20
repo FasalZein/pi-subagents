@@ -1,10 +1,12 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { assembleResult, cutText, type RunEnd } from "../../runtime/result-assembler.ts";
+import { assembleResult, cutText, endedByOf, type RunEnd, writtenFiles } from "../../runtime/result-assembler.ts";
 import { publishResult, type Reservation, readResultRecord } from "../../runtime/result-files.ts";
 import { parseRunId, type ResultRecord, SUMMARY_MAX_CHARS } from "../../runtime/result-record.ts";
 import { renderResult, type VerifierFooter } from "../../runtime/result-render.ts";
-import type { SessionEntry } from "../../session/session.ts";
+import { getEntries, type SessionEntry } from "../../session/session.ts";
 import type { SubagentParamsInput, SubagentResult } from "../../types.ts";
+import { readVerifiedRunCanceller } from "./client.ts";
 import { type VerifiedRunManifest, verifiedRunResultGeneration } from "./types.ts";
 import { latestVerifiedRecord, publishGeneration } from "./winner-store.ts";
 
@@ -76,6 +78,14 @@ function winnerText(manifest: VerifiedRunManifest, runDir: string): WinnerText {
 	};
 }
 
+/** T70: the files the selected winner wrote in its run; losing attempts do not count. */
+function winnerWrittenFiles(manifest: VerifiedRunManifest): string[] {
+	const selection = manifest.result?.selection;
+	if (!selection || !existsSync(selection.winnerSessionFile)) return [];
+	const candidate = manifest.request.candidates.find((c) => c.sessionFile === selection.winnerSessionFile);
+	return writtenFiles(getEntries(selection.winnerSessionFile), candidate?.launchEntryCount ?? 0);
+}
+
 /** The report text as the one assistant message of the run, so the assembler reads it like any report. */
 function reportEntries(report: string): SessionEntry[] {
 	const entry: SessionEntry = {
@@ -124,10 +134,18 @@ export function verifiedRunToSubagentResult(
 		startedAt,
 		endedAt,
 		end: text.end,
+		// T70: a cancelled run names who asked for the stop (the sentinel keeps it for an adopter); the
+		// outcome stays the one winnerText gives.
+		endedBy:
+			manifest.state === "cancelled"
+				? (readVerifiedRunCanceller(runDir) ?? "parent")
+				: endedByOf(text.end, { closedByPerson: false }),
 		entries: reportEntries(text.report),
 		launchEntryCount: 0,
 		resume: { resumable: false, reason: NO_ATTEMPT_RESUME_REASON },
 	});
+	// T70: the report is synthetic, so the files come from the winner's own session, after its launch.
+	assembled.record.artifacts = winnerWrittenFiles(manifest);
 	const record = publishGeneration(runDir, verifiedRunResultGeneration(manifest), assembled);
 	const rendered = renderVerified(record, manifest, target, text.verifierFooter);
 	return {
@@ -142,6 +160,7 @@ export function verifiedRunToSubagentResult(
 		resultText: rendered,
 		resultRunId: record.runId,
 		resultOutcome: record.outcome,
+		resultEndedBy: record.endedBy,
 		...(record.report.saved ? { reportFile: record.report.path } : {}),
 	};
 }
@@ -169,6 +188,7 @@ export function verifiedRunNotice(
 			startedAt: startTime,
 			endedAt,
 			end: { kind: "exited", code: 0 },
+			endedBy: "child",
 			entries: reportEntries(notice),
 			launchEntryCount: 0,
 			resume: { resumable: false, reason: NO_ATTEMPT_RESUME_REASON },
@@ -191,6 +211,8 @@ export function verifiedRunNotice(
 		resultText: rendered,
 		resultRunId: record.runId,
 		resultOutcome: record.outcome,
+		// T70: a run that still runs has no ender yet; only a committed record names one.
+		...(committed ? { resultEndedBy: committed.endedBy } : {}),
 		...(record.report.saved ? { reportFile: record.report.path } : {}),
 	};
 }

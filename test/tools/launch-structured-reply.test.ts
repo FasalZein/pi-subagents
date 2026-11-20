@@ -127,7 +127,7 @@ async function startParent(
 		writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 		const end: WatchedEnd = {
 			exitCode: 0,
-			operatorClosed: false,
+			operatorClosed: false, closedByPerson: false,
 			stopped: false,
 			...(ping === undefined ? {} : { ping: { message: ping } }),
 			exitSignal:
@@ -457,7 +457,7 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 		}
 	});
 
-	it("P2: the failure text is state-neutral, names no session path and lists the started children's warnings and dropped extensions", async () => {
+	it("P2: the failure text is state-neutral, names no session path and lists the started children's warnings", async () => {
 		const sessionPath = "/tmp/t28/sessions/2026-11-19_child-three.jsonl";
 		const lockedChild = { ...child("child-one", "worker-locked"), model: "stub/other-model" };
 		const harness = await startParent(
@@ -473,7 +473,6 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			{
 				failError: `EACCES: permission denied, open '${sessionPath}'`,
 				beforeFailure: async (h) => {
-					(runOf(h, "child-two") as { droppedExtensions?: string[] }).droppedExtensions = ["gone-extension"];
 					h.finishWithCall("child-one", "ONE-DONE-EARLY");
 				},
 			},
@@ -488,7 +487,6 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			assert.equal(text.includes(sessionPath), false, "no session path in the text");
 			assert.equal(text.includes(".jsonl"), false);
 			assert.doesNotMatch(text, /keep running/, "an ended sibling is not said to keep running");
-			assert.match(text, /dropped missing extension: gone-extension/);
 			const warning = getIgnoredModelOverrideWarning("worker-locked", false, lockedChild);
 			assert.ok(warning, "the locked agent's model override gives a warning");
 			assert.ok(text.includes(warning), "the started child's launch warning is in the failure text");

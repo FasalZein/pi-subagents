@@ -2,6 +2,7 @@ import type { SessionEntry } from "../session/session.ts";
 import { COMPLETION_JSON_FIELDS, SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { parseJsonFields } from "../tools/json-string-args.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
+import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../tools/written-files.ts";
 import type { SubagentTimeoutKind } from "../types.ts";
 import {
 	type AssembledRecord,
@@ -9,6 +10,7 @@ import {
 	type CallOutcome,
 	type ContextUsage,
 	CUT_MARK,
+	type EndedBy,
 	type ExitFacts,
 	type ResultOutcome,
 	type ResultTyping,
@@ -42,6 +44,8 @@ export interface RunFacts {
 	/** Epoch milliseconds. */
 	endedAt: number;
 	end: RunEnd;
+	/** T70: who ended the run, as the watcher's end facts say (endedByOf). */
+	endedBy: EndedBy;
 	/** Every entry of the child session file, in file order. */
 	entries: readonly SessionEntry[];
 	/** Entries before this index belong to fork history or an earlier run (D12). */
@@ -218,6 +222,40 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
 		undefined,
 	);
 	return { texts, accepted, dataErrors, autonomous, call };
+}
+
+/**
+ * T70: who ended a run, from the watcher's end facts only. A requested stop names its origin (the
+ * overlay operator, else the parent); a time limit and a wrap-up are the time limit; a ping and a
+ * crash are the child's own end; a clean or failed exit is the child's unless a person closed the pane.
+ */
+export function endedByOf(end: RunEnd, facts: { stoppedBy?: "operator" | "parent"; closedByPerson: boolean }): EndedBy {
+	switch (end.kind) {
+		case "cancelled":
+			return facts.stoppedBy ?? "parent";
+		case "timed_out":
+			return "time_limit";
+		case "pinged":
+			return "child";
+		case "exited":
+		case "failed":
+			return facts.closedByPerson ? "operator" : "child";
+	}
+}
+
+/**
+ * T70: the files this run wrote: the targets the child recorded for its successful write and edit
+ * calls (SUBAGENT_WRITTEN_FILE_ENTRY, already absolute), after the launch entry, deduplicated, in the
+ * order of the first write.
+ */
+export function writtenFiles(entries: readonly SessionEntry[], launchEntryCount: number): string[] {
+	const paths = new Set<string>();
+	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
+		const raw = entries[i] as { type?: unknown; customType?: unknown; data?: unknown };
+		if (raw.type !== "custom" || raw.customType !== SUBAGENT_WRITTEN_FILE_ENTRY || !isRecord(raw.data)) continue;
+		if (isNonBlank(raw.data.path)) paths.add(raw.data.path);
+	}
+	return [...paths];
 }
 
 /** Cuts `text` to at most `max` characters with the cut mark, never inside a surrogate pair. */
@@ -408,18 +446,20 @@ function pingBody(value: unknown): Body | undefined {
 	};
 }
 
+/** T70: an untyped run names the files it wrote, as no completion call listed them. */
 function untypedBody(facts: RunFacts, text: string | undefined): Body {
 	const outcome = endOutcome(facts.end);
+	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
 	if (!text) {
 		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
-		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts: [] };
+		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts };
 	}
 	return {
 		typing: { typed: false },
 		outcome,
 		summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS),
 		report: text,
-		artifacts: [],
+		artifacts,
 	};
 }
 
@@ -458,6 +498,7 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 		title: facts.title,
 		modelRef: facts.modelRef,
 		outcome: body.outcome,
+		endedBy: facts.endedBy,
 		summary: body.summary,
 		sessionFile: facts.sessionFile,
 		artifacts: body.artifacts,

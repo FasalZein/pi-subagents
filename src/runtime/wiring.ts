@@ -124,6 +124,7 @@ export async function stopRunningSubagent(
 	// A verified fan-out has no child process in this parent: its candidates
 	// belong to a detached supervisor. Kill = cancel the run (supervisor kills
 	// the candidate groups and terminalizes the manifest).
+	const stopBy = options.operator ? "operator" : "parent";
 	if (running.verifiedRunDir) {
 		if (running.verifiedRunCancelDenied && !options.operator) {
 			throw new Error(
@@ -133,11 +134,13 @@ export async function stopRunningSubagent(
 			);
 		}
 		try {
-			requestVerifiedRunCancel(running.verifiedRunDir);
+			requestVerifiedRunCancel(running.verifiedRunDir, stopBy);
 		} catch {
 			// surfaced by the cancelled manifest state instead
 		}
 	}
+	// T70: the first stop request names who ended the run.
+	running.stopRequestedBy ??= stopBy;
 	await stopRunningSubagentWithDeps(running, closeRunningSurface);
 	updateWidget();
 }

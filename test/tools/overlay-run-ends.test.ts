@@ -40,6 +40,7 @@ function publishRecord(
 			name: run.name,
 			agent: "worker",
 			outcome: run.outcome,
+			endedBy: "child",
 			summary: run.summary,
 			sessionFile: run.sessionFile,
 			artifacts: [],

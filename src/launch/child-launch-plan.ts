@@ -13,7 +13,6 @@ import { buildSubagentSessionTitle } from "../agents/titles.ts";
 import { generateSubagentSessionFile, type ResumeMode } from "../session/session-files.ts";
 import { addToolModeDeniedNames, resolveDenyTools } from "../tools/policy.ts";
 import type { SubagentParamsInput } from "../types.ts";
-import { dropMissingExtensionEntries } from "./extension-entries.ts";
 import { resolveConfiguredExtensionSources } from "./extensions.ts";
 import { resolveSubagentExtensions, resolveSubagentNoSession } from "./policy.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentRuntimePaths } from "./runtime-paths.ts";
@@ -33,8 +32,6 @@ interface ChildCapabilityPlan {
 	skills?: string;
 	injectSkills?: string;
 	extensions?: string[];
-	/** Entries of the extension list that do not resolve and that this launch drops (D10). */
-	droppedExtensions: string[];
 	denySet: Set<string>;
 	skillLaunchPlan: SkillLaunchPlan;
 }
@@ -305,12 +302,17 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			resolveAlways: false,
 			explicitThinking: params.thinking != null,
 		});
-		const implicitRef = resolveImplicitModelGrant(
-			modelConfig,
-			options.modelRegistry,
-			inheritedModelRef,
-			fallbackThinking,
-		);
+		// With neither a model nor a thinking override, the grant resolves exactly as v2.9.2 did: the
+		// parent's provider breaks a bare-id tie and an unsupported inherited level drops, so a default
+		// that two providers carry is granted as the ref it runs on (M34). A thinking-only call keeps the
+		// default at the inherited level, so that grant cannot widen to every level.
+		const implicitRef =
+			params.thinking == null
+				? resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
+						resolveAlways: false,
+						explicitThinking: false,
+					}).effectiveModelRef
+				: resolveImplicitModelGrant(modelConfig, options.modelRegistry, inheritedModelRef, fallbackThinking);
 		if (hasAllowedModels) {
 			assertModelAllowed(
 				ref.effectiveModelRef,
@@ -350,19 +352,13 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 	const skills = params.skills ?? agentDefs?.skills;
 	const injectSkills = agentDefs?.injectSkills;
 	const extensionSources = resolveSubagentExtensions(agentDefs);
-	const extensionCwd = runtimePaths.effectiveCwd ?? parentCwd;
-	const configuredExtensions = resolveConfiguredExtensionSources(extensionSources, {
-		cwd: extensionCwd,
+	// No list keeps the inherited set; a list passes to Pi as configured, unresolved entries included (D10).
+	const extensions = resolveConfiguredExtensionSources(extensionSources, {
+		cwd: runtimePaths.effectiveCwd ?? parentCwd,
 		agentDir: runtimePaths.effectiveAgentConfigDir,
 		agentDefs,
 		mode: options.mode ?? "background",
 	});
-	// No list keeps the inherited set; a list keeps only the entries that resolve (D10).
-	const entryCheck = dropMissingExtensionEntries(configuredExtensions, {
-		cwd: extensionCwd,
-		agentDir: runtimePaths.effectiveAgentConfigDir,
-	});
-	const extensions = entryCheck.kept;
 	const denySet = addToolModeDeniedNames(resolveDenyTools(agentDefs), tools);
 	const skillLaunchPlan = await buildSkillLaunchPlan(
 		skills,
@@ -385,7 +381,6 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			skills,
 			injectSkills,
 			extensions,
-			droppedExtensions: entryCheck.dropped,
 			denySet,
 			skillLaunchPlan,
 		},

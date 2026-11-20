@@ -74,7 +74,7 @@ async function deliverAndLookUp(spec: Case) {
 	writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 	const end: WatchedEnd = {
 		exitCode: 0,
-		operatorClosed: false,
+		operatorClosed: false, closedByPerson: false,
 		stopped: false,
 		exitSignal: spec.end.timedOut
 			? undefined

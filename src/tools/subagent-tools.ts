@@ -3,7 +3,6 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { type LaunchableAgent, nameOf, renderUnknownAgentRefusal } from "../agents/launchable-agents.ts";
-import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { stripInternalLaunchOverrides } from "../launch/launch-overrides.ts";
 import {
 	enforceAgentFrontmatter,
@@ -442,10 +441,12 @@ export function registerSubagentCoreTools(
 						content: [
 							{
 								type: "text",
-								text: renderLaunchFailure(failed, prepared.length, launched, [
-									...launched.map((_, index) => prepared[index].warning),
-									...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
-								]),
+								text: renderLaunchFailure(
+									failed,
+									prepared.length,
+									launched,
+									launched.map((_, index) => prepared[index].warning),
+								),
 							},
 						],
 						details: structured,
@@ -481,11 +482,11 @@ export function registerSubagentCoreTools(
 					}
 					return details;
 				};
-				const text = renderLaunchReply(launched, deliveries, [
-					...prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
-					// D10: outside every result frame, so each dropped entry is named once in this reply.
-					...droppedExtensionLines(launched.flatMap((running) => running.droppedExtensions ?? [])),
-				]);
+				const text = renderLaunchReply(
+					launched,
+					deliveries,
+					prepared.filter((_, index) => !delivered[index]).map((entry) => entry.warning),
+				);
 				const structured: SubagentLaunchStructured = {
 					status: "launched",
 					// A wait error is no evidence that the child ended; only a delivered report is.
