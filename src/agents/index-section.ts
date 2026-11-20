@@ -47,7 +47,7 @@ export const INDEX_MORE_TOOLS = ["subagent_wait", "subagent_resume", "subagent_k
 type IndexMoreTool = (typeof INDEX_MORE_TOOLS)[number];
 
 /** What the session may call besides launch, so the index names only usable tools (D06). */
-export interface IndexToolAccess {
+interface IndexToolAccess {
 	/** The management tools this session may call. */
 	callable: ReadonlySet<IndexMoreTool>;
 	/** The agent file locations, named on the count line when subagent_agents is not callable. */

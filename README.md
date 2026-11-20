@@ -481,17 +481,17 @@ At the start of each prompt, Pi writes one named system-prompt section, `index`,
 
 ```text
 Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
-Do not do delegated work yourself. A script that launches waits in the same script with a time limit and returns the pending ids.
+Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
 More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).
 - reviewer: Review a diff for bugs and missing tests. [pane] [manual]
 - scout: Inspect the codebase and report the relevant files.
 ```
 
-Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too.
+Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The index names only the tools that the session may call: without `subagent_wait` the first line drops its clause, and without `subagent_agents` the last line points to the agent files instead: `+<n> more: agent files in .pi/agents/ or <agent dir>/agents`. When an earlier extension composes the whole system prompt, the section is appended to it, in a parent and in a child.
 
 A flag shows only where an agent differs from the common case:
 
-- `[pane]`: the child opens in a pane.
+- `[pane]`: the child opens in a pane when a multiplexer runs. A prompt start does not probe for one, so the flag shows in every session with a UI.
 - `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
 - `[manual]`: the agent has `auto-exit` off, so the pane stays open until a person closes it. The child has no `subagent_done` and cannot close the pane itself (see [`subagent_done`](#subagent_done)).
 - `[waits]`: the launch call waits for the result (`async: false`).
@@ -543,7 +543,7 @@ Each report arrives later, and this turn may stop after this call so the reports
 
 A launch waits for its results, and the reply holds them, when the agent has `async: false`, when the parent has no durable turn, or when the call shares a tool batch with a sync launch (see [Mixed sync and async batches](#mixed-sync-and-async-batches)). A direct launch next to a call of another tool, such as `read`, also waits, unless `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`. Inside codemode, a launch returns at once unless it waits by these rules.
 
-An unknown agent name is refused with the three closest names among the agents the caller may launch. When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
+An unknown agent name is refused as in v2.9.2, with the requested name and the search locations and no other agent name: `Error: agent "<name>" was not found in .pi/agents/ or <agent dir>/agents.` When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
 
 ### Model names
 
