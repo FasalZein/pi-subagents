@@ -179,7 +179,8 @@ async function startParent(
 				mode: "background",
 				phase: "running",
 				parentClosePolicy: "terminate",
-				blocking: params.agent === "worker-wait",
+				// worker-batch waits by the batch rule (blocking, not async: false), so Esc reaches its wait (D04a).
+				blocking: params.agent === "worker-wait" || params.agent === "worker-batch",
 				async: params.agent !== "worker-wait",
 				startTime: Date.now(),
 				sessionFile: join(root, `${params.name}.jsonl`),
@@ -437,7 +438,7 @@ describe("T28 fix round 1: a started reply does not deliver a queued result", ()
 describe("T28 fix round 1: launch facts and failure text", () => {
 	it("P2: an interrupted wait leaves the child started, not ended without a record", async () => {
 		const harness = await startParent({
-			go: [fauxToolCall("subagent", { children: [child("child-wait", "worker-wait")] }, { id: "launch-1" })],
+			go: [fauxToolCall("subagent", { children: [child("child-wait", "worker-batch")] }, { id: "launch-1" })],
 		});
 		const structured: unknown[] = [];
 		harness.session.subscribe((event) => {
@@ -452,6 +453,8 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			const value = structured[0] as { children: ScriptChild[] } | undefined;
 			assert.equal(value?.children[0]?.state, "started");
 			assert.equal(value?.children[0]?.runId, runOf(harness, "child-wait").id);
+			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child.
+			assert.equal(runOf(harness, "child-wait").stopRequestedBy, "parent");
 		} finally {
 			await harness.dispose();
 		}
