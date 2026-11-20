@@ -3,7 +3,6 @@ import { Text } from "@earendil-works/pi-tui";
 import { resolve } from "node:path";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
-import { droppedExtensionLines } from "../launch/extension-entries.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
@@ -190,8 +189,6 @@ export function registerSubagentResumeTool(
 
 			forceSynchronousResumeIfNeeded(running, ctx.hasUI);
 
-			// D10: dropped entries are named outside the result frame, once per reply.
-			const dropped = droppedExtensionLines(running.droppedExtensions ?? []);
 			const shouldAwait = shouldAwaitSubagentLaunch(running);
 			if (shouldAwait) {
 				const result = await runtime.getLaunchedSubagentResult(running, signal);
@@ -205,7 +202,7 @@ export function registerSubagentResumeTool(
 						: { waitError: resultBody };
 				return {
 					...result,
-					content: [{ type: "text" as const, text: renderLaunchReply([running], [delivery], dropped) }],
+					content: [{ type: "text" as const, text: renderLaunchReply([running], [delivery], []) }],
 					structuredContent: asStructuredContent({
 						status: "launched",
 						children: [launchedChildData(running, running.agent ?? "", reported.length > 0)],
@@ -215,7 +212,7 @@ export function registerSubagentResumeTool(
 
 			requestSubagentBatchStop();
 			return {
-				content: [{ type: "text" as const, text: renderLaunchReply([running], [null], [warning, ...dropped]) }],
+				content: [{ type: "text" as const, text: renderLaunchReply([running], [null], [warning]) }],
 				details: {
 					id: running.id,
 					name: running.name,

@@ -177,8 +177,8 @@ describe("child launch plan", () => {
 		assert.deepEqual(plan.capability.extensions, ["git:github.com/example/footer-extension@v1"]);
 	});
 
-	// D10 changes v2.9.2 on purpose: an uninstalled npm entry no longer reaches Pi as a temporary package.
-	it("drops a configured npm package that is not installed", async () => {
+	// D10 as amended (D18): an uninstalled npm entry reaches Pi as configured, as in v2.9.2 (cf6dbf4).
+	it("passes a configured npm package that is not installed as configured", async () => {
 		const cwd = createTestDir();
 		const agentDir = join(cwd, "agent-root");
 		mkdirSync(agentDir, { recursive: true });
@@ -200,8 +200,7 @@ describe("child launch plan", () => {
 			mode: "background",
 		});
 
-		assert.deepEqual(plan.capability.extensions, []);
-		assert.deepEqual(plan.capability.droppedExtensions, ["npm:missing-footer"]);
+		assert.deepEqual(plan.capability.extensions, ["npm:missing-footer"]);
 	});
 
 	it("does not reuse project packages for an untrusted background child", async () => {
@@ -562,5 +561,29 @@ describe("child launch plan", () => {
 		});
 
 		assert.equal(plan.effectiveModelRef, "zai-messages/glm-5-turbo:off");
+	});
+
+	// M34 (decisions.md, D08): the definition and registry are the ones the decision names. cf6dbf4
+	// resolves the default and its implicit grant through the parent's provider, so it launches on a/base.
+	it("launches an unchanged bare default that two providers carry, without an override, as cf6dbf4 does", async () => {
+		const cwd = createTestDir();
+		const plan = await buildChildLaunchPlan({
+			params: { name: "grant-check", task: "check", title: "Grant check", agent: "reviewer" },
+			agentDefs: { model: "base", allowedModels: "other/x" },
+			parentCwd: cwd,
+			parentSessionDir: join(cwd, "parent-sessions"),
+			parentModelRef: "a/parent",
+			modelRegistry: {
+				getAvailable: () => [
+					{ provider: "a", id: "parent" },
+					{ provider: "a", id: "base" },
+					{ provider: "b", id: "base" },
+					{ provider: "other", id: "x" },
+				],
+			},
+		});
+
+		assert.equal(plan.effectiveModel, "a/base");
+		assert.equal(plan.effectiveModelRef, "a/base");
 	});
 });

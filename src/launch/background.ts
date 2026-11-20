@@ -208,7 +208,6 @@ async function startBackgroundSubagent(
 		modelContextWindow: runtime.getContextWindow(prepared.effectiveModelRef),
 		modelRef: prepared.effectiveModelRef,
 		launchMetadata: launch.launchMetadata,
-		droppedExtensions: prepared.droppedExtensions,
 		resultTarget: { store, reservation, parentCwd: ctx.cwd, warnings: ctx.resultWarnings ?? [] },
 	};
 	const rememberTail = (current: string | undefined, chunk: Buffer | string) =>

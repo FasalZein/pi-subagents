@@ -1,14 +1,7 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONFIG_DIR_NAME, DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-
-/** The extension list a child starts with, and the entries dropped from it because they do not resolve (D10). */
-interface ExtensionEntryCheck<Kept extends string[] | undefined = string[]> {
-	kept: Kept;
-	dropped: string[];
-}
 
 /** Prefixes Pi reads as a package or built-in source rather than a local path (Pi's isLocalPath). */
 const NON_LOCAL_PREFIXES = ["npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:"];
@@ -67,69 +60,3 @@ export function isSubagentsExtensionEntry(entry: string, cwd = process.cwd()): b
 	return PACKAGE_PATHS.has(path) || packageNameAt(path) === PACKAGE_MANIFEST.name;
 }
 
-/**
- * Drops each entry that does not resolve: a local path that does not exist, or an npm or git
- * package that Pi has not installed in user or project scope. No list stays no list. The mandatory
- * pi-subagents entry is never dropped. A package present only as a temporary `-e` checkout counts
- * as not installed: Pi exposes no lookup for that location, and D10 stops relying on temporary installs.
- *
- * The check runs no command. An unapproved project can set `npmCommand`, and Pi's lookup of a
- * legacy global npm install runs it, so npm entries are looked up only in Pi's managed npm
- * locations. Limit: a package installed only by the legacy global npm route counts as not installed.
- */
-export function dropMissingExtensionEntries(
-	entries: readonly string[],
-	options: { cwd: string; agentDir: string },
-): ExtensionEntryCheck;
-export function dropMissingExtensionEntries(
-	entries: readonly string[] | undefined,
-	options: { cwd: string; agentDir: string },
-): ExtensionEntryCheck<string[] | undefined>;
-export function dropMissingExtensionEntries(
-	entries: readonly string[] | undefined,
-	options: { cwd: string; agentDir: string },
-): ExtensionEntryCheck<string[] | undefined> {
-	if (entries === undefined) return { kept: undefined, dropped: [] };
-	let packageManager: DefaultPackageManager | undefined;
-	const isInstalled = (entry: string): boolean => {
-		if (entry.startsWith("npm:")) {
-			const name = npmPackageName(entry.slice("npm:".length));
-			return [
-				join(options.cwd, CONFIG_DIR_NAME, "npm", "node_modules", name),
-				join(options.agentDir, "npm", "node_modules", name),
-			].some((path) => existsSync(path));
-		}
-		// For git sources Pi's lookup only computes and checks paths; project trust lets it read project scope.
-		packageManager ??= new DefaultPackageManager({
-			cwd: options.cwd,
-			agentDir: options.agentDir,
-			settingsManager: SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: true }),
-		});
-		for (const scope of ["project", "user"] as const) {
-			try {
-				if (packageManager.getInstalledPath(entry, scope)) return true;
-			} catch {
-				// An unparseable source leaves this scope without an install.
-			}
-		}
-		return false;
-	};
-	const kept: string[] = [];
-	const dropped: string[] = [];
-	for (const entry of entries) {
-		const trimmed = entry.trim();
-		const resolves =
-			isSubagentsExtensionEntry(entry, options.cwd) ||
-			trimmed.startsWith("builtin:") ||
-			(NON_LOCAL_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
-				? isInstalled(trimmed)
-				: existsSync(localEntryPath(trimmed, options.cwd)));
-		(resolves ? kept : dropped).push(entry);
-	}
-	return { kept, dropped };
-}
-
-/** One reply line per dropped entry, each entry named once (D10). */
-export function droppedExtensionLines(dropped: Iterable<string>): string[] {
-	return [...new Set(dropped)].map((entry) => `dropped missing extension: ${entry}`);
-}
