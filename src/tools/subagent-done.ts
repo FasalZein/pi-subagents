@@ -24,7 +24,12 @@ import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfter
 import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
 import { registerSubagentDoneTool } from "./completion-call.ts";
 import { createCompletionNudge, hasAssistantText } from "./completion-nudge.ts";
-import { filterToolNames, getDeniedToolNames, shouldRegisterSubagentDone } from "./child-tool-policy.ts";
+import {
+	filterToolNames,
+	getDeniedToolNames,
+	readChildLifecycle,
+	shouldRegisterSubagentDone,
+} from "./child-tool-policy.ts";
 
 const TOOL_BOUNDARY_RECOVERY_NUDGE = "continue";
 const MAX_CONSECUTIVE_TOOL_BOUNDARY_ENDS = 3;
@@ -43,15 +48,17 @@ type WidgetThemeLike = {
 };
 
 export default function (pi: ExtensionAPI) {
-	const autoExit = process.env.PI_SUBAGENT_AUTO_EXIT === "1";
-	const isInteractive = !!process.env.PI_SUBAGENT_SURFACE;
+	const lifecycle = readChildLifecycle();
+	const autoExit = lifecycle.autoExit;
+	const isInteractive = lifecycle.pane;
 	const denied: string[] = getDeniedToolNames();
+	const hasSubagentDone = shouldRegisterSubagentDone(denied, lifecycle);
 	let outputTokens = 0;
 	let finalContextUsage: FinalContextSnapshot | undefined;
 	// Factory-scoped because the takeover machinery that suppresses it lives
 	// inside the `if (autoExit)` block, while caller_ping registers outside it.
 	const callerPingState = createCallerPingState();
-	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: shouldRegisterSubagentDone(denied) });
+	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: hasSubagentDone });
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
@@ -508,7 +515,7 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
-	if (shouldRegisterSubagentDone(denied)) {
+	if (hasSubagentDone) {
 		registerSubagentDoneTool(pi, {
 			isTakenOver: () => takeover.tookOver,
 			writeExitSignal,

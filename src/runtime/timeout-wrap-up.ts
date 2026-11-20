@@ -30,7 +30,7 @@ import {
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 	PI_SUBAGENT_TIMEOUT_WRAP_UP,
 } from "../tools/timeout-reminders.ts";
-import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
+import { SPAWNING_TOOL_NAMES, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import type { RunningSubagent } from "../types.ts";
 import { addResultWarning } from "./run-result.ts";
@@ -117,6 +117,8 @@ async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSign
 	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(invocationMetadata.skills);
 	const deniedTools = new Set(invocationMetadata.denyTools);
 	for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);
+	// T69 (v2.9.2): a manual pane never gets subagent_done; the forced auto-exit below must not grant it.
+	if (running.mode === "interactive" && !running.autoExit) deniedTools.add(SUBAGENT_DONE_TOOL_NAME);
 	if (deniedTools.size > 0) env.PI_DENY_TOOLS = [...deniedTools].join(",");
 	env[PI_SUBAGENT_CONTEXT_WARN_THRESHOLD] = "";
 	env[PI_SUBAGENT_CONTEXT_WARN_STEP] = "";
