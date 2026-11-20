@@ -28,6 +28,13 @@ const PRINT: IndexLaunchPolicy = { paneAvailable: false, forcesWait: true };
 const STARTUP: IndexLaunchPolicy = { paneAvailable: true, forcesWait: true };
 const HEADLESS: IndexLaunchPolicy = { paneAvailable: false, forcesWait: false };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
+// D06: the cf6dbf4 routing rules in short form. Sources (git show cf6dbf4:<path>):
+// src/tools/subagent-tools.ts promptSnippet "Do small direct work yourself: ... tiny one-shot edits",
+// "include each named agent exactly once. Do not substitute one agent for another",
+// "Do not redo delegated work", "Ask the user only when ... ownership is ambiguous";
+// src/agents/agent-list.ts "do not suggest a different listed agent".
+const UPSTREAM_RULES_LINE =
+	"Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.";
 
 function entry(name: string, extra: Partial<AgentListEntry> = {}): AgentListEntry {
 	return {
@@ -71,11 +78,7 @@ describe("agent index section", () => {
 			assert.ok(rendered.length <= AGENT_INDEX_MAX_CHARS, `${rendered.length} characters\n${rendered}`);
 			const lines = section.split("\n");
 			assert.match(lines[0], /^Helpers: launch with subagent \(a children list\)\./);
-			assert.match(lines[1], /^Do not do delegated work yourself\./);
-			assert.match(
-				lines[1],
-				/A script that launches waits in the same script with a time limit and returns the pending ids\./,
-			);
+			assert.equal(lines[1], UPSTREAM_RULES_LINE);
 			assert.match(lines[2], /^More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents/);
 			for (const name of names)
 				assert.ok(
@@ -172,21 +175,37 @@ describe("agent index section", () => {
 		assert.equal(renderAgentIndexSection([entry("blank", { description: "  " })], PANE), undefined);
 	});
 
-	it("appends the section to a whole prompt only in a child", () => {
+	it("names only the tools the session may call and points to the agent files without subagent_agents", () => {
+		const entries = Array.from({ length: 100 }, (_, i) => entry(`agent-${String(i).padStart(3, "0")}`));
+		const dirs = ".pi/agents/ or /home/u/.pi/agent/agents";
+		const section = renderAgentIndexSection(entries, PANE, {
+			callable: new Set(["subagent_wait", "subagent_kill"]),
+			agentDirs: dirs,
+		});
+		const lines = section?.split("\n") ?? [];
+		assert.equal(lines[2], "More tools: subagent_wait, subagent_kill.");
+		assert.ok(!section?.includes("subagent_agents"), section);
+		assert.match(lines.at(-1) ?? "", new RegExp(`^\\+\\d+ more: agent files in ${dirs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+		assert.ok(renderAgentIndexRequestText(section ?? "").length <= AGENT_INDEX_MAX_CHARS);
+		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set(), agentDirs: dirs });
+		assert.ok(!none?.includes("More tools"), none);
+	});
+
+	it("appends the section to a whole prompt in a parent and in a child", () => {
 		const forced = () => ({
 			systemPromptOptions: { sections: {}, forceSystemPrompt: "WHOLE" },
 		});
-		assert.equal(applyAgentIndexSection(forced(), "INDEX", false), undefined);
 		const tagged = `<${AGENT_INDEX_SECTION_NAME}>\nINDEX\n</${AGENT_INDEX_SECTION_NAME}>`;
-		assert.deepEqual(applyAgentIndexSection(forced(), "INDEX", true), {
+		assert.deepEqual(applyAgentIndexSection(forced(), "INDEX"), {
 			systemPrompt: `WHOLE\n\n${tagged}`,
 		});
+		assert.equal(applyAgentIndexSection({ systemPromptOptions: { sections: {} } }, "INDEX"), undefined);
 		const already = {
 			systemPromptOptions: {
 				sections: {},
 				forceSystemPrompt: `WHOLE\n\n${tagged}`,
 			},
 		};
-		assert.equal(applyAgentIndexSection(already, "INDEX", true), undefined);
+		assert.equal(applyAgentIndexSection(already, "INDEX"), undefined);
 	});
 });

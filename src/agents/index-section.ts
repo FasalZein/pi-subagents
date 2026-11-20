@@ -31,11 +31,28 @@ const FORCED_WAIT_LINE = "Launches wait.";
 
 const DESCRIPTION_CHARS = 100;
 
-const FIXED_LINES = [
-	"Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].",
-	"Do not do delegated work yourself. A script that launches waits in the same script with a time limit and returns the pending ids.",
-	"More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).",
-] as const;
+const LAUNCH_LINE =
+	"Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].";
+
+// The routing rules of the v2.9.2 launch tool and roster (cf6dbf4
+// src/tools/subagent-tools.ts promptSnippet, src/agents/agent-list.ts rules),
+// shortened to fit the section (D06).
+const RULES_LINE =
+	"Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.";
+
+/** The management tools the index names, in index order. */
+export const INDEX_MORE_TOOLS = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"] as const;
+type IndexMoreTool = (typeof INDEX_MORE_TOOLS)[number];
+
+/** What the session may call besides launch, so the index names only usable tools (D06). */
+export interface IndexToolAccess {
+	/** The management tools this session may call. */
+	callable: ReadonlySet<IndexMoreTool>;
+	/** The agent file locations, named on the count line when subagent_agents is not callable. */
+	agentDirs: string;
+}
+
+const ALL_TOOLS: IndexToolAccess = { callable: new Set(INDEX_MORE_TOOLS), agentDirs: "" };
 
 function getFlags(entry: AgentListEntry, policy: IndexLaunchPolicy): string[] {
 	// The common case is a headless, fresh, self-closing helper whose launch
@@ -81,8 +98,18 @@ function renderAgentLine(entry: AgentListEntry, policy: IndexLaunchPolicy): stri
 	return [`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" ");
 }
 
-function renderCountLine(rest: number): string {
-	return `+${rest} more: subagent_agents with a query`;
+function renderCountLine(rest: number, tools: IndexToolAccess): string {
+	// Without the lookup tool the files themselves are the catalog (D06).
+	return tools.callable.has("subagent_agents")
+		? `+${rest} more: subagent_agents with a query`
+		: `+${rest} more: agent files in ${tools.agentDirs}`;
+}
+
+function renderMoreToolsLine(tools: IndexToolAccess): string[] {
+	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) =>
+		name === "subagent_agents" ? `${name} (search, full detail)` : name,
+	);
+	return names.length > 0 ? [`More tools: ${names.join(", ")}.`] : [];
 }
 
 function compareIndexOrder(a: AgentListEntry, b: AgentListEntry): number {
@@ -99,14 +126,20 @@ function compareIndexOrder(a: AgentListEntry, b: AgentListEntry): number {
 export function renderAgentIndexSection(
 	entries: readonly AgentListEntry[],
 	policy: IndexLaunchPolicy,
+	tools: IndexToolAccess = ALL_TOOLS,
 ): string | undefined {
 	const described = entries.filter((entry) => entry.description?.trim());
 	if (described.length === 0) return undefined;
 	const lines = [...described].sort(compareIndexOrder).map((entry) => renderAgentLine(entry, policy));
-	const fixed = [...FIXED_LINES, ...(policy.forcesWait ? [FORCED_WAIT_LINE] : [])].join("\n");
+	const fixed = [
+		LAUNCH_LINE,
+		RULES_LINE,
+		...renderMoreToolsLine(tools),
+		...(policy.forcesWait ? [FORCED_WAIT_LINE] : []),
+	].join("\n");
 	// Length with the first k agent lines: each line adds itself and one newline.
 	const lengthWith = (k: number, prefix: number) =>
-		WRAPPER_CHARS + fixed.length + prefix + (k < lines.length ? 1 + renderCountLine(lines.length - k).length : 0);
+		WRAPPER_CHARS + fixed.length + prefix + (k < lines.length ? 1 + renderCountLine(lines.length - k, tools).length : 0);
 	// The fixed lines and a count line alone fit, so zero agent lines always fit.
 	let shown = 0;
 	let prefix = 0;
@@ -115,7 +148,7 @@ export function renderAgentIndexSection(
 		if (lengthWith(k, prefix) <= AGENT_INDEX_MAX_CHARS) shown = k;
 	}
 	const rest = lines.length - shown;
-	return [fixed, ...lines.slice(0, shown), ...(rest > 0 ? [renderCountLine(rest)] : [])].join("\n");
+	return [fixed, ...lines.slice(0, shown), ...(rest > 0 ? [renderCountLine(rest, tools)] : [])].join("\n");
 }
 
 interface IndexPromptEvent {
@@ -126,21 +159,17 @@ interface IndexPromptEvent {
 }
 
 /**
- * Write the index into the prompt of this request. The named section is the
- * only channel in a parent (D3). A child keeps its whole-prompt returns until
- * D33, and Pi sends a whole prompt instead of the sections, so when an earlier
- * handler in a child already composed one, the section text is appended to it
- * and returned. A later whole-prompt handler renders the prompt with the
- * section, so it keeps the index too.
+ * Write the index into the prompt of this request as the named section. Pi
+ * sends a whole prompt instead of the sections when an earlier handler, in a
+ * parent or a child, already composed one, so the section text is then
+ * appended to it and returned; otherwise that prompt would hide the index
+ * (D06). A later whole-prompt handler renders the prompt with the section, so
+ * it keeps the index too.
  */
-export function applyAgentIndexSection(
-	event: IndexPromptEvent,
-	section: string,
-	isChild: boolean,
-): { systemPrompt: string } | undefined {
+export function applyAgentIndexSection(event: IndexPromptEvent, section: string): { systemPrompt: string } | undefined {
 	event.systemPromptOptions.sections[AGENT_INDEX_SECTION_NAME] = section;
 	const forced = event.systemPromptOptions.forceSystemPrompt;
-	if (forced === undefined || !isChild) return undefined;
+	if (forced === undefined) return undefined;
 	const tagged = renderAgentIndexRequestText(section);
 	if (forced.includes(tagged)) return undefined;
 	return { systemPrompt: `${forced}\n\n${tagged}` };

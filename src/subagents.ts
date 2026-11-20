@@ -6,10 +6,12 @@ import type { AgentListEntry } from "./agents/agent-list.ts";
 import { getAgentListEntries as getAgentListEntriesFromDefinitions } from "./agents/agent-list.ts";
 import {
 	applyAgentIndexSection,
+	INDEX_MORE_TOOLS,
 	type IndexLaunchPolicy,
 	renderAgentIndexSection,
 	selectIndexTargets,
 } from "./agents/index-section.ts";
+import { agentFileLocations } from "./agents/launchable-agents.ts";
 import type { AgentDefaults } from "./agents/definitions.ts";
 import {
 	formatMalformedAgentNotice,
@@ -264,12 +266,15 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		managementToolExposure.finalize(ctx.sessionManager.getBranch());
 		if (!mayLaunch()) return undefined;
 		const spawnEnv = parseSpawnEnv(process.env);
+		// No multiplexer probe here: a prompt start without a launch stays as cheap
+		// as in v2.9.2, so [pane] states the agent's kind in a UI session (D06).
 		const section = renderAgentIndexSection(
 			selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv),
-			getSoloLaunchPolicy(ctx.hasUI),
+			{ paneAvailable: ctx.hasUI, forcesWait: shouldForceSynchronousLaunch(ctx.hasUI) },
+			{ callable: new Set(INDEX_MORE_TOOLS.filter(shouldRegister)), agentDirs: agentFileLocations() },
 		);
 		if (!section) return undefined;
-		return applyAgentIndexSection(event, section, spawnEnv.callerAgent !== null);
+		return applyAgentIndexSection(event, section);
 	});
 
 	pi.on("input", () => {
