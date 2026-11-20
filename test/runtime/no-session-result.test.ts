@@ -366,6 +366,8 @@ describe("in-memory no-session child results", () => {
 
 	it("continue: a detach marks no file for deletion and delivers no result", async () => {
 		const { running, store, runId } = makeInMemoryRun("background", "continue");
+		// The detached child still runs.
+		running.childProcess = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null }) as ChildProcess;
 		const actions = await shutdownSubagentsForParentExit(shutdownRuntime(running, 2000));
 		assert.deepEqual(actions, [{ id: running.id, policy: "continue", action: "continue" }]);
 		assert.equal(running.resultTarget, undefined, "no result is delivered for a detached child");
