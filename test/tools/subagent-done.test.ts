@@ -78,7 +78,8 @@ describe("subagent-done.ts", () => {
 			{ autoExit: false, pane: false },
 		];
 		it("respects explicit deny lists", () => {
-			for (const lifecycle of selfClosing) assert.equal(shouldRegisterSubagentDone(["subagent_done"], lifecycle), false);
+			for (const lifecycle of selfClosing)
+				assert.equal(shouldRegisterSubagentDone(["subagent_done"], lifecycle), false);
 		});
 
 		it("keeps subagent_done without a deny entry", () => {
