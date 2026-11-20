@@ -35,6 +35,10 @@ const ResultFieldsSchema = Type.Object({
 	title: Type.Optional(Type.String()),
 	modelRef: Type.Optional(Type.String()),
 	outcome: ResultOutcomeSchema,
+	// Optional only so a stored record published before T70 still reads; every new record has it.
+	endedBy: Type.Optional(
+		Type.Union([Type.Literal("child"), Type.Literal("operator"), Type.Literal("parent"), Type.Literal("time_limit")]),
+	),
 	summary: Type.String(),
 	sessionFile: Type.Optional(Type.String()),
 	artifacts: Type.Array(Type.String()),

@@ -1,7 +1,7 @@
 import { isAbsolute, relative } from "node:path";
 import { formatElapsedSeconds } from "../tools/overlay/render-helpers.ts";
 import { cutText } from "./result-assembler.ts";
-import { CUT_MARK, type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
+import { CUT_MARK, type EndedBy, type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
 
 /** D14: everything around the summary, unless a long report locator needs more. */
 export const FRAME_MAX_CHARS = 400;
@@ -43,6 +43,14 @@ export const OUTCOME_WORDS: Record<ResultOutcome, string> = {
 	cancelled: "cancelled",
 };
 
+/** T70: the header names who ended the run only when it was not the child, so the common case adds no text. */
+const ENDED_BY_WORDS: Record<EndedBy, string | undefined> = {
+	child: undefined,
+	operator: "ended by operator",
+	parent: "ended by parent",
+	time_limit: "ended by time limit",
+};
+
 function isHomePath(path: string, homeDir: string): boolean {
 	return homeDir !== "" && path.startsWith(homeDir.endsWith("/") ? homeDir : `${homeDir}/`);
 }
@@ -69,6 +77,9 @@ function headerLine(record: ResultRecord): string {
 		formatElapsedSeconds(record.elapsedSeconds),
 		record.typed ? "typed" : "untyped",
 	];
+	// A record stored before T70 has no endedBy and gets no words.
+	const endedBy = record.endedBy && ENDED_BY_WORDS[record.endedBy];
+	if (endedBy) parts.push(endedBy);
 	if (record.dataError !== undefined) parts.push("data error");
 	return parts.join(" · ");
 }

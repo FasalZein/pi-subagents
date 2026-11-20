@@ -27,6 +27,7 @@ function getSubagentWaitPingResult(running: RunningSubagent, result: SubagentRes
 			message: result.ping?.message,
 			...(result.resultRunId ? { runId: result.resultRunId } : {}),
 			...(result.resultOutcome ? { outcome: result.resultOutcome } : {}),
+			...(result.resultEndedBy ? { endedBy: result.resultEndedBy } : {}),
 			...(result.reportFile ? { reportFile: result.reportFile } : {}),
 		},
 	};
@@ -56,6 +57,7 @@ export function getSubagentWaitSuccessResult(cached: CompletedSubagentResult) {
 			sessionFile: cached.sessionFile,
 			...(cached.resultRunId ? { runId: cached.resultRunId } : {}),
 			...(cached.resultOutcome ? { outcome: cached.resultOutcome } : {}),
+			...(cached.resultEndedBy ? { endedBy: cached.resultEndedBy } : {}),
 			...(cached.reportFile ? { reportFile: cached.reportFile } : {}),
 			...(cached.deliveryId ? { deliveryId: cached.deliveryId } : {}),
 			...getTimeoutResultDetails(cached),

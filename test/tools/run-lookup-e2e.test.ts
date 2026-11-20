@@ -70,7 +70,7 @@ function endChild(running: RunningSubagent, summary: string): SubagentResult {
 	writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 	const end: WatchedEnd = {
 		exitCode: 0,
-		operatorClosed: false,
+		operatorClosed: false, closedByPerson: false,
 		stopped: false,
 		exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "d1", args } },
 		contextUsage: {},

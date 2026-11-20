@@ -90,7 +90,7 @@ function startRun(
 		};
 		const published = publishRunResult(running, {
 			exitCode: 0,
-			operatorClosed: false,
+			operatorClosed: false, closedByPerson: false,
 			stopped: false,
 			exitSignal,
 			contextUsage: {},

@@ -274,7 +274,6 @@ async function startInteractiveSubagent(
 		modelRef: prepared.effectiveModelRef,
 		launchMetadata: launch.launchMetadata,
 		rexPlacementPolicy: launch.launchMetadata.rexPlacementPolicy,
-		droppedExtensions: prepared.droppedExtensions,
 		doneSentinelFile,
 		zellijTarget: programSession?.target,
 		resultTarget: {

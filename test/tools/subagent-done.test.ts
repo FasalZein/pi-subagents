@@ -205,6 +205,8 @@ describe("subagent-done.ts", () => {
 							outputTokens: 23,
 							contextTokens: 145_000,
 							contextWindow: 200_000,
+							// T70: a pane shutdown the child did not request names a person.
+							...(testCase.surface ? { endedBy: "operator" } : {}),
 						},
 						testCase.name,
 					);

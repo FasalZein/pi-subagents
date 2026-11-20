@@ -177,7 +177,7 @@ async function startParent(plan: Record<string, ReturnType<typeof fauxToolCall>[
 			const sidecar = JSON.parse(readFileSync(getSubagentExitSidecarPath(childSessionFile), "utf8"));
 			const published = publishRunResult(running, {
 				exitCode: 0,
-				operatorClosed: false,
+				operatorClosed: false, closedByPerson: false,
 				stopped: false,
 				exitSignal: __pollForExitTest__.interpretExitSidecar(sidecar),
 				contextUsage: {},

@@ -67,7 +67,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 }
 
 function watchedEnd(overrides: Partial<WatchedEnd> = {}): WatchedEnd {
-	return { exitCode: 0, operatorClosed: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
+	return { exitCode: 0, operatorClosed: false, closedByPerson: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
 }
 
 /** The watcher's result for a published end, with the legacy exit facts the watchers still carry. */
@@ -261,20 +261,15 @@ describe("published text displays (B1 review)", () => {
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("shows the child's answer in a waiting resume reply with a dropped-extension notice", async () => {
+	it("shows the child's answer in a waiting resume reply", async () => {
 		const { running, result } = doneChild("resumed-worker");
-		const waited = await publishedWait(running, result)();
-		// resume-tool.ts: a waiting resume puts the dropped-extension lines in a block before the result.
-		const reply = {
-			...waited,
-			content: [{ type: "text", text: "dropped missing extension: gone.ts" }, ...waited.content],
-		};
+		const reply = await publishedWait(running, result)();
 		const shown = registeredTools()
 			.get(SUBAGENT_RESUME_TOOL_NAME)!
 			.renderResult(reply, { expanded: true }, theme, { args: {} })
 			.render(WIDTH)
 			.join("\n");
-		assertShowsMarkers(reply, shown, ["dropped missing extension: gone.ts", ANSWER]);
+		assertShowsMarkers(reply, shown, [ANSWER]);
 	});
 
 	it("shows each published answer and the ping question of a waiting multi-child launch", async () => {

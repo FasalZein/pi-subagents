@@ -4,9 +4,9 @@ import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
-import { assembleResult, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
+import { assembleResult, endedByOf, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
-import type { ResultRecord } from "./result-record.ts";
+import type { EndedBy, ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
 
 /** Where a watched run publishes its result: the store of its parent session and its reserved id. */
@@ -74,6 +74,11 @@ export interface WatchedEnd {
 	 * without a child error: a successful end when the child answered, a failure when it did not.
 	 */
 	operatorClosed: boolean;
+	/**
+	 * T70: the child's shutdown record says a person closed its pane (PollResult.closedByOperator). A
+	 * headless child never has one; operatorClosed above is a shell status, not this fact.
+	 */
+	closedByPerson: boolean;
 	/** D7: the parent asked this run to stop; it ends cancelled whatever the dying child wrote. */
 	stopped: boolean;
 	/** The hard budget the runtime killed the child on; unset when the child's own outcome beat it. */
@@ -128,6 +133,16 @@ export function keepCompletionOverWrapUp(running: RunningSubagent): void {
 
 /** D7: the reason a stopped run's record names. */
 export const STOPPED_REASON = "stopped by the parent";
+/** T70: the reason of a run the operator stopped from the overlay. */
+export const OPERATOR_STOPPED_REASON = "stopped by the operator";
+
+/** D7 and T70: the cancelled end of a stopped run, with the reason of whoever asked for the stop. */
+export function stoppedEnd(running: Pick<RunningSubagent, "stopRequestedBy">): RunEnd {
+	return {
+		kind: "cancelled",
+		reason: running.stopRequestedBy === "operator" ? OPERATOR_STOPPED_REASON : STOPPED_REASON,
+	};
+}
 
 /**
  * D7 and D12: one decision per watched end. A stop wins over everything; a ping, which asks the
@@ -136,7 +151,7 @@ export const STOPPED_REASON = "stopped by the parent";
  * fails with its exit code.
  */
 function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
-	if (end.stopped) return { kind: "cancelled", reason: STOPPED_REASON };
+	if (end.stopped) return stoppedEnd(running);
 	if (end.ping) return { kind: "pinged", message: end.ping.message, code: end.exitCode };
 	if (end.timedOut) {
 		return { kind: "timed_out", budget: end.timedOut.kind, seconds: end.timedOut.seconds, wrapUp: false };
@@ -174,6 +189,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		contextWarned: contextUsage.contextWarned === true,
 		// A nonzero operator close without an answer is a failure, not the child's own end.
 		failWithoutText: runEnd.kind === "exited" && end.exitCode !== 0,
+		closedByPerson: end.closedByPerson,
 	});
 }
 
@@ -182,8 +198,19 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
  * wrap-up that could not start, a watcher error): the same assembled record and rendering, as a
  * runtime-built SubagentResult with the published record's summary.
  */
-export function withRuntimeEnd(running: RunningSubagent, result: SubagentResult, end: RunEnd): SubagentResult {
-	const published = publishEnd(running, end, { contextWarned: false, failWithoutText: false });
+export function withRuntimeEnd(
+	running: RunningSubagent,
+	result: SubagentResult,
+	end: RunEnd,
+	/** T70: who ended the run when the end kind does not say it (a wrap-up that could not start). */
+	endedBy?: EndedBy,
+): SubagentResult {
+	const published = publishEnd(running, end, {
+		contextWarned: false,
+		failWithoutText: false,
+		closedByPerson: false,
+		endedBy,
+	});
 	if (!published) return result;
 	return {
 		...result,
@@ -199,6 +226,10 @@ interface PublishOptions {
 	contextWarned: boolean;
 	/** Publish a failed end instead when the run left no text (a nonzero operator close). */
 	failWithoutText: boolean;
+	/** T70: a person closed the pane (WatchedEnd.closedByPerson). */
+	closedByPerson: boolean;
+	/** T70: an ender the caller knows apart from the end kind. */
+	endedBy?: EndedBy;
 }
 
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
@@ -217,6 +248,9 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			startedAt: running.startTime,
 			endedAt: Date.now(),
 			end: runEnd,
+			endedBy:
+				options.endedBy ??
+				endedByOf(runEnd, { stoppedBy: running.stopRequestedBy, closedByPerson: options.closedByPerson }),
 			entries,
 			launchEntryCount,
 			nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
@@ -271,11 +305,12 @@ function resumeFact(running: RunningSubagent, end: RunEnd, contextWarned: boolea
 /** The SubagentResult fields that carry a published rendering to the message and wait paths. */
 export function publishedResultFields(
 	published: PublishedResult | undefined,
-): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile" | "resultOutcome"> {
+): Pick<SubagentResult, "resultText" | "resultRunId" | "reportFile" | "resultOutcome" | "resultEndedBy"> {
 	if (!published) return {};
 	return {
 		resultText: published.text,
 		resultOutcome: published.record.outcome,
+		resultEndedBy: published.record.endedBy,
 		resultRunId: published.record.runId,
 		...(published.record.report.saved ? { reportFile: published.record.report.path } : {}),
 	};
