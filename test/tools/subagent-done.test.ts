@@ -71,14 +71,30 @@ describe("subagent-done.ts", () => {
 	});
 
 	describe("shouldRegisterSubagentDone", () => {
-		// D12: every child that can end by itself has the tool; only a deny entry removes it.
+		// D12: an auto-exit pane or headless child has the tool; only a deny entry removes it.
+		const selfClosing = [
+			{ autoExit: true, pane: true },
+			{ autoExit: true, pane: false },
+			{ autoExit: false, pane: false },
+		];
 		it("respects explicit deny lists", () => {
-			assert.equal(shouldRegisterSubagentDone(["subagent_done"]), false);
+			for (const lifecycle of selfClosing)
+				assert.equal(shouldRegisterSubagentDone(["subagent_done"], lifecycle), false);
 		});
 
 		it("keeps subagent_done without a deny entry", () => {
-			assert.equal(shouldRegisterSubagentDone([]), true);
-			assert.equal(shouldRegisterSubagentDone(["bash"]), true);
+			for (const lifecycle of selfClosing) {
+				assert.equal(shouldRegisterSubagentDone([], lifecycle), true);
+				assert.equal(shouldRegisterSubagentDone(["bash"], lifecycle), true);
+			}
+		});
+
+		// T69 (v2.9.2 shouldRegisterSubagentDone: isInteractive returns false): only a person closes a manual pane.
+		it("never registers it for a manual pane child, with or without a deny entry", () => {
+			const manualPane = { autoExit: false, pane: true };
+			assert.equal(shouldRegisterSubagentDone([], manualPane), false);
+			assert.equal(shouldRegisterSubagentDone(["bash"], manualPane), false);
+			assert.equal(shouldRegisterSubagentDone(["subagent_done"], manualPane), false);
 		});
 	});
 

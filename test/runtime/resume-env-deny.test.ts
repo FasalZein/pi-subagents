@@ -582,3 +582,42 @@ describe("standalone sessions keep the agent's deny-env on resume (B3 g4)", () =
 		});
 	}
 });
+
+describe("a default-manual pane keeps its lifecycle on resume (T69)", () => {
+	// T69: an interactive agent without an auto-exit key launches as a manual pane; its resume must
+	// stay manual (PI_SUBAGENT_AUTO_EXIT empty), so the resumed child gets no subagent_done.
+	it("an interactive launch with no auto-exit key resumes with auto-exit off", async () => {
+		const fixture = standaloneFixture("interactive");
+		try {
+			const parentSession = join(fixture.dir, "parent.jsonl");
+			writePiHeader(parentSession, fixture.dir);
+			const launch = await coordinateSubagentLaunch(
+				{ name: "keeper-run", title: "Keeper", task: "Keep.", agent: "keeper" },
+				{
+					cwd: fixture.dir,
+					sessionManager: { getSessionFile: () => parentSession, getSessionId: () => "parent-session-id" },
+				},
+				{ mode: "interactive", undo: new LaunchUndo() },
+			);
+			assert.equal(launch.envVars.PI_SUBAGENT_AUTO_EXIT, "", "the launch runs as a manual pane");
+			const sessionFile = launch.prepared.subagentSessionFile;
+			if (!existsSync(sessionFile)) writePiHeader(sessionFile, fixture.dir);
+			const running = await resumeSubagentSession(
+				{
+					resultsDir: testResultsDir(),
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile,
+					task: "Resume probe.",
+					mode: "interactive",
+				},
+				resumeRuntime(),
+			);
+			assert.equal(running.autoExit, false);
+			const capsulePath = readFileSync(join(fixture.dir, "tmux.log"), "utf8").match(/run-child\.mjs' '([^']+)'/)?.[1];
+			assert.ok(capsulePath, "the resume command invokes the capsule launcher");
+			assert.equal(JSON.parse(readFileSync(capsulePath, "utf8")).overrides.PI_SUBAGENT_AUTO_EXIT, "");
+		} finally {
+			fixture.cleanup();
+		}
+	});
+});
