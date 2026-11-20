@@ -67,7 +67,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 }
 
 function watchedEnd(overrides: Partial<WatchedEnd> = {}): WatchedEnd {
-	return { exitCode: 0, operatorClosed: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
+	return { exitCode: 0, operatorClosed: false, closedByPerson: false, stopped: false, exitSignal: undefined, contextUsage: {}, ...overrides };
 }
 
 /** The watcher's result for a published end, with the legacy exit facts the watchers still carry. */

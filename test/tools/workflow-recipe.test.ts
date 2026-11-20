@@ -126,7 +126,7 @@ function endChild(running: RunningSubagent, how: ChildEnd): SubagentResult {
 	writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 	const published = publishRunResult(running, {
 		exitCode: 0,
-		operatorClosed: false,
+		operatorClosed: false, closedByPerson: false,
 		stopped: false,
 		exitSignal,
 		contextUsage: {},

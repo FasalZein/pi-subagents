@@ -15,6 +15,8 @@ export interface PollResult {
 	errorMessage?: string;
 	/** The completion call as the child's completion tool accepted it (RunFacts.acceptedCall, D12). */
 	acceptedCall?: { toolCallId: string; args: Record<string, unknown>; dataError?: string };
+	/** T70: the child's shutdown record says a person closed its pane (the child did not end itself). */
+	closedByOperator?: true;
 }
 
 /**
@@ -59,6 +61,11 @@ function withDefinedCompletionReason(obj: PollResult, reason: unknown): PollResu
 	return obj;
 }
 
+function withOperatorClose(obj: PollResult, endedBy: unknown): PollResult {
+	if (endedBy === "operator") obj.closedByOperator = true;
+	return obj;
+}
+
 /**
  * Interpret an `.exit` sidecar payload. Centralized so both
  * consumeSubagentExitSignal and pollForExit decode the same way.
@@ -69,12 +76,15 @@ function interpretExitSidecar(data: any): PollResult {
 	const contextTokens = typeof data.contextTokens === "number" ? data.contextTokens : undefined;
 	const contextWindow = typeof data.contextWindow === "number" ? data.contextWindow : undefined;
 	const withUsage = (result: PollResult) =>
-		withDefinedAcceptedCall(
-			withDefinedCompletionReason(
-				withDefinedContextUsage(withDefinedTokens(result, tokens), contextTokens, contextWindow),
-				data.completionReason,
+		withOperatorClose(
+			withDefinedAcceptedCall(
+				withDefinedCompletionReason(
+					withDefinedContextUsage(withDefinedTokens(result, tokens), contextTokens, contextWindow),
+					data.completionReason,
+				),
+				data.acceptedCall,
 			),
-			data.acceptedCall,
+			data.endedBy,
 		);
 	if (data.type === "ping") {
 		return withUsage({

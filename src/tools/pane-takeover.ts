@@ -50,6 +50,8 @@ interface PaneTakeoverDeps {
  */
 export function createPaneTakeover(deps: PaneTakeoverDeps) {
 	let tookOver = false;
+	// T70: set when this child's own code asked Pi to shut down; any other shutdown came from outside.
+	let childRequestedShutdown = false;
 	let unrecoveredError: ErrorExitPayload | null = null;
 	let stopKeyWatch: (() => void) | undefined;
 
@@ -76,6 +78,7 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 				return;
 			}
 			beforeShutdown?.();
+			childRequestedShutdown = true;
 			try {
 				ctx.shutdown();
 			} catch {
@@ -87,6 +90,15 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 	return {
 		get tookOver() {
 			return tookOver;
+		},
+		/** The child's own shutdown (completion, ping, untyped exit): marks the end as the child's (T70). */
+		requestShutdown(ctx: ShutdownContext) {
+			childRequestedShutdown = true;
+			requestShutdown(ctx);
+		},
+		/** T70: true once this child's own code asked Pi to shut down. */
+		get childRequestedShutdown() {
+			return childRequestedShutdown;
 		},
 		/** Returns true when this call started the takeover. */
 		markTakenOver(): boolean {
