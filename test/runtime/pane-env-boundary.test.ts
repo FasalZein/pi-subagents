@@ -161,7 +161,8 @@ const BACKENDS: BackendFake[] = [
 		mux: "rex",
 		bin: "rex",
 		script: FAKE_REX,
-		parentEnv: { REX_SESSION: FAKE_REX_SESSION, REX_BLOCK: FAKE_REX_PARENT },
+		// T71: the default is a new window; this boundary test keeps the split, whose block it derives.
+		parentEnv: { REX_SESSION: FAKE_REX_SESSION, REX_BLOCK: FAKE_REX_PARENT, PI_SUBAGENT_REX_PLACEMENT: "split" },
 		surfaceEnv: { REX_SESSION: FAKE_REX_SESSION, REX_BLOCK: FAKE_REX_FIRST_CHILD, REX_PROBE_PRIVATE: "shell-only" },
 		identity: ["REX_SESSION", "REX_BLOCK"],
 		extraMarkers: ["REX_PROBE_PRIVATE"],
