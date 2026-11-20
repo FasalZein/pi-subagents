@@ -84,7 +84,6 @@ describe("session id path containment", () => {
 				{ registerTool: (definition: any) => tools.set(definition.name, definition) } as any,
 				() => true,
 				{} as any,
-				{ mayLaunch: () => true },
 			);
 			const ctx = { cwd: dir, hasUI: false, sessionManager: { getSessionId: () => "../../outside" } };
 			const before = listTree(dir);

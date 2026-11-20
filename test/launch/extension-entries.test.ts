@@ -84,7 +84,6 @@ async function resumeSavedSession(
 				return { content: [{ type: "text", text: "completed" }], details: { status: "completed" } };
 			},
 		} as never,
-		{ mayLaunch: () => true },
 	);
 	const originalCommand = process.env.PI_SUBAGENT_PI_COMMAND;
 	const originalRoot = process.env.PI_ARTIFACT_PROJECT_ROOT;
