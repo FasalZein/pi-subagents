@@ -15,6 +15,12 @@ import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSy
 import { assistant, facts, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
 const DONE = SUBAGENT_DONE_TOOL_NAME;
+
+/** The rendered text (or summary) of a published result; fails the test when nothing was published. */
+function textOf(published: { text: string; summary: string } | undefined, field: "text" | "summary" = "text"): string {
+	assert.ok(published, "the run published a result");
+	return published[field];
+}
 const dirs: string[] = [];
 
 function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
@@ -73,7 +79,10 @@ describe("run records say who ended the run (T70)", () => {
 	it("child: a completion call, a ping, an untyped exit and a crash are the child's own end", () => {
 		const cases: Array<[object[], Partial<WatchedEnd>]> = [
 			[[user("task"), toolCall(DONE, DONE_ARGS, "d1", "Report."), toolResult(DONE, "d1", "ok")], {}],
-			[[user("task"), toolCall(CALLER_PING_TOOL_NAME, { message: "Need a key." }, "p1")], { ping: { message: "Need a key." } }],
+			[
+				[user("task"), toolCall(CALLER_PING_TOOL_NAME, { message: "Need a key." }, "p1")],
+				{ ping: { message: "Need a key." } },
+			],
 			[[user("task"), assistant("Untyped report.")], {}],
 			[[user("task"), assistant("Partial.")], { exitCode: 1 }],
 		];
@@ -81,7 +90,7 @@ describe("run records say who ended the run (T70)", () => {
 			const { running, store, reservation } = setup(entries);
 			const published = publishRunResult(running, watchedEnd(end));
 			assert.equal(store.read(reservation.runId)?.endedBy, "child");
-			assert.ok(!published!.text.includes("ended by"), "the common case adds no text");
+			assert.ok(!textOf(published).includes("ended by"), "the common case adds no text");
 		}
 	});
 
@@ -90,7 +99,7 @@ describe("run records say who ended the run (T70)", () => {
 		const closed = publishRunResult(answered.running, watchedEnd({ closedByPerson: true }));
 		assert.equal(closed?.record.outcome, "done");
 		assert.equal(closed?.record.endedBy, "operator");
-		assert.match(closed!.text.split("\n")[0], / · ended by operator$/);
+		assert.match(textOf(closed).split("\n")[0], / · ended by operator$/);
 
 		const silent = setup([user("task")], { mode: "interactive", autoExit: false });
 		const failed = publishRunResult(silent.running, watchedEnd({ exitCode: 130, operatorClosed: true }));
@@ -117,14 +126,17 @@ describe("run records say who ended the run (T70)", () => {
 		await stopRunningSubagent(byParent.running);
 		const parentEnd = publishRunResult(byParent.running, watchedEnd({ stopped: true }));
 		assert.equal(parentEnd?.record.endedBy, "parent");
-		assert.match(parentEnd!.text.split("\n")[0], / · ended by parent$/);
+		assert.match(textOf(parentEnd).split("\n")[0], / · ended by parent$/);
 	});
 
 	it("time_limit: a hard kill and a report-only wrap-up", () => {
 		const killed = setup([user("task"), assistant("Partial.")]);
-		const kill = publishRunResult(killed.running, watchedEnd({ exitCode: 1, timedOut: { kind: "timeout", seconds: 60 } }));
+		const kill = publishRunResult(
+			killed.running,
+			watchedEnd({ exitCode: 1, timedOut: { kind: "timeout", seconds: 60 } }),
+		);
 		assert.equal(kill?.record.endedBy, "time_limit");
-		assert.match(kill!.text.split("\n")[0], / · ended by time limit$/);
+		assert.match(textOf(kill).split("\n")[0], / · ended by time limit$/);
 		const wrapped = setup([user("task"), assistant("Wrap-up report.")], {
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
 			phase: "wrapping-up",
@@ -169,14 +181,14 @@ describe("run records say who ended the run (T70)", () => {
 	it("record readers carry it: the wait details and the record schema", () => {
 		const { running, store, reservation } = setup([user("task"), assistant("Notes.")]);
 		const published = publishRunResult(running, watchedEnd({ closedByPerson: true }));
-		const record = store.read(reservation.runId)!;
-		assert.ok(Value.Check(ResultRecordSchema, record));
+		const record = store.read(reservation.runId);
+		assert.ok(record && Value.Check(ResultRecordSchema, record));
 		const { endedBy: _dropped, ...legacy } = record;
 		assert.ok(Value.Check(ResultRecordSchema, legacy), "a record stored before T70 still reads");
 		const cached = {
 			id: running.id,
 			name: "worker",
-			summary: published!.summary,
+			summary: textOf(published, "summary"),
 			...publishedResultFields(published),
 		} as CompletedSubagentResult;
 		assert.equal(getSubagentWaitSuccessResult(cached).details.endedBy, "operator");
