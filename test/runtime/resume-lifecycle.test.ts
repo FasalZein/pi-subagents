@@ -1,3 +1,4 @@
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
@@ -18,7 +19,7 @@ import {
 } from "../../src/runtime/wiring.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import { writeSubagentLaunchMetadataEntry } from "../../src/session/session-files.ts";
-import { readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
+import { getSubagentTimeoutSidecarPath, readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -97,9 +98,8 @@ function realTools() {
 		runningSubagents,
 		getContextWindow: () => undefined,
 	};
-	const grant = { mayLaunch: () => true };
-	registerSubagentKillTool(pi as never, () => true, stopRunningSubagent, grant);
-	registerSubagentResumeTool(pi as never, () => true, runtime as never, grant);
+	registerSubagentKillTool(pi as never, () => true, stopRunningSubagent);
+	registerSubagentResumeTool(pi as never, () => true, runtime as never);
 	return {
 		resume: tools.get("subagent_resume") as Tool,
 		kill: tools.get("subagent_kill") as Tool,
@@ -173,10 +173,8 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(limitedRecord?.outcome, "timed_out");
 			assert.deepEqual(limitedRecord?.resume, { resumable: false, reason: TIME_LIMIT_RESUME_REASON });
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);
-			await assert.rejects(
-				() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx),
-				new RegExp(`Run ${limited.id} cannot be resumed: ${TIME_LIMIT_RESUME_REASON}`),
-			);
+			// The live verdict refuses by run id and by session file alike.
+			await assert.rejects(() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx), BLOCKED);
 			await assert.rejects(() => resume.execute("c", { sessionFile }, undefined, undefined, ctx), BLOCKED);
 
 			// 2. The operator override resumes it; subagent_kill stops it by run id. The record is
@@ -187,6 +185,16 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(record(stopped.id)?.outcome, "cancelled");
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);
 			await assert.rejects(() => resume.execute("c", { runId: stopped.id }, undefined, undefined, ctx), BLOCKED);
+			// 2b. Parity D14 (T74 review P1): with the sidecar lost after the cancelled override, the old
+			// time-limit record still refuses, because no later run ended done, partial or blocked.
+			const sidecarPath = getSubagentTimeoutSidecarPath(sessionFile);
+			const sidecar = readFileSync(sidecarPath, "utf8");
+			rmSync(sidecarPath);
+			await assert.rejects(
+				() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx),
+				new RegExp(`Run ${limited.id} cannot be resumed: ${TIME_LIMIT_RESUME_REASON}`),
+			);
+			writeFileSync(sidecarPath, sidecar);
 
 			// 3. The override again; the child answers. The done record removes the verdict.
 			setMode("answer");
@@ -195,6 +203,13 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(record(answered.id)?.outcome, "done");
 			assert.deepEqual(record(answered.id)?.resume, { resumable: true });
 			assert.equal(readSubagentTimeoutSidecar(sessionFile), null);
+
+			// 3b. D14 (parity decisions): the old time-limit record is history, not authority. After the
+			// operator's successful resume removed the verdict, its run id resumes the session.
+			const fromOldRecord = await toolResume({ runId: limited.id });
+			await settled(fromOldRecord);
+			assert.equal(record(fromOldRecord.id)?.outcome, "done");
+			assert.equal(record(fromOldRecord.id)?.sessionFile, sessionFile);
 
 			// 4. A retry by the new run id agrees with its record: the plain tool resumes it.
 			const retried = await toolResume({ runId: answered.id });

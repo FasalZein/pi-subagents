@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import { findRunningSubagent } from "../runtime/running-registry.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
 import type { RunningSubagent } from "../types.ts";
-import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_KILL_TOOL_NAME } from "./tool-names.ts";
 
 const SubagentKillParams = Type.Object({
@@ -16,8 +15,9 @@ export function registerSubagentKillTool(
 	pi: ExtensionAPI,
 	shouldRegister: (name: string) => boolean,
 	stopRunningSubagent: (running: RunningSubagent) => Promise<void>,
-	grant: ManagementToolGrant,
 ): void {
+	// D07: stop has its own grant. Only its deny-tools entry removes it; a session that may not
+	// launch keeps control of the children it already has.
 	if (!shouldRegister(SUBAGENT_KILL_TOOL_NAME)) return;
 	pi.registerTool({
 		name: SUBAGENT_KILL_TOOL_NAME,
@@ -25,7 +25,6 @@ export function registerSubagentKillTool(
 		description: "Stop a running subagent, pane or headless, by its run id or name.",
 		parameters: SubagentKillParams,
 		execute: async (_toolCallId, params) => {
-			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_KILL_TOOL_NAME));
 			const match = findRunningSubagent(params.id);
 			if (!match.running)
 				return asSubagentToolResult({

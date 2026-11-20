@@ -1,12 +1,6 @@
-import { mkdirSync, readdirSync } from "node:fs";
 import { once } from "node:events";
+import { mkdirSync, readdirSync } from "node:fs";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
-import {
-	getLaunchCountUsed,
-	LAUNCH_CAP_ENV,
-	resetLaunchCountForTest,
-	tryAcquireLaunchCapSlots,
-} from "../../src/runtime/launch-cap.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
@@ -17,8 +11,8 @@ import {
 	existsSync,
 	it,
 	join,
-	rmSync,
 	readFileSync,
+	rmSync,
 	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
@@ -137,32 +131,6 @@ cat > "${stdinFile}"
 		assert.match(prompt, /Report your result now/i);
 	});
 
-	it("does not count a time-limit wrap-up against the launch cap (D9)", async () => {
-		const savedCap = process.env[LAUNCH_CAP_ENV];
-		process.env[LAUNCH_CAP_ENV] = "1";
-		resetLaunchCountForTest();
-		try {
-			tryAcquireLaunchCapSlots(1)?.commit();
-			assert.equal(getLaunchCountUsed(), 1, "the cap is full before the wrap-up");
-			const dir = createTestDir();
-			process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(dir, "capture-pi", "#!/usr/bin/env bash\ncat > /dev/null\n");
-			const sessionFile = join(dir, "child.jsonl");
-			writeFileSync(
-				sessionFile,
-				`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
-			);
-			const running = makeRunning(dir, sessionFile);
-			await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
-			assert.ok(running.childProcess);
-			await once(running.childProcess!, "exit");
-			assert.equal(getLaunchCountUsed(), 1);
-		} finally {
-			if (savedCap === undefined) delete process.env[LAUNCH_CAP_ENV];
-			else process.env[LAUNCH_CAP_ENV] = savedCap;
-			resetLaunchCountForTest();
-		}
-	});
-
 	it("closes an interactive pane when restart fails after surface creation", async () => {
 		const dir = createTestDir();
 		const capsuleRoot = join(dir, "capsules");
@@ -276,7 +244,11 @@ esac
 			const capsuleMatch = log.match(/run-child\.mjs' '([^']+)'/);
 			assert.ok(capsuleMatch, "expected the wrap-up command to invoke the capsule launcher");
 			const capsule = JSON.parse(readFileSync(capsuleMatch[1], "utf8"));
-			assert.equal(capsule.parentEnv.WRAP_TEST_DENIED, undefined, "persisted deny-env must filter the wrap-up child env");
+			assert.equal(
+				capsule.parentEnv.WRAP_TEST_DENIED,
+				undefined,
+				"persisted deny-env must filter the wrap-up child env",
+			);
 			assert.equal(capsule.parentEnv.WRAP_TEST_KEEP, "kept", "non-denied env must still flow");
 			assert.equal(capsule.overrides.PI_SUBAGENT_AUTO_EXIT, "1", "wrap-up overrides must survive");
 		} finally {

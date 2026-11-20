@@ -147,7 +147,7 @@ function registeredTools(runtime: Partial<SubagentToolRuntime> = {}) {
 		getThinkingLevel: () => "low",
 	} as never;
 	registerSubagentCoreTools(pi, () => true, runtime as SubagentToolRuntime);
-	registerSubagentResumeTool(pi, () => true, {} as never, { mayLaunch: () => true });
+	registerSubagentResumeTool(pi, () => true, {} as never);
 	return tools;
 }
 

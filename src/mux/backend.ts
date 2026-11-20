@@ -76,8 +76,10 @@ export interface MuxBackendAdapter {
 	 * when the close is done; target is the session stored at a direct-program start.
 	 */
 	closeSurface(surface: string, target?: MuxSessionTarget): void | Promise<void>;
-	renameCurrentTab(title: string): void;
-	renameWorkspace(title: string): void;
+	/** Optional ability: rename the tab or pane of the caller. Absent means set_tab_title reports unavailable (D10). */
+	renameCurrentTab?(title: string): void;
+	/** Optional ability: rename the workspace or session of the caller. */
+	renameWorkspace?(title: string): void;
 	/**
 	 * True when a shell command line goes to the surface through a staged script file,
 	 * because the backend cannot take a long or multi-line command as typed input.

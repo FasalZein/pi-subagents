@@ -1,15 +1,19 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { runningSubagents } from "../../src/runtime/state.ts";
 import { buildResumeSpawnEnv } from "../../src/spawn/policy.ts";
+import type { RunningSubagent } from "../../src/types.ts";
 import {
 	afterEach,
 	assert,
 	createTestDir,
 	describe,
+	existsSync,
 	it,
 	join,
 	mkdirSync,
 	resetSubagentStateForTest,
 	subagentsExtension,
+	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
 
@@ -63,6 +67,8 @@ function createCapturingPi(loadout: readonly string[] = ["read", "bash"]) {
 			return [...registered.values()].map((tool) => ({ name: tool.name, exposure: tool.exposure ?? "direct" }));
 		},
 		getThinkingLevel: () => "off",
+		// A resumed child's steer-back delivers its result here.
+		sendMessage() {},
 		registerCommand(name: string) {
 			captured.commands.push(name);
 		},
@@ -179,6 +185,9 @@ describe("extension registration gating", () => {
 				"agent_settled",
 				"agent_start",
 				"before_agent_start",
+				// D06: the index fallback when another extension's whole prompt replaces the sections.
+				// D11: the old-Herdr settle rule reads the model context, as cf6dbf4 did.
+				"context",
 				"input",
 				"message_end",
 				"session_shutdown",
@@ -234,9 +243,11 @@ describe("extension registration gating", () => {
 		}
 	});
 
-	it("refuses the management tools at call time once launch is revoked after registration", async () => {
+	it("refuses only wait and agents at call time once launch is revoked; stop and resume keep their own grants", async () => {
 		// A deferred tool stays callable from a codemode script while it is not
-		// active, so each tool reads the launch grant when called, not when registered.
+		// active, so wait and agents read the launch grant when called. Stop and
+		// resume have their own grants, as in cf6dbf4 (D07): their execute never
+		// read the launch tool (`git show cf6dbf4:src/tools/subagent-tools.ts`).
 		const { registered, active, dir } = loadWithWorker();
 		const tool = (name: string): RegisteredTool => {
 			const found = registered.get(name);
@@ -245,35 +256,81 @@ describe("extension registration gating", () => {
 		};
 		const ctx = { cwd: dir, hasUI: false, sessionManager: { getSessionId: () => "gating" } };
 		const refusal = /This session may not launch agents/;
-		const callAll = () =>
-			Promise.all([
-				tool("subagent_resume")
-					.execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx)
-					.then(
-						(result: { content: { text: string }[] }) => result.content[0]?.text ?? "",
-						(error: Error) => error.message,
-					),
-				tool("subagent_kill")
-					.execute("call-2", { id: "worker" })
-					.then(
-						(result: { content: { text: string }[] }) => result.content[0]?.text ?? "",
-						(error: Error) => error.message,
-					),
-				tool("subagent_agents")
-					.execute("call-3", {}, undefined, undefined, ctx)
-					.then((result: { content: { text: string }[] }) => result.content[0]?.text ?? ""),
-				tool("subagent_wait")
-					.execute("call-4", {}, undefined, undefined, ctx)
-					.then(
-						(result: { content: { text: string }[] }) => result.content[0]?.text ?? "",
-						(error: Error) => error.message,
-					),
-			]);
-		for (const text of await callAll()) assert.doesNotMatch(text, refusal, "launch granted");
+		const settle = (call: Promise<{ content: { text: string }[] }>) =>
+			call.then(
+				(result) => result.content[0]?.text ?? "",
+				(error: Error) => error.message,
+			);
+		const callAll = async () => ({
+			resume: await settle(
+				tool("subagent_resume").execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx),
+			),
+			kill: await settle(tool("subagent_kill").execute("call-2", { id: "worker" })),
+			agents: await settle(tool("subagent_agents").execute("call-3", {}, undefined, undefined, ctx)),
+			wait: await settle(tool("subagent_wait").execute("call-4", {}, undefined, undefined, ctx)),
+		});
+		for (const text of Object.values(await callAll())) assert.doesNotMatch(text, refusal, "launch granted");
 		// The operator deactivates the launch tool after the management tools registered.
 		active.delete("subagent");
-		for (const text of await callAll()) assert.match(text, refusal, "launch revoked");
+		const revoked = await callAll();
+		assert.match(revoked.agents, refusal, "agents: launch revoked");
+		assert.match(revoked.wait, refusal, "wait: launch revoked");
+		assert.match(revoked.resume, /Session file not found/, "resume keeps its own grant");
+		assert.match(revoked.kill, /not found|No running subagent/i, "stop keeps its own grant");
+		assert.doesNotMatch(revoked.kill, refusal);
 		active.add("subagent");
-		for (const text of await callAll()) assert.doesNotMatch(text, refusal, "launch restored");
+		for (const text of Object.values(await callAll())) assert.doesNotMatch(text, refusal, "launch restored");
+	});
+
+	it("lets a caller that may stop but not launch stop an existing child (D07)", async () => {
+		// cf6dbf4 registered and ran subagent_kill without the launch tool; its reply was
+		// `Stopping subagent "<name>" (<id>).` (`git show cf6dbf4:src/tools/subagent-tools.ts`).
+		process.env.PI_DENY_TOOLS = "subagent";
+		const { registered, dir } = loadWithWorker();
+		assert.equal(registered.has("subagent"), false, "launch is denied");
+		const kill = registered.get("subagent_kill");
+		assert.ok(kill, "stop is registered");
+		const running: RunningSubagent = {
+			id: "stop-me-1",
+			name: "stop-me",
+			task: "Wait",
+			agent: "worker",
+			mode: "background",
+			phase: "running",
+			parentClosePolicy: "terminate",
+			async: true,
+			startTime: Date.now(),
+			sessionFile: join(dir, "stop-me.jsonl"),
+		};
+		runningSubagents.set(running.id, running);
+		const result = await kill.execute("call-kill", { id: running.id });
+		assert.equal(result.content[0]?.text, `Stopping subagent "stop-me" (stop-me-1).`);
+		assert.equal(running.phase, "stopping");
+	});
+
+	it("lets a caller that may resume but not launch resume a saved session (D07)", async () => {
+		// cf6dbf4's resume tool never read the launch tool; a saved session starts its child again.
+		process.env.PI_DENY_TOOLS = "subagent";
+		const { registered, dir } = loadWithWorker();
+		assert.equal(registered.has("subagent"), false, "launch is denied");
+		const resume = registered.get("subagent_resume");
+		assert.ok(resume, "resume is registered");
+		const marker = join(dir, "child-started");
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(dir, "marker-pi", `#!/usr/bin/env bash\ntouch '${marker}'\n`);
+		process.env.PI_ARTIFACT_PROJECT_ROOT = dir;
+		const sessionFile = join(dir, "saved.jsonl");
+		const header = { type: "session", version: 3, id: "saved", timestamp: new Date().toISOString(), cwd: dir };
+		writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
+		const ctx = { cwd: dir, hasUI: true, sessionManager: { getSessionId: () => "gating" } };
+		const reply = await resume.execute(
+			"call-resume",
+			{ sessionFile, agent: "worker", mode: "background" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(reply.details?.status, "started", JSON.stringify(reply.content));
+		await runningSubagents.get(reply.details.id)?.completionPromise;
+		assert.equal(existsSync(marker), true, "the resumed child process ran");
 	});
 });

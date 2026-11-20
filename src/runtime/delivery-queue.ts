@@ -225,14 +225,17 @@ class DeliveryQueue {
 		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
 	}
 
-	/** A committed message delivers every run end it carries, grouped or single; each lease ends once (D30). */
+	/**
+	 * A committed message delivers every run end it carries, grouped or single; each lease ends once (D30),
+	 * or after the parent read it and settled idle under the old-Herdr rule (D11).
+	 */
 	private commitIds(ids: readonly string[]): void {
 		for (const id of ids) {
 			this.pending.delete(id);
 			this.held.delete(id);
 			this.inFlight.delete(id);
 		}
-		if (ids.length > 0) outstandingWork.release(...ids);
+		if (ids.length > 0) outstandingWork.committed(...ids);
 	}
 
 	/** A wait reply carried this run end to its caller: no boundary hands it over again. */

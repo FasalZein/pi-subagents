@@ -16,6 +16,7 @@ import {
 	writeFileSync,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
+import { upstreamUnknownAgentError } from "../support/upstream-wording.ts";
 
 type AgentsTool = {
 	execute(
@@ -275,16 +276,18 @@ describe("subagent_agents tool", () => {
 		process.env.PI_SUBAGENT_SPAWNABLE = "helper,broken-allowed";
 		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
 		const call = loadAgentsTool(cwd);
-		const hidden = /secret\b|secrets\b|broken-secret|coordinator/;
 
 		const count = await call({});
 		assert.match(count, /^2 agents that you may launch \(1 malformed\)\. /);
 
+		// D06: the cf6dbf4 unknown-agent error, without substitute names; a hidden
+		// agent gets the same reply as a name with no file.
+		const configDir = process.env.PI_CODING_AGENT_DIR ?? "";
 		const byName = await call({ name: "secret" });
-		assert.match(byName, /^No agent of that name that you may launch\. Closest: /);
-		assert.doesNotMatch(byName, hidden);
+		assert.equal(byName, upstreamUnknownAgentError("secret", configDir));
 		const typo = await call({ name: "secrat" });
-		assert.equal(typo, "No agent of that name that you may launch. Closest: helper, broken-allowed.");
+		assert.equal(typo, upstreamUnknownAgentError("secrat", configDir));
+		assert.doesNotMatch(typo, /helper|broken-allowed/);
 		assert.doesNotMatch(await call({ name: "broken-secret" }), /malformed|timeout/);
 
 		const query = await call({ query: "secret broken" });
@@ -339,9 +342,9 @@ describe("subagent_agents tool", () => {
 		const call = loadAgentsTool(cwd);
 		const hidden = /root-only|unreadable|open-root/;
 		assert.match(await call({}), /^2 agents that you may launch \(1 malformed\)\. /);
-		assert.doesNotMatch(await call({ name: "root-only" }), hidden);
-		assert.doesNotMatch(await call({ name: "unreadable" }), hidden);
-		assert.doesNotMatch(await call({ name: "root-onyl" }), hidden);
+		// A hidden file gets the reply of a name with no file (D06 wording).
+		for (const name of ["root-only", "unreadable", "root-onyl"])
+			assert.equal(await call({ name }), upstreamUnknownAgentError(name, process.env.PI_CODING_AGENT_DIR ?? ""));
 		assert.doesNotMatch(await call({ query: "root only unreadable granted worker" }), hidden);
 		assert.match(await call({ name: "granted" }), /^Agent 'granted' is malformed in .*granted\.md: .*timeout/);
 		// Launch and resume check the grant before they name the file or its parse error (review b1 g3).
@@ -390,7 +393,10 @@ describe("subagent_agents tool", () => {
 		assert.match(await call({}), /^1 agents that you may launch\. /);
 		assert.match(await call({ name: "scout" }), /^scout \(global\): $/m);
 		assert.equal(await call({ query: "scout" }), "- scout: ");
-		assert.equal(await call({ name: "scuot" }), "No agent of that name that you may launch. Closest: scout.");
+		assert.equal(
+			await call({ name: "scuot" }),
+			upstreamUnknownAgentError("scuot", process.env.PI_CODING_AGENT_DIR ?? ""),
+		);
 	});
 
 	it("shows the models the launch resolver accepts (review 5)", async () => {
