@@ -5,7 +5,6 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { getSubagentTerminalStopReason } from "../session/session.ts";
 import type { CompletedSubagentResult, RunningSubagent, SubagentCompletionStatus, SubagentResult } from "../types.ts";
 import { releaseSpawnWidthSlot, resetSpawnWidthForTest } from "./spawn-width.ts";
-import { resetLaunchCountForTest } from "./launch-cap.ts";
 import { SubagentWidgetManager } from "./widget.ts";
 
 export const runningSubagents = outstandingWork.running;
@@ -168,7 +167,6 @@ export function resetRuntimeStateForTest(resetAmbient: () => void): void {
 	resetRunEndHolds();
 	completedSubagentResults.clear();
 	resetSpawnWidthForTest();
-	resetLaunchCountForTest();
 	resetSubagentBatchStopRequest();
 	widgetManager.reset();
 }

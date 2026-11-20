@@ -62,7 +62,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
-The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`.
+The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`. In Rex, `set_tab_title` also reports that the multiplexer is not available: Rex has no tab or workspace title that it can set.
 
 Normal launches use a backend-specific surface:
 
@@ -71,7 +71,7 @@ Normal launches use a backend-specific surface:
 - The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
 - Other backends may use windows, splits, or stacked panes.
 
-In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it.
+In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it. Old Herdr keeps its pane metadata count, where a delivered result counts until the parent has read it and settled idle.
 
 ### Removed: orchestrator mode and ambient awareness
 
@@ -500,7 +500,7 @@ An agent without a `description` is not in the index, and it stays launchable. A
 
 ### Find the management tools
 
-`subagent` is declared in every session that may launch. When codemode or tool search is active at the first prompt, Pi registers `subagent_wait`, `subagent_resume`, `subagent_kill`, and `subagent_agents` as deferred: they are not in the active tool list until tool search loads them, and a codemode script calls them as `tools.subagent_wait` and so on. Without codemode and tool search, Pi declares them directly.
+`subagent` is declared in every session that may launch. When codemode or tool search is active at the first prompt, Pi registers `subagent_wait`, `subagent_resume`, `subagent_kill`, and `subagent_agents` as deferred: they are not in the active tool list until tool search loads them, and a codemode script calls them as `tools.subagent_wait` and so on. Without codemode and tool search, Pi declares them directly. `subagent_wait` and `subagent_agents` refuse a call when the session may not launch. `subagent_resume` and `subagent_kill` do not: a session that may not launch can still resume and stop children, and only their own `deny-tools` entry removes them.
 
 ### Look up an agent with `subagent_agents`
 
@@ -516,7 +516,7 @@ A call with both `name` and `query` is refused. A malformed agent file is named 
 
 ### One malformed agent file
 
-Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file.
+Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file. When a valid definition of the same name shadows a malformed file, the notice lists that file apart and does not call the agent refused: the valid definition takes its place, under its own launch rules.
 
 ## Launching and waiting
 
@@ -557,9 +557,9 @@ Without `model`, the child runs on the default model of its agent. With `model`,
 
 A refusal names at most 8 matching candidates, grouped by provider, and points to `subagent_agents` with the agent name. An agent with `allow-model-override: false` ignores `model` and says so in the launch reply. `subagent_resume` applies the same rules to its `model`. The launch reply names the model ref that runs.
 
-### Launch cap
+### Launch admission
 
-A parent starts at most 64 runs between two session starts. `PI_SUBAGENT_LAUNCH_CAP` changes the number. The count starts at 0 when Pi starts or replaces the session (new, resume, fork). A `/reload` keeps the count. Each child of a `children` list counts once, a verified fan-out counts each candidate, a resume counts, and a time-limit wrap-up does not count. A launch over the cap starts nothing and returns an error result with the count and the cap. A launch that the spawn width refuses also returns an error result. In a codemode script, both refusals reject the `tools.subagent` call.
+Only the spawn width limits launches. It counts the runs that run at the same time, not the runs that a session started before. A launch that the spawn width refuses starts nothing and returns an error result. In a codemode script, the refusal rejects the `tools.subagent` call.
 
 ### The result of a run
 
@@ -637,7 +637,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width or the launch cap refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent or a bad `schema`, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -907,7 +907,7 @@ Use `caller_ping` when the child needs the parent. The child sends a message up,
 
 ## Resuming child sessions
 
-`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record says it is not resumable, such as a run without a session, is refused with the reason from that record. `subagent_kill` stops a running child by its run id or its name.
+`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name.
 
 Only one resume of a session runs at a time in one Pi process: a second resume of the same session is refused, also when both start together. Two Pi processes that resume one session at the same moment are not covered.
 
@@ -1183,7 +1183,6 @@ User-facing knobs:
 | --- | --- |
 | `PI_SUBAGENT_PI_COMMAND` | Launch children through a wrapper command |
 | `PI_SUBAGENT_MUX` | Force `herdr-core`, `rex`, `herdr`, `cmux`, `tmux`, `zellij`, or `wezterm` |
-| `PI_SUBAGENT_LAUNCH_CAP` | Change the number of runs a parent may start between two session starts (default: 64). See [Launch cap](#launch-cap) |
 | `PI_CODING_AGENT_DIR` | Use a different Pi agent config root |
 | `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN` | Set `1` to let the parent keep running after async launches |
 | `PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY` | Set `1` for raw forks with no boundary marker |

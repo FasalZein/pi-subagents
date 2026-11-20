@@ -99,7 +99,6 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 		pi as never,
 		() => true,
 		(r: RunningSubagent) => stopRunningSubagent(r, async () => {}),
-		{ mayLaunch: () => true },
 	);
 	wireSubagentSteerBack(pi as never, running, watch, () => {});
 	try {

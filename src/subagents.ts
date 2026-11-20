@@ -98,7 +98,6 @@ import { isToolCallable } from "./tools/policy.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
 import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
-import { resetLaunchCountForSessionStart } from "./runtime/launch-cap.ts";
 
 export { classifyAssistantMessageForMixedBatch as classifyAssistantMessageForMixedBatchForTest } from "./runtime/batch-classifier.ts";
 export { shouldAwaitSubagentLaunch as shouldAwaitSubagentLaunchForTest } from "./runtime/running-registry.ts";
@@ -203,9 +202,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const managementToolExposure = createManagementToolExposure(pi);
 
 	// Capture the UI context early so the widget keeps a stable slot above tasks.
-	pi.on("session_start", (event, ctx) => {
+	pi.on("session_start", (_event, ctx) => {
 		initializeSpawnWidthForSession();
-		resetLaunchCountForSessionStart(event.reason);
 		void workReporting.start(ctx);
 		latestContext = ctx;
 		resetSubagentBatchStopRequest();
@@ -217,7 +215,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		// Pi has no print-mode notice channel and its fallback notify is a no-op.
 		// The launch refusal still names the file and its error. Revisit if Pi
 		// adds a print-mode notice channel.
-		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd).malformedFiles);
+		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd));
 		const noticeSession = ctx.sessionManager.getSessionId?.() ?? "";
 		const globalState = globalThis as Record<PropertyKey, unknown>;
 		if (malformedNotice && globalState[MALFORMED_AGENT_NOTICE_SESSION_KEY] !== noticeSession) {
@@ -395,7 +393,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// defers them when codemode or tool search is active.
 	const grant = { mayLaunch };
 	const managementTools = managementToolExposure.recordingApi;
-	registerSubagentKillTool(managementTools, shouldRegister, stopRunningSubagent, grant);
+	registerSubagentKillTool(managementTools, shouldRegister, stopRunningSubagent);
 	registerSubagentWaitTool(managementTools, shouldRegister, grant);
 	registerSubagentResumeTool(
 		managementTools,
@@ -415,7 +413,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				getAvailable: () => latestContext?.modelRegistry.getAvailable() ?? [],
 			},
 		},
-		grant,
 	);
 
 	registerSubagentAgentsTool(

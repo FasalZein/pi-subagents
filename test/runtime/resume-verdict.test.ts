@@ -100,7 +100,6 @@ function resumeTool(runtime: ReturnType<typeof createRuntime>) {
 		{ registerTool: (definition: never) => (tool = definition) } as never,
 		() => true,
 		runtime as never,
-		{ mayLaunch: () => true },
 	);
 	return tool!;
 }
@@ -245,7 +244,6 @@ describe("resume by run id (D8)", () => {
 			async (running) => {
 				stopped.push(running.id);
 			},
-			{ mayLaunch: () => true },
 		);
 		const running = { id: "bbbb0001", name: "worker" } as RunningSubagent;
 		runningSubagents.set(running.id, running);

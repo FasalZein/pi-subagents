@@ -5,6 +5,11 @@ import { runEndIds } from "./run-end-message.ts";
 
 /** Optional transport for session-scoped delegated-work facts, never native agent status. */
 export interface WorkReporter {
+	/**
+	 * True for old Herdr: a report counts until the parent read it and settled idle, as in cf6dbf4 (D11).
+	 * Absent: a report counts until its result is delivered (D30).
+	 */
+	readonly releaseAfterSettle?: true;
 	publish(count: number): Promise<void>;
 	stop(): Promise<void>;
 }
@@ -38,17 +43,29 @@ export function registerOutstandingWorkReporting(
 
 	pi.on("tool_result", async () => { await flush(); });
 	// D30: a run counts until the message that carries its result is committed, single or grouped.
-	pi.on("message_end", (event) => { if (!stopped) outstandingWork.release(...runEndIds(event.message)); });
-	pi.on("agent_settled", async () => { await flush(); });
+	// D11: under the old-Herdr settle rule a commit releases nothing; reading it and an idle settle do.
+	pi.on("message_end", (event) => {
+		if (!stopped) outstandingWork.committed(...runEndIds(event.message));
+	});
+	pi.on("context", (event) => {
+		if (!stopped && outstandingWork.tracksReads) outstandingWork.consume(event.messages.flatMap(runEndIds));
+	});
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!stopped && ctx.isIdle()) outstandingWork.settle();
+		await flush();
+	});
 
 	return {
 		start(ctx: ExtensionContext): Promise<void> {
 			stopped = false;
+			// D11: commits and reads during the probe are kept until the reporter's release rule is known.
+			outstandingWork.beginStartup();
 			unsubscribe = outstandingWork.subscribe(() => { void publish(); });
 			ready = connect(ctx).then(async (connected) => {
 				if (stopped) { await connected?.stop(); return; }
 				reporter = connected;
 				if (!reporter) { unsubscribe?.(); outstandingWork.reset(); return; }
+				outstandingWork.useSettleRule(reporter.releaseAfterSettle === true);
 				await publish();
 			}).catch(() => { unsubscribe?.(); outstandingWork.reset(); });
 			return ready;

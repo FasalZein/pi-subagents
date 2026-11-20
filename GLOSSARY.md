@@ -95,9 +95,6 @@ _Avoid_: workflow, pipeline, orchestration script
 **Digest**:
 The text that a workflow script returns to the parent.
 
-**Launch cap**:
-The largest number of runs a parent may start between two session starts.
-
 ### Finding agents
 
 **Index**:

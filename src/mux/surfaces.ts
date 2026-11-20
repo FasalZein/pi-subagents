@@ -14,9 +14,9 @@ export function createSurfaceSplit(name: string, direction: SurfaceSplitDirectio
 }
 
 export function renameCurrentTab(title: string): void {
-	muxBackendAdapter(requireMuxBackend()).renameCurrentTab(title);
+	muxBackendAdapter(requireMuxBackend()).renameCurrentTab?.(title);
 }
 
 export function renameWorkspace(title: string): void {
-	muxBackendAdapter(requireMuxBackend()).renameWorkspace(title);
+	muxBackendAdapter(requireMuxBackend()).renameWorkspace?.(title);
 }

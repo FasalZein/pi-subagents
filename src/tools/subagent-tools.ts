@@ -13,7 +13,6 @@ import {
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
-import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import {
@@ -103,17 +102,13 @@ function getUnknownAgentError(agent: string, launchable: () => LaunchableAgent[]
 	return `Error: ${renderUnknownAgentRefusal(agent, launchable().map(nameOf))}`;
 }
 
-/** A refusal before any child starts: an error result, so a codemode script call rejects. */
-function getRefusal(text: string, error: "spawn_width" | "launch_cap"): ToolResult {
+/** A spawn width refusal before any child starts: an error result, so a codemode script call rejects. */
+function getSpawnWidthError(text: string): ToolResult {
 	return asSubagentToolResult({
 		content: [{ type: "text" as const, text }],
-		details: { error },
+		details: { error: "spawn_width" },
 		isError: true,
 	});
-}
-
-function getSpawnWidthError(text: string): ToolResult {
-	return getRefusal(text, "spawn_width");
 }
 
 function getBatchWidthValidationError(count: number, limit: number): ToolResult {
@@ -393,14 +388,8 @@ export function registerSubagentCoreTools(
 						: 1,
 				);
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
-				// D9: the launch cap counts the same units, taken before any side effect.
-				const unlaunchedCapSlots = tryAcquireLaunchCapSlots(totalSlots);
-				if (!unlaunchedCapSlots) {
-					return getRefusal(getLaunchCapError(totalSlots), "launch_cap");
-				}
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
 				if (!unlaunchedSlots) {
-					unlaunchedCapSlots.release();
 					return getSpawnWidthLimitError(widthLimit);
 				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
@@ -415,7 +404,6 @@ export function registerSubagentCoreTools(
 						const entry = prepared[index];
 						// A failed child gives back its own share; the outer catch, the rest.
 						const childSlots = unlaunchedSlots.split(slotCosts[index]);
-						const childCapSlots = unlaunchedCapSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
 							const { agentDefs, warning, dataSchema } = entry;
@@ -425,7 +413,6 @@ export function registerSubagentCoreTools(
 							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();
-							childCapSlots.release();
 							if (launched.length === 0) throw error;
 							// D16: a later child failed; the started children keep running and are named.
 							failed = {
@@ -436,19 +423,16 @@ export function registerSubagentCoreTools(
 							};
 							break;
 						}
-						childCapSlots.commit();
 						launched.push(running);
 						runtime.wireSubagentSteerBack(pi, running, running.completionPromise!);
 					}
 				} catch (error) {
 					unlaunchedSlots.release();
-					unlaunchedCapSlots.release();
 					throw error;
 				}
 				runtime.startWidgetRefresh();
 				if (failed) {
 					unlaunchedSlots.release();
-					unlaunchedCapSlots.release();
 					const started = launched.map((running, index) =>
 						launchedChildData(running, prepared[index].child.agent, false),
 					);
