@@ -182,7 +182,7 @@ export async function getLaunchedSubagentResult(
 	if (!parentShouldWait) return getStartedSubagentResult(running);
 	const waited = (await runtime.waitForSubagentResult({ id: running.id }, signal)) as { details?: { error?: string } };
 	// D04a: as v2.9.2 (cf6dbf4), Esc during the wait of a launch or resume stops the child. subagent_wait
-	// keeps its own Esc, which stops only the wait.
+	// keeps its own Esc, which stops only the wait. T81: the runtime records this stop as the operator's.
 	if (waited.details?.error === "interrupted" && runningSubagents.get(running.id) === running) {
 		await runtime.stopRunningSubagent(running);
 	}

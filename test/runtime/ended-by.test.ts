@@ -10,10 +10,22 @@ import { getSubagentWaitSuccessResult } from "../../src/runtime/wait-result.ts";
 import { stopRunningSubagent } from "../../src/runtime/wiring.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
 import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../../src/tools/completion-call.ts";
+import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../../src/tools/written-files.ts";
 import type { CompletedSubagentResult, RunningSubagent } from "../../src/types.ts";
-import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
+import {
+	afterEach,
+	assert,
+	createSessionFile,
+	createTestDir,
+	describe,
+	getLaunchedSubagentResultForTest,
+	it,
+	resetSubagentStateForTest,
+	rmSync,
+	setRunningSubagentForTest,
+} from "../support/index.ts";
 import { assistant, facts, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
 const DONE = SUBAGENT_DONE_TOOL_NAME;
@@ -74,6 +86,7 @@ const DONE_ARGS = { outcome: "done", summary: "All work finished.", artifacts: [
 const header = { type: "session", id: "h", cwd: "/work/child" };
 
 afterEach(() => {
+	resetSubagentStateForTest();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -144,6 +157,36 @@ describe("run records say who ended the run (T70)", () => {
 		assert.equal(parentEnd?.record.endedBy, "parent");
 		assert.match(textOf(parentEnd).split("\n")[0], / · ended by parent$/);
 		assert.match(textOf(parentEnd), /cancelled: stopped by the parent/);
+	});
+
+	// T81: expected values from the owner's statecharts answer (2026-11-20): a person pressed Esc, so
+	// the record names the operator. subagent_launch and subagent_resume both wait through
+	// getLaunchedSubagentResult with the tool call's abort signal.
+	it("operator: Esc on a waiting launch or resume; parent: subagent_kill", async () => {
+		const escaped = setup([user("task")], { blocking: true, async: undefined });
+		escaped.running.completionPromise = new Promise(() => {});
+		setRunningSubagentForTest(escaped.running);
+		const esc = new AbortController();
+		esc.abort();
+		const waited = await getLaunchedSubagentResultForTest(escaped.running, esc.signal);
+		assert.equal((waited.details as { error?: string }).error, "interrupted");
+		const escEnd = publishRunResult(escaped.running, watchedEnd({ stopped: true }));
+		assert.equal(escEnd?.record.outcome, "cancelled");
+		assert.equal(escEnd?.record.endedBy, "operator");
+		assert.match(textOf(escEnd), /cancelled: stopped by the operator/);
+
+		const killed = setup([user("task")]);
+		setRunningSubagentForTest(killed.running);
+		let killTool: { execute: (id: string, params: { id: string }) => Promise<unknown> } | undefined;
+		const pi = { registerTool: (tool: typeof killTool) => (killTool = tool) } as unknown as Parameters<
+			typeof registerSubagentKillTool
+		>[0];
+		registerSubagentKillTool(pi, () => true, stopRunningSubagent);
+		assert.ok(killTool, "subagent_kill is registered");
+		await killTool.execute("kill-1", { id: killed.running.id });
+		const killEnd = publishRunResult(killed.running, watchedEnd({ stopped: true }));
+		assert.equal(killEnd?.record.endedBy, "parent");
+		assert.match(textOf(killEnd), /cancelled: stopped by the parent/);
 	});
 
 	it("time_limit: a hard kill and a report-only wrap-up", () => {

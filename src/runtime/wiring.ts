@@ -151,7 +151,8 @@ export async function getLaunchedSubagentResult(running: RunningSubagent, signal
 		{
 			updateWidget,
 			waitForSubagentResult,
-			stopRunningSubagent: (child) => stopRunningSubagent(child),
+			// T81: only Esc on the wait of a launch or resume reaches this stop, and a person pressed Esc.
+			stopRunningSubagent: (child) => stopRunningSubagent(child, { operator: true }),
 			asSubagentToolResult,
 		},
 		signal,
