@@ -114,6 +114,10 @@ describe("one message per turn boundary (T22, D15, D30)", () => {
 			const details = message?.details as Record<string, unknown> | undefined;
 			assert.equal(details?.id, runId);
 			assert.equal(details?.outcome, "failed");
+			// T70: the message names the ender of the saved record.
+			const saved = parent.store.read(runId);
+			assert.ok(saved?.endedBy, "the saved record names its ender");
+			assert.equal(details?.endedBy, saved?.endedBy);
 			assert.match(String(details?.sessionFile), /child\.jsonl$/);
 			const renderers = new Map<string, (...args: any[]) => any>();
 			registerSubagentMessageRenderers(
