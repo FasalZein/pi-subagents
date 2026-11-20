@@ -362,7 +362,7 @@ The block-resume verdict stays until the resumed run ends. The published outcome
 With the default value, the parent receives a result such as this:
 
 ```text
-auth-scout · scout · done · 3.0s · typed
+auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
 report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 run: <run>
@@ -383,7 +383,7 @@ report-context-usage: false
 The parent then receives this result:
 
 ```text
-auth-scout · scout · done · 3.0s · typed
+auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
 report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 run: <run>
@@ -569,7 +569,7 @@ The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, 
 The rendering has a header line, the summary, and a footer:
 
 ```text
-auth-scout · scout · done · 3.0s · typed
+auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
 report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 run: <run>
@@ -874,7 +874,7 @@ Once the operator interrupts (Escape) or sends input to the child, auto-exit is 
 
 ### `subagent_done`
 
-`subagent_done` closes a headless child whose agent has `auto-exit` off. It has no parameters. The last assistant message before the call is the result, so the child writes its final report first and then makes the call. The result is untyped.
+`subagent_done` closes a headless child that runs without auto-exit. Ordinary background launches and headless resumes force auto-exit, also when the agent says `auto-exit: false`, so those children do not have it. It has no parameters. The last assistant message before the call is the result, so the child writes its final report first and then makes the call. The result is untyped.
 
 An auto-exit child, in a pane or headless, has no `subagent_done`: it exits after its answer and any pending work, and its result is untyped and built from its last message. A pane child with `auto-exit` off never has it, also after a resume: only a person closes its pane, and its result is untyped. Its brief tells it to stay in the pane and not to exit. An agent that lists `subagent_done` in `deny-tools` never has it.
 

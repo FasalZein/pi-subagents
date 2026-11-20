@@ -104,6 +104,11 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
+			// T72 review: a blank message would reach the parent as no report at all; it does not use up
+			// the one ping (no length limit, as in cf6dbf4).
+			if (typeof params.message !== "string" || params.message.trim() === "") {
+				throw new Error("caller_ping needs a message: say what you need from the launching chat.");
+			}
 			state.count += 1;
 			// The count is attempts, not deliveries: a first ping refused
 			// because a done/error outcome already owns this child still

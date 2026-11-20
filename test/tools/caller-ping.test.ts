@@ -120,11 +120,11 @@ describe("caller_ping loop guard", () => {
 		const { sessionFile, restore } = setupLoopGuardSession();
 		try {
 			writeFileSync(sessionFile + ".exit", JSON.stringify({ type: "done", outputTokens: 9 }));
-			// C38: a ping that lost the exit record fails, with the cf6dbf4 text.
-			await assert.rejects(
-				pingTool.execute("t1", { message: "tri-state" }, undefined, undefined, { shutdown() {} }),
-				/already recorded/,
-			);
+			// C38: a ping that lost the exit record is a terminating error result, with the cf6dbf4 text.
+			const refused = await pingTool.execute("t1", { message: "tri-state" }, undefined, undefined, { shutdown() {} });
+			assert.equal(refused.isError, true);
+			assert.equal(refused.terminate, true);
+			assert.match(String(refused.content?.[0]?.text ?? ""), /already recorded/);
 			await assert.rejects(
 				pingTool.execute("t2", { message: "tri-state" }, undefined, undefined, { shutdown() {} }),
 				/caller_ping/,
@@ -167,10 +167,11 @@ describe("caller_ping loop guard", () => {
 		const { sessionFile, restore } = setupLoopGuardSession();
 		try {
 			writeFileSync(sessionFile + ".exit", JSON.stringify({ type: "done", outputTokens: 3 }));
-			await assert.rejects(
-				pingTool.execute("t1", { message: "placeholder" }, undefined, undefined, { shutdown() {} }),
-				(error: Error) => /already recorded/.test(error.message) && !/Ping sent/.test(error.message),
-			);
+			const result = await pingTool.execute("t1", { message: "placeholder" }, undefined, undefined, { shutdown() {} });
+			const text = String(result.content?.[0]?.text ?? "");
+			assert.equal(result.isError, true);
+			assert.match(text, /already recorded/);
+			assert.doesNotMatch(text, /Ping sent/);
 			assert.equal(JSON.parse(readFileSync(sessionFile + ".exit", "utf8")).type, "done");
 			mock.timers.tick(751);
 			// The done sidecar is durable, so the backstop must still enforce
@@ -181,6 +182,25 @@ describe("caller_ping loop guard", () => {
 				pingTool.execute("t2", { message: "placeholder" }, undefined, undefined, { shutdown() {} }),
 				/caller_ping/,
 			);
+		} finally {
+			exitMock.mock.restore();
+			mock.timers.reset();
+			restore();
+		}
+	});
+
+	it("a blank message is refused and does not use up the ping (T72 review)", async () => {
+		mock.timers.enable({ apis: ["setTimeout"] });
+		const exitMock = mock.method(process, "exit", (() => {}) as never);
+		const { pingTool } = registerPingToolForLoopGuard();
+		const { sessionFile, restore } = setupLoopGuardSession();
+		try {
+			await assert.rejects(
+				pingTool.execute("t1", { message: "  \n" }, undefined, undefined, { shutdown() {} }),
+				/needs a message/,
+			);
+			await pingTool.execute("t2", { message: "real question" }, undefined, undefined, { shutdown() {} });
+			assert.equal(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")).message, "real question");
 		} finally {
 			exitMock.mock.restore();
 			mock.timers.reset();

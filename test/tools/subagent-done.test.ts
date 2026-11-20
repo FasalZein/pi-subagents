@@ -666,7 +666,8 @@ describe("subagent-done.ts", () => {
 					},
 				);
 				let shutdowns = 0;
-				// cf6dbf4: the zero-argument call writes a plain done record.
+				// cf6dbf4: the zero-argument call writes a done record; T72 review: its executed (empty)
+				// arguments go with it, so legacy fields in the request never type the run.
 				await doneTool.execute("tool-2", {}, undefined, undefined, {
 					shutdown() {
 						shutdowns += 1;
@@ -678,6 +679,7 @@ describe("subagent-done.ts", () => {
 				assert.deepEqual(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")), {
 					type: "done",
 					outputTokens: 17,
+					acceptedCall: { toolCallId: "tool-2", args: {} },
 					contextTokens: 145_000,
 					contextWindow: 200_000,
 				});
