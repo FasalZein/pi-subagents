@@ -27,7 +27,7 @@ export function filterToolNames(toolNames: string[], deniedTools: string[]): str
 }
 
 /** How this child process runs: from PI_SUBAGENT_AUTO_EXIT and PI_SUBAGENT_SURFACE. */
-export interface ChildLifecycle {
+interface ChildLifecycle {
 	autoExit: boolean;
 	/** The child runs in a pane (PI_SUBAGENT_SURFACE is set). */
 	pane: boolean;
