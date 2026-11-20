@@ -131,6 +131,32 @@ cat > "${stdinFile}"
 		assert.match(prompt, /Report your result now/i);
 	});
 
+	it("replays the invocation ref, not the display ref (D08)", async () => {
+		const dir = createTestDir();
+		const argvFile = join(dir, "argv.txt");
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(
+			dir,
+			"capture-pi",
+			`#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > /dev/null\n`,
+		);
+		const sessionFile = join(dir, "child.jsonl");
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+		);
+		const running = makeRunning(dir, sessionFile);
+		// The first launch passed a bare default to Pi; the record names the one registry ref it runs on.
+		running.launchMetadata = { ...makeMetadata(dir), invocationModelRef: "model:off" };
+
+		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+		const child = running.childProcess;
+		assert.ok(child);
+		await once(child, "exit");
+
+		const argv = (await readNonEmptyFileEventually(argvFile)).split("\n");
+		assert.equal(argv[argv.indexOf("--model") + 1], "model:off");
+	});
+
 	it("closes an interactive pane when restart fails after surface creation", async () => {
 		const dir = createTestDir();
 		const capsuleRoot = join(dir, "capsules");

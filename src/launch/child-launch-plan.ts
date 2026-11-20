@@ -5,8 +5,8 @@ import type { AgentDefaults } from "../agents/definitions.ts";
 import {
 	assertModelAllowed,
 	buildModelRef,
-	parseAllowedModels,
 	matchModelFragment,
+	parseAllowedModels,
 	splitModelRef,
 } from "../agents/model-refs.ts";
 import { buildSubagentSessionTitle } from "../agents/titles.ts";
@@ -235,6 +235,26 @@ function hasExactModel(model: string, modelRegistry: ModelRegistryLike | undefin
 }
 
 /**
+ * Split the call's model and level against Pi's known ids: a whole known id
+ * stays whole, colons included; a suffix after a known id is its level even
+ * when Pi does not know the level, so the refusal names it (as v2.9.2).
+ */
+function splitCallModel(
+	model: string,
+	fallbackThinking: string | undefined,
+	modelRegistry: ModelRegistryLike | undefined,
+): ReturnType<typeof splitModelRefThinking> {
+	if ((modelRegistry?.getAvailable().length ?? 0) > 0) {
+		if (hasExactModel(model, modelRegistry)) return { model, thinking: fallbackThinking, explicitThinking: false };
+		const idx = model.lastIndexOf(":");
+		if (idx !== -1 && hasExactModel(model.slice(0, idx), modelRegistry)) {
+			return { model: model.slice(0, idx), thinking: model.slice(idx + 1), explicitThinking: true };
+		}
+	}
+	return splitModelRefThinking(model, fallbackThinking);
+}
+
+/**
  * Resolve the model of a launch or resume call (D08, D22). Exact ids, the
  * bare-id provider tie-break and level precedence follow v2.9.2: the call's
  * `:level` suffix, else its thinking parameter, else `fallbackThinking`; an
@@ -252,7 +272,7 @@ export function resolveCallModelRef(request: CallModelRequest): ReturnType<typeo
 		request.inheritedModelRef,
 		request.grantThinking ?? request.fallbackThinking,
 	);
-	const split = splitModelRefThinking(request.model, request.thinking ?? request.fallbackThinking);
+	const split = splitCallModel(request.model, request.thinking ?? request.fallbackThinking, request.modelRegistry);
 	const explicitThinking = split.explicitThinking || request.thinking != null;
 	let model = split.model as string;
 	if (!hasExactModel(model, request.modelRegistry)) {

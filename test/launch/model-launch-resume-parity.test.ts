@@ -19,7 +19,8 @@ import "../support/ambient-spawn-grant.ts";
 
 /**
  * D22 parity: the subagent tool and the subagent_resume tool resolve the same
- * call model to the same child ref for the same agent. Synthetic refs only.
+ * call model to the same child ref for the same agent, except where v2.9.2
+ * (cf6dbf4) lets a resume keep the prior run's level (D08). Synthetic refs only.
  */
 const KNOWN = [
 	"synthetic-a/base",
@@ -41,7 +42,8 @@ const PARENT = { provider: "synthetic-a", id: "base" };
 type Outcome = { modelRef?: string; refusal?: string };
 
 function refusalOf(text: string): Outcome {
-	const match = text.match(/(Model '|Unknown model override ')[\s\S]*?subagent_agents/);
+	// A fragment refusal points to subagent_agents; an exact-id refusal (cf6dbf4) lists the allowed models.
+	const match = text.match(/(Model '|Unknown model override ')[\s\S]*?(subagent_agents|Allowed models: [^\n]*)/);
 	if (!match) throw new Error(`Expected a D22 refusal, got: ${text}`);
 	return { refusal: match[0] };
 }
@@ -190,12 +192,14 @@ const CASES: Array<{
 	first?: string;
 	model: string;
 	expected: Outcome["modelRef"] | "refused";
+	/** The resume's ref when cf6dbf4 resolves it differently from the launch. */
+	resumed?: Outcome["modelRef"];
 }> = [
 	{
-		title: "an unqualified id takes the agent default provider, not an exact id under another provider",
+		title: "an exact unqualified id wins over a fragment under the default provider (D08, cf6dbf4)",
 		frontmatter: "model: synthetic-a/base\nallowed-models: synthetic-a/mini-v2, synthetic-b/mini",
 		model: "mini",
-		expected: "synthetic-a/mini-v2:low",
+		expected: "synthetic-b/mini:low",
 	},
 	{
 		title: "an agent default written without a provider is the provider source",
@@ -210,11 +214,13 @@ const CASES: Array<{
 		expected: "refused",
 	},
 	{
-		title: "a model without a level takes the configured default level, not the previous run's",
+		title:
+			"a model without a level takes the configured level on launch and the previous run's on resume (D08, cf6dbf4)",
 		frontmatter: "thinking: high\nallowed-models: synthetic-a/target:low, synthetic-a/target:high",
 		first: "synthetic-a/target:low",
 		model: "synthetic-a/target",
 		expected: "synthetic-a/target:high",
+		resumed: "synthetic-a/target:low",
 	},
 	{
 		title: "the agent default is accepted at its effective level only",
@@ -250,6 +256,16 @@ describe("launch and resume model parity (D22)", () => {
 				assert.ok(launched.refusal, `launch must refuse, got ${launched.modelRef}`);
 			} else {
 				assert.equal(launched.modelRef, testCase.expected, launched.refusal);
+			}
+			if (testCase.resumed) {
+				assert.deepEqual(
+					{ modelRef: resumed.modelRef, refusal: resumed.refusal },
+					{
+						modelRef: testCase.resumed,
+						refusal: undefined,
+					},
+				);
+				return;
 			}
 			assert.deepEqual(
 				{ modelRef: resumed.modelRef, refusal: resumed.refusal },

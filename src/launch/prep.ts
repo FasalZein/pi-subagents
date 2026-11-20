@@ -12,15 +12,16 @@ import {
 	type PersistedSubagentLaunchMetadata,
 	type SubagentSessionMode,
 } from "../session/session-files.ts";
+import { parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
+import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
+import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
 import {
 	PI_SUBAGENT_IDLE_TIMEOUT,
 	PI_SUBAGENT_TIMEOUT,
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
-import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
 import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
-import { parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { parseCommandWords } from "./child-command.ts";
@@ -29,7 +30,6 @@ import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
 import { isSubagentsExtensionEntry } from "./extension-entries.ts";
 import { getLaunchEnvCollisions } from "./launch-overrides.ts";
-import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import {
 	resolveSubagentNoContextFiles,
 	resolveSubagentNoSession,
@@ -38,8 +38,8 @@ import {
 } from "./policy.ts";
 import type { ResumeMode } from "./resume.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentCwd } from "./runtime-paths.ts";
+import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import { buildSkillLaunchPlan, formatInjectedSkills, type SkillLaunchPlan } from "./skills.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 
 export {
 	normalizeModelRef,
@@ -487,8 +487,7 @@ export function getBaseSubagentEnvVars(
 	envVars.PI_SUBAGENT_SPAWN_BUDGET = String(spawnPolicy.childBudget ?? 0);
 	envVars.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE =
 		spawnPolicy.effectiveWidth === null ? "" : String(spawnPolicy.effectiveWidth);
-	envVars.PI_SUBAGENT_SPAWNABLE =
-		spawnPolicy.spawnableAgents === true ? "true" : spawnPolicy.spawnableAgents.join(",");
+	envVars.PI_SUBAGENT_SPAWNABLE = spawnPolicy.spawnableAgents === true ? "true" : spawnPolicy.spawnableAgents.join(",");
 	const deniedTools = new Set(prepared.denySet);
 	if (spawnPolicy.childBudget === null) {
 		for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);
