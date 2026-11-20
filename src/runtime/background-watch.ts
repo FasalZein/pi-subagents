@@ -15,7 +15,7 @@ import {
 	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
-	STOPPED_REASON,
+	stoppedEnd,
 	withRuntimeEnd,
 } from "./run-result.ts";
 import {
@@ -188,7 +188,7 @@ async function watchBackgroundSubagentUntilFinal(
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
 					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				}, { kind: "failed", error: message });
+				}, { kind: "failed", error: message }, "time_limit");
 			}
 		}
 	} finally {
@@ -392,6 +392,7 @@ function watchBackgroundGeneration(
 			const published = publishRunResult(running, {
 				exitCode,
 				operatorClosed: false,
+				closedByPerson: false,
 				stopped,
 				timedOut,
 				ping,
@@ -525,5 +526,5 @@ function buildBackgroundCancellationResult(running: RunningSubagent): SubagentRe
 		elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 		error: "cancelled",
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	}, { kind: "cancelled", reason: STOPPED_REASON });
+	}, stoppedEnd(running));
 }

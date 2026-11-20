@@ -25,6 +25,8 @@ export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNot
 	const notices: string[] = [];
 	const nudges: string[] = [];
 	const keyListeners: Array<(data: string) => unknown> = [];
+	const commands = new Map<string, { handler: (args: string, ctx: unknown) => unknown }>();
+	const entries: Array<{ customType: string; data: unknown }> = [];
 	let shutdowns = 0;
 	const dir = createTestDir();
 	const sessionFile = join(dir, "child.jsonl");
@@ -42,17 +44,22 @@ export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNot
 			tools.set(definition.name, definition);
 			return definition;
 		},
-		registerCommand() {},
+		registerCommand(name: string, command: { handler: (args: string, ctx: unknown) => unknown }) {
+			commands.set(name, command);
+		},
 		on(event: string, handler: any) {
 			handlers.set(event, handler);
 		},
 		sendUserMessage(message: string) {
 			nudges.push(message);
 		},
-		appendEntry() {},
+		appendEntry(customType: string, data: unknown) {
+			entries.push({ customType, data });
+		},
 		registerShortcut() {},
 	} as any);
 	const ctx = {
+		cwd: dir,
 		isIdle: () => true,
 		ui: {
 			setStatus() {},
@@ -78,6 +85,9 @@ export function loadPaneChild(options: { autoExit: boolean; pane: boolean; onNot
 		notices,
 		nudges,
 		tools,
+		commands,
+		/** Custom session entries the extension appended, in order. */
+		entries,
 		/** Raw pane input, as Pi's TUI hands it to extension listeners. */
 		press(data: string) {
 			for (const listener of [...keyListeners]) listener(data);

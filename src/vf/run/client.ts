@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRIVATE_DIR_MODE } from "../../runtime/result-files.ts";
@@ -251,9 +251,26 @@ export function waitForVerifiedRunResult(
 	});
 }
 
-export function requestVerifiedRunCancel(runDir: string): void {
+/** T70: who asked a verified run to stop: the overlay operator or the parent. */
+export type VerifiedRunCanceller = "operator" | "parent";
+
+/**
+ * T70: the canceller the sentinel names (its second line), so an adopter publishes the same ender.
+ * Undefined when no sentinel exists or it names none (written before T70).
+ */
+export function readVerifiedRunCanceller(runDir: string): VerifiedRunCanceller | undefined {
+	try {
+		const by = readFileSync(verifiedRunFilePaths(runDir).cancelSentinel, "utf8").split("\n")[1];
+		return by === "operator" || by === "parent" ? by : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function requestVerifiedRunCancel(runDir: string, by: VerifiedRunCanceller = "parent"): void {
 	const paths = verifiedRunFilePaths(runDir);
-	writeFileSync(paths.cancelSentinel, `${new Date().toISOString()}\n`);
+	// The supervisor checks only that the sentinel exists; its second line keeps who asked first (T70).
+	if (!existsSync(paths.cancelSentinel)) writeFileSync(paths.cancelSentinel, `${new Date().toISOString()}\n${by}\n`);
 	const manifest = readVerifiedRunManifest(runDir);
 	if (manifest.lease && isPidAlive(manifest.lease.pid)) {
 		try {

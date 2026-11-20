@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import type { RexPlacementPolicy } from "./mux/rex.ts";
-import type { ResultOutcome } from "./runtime/result-record.ts";
+import type { EndedBy, ResultOutcome } from "./runtime/result-record.ts";
 import type { ResultTarget } from "./runtime/run-result.ts";
 import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts";
 
@@ -120,6 +120,8 @@ export interface SubagentResult {
 	reportFile?: string;
 	/** The published record's outcome; status and displays derive from it when it is set (D14). */
 	resultOutcome?: ResultOutcome;
+	/** The published record's ender (T70). */
+	resultEndedBy?: EndedBy;
 }
 
 export interface CompletedSubagentResult extends SubagentResult {
@@ -204,6 +206,8 @@ export interface RunningSubagent {
 	lastSessionSize?: number;
 	pendingToolCount?: number;
 	abortController?: AbortController;
+	/** T70: who asked this run to stop: the overlay operator or the parent (subagent_kill, shutdown). */
+	stopRequestedBy?: "operator" | "parent";
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
 	/** The pane launcher's process id, read before the watcher removes its marker; it exits after Pi. */
@@ -285,6 +289,8 @@ export interface SubagentResultMessageDetails {
 	errorMessage?: string;
 	/** The published record's outcome (D14); the TUI header shows it instead of the exit facts. */
 	outcome?: ResultOutcome;
+	/** The published record's ender (T70). */
+	endedBy?: EndedBy;
 	/** Set when the result was published (D13); the content is then the rendered record. */
 	runId?: string;
 }
@@ -307,6 +313,7 @@ export interface SubagentPingMessageDetails {
 	runId?: string;
 	reportFile?: string;
 	outcome?: ResultOutcome;
+	endedBy?: EndedBy;
 }
 
 export interface WidgetThemeLike {

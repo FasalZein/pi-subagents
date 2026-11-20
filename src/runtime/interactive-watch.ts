@@ -18,7 +18,7 @@ import {
 	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
-	STOPPED_REASON,
+	stoppedEnd,
 	withRuntimeEnd,
 } from "./run-result.ts";
 import {
@@ -191,7 +191,7 @@ export async function watchSubagent(
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
 					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-				}, { kind: "failed", error: message });
+				}, { kind: "failed", error: message }, "time_limit");
 			}
 		}
 	} finally {
@@ -336,6 +336,9 @@ async function watchInteractiveGeneration(
 		const published = publishRunResult(running, {
 			exitCode: end.exitCode,
 			operatorClosed: running.autoExit === false && end.reason === "sentinel",
+			// T70: only the child's shutdown record says that a person closed the pane; a shell status
+			// without it (a crash before the record) is no evidence of who acted.
+			closedByPerson: end.closedByOperator === true || exitSignal?.closedByOperator === true,
 			stopped,
 			timedOut: timeoutFields.timedOut
 				? { kind: timeoutFields.timedOut, seconds: timeoutFields.timedOutAfter ?? 0 }
@@ -450,7 +453,7 @@ function buildInteractiveCancellationResult(running: RunningSubagent): SubagentR
 		outputTokens: 0,
 		error: "cancelled",
 		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
-	}, { kind: "cancelled", reason: STOPPED_REASON });
+	}, stoppedEnd(running));
 }
 
 function getSummary(
