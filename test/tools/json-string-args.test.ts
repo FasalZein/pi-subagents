@@ -1,4 +1,3 @@
-import { createDataCheck, DATA_MAX_CHARS } from "../../src/tools/data-schema.ts";
 import { parseJsonContainer, parseJsonFields, parseLaunchJsonFields } from "../../src/tools/json-string-args.ts";
 import { assert, describe, it } from "../support/index.ts";
 
@@ -40,24 +39,10 @@ describe("JSON string arguments (T64)", () => {
 		assert.equal(parseJsonFields("text", ["data"]), "text");
 	});
 
-	it("parses launch children and each child's schema", () => {
-		const schema = { type: "object" };
-		const child = { name: "a", schema: JSON.stringify(schema) };
-		assert.deepEqual(parseLaunchJsonFields({ children: JSON.stringify([child]) }), {
-			children: [{ name: "a", schema }],
-		});
-		assert.deepEqual(parseLaunchJsonFields({ children: [child] }), { children: [{ name: "a", schema }] });
-		const plain = { children: [{ name: "a", schema }] };
+	it("parses launch children sent as a JSON string; a child's fields stay as sent", () => {
+		const child = { name: "a", task: '{"b":1}' };
+		assert.deepEqual(parseLaunchJsonFields({ children: JSON.stringify([child]) }), { children: [child] });
+		const plain = { children: [child] };
 		assert.equal(parseLaunchJsonFields(plain), plain);
-	});
-
-	it("the data size limit counts the parsed JSON, not the string the model sent", () => {
-		const check = createDataCheck("subagent_done", undefined);
-		const value = { text: "x".repeat(DATA_MAX_CHARS - 100) };
-		const padded = JSON.stringify(value, null, 2).replace("{", `{${" ".repeat(200)}`);
-		assert.ok(padded.length > DATA_MAX_CHARS, "the sent string is over the limit");
-		assert.deepEqual(check(parseJsonContainer(padded)), { kind: "accept" });
-		const over = JSON.stringify({ text: "x".repeat(DATA_MAX_CHARS) });
-		assert.throws(() => check(parseJsonContainer(over)), /the limit is 32,000/);
 	});
 });

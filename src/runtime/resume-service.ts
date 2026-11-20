@@ -35,7 +35,6 @@ import {
 import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { buildResumeSpawnEnv, narrowSpawnBudget, parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import {
 	PI_SUBAGENT_IDLE_TIMEOUT,
 	PI_SUBAGENT_TIMEOUT,
@@ -460,8 +459,6 @@ async function resumeSubagentSessionWithoutWidth(
 	}
 	resumeEnvVars.PI_SUBAGENT_NAME = invocationMetadata?.name ?? name;
 	resumeEnvVars.PI_SUBAGENT_AGENT = resumedAgent ?? "";
-	// D12: a resume names no schema; never pass on the resuming process's own or a frontmatter value.
-	resumeEnvVars[DATA_SCHEMA_ENV] = "";
 	resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
 
 	const resumedAsync = invocationMetadata?.async ?? metadata.async ?? true;

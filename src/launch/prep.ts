@@ -14,7 +14,6 @@ import {
 } from "../session/session-files.ts";
 import { parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
 import {
 	PI_SUBAGENT_IDLE_TIMEOUT,
@@ -494,8 +493,6 @@ export function getBaseSubagentEnvVars(
 	envVars[PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD] = prepared.agentDefs?.timeoutWarnThreshold ?? "";
 	envVars.PI_SUBAGENT_NAME = params.name;
 	envVars.PI_SUBAGENT_AGENT = params.agent ?? "";
-	// D12: unconditional, so a grandchild never inherits its parent's launch schema.
-	envVars[DATA_SCHEMA_ENV] = params.dataSchemaFile ?? "";
 	const spawnPolicy = prepared.spawnPolicy ?? resolvePreparedSpawnPolicy(params, prepared.agentDefs);
 	envVars.PI_SUBAGENT_SPAWN_BUDGET = String(spawnPolicy.childBudget ?? 0);
 	envVars.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE =

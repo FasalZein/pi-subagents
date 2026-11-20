@@ -18,7 +18,6 @@ import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { getEntryCount } from "../session/session.ts";
 import { getDoneSentinelFile } from "../session/session-files.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import {
 	formatTimeoutWarning,
 	PI_SUBAGENT_IDLE_TIMEOUT,
@@ -27,7 +26,7 @@ import {
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 	PI_SUBAGENT_TIMEOUT_WRAP_UP,
 } from "../tools/timeout-reminders.ts";
-import { SPAWNING_TOOL_NAMES, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
+import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
 import type { RunningSubagent } from "../types.ts";
 import { addResultWarning } from "./run-result.ts";
 
@@ -113,8 +112,6 @@ async function getWrapUpLaunchParts(
 	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(metadata.skills);
 	const deniedTools = new Set(metadata.denyTools);
 	for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);
-	// T69 (v2.9.2): a manual pane never gets subagent_done; the forced auto-exit below must not grant it.
-	if (running.mode === "interactive" && !running.autoExit) deniedTools.add(SUBAGENT_DONE_TOOL_NAME);
 	if (deniedTools.size > 0) env.PI_DENY_TOOLS = [...deniedTools].join(",");
 	env[PI_SUBAGENT_CONTEXT_WARN_THRESHOLD] = "";
 	env[PI_SUBAGENT_CONTEXT_WARN_STEP] = "";
@@ -127,8 +124,6 @@ async function getWrapUpLaunchParts(
 	env[PI_SUBAGENT_TIMEOUT_WRAP_UP] = "1";
 	env.PI_SUBAGENT_NAME = running.name;
 	env.PI_SUBAGENT_AGENT = running.agent ?? "";
-	// D7 and D12: a report-only wrap-up is untyped; it checks no data against any schema.
-	env[DATA_SCHEMA_ENV] = "";
 	env.PI_SUBAGENT_SESSION = running.sessionFile;
 	env.PI_SUBAGENT_AUTO_EXIT = "1";
 	env.PI_SUBAGENT_SPAWN_BUDGET = "0";

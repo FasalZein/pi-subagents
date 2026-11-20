@@ -378,16 +378,39 @@ export function containsToken(text, token) {
 	).test(text);
 }
 
-/** True when the child's own last reply ended its turn normally. */
-export function childEnded(events) {
-	return endedAfter(events, launchBoundary(events));
+/**
+ * True when the child's own last reply ended its turn normally. blocked: the parent published a
+ * blocked record for this session (readBlockedSessions), the evidence of a caller_ping end.
+ */
+export function childEnded(events, blocked = false) {
+	return endedAfter(events, launchBoundary(events), blocked);
 }
 
-function endedAfter(events, index) {
+function endedAfter(events, index, blocked) {
 	const own = events.slice(Math.max(0, index) + 1);
 	return (
 		assistantMessages(own).at(-1)?.stopReason === "stop" ||
-		acceptedCompletion(own) !== null
+		acceptedCompletion(own) !== null ||
+		(blocked && pingEnded(own))
+	);
+}
+
+/**
+ * T72: an autonomous caller_ping ends the child at a tool-use stop without a session entry, and Pi
+ * may not persist its result before the process exits. It ends the run when the last reply holds
+ * the ping and no error result refused it (a second ping, or a ping after done owned the end).
+ */
+function pingEnded(own) {
+	const ping = (assistantMessages(own).at(-1)?.content ?? []).findLast(
+		(part) => part?.type === "toolCall" && part.name === PING_TOOL,
+	);
+	if (!ping) return false;
+	return !own.some(
+		(e) =>
+			e?.type === "message" &&
+			e.message?.role === "toolResult" &&
+			e.message.toolCallId === ping.id &&
+			e.message.isError === true,
 	);
 }
 
@@ -421,16 +444,18 @@ export function resumedRuns(parentEvents) {
  * run's completion earlier in the same file does not count. Before its task
  * arrives the run is open.
  */
-export function resumeEnded(events, calledAt) {
+export function resumeEnded(events, calledAt, blocked = false) {
 	const task = events.findIndex(
 		(e) => e?.type === "message" && e.message?.role === "user" && Date.parse(e.timestamp) > calledAt,
 	);
-	return task >= 0 && endedAfter(events, task);
+	return task >= 0 && endedAfter(events, task, blocked);
 }
 
-// Candidate (T59a): an auto-exit child ends with a subagent_done call that the
-// extension accepted and recorded; an autonomous caller_ping is a blocked end.
-// cf6dbf4 writes no such entry.
+// Candidate (T59a): an auto-exit child ended with a subagent_done call that the
+// extension accepted and recorded; an autonomous caller_ping was a blocked end.
+// cf6dbf4 writes no such entry. Since T72 the entry marks a zero-argument
+// subagent_done of a headless child without auto-exit; an autonomous ping writes
+// none (pingEnded). A call after a takeover (autonomous false) ends nothing.
 const ACCEPTED_CALL = "pi-subagent-accepted-call";
 const COMPLETION_TOOL = "subagent_done";
 const PING_TOOL = "caller_ping";
@@ -445,7 +470,7 @@ function acceptedCompletion(own, tools = [COMPLETION_TOOL, PING_TOOL]) {
 				e?.type === "custom" &&
 				e.customType === ACCEPTED_CALL &&
 				tools.includes(e.data?.tool) &&
-				(e.data?.tool !== PING_TOOL || e.data?.autonomous !== false),
+				e.data?.autonomous !== false,
 		) ?? null
 	);
 }

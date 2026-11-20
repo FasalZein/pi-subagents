@@ -28,7 +28,7 @@ import { answerParser, scoreAttempt, terminalAnswer } from "./record.mjs";
 import recon from "./scenarios/recon/scenario.mjs";
 import review from "./scenarios/review/scenario.mjs";
 import reviewWorkflow from "./scenarios/review-workflow/scenario.mjs";
-import { readRunFolders } from "./session-evidence.mjs";
+import { readBlockedSessions, readRunFolders } from "./session-evidence.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WORK = "/r/workspace";
@@ -187,6 +187,10 @@ test("[T59a] run folders bind run ids to launch names and report paths: record.j
 			{ runId: "a0cc61e8", name: "review-cache", report: null },
 		]);
 		assert.deepEqual(readRunFolders(join(root, "sessions"), sessions), []);
+		// T72 review P1: a blocked record names its session as a ping end; a done record does not.
+		assert.deepEqual([...readBlockedSessions(root, sessions)], []);
+		writeFileSync(join(running, "record.json"), JSON.stringify({ runId: "a0cc61e8", name: "review-cache", outcome: "blocked" }));
+		assert.deepEqual([...readBlockedSessions(root, sessions)], [childFile]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

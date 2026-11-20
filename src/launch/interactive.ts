@@ -11,7 +11,6 @@ import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
-import { completionCallBrief, withCompletionBrief } from "./completion-brief.ts";
 import { coordinateSubagentLaunch } from "./launch-coordinator.ts";
 import { type LaunchUndo, withLaunchUndo } from "./launch-undo.ts";
 import { buildInteractiveShellCommand } from "./shell-command.ts";
@@ -98,11 +97,10 @@ async function startInteractiveSubagent(
 			: undefined;
 	const doneSentinelFile = getDoneSentinelFile(prepared.subagentSessionFile, id);
 	// T69 (v2.9.2): a manual pane child has no subagent_done (child-tool-policy.ts), so its launch
-	// treats the tool as denied: no completion line, and the tool list does not name it.
+	// treats the tool as denied: the tool list does not name it.
 	const childDenySet = prepared.agentDefs?.autoExit
 		? prepared.denySet
 		: new Set([...prepared.denySet, SUBAGENT_DONE_TOOL_NAME]);
-	const completionBrief = completionCallBrief(childDenySet);
 	const modeHint = prepared.agentDefs?.autoExit
 		? "Complete your task autonomously."
 		: "Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
@@ -121,13 +119,9 @@ async function startInteractiveSubagent(
 		enabled: prepared.agentDefs?.taskExpansion === "shell",
 		cwd: prepared.runtimePaths.effectiveCwd ?? ctx.cwd,
 	});
-	// D12: a fork task keeps its own text first; the completion line, when there is one, follows it.
-	let fullTask = withCompletionBrief(
-		directTask
-			? expandedTask
-			: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}`,
-		completionBrief,
-	);
+	let fullTask = directTask
+		? expandedTask
+		: `${roleBlock}\n\n${modeHint}\n\n${tabTitleInstruction}\n\n${expandedTask}\n\n${summaryInstruction}`;
 	const skillInjection = getPreparedSkillInjection(prepared);
 	if (skillInjection) fullTask = `${skillInjection}\n\n${fullTask}`;
 

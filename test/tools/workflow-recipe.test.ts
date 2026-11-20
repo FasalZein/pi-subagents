@@ -348,14 +348,15 @@ describe("T51: the README workflow script recipe in a real Pi session", () => {
 				p.end("search-audit", { kind: "untyped", text: "UNTYPED REPORT OF search-audit" });
 			});
 			assert.match(text, new RegExp(`Run ids: ${parent.runIds.join(", ")}`));
-			assert.equal(digest.ok, false, "a data error and an untyped run make the batch not ok");
+			assert.equal(digest.ok, false, "a data error makes the batch not ok");
 			assert.deepEqual(Object.keys(byName).sort(), [...NAMES].sort());
 			assert.equal(byName["auth-audit"]?.outcome, "done");
 			assert.deepEqual(byName["auth-audit"]?.data, { findings: 2 }, "a small value comes back whole");
 			assert.equal(byName["auth-audit"]?.check, undefined);
 			assert.match(String(byName["billing-audit"]?.check), /^data error: DATA-ERROR/);
 			assert.equal(byName["billing-audit"]?.data, undefined);
-			assert.match(String(byName["search-audit"]?.check), /^untyped/);
+			// T72: an untyped done run is an ordinary success; its report path is the result.
+			assert.equal(byName["search-audit"]?.check, undefined);
 			for (const run of Object.values(byName)) {
 				assert.equal(run.id, parent.idOf(String(run.name)));
 				assert.match(String(run.report), /\.md$/, "each entry names its report file");
@@ -363,6 +364,26 @@ describe("T51: the README workflow script recipe in a real Pi session", () => {
 			assert.equal(parent.resultMessages(), 0, "the wait delivered every result");
 		} finally {
 			await parent.dispose();
+		}
+	});
+
+	it("T72 review (P1): an all-done untyped batch is ok; a failed or blocked run is not", async () => {
+		for (const [last, expected] of [
+			[{ kind: "untyped", text: "UNTYPED REPORT" }, true],
+			[{ kind: "typed", outcome: "blocked", summary: "Need a key." }, false],
+		] as const) {
+			const parent = await startParent();
+			try {
+				const { digest, byName } = await runBatch(parent, recipe(), (p) => {
+					p.end("auth-audit", { kind: "untyped", text: "UNTYPED REPORT OF auth-audit" });
+					p.end("billing-audit", { kind: "untyped", text: "UNTYPED REPORT OF billing-audit" });
+					p.end("search-audit", last);
+				});
+				for (const run of Object.values(byName)) assert.equal(run.check, undefined, "no run has a check");
+				assert.equal(digest.ok, expected);
+			} finally {
+				await parent.dispose();
+			}
 		}
 	});
 

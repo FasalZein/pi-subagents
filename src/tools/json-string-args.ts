@@ -31,14 +31,9 @@ export function parseJsonFields(args: unknown, fields: readonly string[]): unkno
 	return changed ?? args;
 }
 
-/** T64: launch arguments with children, and each child's schema, parsed when sent as a JSON string. */
+/** T64: launch arguments with children, parsed when sent as a JSON string. */
 export function parseLaunchJsonFields(args: unknown): unknown {
-	const parsed = parseJsonFields(args, ["children"]);
-	const children = isRecord(parsed) ? parsed.children : undefined;
-	if (!Array.isArray(children)) return parsed;
-	const parsedChildren = children.map((child) => parseJsonFields(child, ["schema"]));
-	if (parsedChildren.every((child, i) => child === children[i])) return parsed;
-	return { ...(parsed as Record<string, unknown>), children: parsedChildren };
+	return parseJsonFields(args, ["children"]);
 }
 
 /**

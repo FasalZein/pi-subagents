@@ -2,8 +2,6 @@ import {
 	assert,
 	createTestDir,
 	describe,
-	isCompletionNudge,
-	NUDGE_ANSWERED_WITHOUT_CALL,
 	it,
 	join,
 	readFileSync,
@@ -68,7 +66,6 @@ function buildAutoExitHarness(opts: { interactive?: boolean } = {}): Harness {
 		},
 		// D12: the model answers the completion nudge without a call; the child then exits.
 		sendUserMessage(message: unknown) {
-			if (isCompletionNudge(message)) handlers.get("agent_end")?.(NUDGE_ANSWERED_WITHOUT_CALL, ctx());
 		},
 		appendEntry() {},
 		registerShortcut() {},

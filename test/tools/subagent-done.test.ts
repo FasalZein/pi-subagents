@@ -3,10 +3,9 @@ import {
 	assert,
 	createTestDir,
 	describe,
-	isCompletionNudge,
+	getDeniedToolNames,
 	it,
 	join,
-	NUDGE_ANSWERED_WITHOUT_CALL,
 	readFileSync,
 	rmSync,
 	shouldAutoExitOnAgentEnd,
@@ -71,30 +70,21 @@ describe("subagent-done.ts", () => {
 	});
 
 	describe("shouldRegisterSubagentDone", () => {
-		// D12: an auto-exit pane or headless child has the tool; only a deny entry removes it.
-		const selfClosing = [
-			{ autoExit: true, pane: true },
-			{ autoExit: true, pane: false },
-			{ autoExit: false, pane: false },
-		];
-		it("respects explicit deny lists", () => {
-			for (const lifecycle of selfClosing)
-				assert.equal(shouldRegisterSubagentDone(["subagent_done"], lifecycle), false);
-		});
-
-		it("keeps subagent_done without a deny entry", () => {
-			for (const lifecycle of selfClosing) {
-				assert.equal(shouldRegisterSubagentDone([], lifecycle), true);
-				assert.equal(shouldRegisterSubagentDone(["bash"], lifecycle), true);
-			}
-		});
-
-		// T69 (v2.9.2 shouldRegisterSubagentDone: isInteractive returns false): only a person closes a manual pane.
-		it("never registers it for a manual pane child, with or without a deny entry", () => {
-			const manualPane = { autoExit: false, pane: true };
-			assert.equal(shouldRegisterSubagentDone([], manualPane), false);
-			assert.equal(shouldRegisterSubagentDone(["bash"], manualPane), false);
-			assert.equal(shouldRegisterSubagentDone(["subagent_done"], manualPane), false);
+		// Differential against cf6dbf4 shouldRegisterSubagentDone(autoExit, getDeniedToolNames(autoExit, deny),
+		// isInteractive), transcribed: false when denied, when autoExit, or when interactive; else true.
+		const upstream = (autoExit: boolean, pane: boolean, deny: string[]) =>
+			!deny.includes("subagent_done") && !autoExit && !pane;
+		it("matches cf6dbf4 for every lifecycle and deny list", () => {
+			for (const autoExit of [false, true])
+				for (const pane of [false, true])
+					for (const deny of [[], ["bash"], ["subagent_done"]]) {
+						const denied = getDeniedToolNames(autoExit, deny.join(","));
+						assert.equal(
+							shouldRegisterSubagentDone(denied, { autoExit, pane }),
+							upstream(autoExit, pane, deny),
+							JSON.stringify({ autoExit, pane, deny }),
+						);
+					}
 		});
 	});
 
@@ -274,7 +264,6 @@ describe("subagent-done.ts", () => {
 					name: "Ping Child",
 					message: "Need help",
 					outputTokens: 11,
-					acceptedCall: { toolCallId: "tool-1", args: { message: "Need help" } },
 				});
 			} finally {
 				exitMock.mock.restore();
@@ -615,17 +604,14 @@ describe("subagent-done.ts", () => {
 
 				// Now simulate a new turn completing normally
 				handlers.get("agent_start")?.({});
-				// After /auto-exit, agent_end should auto-exit: after the one D12
-				// completion nudge, which the model answers without a call.
+				// After /auto-exit, agent_end should auto-exit at once (cf6dbf4: no nudge).
 				const endCtx = {
 					shutdown() {
 						shutdowns += 1;
 					},
 				};
 				handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "stop" }] }, endCtx);
-				assert.equal(sent.length, 1);
-				assert.ok(isCompletionNudge(sent[0]), "the re-armed child gets the completion nudge first");
-				handlers.get("agent_end")?.(NUDGE_ANSWERED_WITHOUT_CALL, endCtx);
+				assert.equal(sent.length, 0, "no completion nudge");
 				await sleep(0);
 
 				assert.equal(shutdowns, 1, "should auto-exit after /auto-exit re-enables it");
@@ -680,8 +666,9 @@ describe("subagent-done.ts", () => {
 					},
 				);
 				let shutdowns = 0;
-				const args = { outcome: "done", summary: "s", data: { big: "x".repeat(9_000) } };
-				await doneTool.execute("tool-2", args, undefined, undefined, {
+				// cf6dbf4: the zero-argument call writes a done record; T72 review: its executed (empty)
+				// arguments go with it, so legacy fields in the request never type the run.
+				await doneTool.execute("tool-2", {}, undefined, undefined, {
 					shutdown() {
 						shutdowns += 1;
 					},
@@ -692,7 +679,7 @@ describe("subagent-done.ts", () => {
 				assert.deepEqual(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")), {
 					type: "done",
 					outputTokens: 17,
-					acceptedCall: { toolCallId: "tool-2", args },
+					acceptedCall: { toolCallId: "tool-2", args: {} },
 					contextTokens: 145_000,
 					contextWindow: 200_000,
 				});

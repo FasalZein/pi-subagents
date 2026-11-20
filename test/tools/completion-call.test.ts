@@ -1,6 +1,5 @@
 import { mock } from "node:test";
 import { buildBackgroundLaunchPlan } from "../../src/launch/background.ts";
-import { completionCallBrief } from "../../src/launch/completion-brief.ts";
 import { assembleResult, NO_REPORT_LINE } from "../../src/runtime/result-assembler.ts";
 import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
@@ -20,12 +19,11 @@ import {
 import { cleanupPaneChild as cleanup, loadPaneChild as loadChild } from "../support/pane-child.ts";
 import { assistant, facts, sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
-// D12: the completion call. Expected values come from the decision text: the 1,500 character limit,
-// typed only with a valid outcome and a non-empty summary, one refusal over the limit, the full text
-// in the report, and "no report beyond the summary" for a run without assistant text.
+// T72 (D01 revert): child-side expected values come from cf6dbf4 (an auto-exit child has no
+// subagent_done, no brief line, no refusal). Assembler cases keep D12's reading of older typed
+// sessions: typed only with a valid outcome and a non-empty summary, the full text in the report.
 const DONE = SUBAGENT_DONE_TOOL_NAME;
 const PING = CALLER_PING_TOOL_NAME;
-const LIMIT = /1,500 characters/;
 
 type Child = ReturnType<typeof loadChild>;
 
@@ -58,22 +56,13 @@ const kinds = [
 	{ name: "a headless child", options: { autoExit: true, pane: false } },
 ];
 
-describe("completion call (D12)", () => {
+describe("completion call (T72, D12 records)", () => {
 	for (const kind of kinds) {
 		it(
-			`${kind.name} has subagent_done with outcome, summary, artifacts and data`,
+			`${kind.name} has no subagent_done (cf6dbf4 getDeniedToolNames with autoExit)`,
 			withChild(kind.options, (child) => {
-				const tool = child.tools.get(DONE);
-				assert.ok(tool, "subagent_done is registered");
-				const properties = Object.keys(tool.parameters.properties ?? {}).sort();
-				assert.deepEqual(properties, ["artifacts", "data", "outcome", "summary"]);
-				assert.match(tool.description, LIMIT);
-				// T66: the summary field asks for the task's answer first, verbatim, one keyed value per line.
-				assert.equal(
-					tool.parameters.properties?.summary?.description,
-					"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, " +
-						"each keyed value on its own line. Then say what you accomplished. At most 1,500 characters.",
-				);
+				assert.equal(child.tools.has(DONE), false);
+				assert.ok(child.tools.has(PING), "caller_ping stays");
 			}),
 		);
 	}
@@ -103,28 +92,13 @@ describe("completion call (D12)", () => {
 		}
 	});
 
-	it("the brief states the limit and the call, and asks for no call when the tool is denied", () => {
-		assert.match(completionCallBrief(new Set()), /call subagent_done with outcome .* at most 1,500 characters/);
-		assert.doesNotMatch(completionCallBrief(new Set()), /caller_ping/, "the brief names no tool a manual pane lacks");
-		assert.equal(completionCallBrief(new Set([DONE])), "");
-	});
-
-	it("the brief asks for the task's answer first in the summary, verbatim, one keyed value per line (T66)", () => {
-		assert.ok(
-			completionCallBrief(new Set()).includes(
-				"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, " +
-					"each keyed value on its own line.",
-			),
-		);
-	});
-
 	const briefCases = [
 		{ deny: undefined, fork: false },
 		{ deny: DONE, fork: false },
 		{ deny: undefined, fork: true },
 		{ deny: DONE, fork: true },
 	];
-	it("a headless brief, fork included, contains the limit; with subagent_done denied it does not ask for the call", async () => {
+	it("a headless brief, fork included, has no completion-call line (cf6dbf4 background.ts)", async () => {
 		for (const { deny, fork } of briefCases) {
 			const cwd = createTestDir();
 			mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
@@ -157,8 +131,8 @@ describe("completion call (D12)", () => {
 			const label = `deny=${deny ?? "none"} fork=${fork}`;
 			assert.equal(plan.launch.directTask, fork, label);
 			if (fork) assert.ok(plan.fullTask.startsWith("Do the work"), `${label}: the fork task stays first and whole`);
-			if (deny) assert.doesNotMatch(plan.fullTask, /subagent_done/, label);
-			else assert.match(plan.fullTask, /call subagent_done with outcome .* at most 1,500 characters/, label);
+			assert.doesNotMatch(plan.fullTask, /outcome \(done, partial or blocked\)|1,500 characters|refused once/, label);
+			if (fork) assert.equal(plan.fullTask, "Do the work", label);
 		}
 	});
 
@@ -183,35 +157,25 @@ describe("completion call (D12)", () => {
 		assert.equal(report, "Report.");
 	});
 
-	it(
-		"outcome partial with a summary ends in a typed partial record",
-		withChild({ autoExit: true, pane: false }, async (child) => {
-			const args = { outcome: "partial", summary: "Half of the files are fixed." };
-			await callDone(child, args);
-			assert.equal(child.shutdowns, 1);
-			const exit = child.readExit();
-			assert.equal(exit?.type, "done");
-			assert.deepEqual(exit?.acceptedCall, { toolCallId: "c1", args });
-			const { record, report } = assembleResult(
-				facts(
-					[
-						sessionHeader(),
-						user("task"),
-						assistant("Details."),
-						toolCall(DONE, args, "c1"),
-						toolResult(DONE, "c1", "ok"),
-					],
-					{
-						acceptedCall: exit.acceptedCall,
-					},
-				),
-			);
-			assert.equal(record.typed, true);
-			assert.equal(record.outcome, "partial");
-			assert.equal(record.summary, "Half of the files are fixed.");
-			assert.equal(report, "Details.");
-		}),
-	);
+	it("an older session's typed partial call still loads as a typed partial record", () => {
+		const args = { outcome: "partial", summary: "Half of the files are fixed." };
+		const { record, report } = assembleResult(
+			facts(
+				[
+					sessionHeader(),
+					user("task"),
+					assistant("Details."),
+					toolCall(DONE, args, "c1"),
+					toolResult(DONE, "c1", "ok"),
+				],
+				{ acceptedCall: { toolCallId: "c1", args } },
+			),
+		);
+		assert.equal(record.typed, true);
+		assert.equal(record.outcome, "partial");
+		assert.equal(record.summary, "Half of the files are fixed.");
+		assert.equal(report, "Details.");
+	});
 
 	it(
 		"a call with no arguments ends the child untyped",
@@ -242,44 +206,23 @@ describe("completion call (D12)", () => {
 		assert.equal(report, `Wrote the file.\n\n${NO_REPORT_LINE}`);
 	});
 
-	it(
-		"a summary over the limit is refused once; the second is accepted, cut and kept whole in the report",
-		withChild({ autoExit: true, pane: false }, async (child) => {
-			const summary = longText(2_000, "END-OF-SUMMARY");
-			const args = { outcome: "done", summary };
-			await assert.rejects(callDone(child, args, "c1"), LIMIT);
-			assert.equal(child.shutdowns, 0);
-			assert.equal(child.readExit(), null);
-			await callDone(child, args, "c2");
-			assert.equal(child.shutdowns, 1);
-			const { record, report } = assembleResult(
-				facts(
-					[
-						sessionHeader(),
-						user("task"),
-						toolCall(DONE, args, "c1"),
-						toolResult(DONE, "c1", "refused", true),
-						toolCall(DONE, args, "c2"),
-						toolResult(DONE, "c2", "ok"),
-					],
-					{ acceptedCall: child.readExit()?.acceptedCall },
-				),
-			);
-			assert.equal(record.typed, true);
-			assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-			assert.ok(record.summary.endsWith(CUT_MARK));
-			assert.ok(report.includes(summary), "the report holds the full summary with its last marker");
-		}),
-	);
+	it("an older session's typed summary over the limit is cut and kept whole in the report", () => {
+		const summary = longText(2_000, "END-OF-SUMMARY");
+		const args = { outcome: "done", summary };
+		const { record, report } = assembleResult(
+			facts([sessionHeader(), user("task"), toolCall(DONE, args, "c2"), toolResult(DONE, "c2", "ok")]),
+		);
+		assert.equal(record.typed, true);
+		assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
+		assert.ok(record.summary.endsWith(CUT_MARK));
+		assert.ok(report.includes(summary), "the report holds the full summary with its last marker");
+	});
 
 	it(
-		"a 3,000-character one-line caller_ping is refused once without using up the ping",
+		"a 3,000-character one-line caller_ping is accepted at once (cf6dbf4: no refusal)",
 		withChild({ autoExit: true, pane: false }, async (child) => {
 			const message = longText(3_000, "END-OF-PING");
-			const ping = (id: string) => child.tools.get(PING).execute(id, { message }, undefined, undefined, child.ctx);
-			await assert.rejects(ping("p1"), LIMIT);
-			assert.equal(child.readExit(), null);
-			await ping("p2");
+			await child.tools.get(PING).execute("p1", { message }, undefined, undefined, child.ctx);
 			const exit = child.readExit();
 			assert.equal(exit?.type, "ping");
 			assert.equal(exit?.message, message);
