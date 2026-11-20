@@ -138,7 +138,10 @@ export const OPERATOR_STOPPED_REASON = "stopped by the operator";
 
 /** D7 and T70: the cancelled end of a stopped run, with the reason of whoever asked for the stop. */
 export function stoppedEnd(running: Pick<RunningSubagent, "stopRequestedBy">): RunEnd {
-	return { kind: "cancelled", reason: running.stopRequestedBy === "operator" ? OPERATOR_STOPPED_REASON : STOPPED_REASON };
+	return {
+		kind: "cancelled",
+		reason: running.stopRequestedBy === "operator" ? OPERATOR_STOPPED_REASON : STOPPED_REASON,
+	};
 }
 
 /**
