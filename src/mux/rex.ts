@@ -205,9 +205,8 @@ export const rexBackend: MuxBackendAdapter = {
 	closeSurface: async (surface) => {
 		await rexAsync(["block", "close", "-s", parentSession(), childBlock(surface)]);
 	},
-	// Both renames would act on the parent's block or session, which no call targets (D28, T48).
-	renameCurrentTab: () => {},
-	renameWorkspace: () => {},
+	// No rename ability: both would act on the parent's block or session, which no call targets (D28, T48),
+	// so set_tab_title reports unavailable rather than a title it did not set (D10).
 	paneIdentity: REX_PANE_IDENTITY,
 	connectWorkReporter: (session) => createOscWorkReporter(session, "rex", rexUsable),
 };

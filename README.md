@@ -62,7 +62,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
-The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`.
+The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`. In Rex, `set_tab_title` also reports that the multiplexer is not available: Rex has no tab or workspace title that it can set.
 
 Normal launches use a backend-specific surface:
 
@@ -71,7 +71,7 @@ Normal launches use a backend-specific surface:
 - The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
 - Other backends may use windows, splits, or stacked panes.
 
-In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it.
+In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it. Old Herdr keeps its pane metadata count, where a delivered result counts until the parent has read it and settled idle.
 
 ### Removed: orchestrator mode and ambient awareness
 
@@ -516,7 +516,7 @@ A call with both `name` and `query` is refused. A malformed agent file is named 
 
 ### One malformed agent file
 
-Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file.
+Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file. When a valid definition of the same name shadows a malformed file, the notice lists that file apart and does not call the agent refused: the valid definition takes its place, under its own launch rules.
 
 ## Launching and waiting
 
