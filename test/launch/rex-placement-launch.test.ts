@@ -4,6 +4,8 @@ import { launchInteractiveSubagent } from "../../src/launch/interactive.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
 import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
+import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
+import type { RunningSubagent } from "../../src/types.ts";
 import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION, readRexCalls } from "../mux/fake-rex.ts";
 import {
 	ASSISTANT_MSG,
@@ -153,7 +155,36 @@ describe("Rex placement at launch (T71, D28)", () => {
 	}
 
 	/** Resumes an interactive child whose launch stored the given env and policy; returns the create verbs. */
-	async function resumeWith(stored: { env?: string; rexPlacementPolicy?: "window" | "split" }): Promise<string[]> {
+	/** Restarts the run for a timeout wrap-up, as wiring.ts does at the warning threshold. */
+	async function wrapUp(running: RunningSubagent): Promise<void> {
+		running.timeoutWrapUp = { kind: "timeout", seconds: 60, threshold: 80 };
+		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+	}
+
+	it("timeout wrap-up: the replacement keeps the agent's split under an invalid parent value", async () => {
+		writeAgent("child", "PI_SUBAGENT_REX_PLACEMENT=split");
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "bogus";
+		const running = await launchInteractiveSubagent(
+			{ name: "rex-child", title: "Rex child", task: "Check placement.", agent: "child" },
+			context(),
+			{ getContextWindow: () => undefined, getShellReadyDelayMs: () => 0 },
+		);
+		await wrapUp(running);
+		assert.deepEqual(creates(), ["split", "split"]);
+	});
+
+	it("timeout wrap-up after a resume: the replacement keeps the resumed run's policy, not the stored one", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
+		const { running } = await resumeWith({ rexPlacementPolicy: "split" });
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "bogus";
+		await wrapUp(running);
+		assert.deepEqual(creates(), ["window new", "window new"]);
+	});
+
+	async function resumeWith(stored: {
+		env?: string;
+		rexPlacementPolicy?: "window" | "split";
+	}): Promise<{ creates: string[]; running: RunningSubagent }> {
 		const sessionFile = join(cwd, "child.jsonl");
 		const header = { type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd };
 		writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
@@ -176,7 +207,7 @@ describe("Rex placement at launch (T71, D28)", () => {
 			...stored,
 		});
 		const result = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
-		await resumeSubagentSession(
+		const running = await resumeSubagentSession(
 			{ resultsDir: testResultsDir(), parent: { parentCwd: cwd, warnings: [] }, sessionFile, task: "resume" },
 			{
 				isMuxAvailable: () => true,
@@ -189,22 +220,21 @@ describe("Rex placement at launch (T71, D28)", () => {
 				runningSubagents: new Map(),
 			} as unknown as Parameters<typeof resumeSubagentSession>[1],
 		);
-		return creates();
+		return { creates: creates(), running };
 	}
 
 	it("resume: the persisted agent env value wins over the current parent default", async () => {
 		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
-		assert.deepEqual(await resumeWith({ env: "PI_SUBAGENT_REX_PLACEMENT=split", rexPlacementPolicy: "split" }), [
-			"split",
-		]);
+		const stored = { env: "PI_SUBAGENT_REX_PLACEMENT=split", rexPlacementPolicy: "split" } as const;
+		assert.deepEqual((await resumeWith(stored)).creates, ["split"]);
 	});
 
 	it("resume: the current parent default wins over a persisted policy without agent env", async () => {
 		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
-		assert.deepEqual(await resumeWith({ rexPlacementPolicy: "split" }), ["window new"]);
+		assert.deepEqual((await resumeWith({ rexPlacementPolicy: "split" })).creates, ["window new"]);
 	});
 
 	it("resume: the persisted policy applies when the parent sets nothing", async () => {
-		assert.deepEqual(await resumeWith({ rexPlacementPolicy: "split" }), ["split"]);
+		assert.deepEqual((await resumeWith({ rexPlacementPolicy: "split" })).creates, ["split"]);
 	});
 });
