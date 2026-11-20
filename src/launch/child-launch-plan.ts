@@ -302,13 +302,17 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 			resolveAlways: false,
 			explicitThinking: params.thinking != null,
 		});
-		// The grant of an unchanged default resolves exactly as v2.9.2 did: the parent's provider
-		// breaks a bare-id tie and an unsupported inherited level drops, so a default that two
-		// providers carry is granted as the ref it runs on (M34).
-		const implicitRef = resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
-			resolveAlways: false,
-			explicitThinking: false,
-		}).effectiveModelRef;
+		// With neither a model nor a thinking override, the grant resolves exactly as v2.9.2 did: the
+		// parent's provider breaks a bare-id tie and an unsupported inherited level drops, so a default
+		// that two providers carry is granted as the ref it runs on (M34). A thinking-only call keeps the
+		// default at the inherited level, so that grant cannot widen to every level.
+		const implicitRef =
+			params.thinking == null
+				? resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
+						resolveAlways: false,
+						explicitThinking: false,
+					}).effectiveModelRef
+				: resolveImplicitModelGrant(modelConfig, options.modelRegistry, inheritedModelRef, fallbackThinking);
 		if (hasAllowedModels) {
 			assertModelAllowed(
 				ref.effectiveModelRef,

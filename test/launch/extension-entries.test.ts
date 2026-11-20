@@ -1,4 +1,5 @@
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildChildLaunchPlan } from "../../src/launch/child-launch-plan.ts";
 import { getExtensionLaunchArgs, getSubagentsExtensionPath } from "../../src/launch/prep.ts";
 import {
@@ -38,7 +39,6 @@ function planFor(cwd: string, extensions: string | undefined, agentDir = join(cw
 async function resumeSavedSession(
 	dir: string,
 	extensions: string[],
-	extra: Partial<PersistedSubagentLaunchMetadata> = {},
 ): Promise<{ reply: string; started: RunningSubagent[] }> {
 	const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
 	const sessionFile = join(dir, "child.jsonl");
@@ -62,7 +62,6 @@ async function resumeSavedSession(
 		cwd: dir,
 		boundarySystemPrompt: false,
 		extensions,
-		...extra,
 	} as PersistedSubagentLaunchMetadata);
 	const started: RunningSubagent[] = [];
 	const empty = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
@@ -178,10 +177,12 @@ describe("configured extension entries pass through (D10 as amended by D18)", ()
 		const { reply, started } = await resumeSavedSession(dir, list);
 		assert.ok(!reply.includes("dropped missing extension"), reply);
 		const args = started[0].childProcess?.spawnargs ?? [];
-		const start = args.indexOf("--no-extensions");
-		assert.ok(start >= 0, args.join(" "));
-		const mandatory = args[start + 2];
-		assert.deepEqual(args.slice(start, start + 3 + 2 * list.length), cf6dbf4ExtensionArgs(list, mandatory));
+		// cf6dbf4 resume-service.ts:336-340: --no-extensions, the subagent-done helper, then the saved list.
+		const helper = resolve(dirname(fileURLToPath(import.meta.url)), "../../src/tools/subagent-done.ts");
+		const extensionArgs = args.flatMap((arg, index) =>
+			arg === "--no-extensions" ? [arg] : arg === "-e" ? [arg, args[index + 1]] : [],
+		);
+		assert.deepEqual(extensionArgs, cf6dbf4ExtensionArgs(list, helper));
 	});
 
 	it("keeps the saved list in the resumed launch metadata, which a time-limit wrap-up restart reuses", async () => {

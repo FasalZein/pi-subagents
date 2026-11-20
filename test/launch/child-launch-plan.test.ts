@@ -586,4 +586,37 @@ describe("child launch plan", () => {
 		assert.equal(plan.effectiveModel, "a/base");
 		assert.equal(plan.effectiveModelRef, "a/base");
 	});
+
+	// M34 covers only calls with neither a model nor a thinking override. A thinking-only call keeps the
+	// a0d0ad9 grant: the default at the inherited level, so an explicit other level stays refused.
+	it("keeps refusing a thinking-only call whose level the default grant does not name, as a0d0ad9 does", async () => {
+		const cwd = createTestDir();
+		const launch = (thinking: string, parentThinking: string, available: Array<{ provider: string; id: string }>) =>
+			buildChildLaunchPlan({
+				params: { name: "grant-check", task: "check", title: "Grant check", agent: "reviewer", thinking },
+				agentDefs: { model: "base", allowedModels: "other/x" },
+				parentCwd: cwd,
+				parentSessionDir: join(cwd, "parent-sessions"),
+				parentModelRef: "a/parent",
+				parentThinking,
+				modelRegistry: { getAvailable: () => [{ provider: "a", id: "parent" }, ...available] },
+			});
+		// One registry match; the inherited xhigh is beyond the levels a/base supports.
+		await assert.rejects(
+			launch("high", "xhigh", [
+				{ provider: "a", id: "base" },
+				{ provider: "other", id: "x" },
+			]),
+			/Model 'a\/base:high' is not allowed for agent 'reviewer'/,
+		);
+		// Two providers carry the default; the grant stays bare on a thinking-only call.
+		await assert.rejects(
+			launch("high", "high", [
+				{ provider: "a", id: "base" },
+				{ provider: "b", id: "base" },
+				{ provider: "other", id: "x" },
+			]),
+			/Model 'a\/base:high' is not allowed for agent 'reviewer'/,
+		);
+	});
 });

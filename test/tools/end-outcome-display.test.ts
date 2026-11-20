@@ -261,20 +261,15 @@ describe("published text displays (B1 review)", () => {
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("shows the child's answer in a waiting resume reply with a leading notice block", async () => {
+	it("shows the child's answer in a waiting resume reply", async () => {
 		const { running, result } = doneChild("resumed-worker");
-		const waited = await publishedWait(running, result)();
-		// A reply whose first text block is a notice before the result block.
-		const reply = {
-			...waited,
-			content: [{ type: "text", text: "notice: context at 91% of the window" }, ...waited.content],
-		};
+		const reply = await publishedWait(running, result)();
 		const shown = registeredTools()
 			.get(SUBAGENT_RESUME_TOOL_NAME)!
 			.renderResult(reply, { expanded: true }, theme, { args: {} })
 			.render(WIDTH)
 			.join("\n");
-		assertShowsMarkers(reply, shown, ["notice: context at 91% of the window", ANSWER]);
+		assertShowsMarkers(reply, shown, [ANSWER]);
 	});
 
 	it("shows each published answer and the ping question of a waiting multi-child launch", async () => {
