@@ -492,7 +492,7 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			assert.equal(value?.children[0]?.state, "started");
 			assert.equal(value?.children[0]?.runId, runOf(harness, "child-wait").id);
 			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child.
-			assert.equal(runOf(harness, "child-wait").stopRequestedBy, "parent");
+			assert.equal(runOf(harness, "child-wait").stopRequestedBy, "operator");
 		} finally {
 			await harness.dispose();
 		}
