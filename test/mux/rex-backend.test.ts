@@ -308,7 +308,11 @@ describe("Rex title (D10)", () => {
 		process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = "1";
 		try {
 			let tool: { execute(id: string, params: { title: string }): Promise<unknown> } | undefined;
-			registerSetTabTitleTool({ registerTool: (definition: typeof tool) => { tool = definition; } } as never);
+			registerSetTabTitleTool({
+				registerTool: (definition: typeof tool) => {
+					tool = definition;
+				},
+			} as never);
 			assert.ok(tool, "the opt-in registers set_tab_title");
 			const before = readRexCalls(stateDir).length;
 			const result = (await tool.execute("call", { title: "Phase 2" })) as {
@@ -316,10 +320,14 @@ describe("Rex title (D10)", () => {
 				details: { error?: string; title?: string };
 			};
 			// cf6dbf4 (src/tools/set-tab-title.ts): text "Terminal multiplexer not available. <hint>", details.error "mux not available".
-			assert.match(result.content[0]!.text, /^Terminal multiplexer not available\./);
-			assert.doesNotMatch(result.content[0]!.text, /Title set to/);
+			const text = result.content[0]?.text ?? "";
+			assert.match(text, /^Terminal multiplexer not available\./);
+			assert.doesNotMatch(text, /Title set to/);
 			assert.deepEqual(result.details, { error: "mux not available" });
-			assert.ok(callsFrom(before).every((call) => verb(call) === "whoami"), "no rename call reaches rex");
+			assert.ok(
+				callsFrom(before).every((call) => verb(call) === "whoami"),
+				"no rename call reaches rex",
+			);
 		} finally {
 			if (saved === undefined) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
 			else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = saved;

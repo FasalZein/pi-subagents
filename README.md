@@ -62,7 +62,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
-The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`.
+The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`. In Rex, `set_tab_title` also reports that the multiplexer is not available: Rex has no tab or workspace title that it can set.
 
 Normal launches use a backend-specific surface:
 

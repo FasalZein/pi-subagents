@@ -229,7 +229,11 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 
 		it("renames the current tab and the workspace", () => {
 			assert.equal(typeof adapter.renameCurrentTab === "function", fixture.renamesTab !== false, "renameCurrentTab");
-			assert.equal(typeof adapter.renameWorkspace === "function", fixture.renamesWorkspace !== false, "renameWorkspace");
+			assert.equal(
+				typeof adapter.renameWorkspace === "function",
+				fixture.renamesWorkspace !== false,
+				"renameWorkspace",
+			);
 			adapter.renameCurrentTab?.("Contract Tab");
 			adapter.renameWorkspace?.("Contract Workspace");
 			const expected = [
