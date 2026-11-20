@@ -19,8 +19,12 @@ const WRAPPER_CHARS = renderAgentIndexRequestText("").length;
 
 /** How a solo launch from this session runs, which decides the flags of a line. */
 export interface IndexLaunchPolicy {
-	/** The session has a UI and a multiplexer, so a non-background agent opens a pane. */
-	paneAvailable: boolean;
+	/**
+	 * Whether a non-background agent opens a pane: false without a UI, and in a
+	 * UI session the multiplexer detection of an earlier launch. "unknown" when
+	 * no launch has detected one yet: a prompt start does not probe (D06).
+	 */
+	paneAvailable: boolean | "unknown";
 	/** Every launch waits for the helper and closes it (print, headless or startup-prompt run). */
 	forcesWait: boolean;
 }
@@ -28,6 +32,12 @@ export interface IndexLaunchPolicy {
 // Kept short: in a startup-prompt session with a pane the line costs what the
 // dropped [manual] flags saved, and every fixture row must still fit (D19).
 const FORCED_WAIT_LINE = "Launches wait.";
+
+// Before the first launch has detected a multiplexer the pane flags are
+// conditional: without one, launch/policy.ts runs the child headless and
+// tools/policy.ts makes it close itself (D06).
+const UNKNOWN_PANE_LINE =
+	"[pane] and [manual] need a multiplexer; without one a helper runs headless and closes itself.";
 
 const DESCRIPTION_CHARS = 100;
 
@@ -46,15 +56,10 @@ const RULES_LINE =
 export const INDEX_MORE_TOOLS = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"] as const;
 type IndexMoreTool = (typeof INDEX_MORE_TOOLS)[number];
 
-/** What the session may call besides launch, so the index names only usable tools (D06). */
-interface IndexToolAccess {
-	/** The management tools this session may call. */
-	callable: ReadonlySet<IndexMoreTool>;
-	/** The agent file locations, named on the count line when subagent_agents is not callable. */
-	agentDirs: string;
-}
+/** The management tools this session may call, so the index names only usable tools (D06). */
+type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool> };
 
-const ALL_TOOLS: IndexToolAccess = { callable: new Set(INDEX_MORE_TOOLS), agentDirs: "" };
+const ALL_TOOLS: IndexToolAccess = { callable: new Set(INDEX_MORE_TOOLS) };
 
 function getFlags(entry: AgentListEntry, policy: IndexLaunchPolicy): string[] {
 	// The common case is a headless, fresh, self-closing helper whose launch
@@ -62,7 +67,7 @@ function getFlags(entry: AgentListEntry, policy: IndexLaunchPolicy): string[] {
 	// the solo launch policy (shouldUseBackgroundLaunch, applySynchronousLaunchPolicy):
 	// a headless or forced-wait launch always closes itself, and a forced wait
 	// is stated once for the session instead of on every line.
-	const pane = policy.paneAvailable && entry.mode !== "background" && entry.llmAsVerifier !== true;
+	const pane = policy.paneAvailable !== false && entry.mode !== "background" && entry.llmAsVerifier !== true;
 	const manual = pane && !policy.forcesWait && entry.autoExit !== true;
 	return [
 		pane ? "[pane]" : undefined,
@@ -100,11 +105,13 @@ function renderAgentLine(entry: AgentListEntry, policy: IndexLaunchPolicy): stri
 	return [`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" ");
 }
 
-function renderCountLine(rest: number, tools: IndexToolAccess): string {
-	// Without the lookup tool the files themselves are the catalog (D06).
-	return tools.callable.has("subagent_agents")
-		? `+${rest} more: subagent_agents with a query`
-		: `+${rest} more: agent files in ${tools.agentDirs}`;
+function renderCountLine(rest: number): string {
+	return `+${rest} more: subagent_agents with a query`;
+}
+
+/** The names line of a session without subagent_agents: the only way it learns the rest (D06). */
+function renderNamesLine(names: readonly string[], hidden: number): string {
+	return `More agents: ${names.join(", ")}${hidden > 0 ? `, +${hidden} not shown` : ""}.`;
 }
 
 function renderMoreToolsLine(tools: IndexToolAccess): string[] {
@@ -122,38 +129,59 @@ function compareIndexOrder(a: AgentListEntry, b: AgentListEntry): number {
 /**
  * The index section text for the agents a session may launch, or undefined
  * when it may launch none. Pinned agents come first, then the others, each
- * group by name; agent lines are added while the rendered section, with a
- * count line for the rest, stays within AGENT_INDEX_MAX_CHARS.
+ * group by name, and the section stays within AGENT_INDEX_MAX_CHARS. With
+ * subagent_agents callable, agent lines are added while they fit with a count
+ * line for the rest; a descriptionless agent is left to the lookup. Without
+ * it, the agents that get no line, descriptionless ones included, are named on
+ * one names line, and agent lines yield to it until every name fits (D06).
  */
 export function renderAgentIndexSection(
 	entries: readonly AgentListEntry[],
 	policy: IndexLaunchPolicy,
 	tools: IndexToolAccess = ALL_TOOLS,
 ): string | undefined {
-	const described = entries.filter((entry) => entry.description?.trim());
-	if (described.length === 0) return undefined;
-	const lines = [...described].sort(compareIndexOrder).map((entry) => renderAgentLine(entry, policy));
+	const lookup = tools.callable.has("subagent_agents");
+	const ordered = [...entries].sort(compareIndexOrder);
+	const described = ordered.filter((entry) => entry.description?.trim());
+	if ((lookup ? described : ordered).length === 0) return undefined;
+	const lines = described.map((entry) => renderAgentLine(entry, policy));
+	const paneUnknown = policy.paneAvailable === "unknown" && lines.some((line) => line.includes(" [pane]"));
 	const fixed = [
 		renderLaunchLine(tools),
 		RULES_LINE,
 		...renderMoreToolsLine(tools),
 		...(policy.forcesWait ? [FORCED_WAIT_LINE] : []),
+		...(paneUnknown ? [UNKNOWN_PANE_LINE] : []),
 	].join("\n");
-	// Length with the first k agent lines: each line adds itself and one newline.
-	const lengthWith = (k: number, prefix: number) =>
-		WRAPPER_CHARS +
-		fixed.length +
-		prefix +
-		(k < lines.length ? 1 + renderCountLine(lines.length - k, tools).length : 0);
-	// The fixed lines and a count line alone fit, so zero agent lines always fit.
-	let shown = 0;
-	let prefix = 0;
-	for (let k = 1; k <= lines.length; k++) {
-		prefix += 1 + lines[k - 1].length;
-		if (lengthWith(k, prefix) <= AGENT_INDEX_MAX_CHARS) shown = k;
+	// prefix[k]: the length of the first k agent lines, each with its newline.
+	const prefix = [0];
+	for (const line of lines) prefix.push(prefix[prefix.length - 1] + 1 + line.length);
+	const fits = (k: number, tail: string | undefined) =>
+		WRAPPER_CHARS + fixed.length + prefix[k] + (tail === undefined ? 0 : 1 + tail.length) <= AGENT_INDEX_MAX_CHARS;
+	const render = (k: number, tail: string | undefined) =>
+		[fixed, ...lines.slice(0, k), ...(tail === undefined ? [] : [tail])].join("\n");
+	if (lookup) {
+		// The fixed lines and a count line alone fit, so zero agent lines always fit.
+		let shown = 0;
+		for (let k = 1; k <= lines.length; k++)
+			if (fits(k, k < lines.length ? renderCountLine(lines.length - k) : undefined)) shown = k;
+		return render(shown, shown < lines.length ? renderCountLine(lines.length - shown) : undefined);
 	}
-	const rest = lines.length - shown;
-	return [fixed, ...lines.slice(0, shown), ...(rest > 0 ? [renderCountLine(rest, tools)] : [])].join("\n");
+	const shownNames = (k: number) => new Set(described.slice(0, k).map((entry) => entry.name));
+	const restNames = (k: number) => {
+		const shown = shownNames(k);
+		return ordered.filter((entry) => !shown.has(entry.name)).map((entry) => entry.name);
+	};
+	for (let k = lines.length; k >= 0; k--) {
+		const rest = restNames(k);
+		const tail = rest.length > 0 ? renderNamesLine(rest, 0) : undefined;
+		if (fits(k, tail)) return render(k, tail);
+	}
+	// Not even every name fits: name as many as fit and count the others.
+	const rest = restNames(0);
+	let named = 0;
+	while (named < rest.length && fits(0, renderNamesLine(rest.slice(0, named + 1), rest.length - named - 1))) named++;
+	return render(0, renderNamesLine(rest.slice(0, named), rest.length - named));
 }
 
 interface IndexPromptEvent {
@@ -164,18 +192,55 @@ interface IndexPromptEvent {
 }
 
 /**
- * Write the index into the prompt of this request as the named section. Pi
- * sends a whole prompt instead of the sections when an earlier handler, in a
- * parent or a child, already composed one, so the section text is then
- * appended to it and returned; otherwise that prompt would hide the index
- * (D06). A later whole-prompt handler renders the prompt with the section, so
- * it keeps the index too.
+ * Write the index into the prompt of this request. The named section is the
+ * only channel in a parent (D3). A child keeps its whole-prompt returns until
+ * D33, and Pi sends a whole prompt instead of the sections, so when an earlier
+ * handler in a child already composed one, the section text is appended to it
+ * and returned. Any other whole prompt, from an earlier parent handler or a
+ * later handler, gets the index through indexFallbackMessages instead.
  */
-export function applyAgentIndexSection(event: IndexPromptEvent, section: string): { systemPrompt: string } | undefined {
+export function applyAgentIndexSection(
+	event: IndexPromptEvent,
+	section: string,
+	isChild: boolean,
+): { systemPrompt: string } | undefined {
 	event.systemPromptOptions.sections[AGENT_INDEX_SECTION_NAME] = section;
 	const forced = event.systemPromptOptions.forceSystemPrompt;
-	if (forced === undefined) return undefined;
+	if (forced === undefined || !isChild) return undefined;
 	const tagged = renderAgentIndexRequestText(section);
 	if (forced.includes(tagged)) return undefined;
 	return { systemPrompt: `${forced}\n\n${tagged}` };
+}
+
+/** The custom type of the per-request index message of the fallback. */
+const AGENT_INDEX_MESSAGE_TYPE = "subagent-index";
+
+interface IndexContextMessage {
+	role: "custom";
+	customType: string;
+	content: string;
+	display: boolean;
+	timestamp: number;
+}
+
+/**
+ * The context of one provider request with the index in front, when the
+ * system prompt that Pi sends lacks it: another extension's whole prompt
+ * (before_agent_start systemPrompt) replaces every section, also when its
+ * handler runs after this one. The index then goes in as a leading message
+ * of this request only: the parent's chosen prompt stays as it is, nothing is
+ * written to the session, and a fixed timestamp keeps the request prefix
+ * stable for the cache (D06). Undefined when the prompt already holds it.
+ */
+export function indexFallbackMessages<T>(
+	messages: readonly T[],
+	systemPrompt: string,
+	section: string,
+): Array<T | IndexContextMessage> | undefined {
+	const tagged = renderAgentIndexRequestText(section);
+	if (systemPrompt.includes(tagged)) return undefined;
+	return [
+		{ role: "custom", customType: AGENT_INDEX_MESSAGE_TYPE, content: tagged, display: false, timestamp: 0 },
+		...messages,
+	];
 }

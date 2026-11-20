@@ -179,6 +179,8 @@ describe("extension registration gating", () => {
 				"agent_settled",
 				"agent_start",
 				"before_agent_start",
+				// D06: the index fallback when another extension's whole prompt replaces the sections.
+				"context",
 				"input",
 				"message_end",
 				"session_shutdown",

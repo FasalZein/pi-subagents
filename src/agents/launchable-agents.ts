@@ -72,24 +72,19 @@ function renderByName(name: string, agents: readonly LaunchableAgent[], context:
 	const agent = agents.find((candidate) => nameOf(candidate) === name);
 	if (agent?.kind === "agent") return renderAgentDetail(agent.entry, context);
 	if (agent?.kind === "malformed") return renderParseError(agent.file);
-	return `Error: ${renderUnknownAgentRefusal(name)}`;
-}
-
-/** Where agent files are searched, as the v2.9.2 unknown-agent error names them (cf6dbf4 src/launch/policy.ts). */
-export function agentFileLocations(): string {
-	return `.pi/agents/ or ${join(getAgentConfigDir(), "agents")}`;
+	// A lookup reply stays one line for any input (review 8); a plain name reads as in v2.9.2.
+	return `Error: ${renderUnknownAgentRefusal(name.replace(/\s+/g, " "))}`;
 }
 
 /**
  * The refusal of a name that matched no launchable agent, worded as v2.9.2
- * after its "Error: " prefix: the requested name and the search locations, no
- * substitute names (D06). JSON quoting equals the v2.9.2 quotes for a plain
- * name and keeps a name with a line break on one line (review 8). The second
- * parameter is unused; the launch tool still passes it
- * (src/tools/subagent-tools.ts, owned by a parallel ticket).
+ * (cf6dbf4 src/launch/policy.ts) after its "Error: " prefix: the requested
+ * name verbatim and the search locations, no substitute names (D06). The
+ * second parameter is unused; the launch tool still passes it
+ * (src/tools/subagent-tools.ts, owned by T74).
  */
 export function renderUnknownAgentRefusal(name: string, _names?: readonly string[]): string {
-	return `agent ${JSON.stringify(name)} was not found in ${agentFileLocations()}.`;
+	return `agent "${name}" was not found in .pi/agents/ or ${join(getAgentConfigDir(), "agents")}.`;
 }
 
 function scoreMatch(agent: LaunchableAgent, terms: readonly string[]): number {

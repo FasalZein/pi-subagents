@@ -5,6 +5,7 @@ import {
 	AGENT_INDEX_SECTION_NAME,
 	applyAgentIndexSection,
 	type IndexLaunchPolicy,
+	indexFallbackMessages,
 	renderAgentIndexRequestText,
 	renderAgentIndexSection,
 	selectIndexTargets,
@@ -175,40 +176,86 @@ describe("agent index section", () => {
 		assert.equal(renderAgentIndexSection([entry("blank", { description: "  " })], PANE), undefined);
 	});
 
-	it("names only the tools the session may call and points to the agent files without subagent_agents", () => {
-		const entries = Array.from({ length: 100 }, (_, i) => entry(`agent-${String(i).padStart(3, "0")}`));
-		const dirs = ".pi/agents/ or /home/u/.pi/agent/agents";
-		const section = renderAgentIndexSection(entries, PANE, {
-			callable: new Set(["subagent_wait", "subagent_kill"]),
-			agentDirs: dirs,
-		});
-		const lines = section?.split("\n") ?? [];
+	it("names only the tools the session may call and names every hidden agent without subagent_agents (D06)", () => {
+		const entries = [
+			...Array.from({ length: 40 }, (_, i) => entry(`agent-${String(i).padStart(3, "0")}`)),
+			entry("bare", { description: undefined }),
+		];
+		const section =
+			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_wait", "subagent_kill"]) }) ?? "";
+		const lines = section.split("\n");
 		assert.equal(lines[2], "More tools: subagent_wait, subagent_kill.");
-		assert.ok(!section?.includes("subagent_agents"), section);
-		assert.match(
-			lines.at(-1) ?? "",
-			new RegExp(`^\\+\\d+ more: agent files in ${dirs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
-		);
-		assert.ok(renderAgentIndexRequestText(section ?? "").length <= AGENT_INDEX_MAX_CHARS);
-		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set(), agentDirs: dirs });
+		assert.ok(!section.includes("subagent_agents"), section);
+		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
+		// Every launchable name is in the section, on a line or on the names line, the descriptionless one too.
+		const namesLine = lines.at(-1) ?? "";
+		assert.match(namesLine, /^More agents: [\w-]+(, [\w-]+)*\.$/);
+		for (const { name } of entries)
+			assert.ok(lines.some((line) => line.startsWith(`- ${name}: `)) || namesLine.includes(name), name);
+		assert.ok(namesLine.includes("agent-039"), "an agent without a line is named");
+		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set() });
 		assert.ok(!none?.includes("More tools"), none);
+		// A lone descriptionless agent is still reachable without the lookup.
+		assert.match(
+			renderAgentIndexSection([entry("bare", { description: undefined })], PANE, { callable: new Set() }) ?? "",
+			/\nMore agents: bare\.$/,
+		);
 	});
 
-	it("appends the section to a whole prompt in a parent and in a child", () => {
+	it("keeps 500 long names within the limit without subagent_agents and counts the unnamed ones", () => {
+		const entries = Array.from({ length: 500 }, (_, i) =>
+			entry(`agent-with-a-rather-long-name-${String(i).padStart(3, "0")}`),
+		);
+		const section = renderAgentIndexSection(entries, PANE, { callable: new Set() }) ?? "";
+		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS, `${section.length}`);
+		const last = section.split("\n").at(-1) ?? "";
+		const named = (last.match(/agent-with/g) ?? []).length;
+		assert.ok(named > 0);
+		assert.ok(last.endsWith(`, +${500 - named} not shown.`), last);
+	});
+
+	it("marks pane flags as conditional while no launch has detected a multiplexer (D06)", () => {
+		const unknown: IndexLaunchPolicy = { paneAvailable: "unknown", forcesWait: false };
+		const manual = entry("manual-pane", { mode: "interactive", autoExit: false });
+		const lines = renderAgentIndexSection([manual], unknown)?.split("\n") ?? [];
+		assert.ok(
+			lines.includes(`- manual-pane: ${manual.description?.slice(0, 100).trimEnd()} [pane] [manual]`),
+			lines.join("\n"),
+		);
+		assert.ok(
+			lines.includes("[pane] and [manual] need a multiplexer; without one a helper runs headless and closes itself."),
+		);
+		// Known: no note; known absent: no pane flags (the launch runs it headless and it closes itself).
+		assert.ok(!renderAgentIndexSection([manual], PANE)?.includes("need a multiplexer"));
+		assert.ok(!renderAgentIndexSection([manual], HEADLESS)?.includes("[pane]"));
+		assert.ok(!renderAgentIndexSection([entry("plain")], unknown)?.includes("need a multiplexer"));
+	});
+
+	it("appends the section to a whole prompt only in a child", () => {
 		const forced = () => ({
 			systemPromptOptions: { sections: {}, forceSystemPrompt: "WHOLE" },
 		});
+		assert.equal(applyAgentIndexSection(forced(), "INDEX", false), undefined);
 		const tagged = `<${AGENT_INDEX_SECTION_NAME}>\nINDEX\n</${AGENT_INDEX_SECTION_NAME}>`;
-		assert.deepEqual(applyAgentIndexSection(forced(), "INDEX"), {
+		assert.deepEqual(applyAgentIndexSection(forced(), "INDEX", true), {
 			systemPrompt: `WHOLE\n\n${tagged}`,
 		});
-		assert.equal(applyAgentIndexSection({ systemPromptOptions: { sections: {} } }, "INDEX"), undefined);
 		const already = {
 			systemPromptOptions: {
 				sections: {},
 				forceSystemPrompt: `WHOLE\n\n${tagged}`,
 			},
 		};
-		assert.equal(applyAgentIndexSection(already, "INDEX"), undefined);
+		assert.equal(applyAgentIndexSection(already, "INDEX", true), undefined);
+	});
+
+	it("puts the index in front of a request whose system prompt lacks it, and only then (D06)", () => {
+		const tagged = renderAgentIndexRequestText("INDEX");
+		const history = [{ role: "user" }];
+		assert.deepEqual(indexFallbackMessages(history, "PARENT PROMPT", "INDEX"), [
+			{ role: "custom", customType: "subagent-index", content: tagged, display: false, timestamp: 0 },
+			...history,
+		]);
+		assert.equal(indexFallbackMessages(history, `PROMPT\n\n${tagged}\n\nMORE`, "INDEX"), undefined);
 	});
 });
