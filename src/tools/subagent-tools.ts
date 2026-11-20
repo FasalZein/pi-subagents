@@ -11,6 +11,7 @@ import {
 	shouldUseBackgroundLaunch,
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
+import { getLaunchCallChildren } from "../runtime/batch-classifier.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
@@ -43,7 +44,7 @@ import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tool-names.ts";
 
 let initialPromptLaunchActive = isInitialPromptInvocation();
 
-export const SubagentChildParams = Type.Object({
+const launchFields = {
 	agent: Type.String({ description: "Name of the agent definition to launch." }),
 	name: Type.String({
 		description: "2-4 lower-kebab words joined by hyphens, max 32 chars. Use auth-scout; one word (build) fails.",
@@ -52,6 +53,10 @@ export const SubagentChildParams = Type.Object({
 		description: "Sentence-case title of 3 to 8 words for the child session, such as Auth implementation map.",
 	}),
 	task: Type.String({ description: "The work for this child, in Markdown for anything beyond one line." }),
+};
+
+export const SubagentChildParams = Type.Object({
+	...launchFields,
 	model: Type.Optional(
 		Type.String({
 			description:
@@ -63,11 +68,19 @@ export const SubagentChildParams = Type.Object({
 	),
 });
 
+/** D05: the v2.9.2 (cf6dbf4) forms: each entry of a nonempty children list, else the top-level fields. */
 export const SubagentParams = Type.Object({
-	children: Type.Array(SubagentChildParams, {
-		minItems: 1,
-		description: "The children to start in this one call, up to the spawn width.",
-	}),
+	agent: Type.Optional(launchFields.agent),
+	name: Type.Optional(launchFields.name),
+	title: Type.Optional(launchFields.title),
+	task: Type.Optional(launchFields.task),
+	model: SubagentChildParams.properties.model,
+	thinking: SubagentChildParams.properties.thinking,
+	children: Type.Optional(
+		Type.Array(SubagentChildParams, {
+			description: "Several children to start in this one call, up to the spawn width; replaces the top-level fields.",
+		}),
+	),
 });
 
 type ToolResult = ReturnType<typeof asSubagentToolResult>;
@@ -152,6 +165,9 @@ function getLaunchError(
 ): string | null {
 	const nameError = getSubagentNameError(params.name);
 	if (nameError) return nameError;
+	// D05: the single form declares task optional as cf6dbf4 did; the README makes it required in both forms.
+	if (typeof params.task !== "string")
+		return "Error: task is required for subagent launches. Give the work for this child.";
 	if (!params.title?.trim())
 		return "Error: title is required for subagent launches. Provide a short sentence-case title for the child session/widget.";
 	if (params.agent && !agentDefs) return getUnknownAgentError(params.agent, launchable);
@@ -346,12 +362,14 @@ export function registerSubagentCoreTools(
 		pi.registerTool({
 			name: SUBAGENT_TOOL_NAME,
 			label: "Subagent",
-			description: "Start one or more child agents, each named with its task in the children list.",
+			description: "Start one child agent from the top-level fields, or several from the children list.",
 			parameters: SubagentParams,
 			prepareArguments: asPrepareArguments(parseLaunchJsonFields),
 			outputSchema: SubagentLaunchOutput,
 			execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
-				const children = params.children.map((child) => stripInternalLaunchOverrides(child as SubagentParamsInput));
+				const children = getLaunchCallChildren(params).map((child) =>
+					stripInternalLaunchOverrides(child as SubagentParamsInput),
+				);
 				const widthLimit = getSpawnWidthLimit();
 				if (children.length > widthLimit) return getBatchWidthValidationError(children.length, widthLimit);
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
@@ -440,7 +458,10 @@ export function registerSubagentCoreTools(
 					});
 				}
 				const results = await Promise.all(
-					launched.map((running) => runtime.getLaunchedSubagentResult(running, signal)),
+					// D04a: as v2.9.2 (cf6dbf4), Esc does not reach the wait of an explicitly synchronous launch.
+					launched.map((running) =>
+						runtime.getLaunchedSubagentResult(running, running.async === false ? undefined : signal),
+					),
 				);
 				const reportedIds = reportedRunIds(results);
 				settleWaitReply(
@@ -511,6 +532,16 @@ export function registerSubagentCoreTools(
 				// T64: Pi renders the raw arguments, where children may be a JSON string.
 				const parsed = parseJsonContainer(args.children);
 				const children: Partial<SubagentParamsInput>[] = Array.isArray(parsed) ? parsed : [];
+				if (children.length === 0) {
+					// D05: the top-level single form, rendered as in v2.9.2 (cf6dbf4).
+					const agent = args.agent ? theme.fg("dim", ` (${args.agent})`) : "";
+					text.setText(
+						`▸ ${theme.fg("toolTitle", theme.bold("Spawn"))} ${theme.fg("accent", theme.bold(args.name ?? "subagent"))}` +
+							agent +
+							formatTaskPreview(args.task, context, theme),
+					);
+					return text;
+				}
 				const lines = [
 					`▸ ${theme.fg("toolTitle", theme.bold("Spawn"))} ${theme.fg("toolTitle", theme.bold(`${children.length} agents`))}`,
 					"",

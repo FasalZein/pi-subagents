@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
-import type { SessionEntry } from "../session/session.ts";
+import { getSubagentTerminalStopReason, type SessionEntry } from "../session/session.ts";
 import type { SubagentResult } from "../types.ts";
-import { assembleResult, endedByOf, type RunEnd } from "./result-assembler.ts";
+import { assembleResult, endedByOf, type RunEnd, type WrapUpFact } from "./result-assembler.ts";
 import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
 import {
@@ -32,17 +32,20 @@ function resultEnd(result: UnpublishedResult): RunEnd {
 		return { kind: "timed_out", budget: result.timedOut, seconds: result.timedOutAfter ?? 0, wrapUp: false };
 	}
 	if (result.errorMessage) return { kind: "failed", error: result.errorMessage, code: result.exitCode };
-	if (result.exitCode === 0 && result.timeoutWrapUp) {
-		return {
-			kind: "timed_out",
-			budget: result.timeoutWrapUp.kind,
-			seconds: result.timeoutWrapUp.seconds,
-			wrapUp: true,
-		};
+	// D12 (cf6dbf4 state.ts): an empty terminal stop fails the run, also after exit 0.
+	if (getSubagentTerminalStopReason(result.summary)) {
+		return { kind: "failed", error: result.summary, code: result.exitCode };
 	}
 	if (result.exitCode !== 0)
 		return { kind: "failed", error: `exited with code ${result.exitCode}`, code: result.exitCode };
 	return { kind: "exited", code: 0 };
+}
+
+/** D21: a report-only wrap-up that ended by itself keeps its time limit, whatever its own end. */
+function wrapUpOf(result: UnpublishedResult, end: RunEnd): WrapUpFact | undefined {
+	const wrapUp = result.timeoutWrapUp;
+	if (!wrapUp || end.kind === "cancelled" || end.kind === "pinged" || end.kind === "timed_out") return undefined;
+	return { budget: wrapUp.kind, seconds: wrapUp.seconds };
 }
 
 function resumeFacts(result: UnpublishedResult): ResultRecord["resume"] {
@@ -73,6 +76,7 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 		? [{ type: "message", id: "result-summary", message: { role: "assistant", content: [{ type: "text", text }] } }]
 		: [];
 	const end = resultEnd(result);
+	const wrapUp = wrapUpOf(result, end);
 	const assembled = assembleResult({
 		runId: runIdOf(result),
 		name: result.name,
@@ -82,7 +86,8 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 		endedAt,
 		end,
 		// No watcher facts reach this path, so a stop names the parent and a close stays the child's.
-		endedBy: endedByOf(end, { closedByPerson: false }),
+		endedBy: endedByOf(end, { closedByPerson: false, wrapUp: wrapUp !== undefined }),
+		wrapUp,
 		entries,
 		launchEntryCount: 0,
 		contextUsage:

@@ -148,7 +148,9 @@ describe("headless results through the assembler (T07)", () => {
 		assert.equal(resolve(parentCwd, expanded), result.reportFile);
 	});
 
-	it("does not report unrelated tool output for a run that stops at a tool call with no text", async () => {
+	// T77 (D12): cf6dbf4 findLastSubagentOutputWithSource reports the trailing tool result of a run
+	// whose last assistant turn has no text.
+	it("reports the trailing tool output of a run that stops at a tool call with no text (cf6dbf4)", async () => {
 		const { running, result } = await finishHeadless([
 			{
 				type: "message",
@@ -171,8 +173,8 @@ describe("headless results through the assembler (T07)", () => {
 			},
 		]);
 		const text = messageText(result, running);
-		assert.ok(!text.includes(TOOL_OUTPUT), text);
+		assert.ok(text.includes(TOOL_OUTPUT), text);
 		assert.ok(result.reportFile);
-		assert.ok(!readFileSync(result.reportFile, "utf8").includes(TOOL_OUTPUT));
+		assert.equal(readFileSync(result.reportFile, "utf8"), TOOL_OUTPUT);
 	});
 });

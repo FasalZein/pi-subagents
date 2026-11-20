@@ -142,11 +142,12 @@ export const WRAP_UP_NOTICE =
 
 /**
  * D7: the time limit of a timed-out run, with the guidance of a kill or the notice of a report-only
- * wrap-up. The limit stays; the guidance or notice gets the room the resume reason leaves.
+ * wrap-up. The limit stays; the guidance or notice gets the room the resume reason leaves. D21: a
+ * completed wrap-up keeps its report outcome and still names the limit here.
  */
 function timeLimitLine(record: ResultRecord): RequiredLine | undefined {
 	const limit = record.timeLimit;
-	if (record.outcome !== "timed_out" || !limit) return undefined;
+	if (!limit || (record.outcome !== "timed_out" && !limit.wrapUp)) return undefined;
 	const budget =
 		limit.kind === "idle-timeout" ? `${limit.seconds}s without output` : `${limit.seconds}s for the whole run`;
 	const [label, text] = limit.wrapUp

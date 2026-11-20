@@ -113,7 +113,7 @@ function launchRuntime(overrides: Partial<SubagentToolRuntime>): SubagentToolRun
 }
 
 /** Launches child-one and child-two through the real tool; child-two's launch waits for its gate. */
-function launchTwo(parent: ReturnType<typeof mockParent>, signal?: AbortSignal) {
+function launchTwo(parent: ReturnType<typeof mockParent>, signal?: AbortSignal, explicitSync = true) {
 	const finish: Record<string, (result: SubagentResult) => void> = {};
 	let releaseLaunch2!: () => void;
 	const gate2 = new Promise<void>((resolve) => {
@@ -125,7 +125,7 @@ function launchTwo(parent: ReturnType<typeof mockParent>, signal?: AbortSignal) 
 		launchRuntime({
 			launchBackgroundSubagent: async (params) => {
 				if (params.name === "child-two") await gate2;
-				const running = blockingRunning(params.name);
+				const running = { ...blockingRunning(params.name), async: explicitSync ? false : undefined };
 				setRunningSubagentForTest(running as any);
 				return running;
 			},
@@ -237,7 +237,23 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.match(messages[0].content, /LATE REPORT/);
 	});
 
-	it("replay 7c: the wait for a child of an async:false agent receives the abort signal", async () => {
+	// D04a: expected values from cf6dbf4 src/runtime/wait-result.ts (a launch or resume wait that starts
+	// aborted stops the child); subagent_resume calls the same getLaunchedSubagentResult with its signal.
+	it("D04a: a launch or resume wait that starts aborted stops its child", async () => {
+		const running: RunningSubagent = { ...blockingRunning("resumed-child"), async: undefined };
+		setRunningSubagentForTest(running);
+		running.completionPromise = new Promise<SubagentResult>(() => {});
+		const abort = new AbortController();
+		abort.abort();
+		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
+		assert.equal((result.details as { error?: string }).error, "interrupted");
+		assert.equal(running.stopRequestedBy, "parent");
+		assert.equal(running.phase, "stopping");
+	});
+
+	// D04a: expected value from cf6dbf4 src/tools/subagent-tools.ts getToolWaitSignal: an explicitly
+	// synchronous run (async: false) waits without the abort signal, so Esc does not stop it.
+	it("replay 7c and D04a: the wait for a child of an async:false agent does not receive the abort signal", async () => {
 		const parent = mockParent();
 		const seen: Array<AbortSignal | undefined> = [];
 		registerSubagentCoreTools(
@@ -261,7 +277,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 				toolCtx,
 			);
 		assert.equal(seen.length, 1);
-		assert.equal(seen[0], abort.signal);
+		assert.equal(seen[0], undefined);
 	});
 
 	it("a tool result and a committed message both carry child 1: capped copies, released once by id; a running sibling stays counted", async () => {
@@ -301,11 +317,13 @@ describe("T23: launches that wait use the delivery owner", () => {
 		}
 	});
 
-	it("T26 checks 1-2: Esc during the launch wait stops no child; the taken result goes out with no turn, a later end starts one", async () => {
+	// D04a: expected values from cf6dbf4 src/runtime/wait-result.ts: a launch wait that observes the abort
+	// stops the child it waits for. The handback of the taken result (R4) stays.
+	it("T26 checks 1-2 and D04a: Esc during a batch-rule launch wait stops child 2; the taken result goes out with no turn", async () => {
 		const parent = mockParent();
 		parent.fire("agent_start");
 		const abort = new AbortController();
-		const launch = launchTwo(parent, abort.signal);
+		const launch = launchTwo(parent, abort.signal, false);
 		launch.releaseLaunch2();
 		await sleep(10);
 		launch.finish["child-one"](endOf("child-one", LONG_REPORT));
@@ -319,13 +337,49 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.match(copies[0].content, /REPORT-HEAD/);
 		assert.ok(copies[0].content.length <= COPY_CAP);
 		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
-		// D16: Esc stops only the wait; child 2 still runs and no stop was sent.
-		assert.equal(runningSubagents.get("id-child-two")?.phase, "running", "child 2 still runs");
-		launch.finish["child-two"](endOf("child-two", "LATE-TWO"));
+		const two = runningSubagents.get("id-child-two");
+		assert.equal(two?.phase, "stopping", "a stop was sent to child 2");
+		assert.equal(two?.stopRequestedBy, "parent");
+		assert.equal(runningSubagents.get("id-child-one"), undefined, "child 1 had ended and is not stopped");
+	});
+
+	// T78 fix round 1 (review P1): expected values from cf6dbf4 src/runtime/wait-result.ts, where the
+	// cached-result branch comes before any abort check: a launch wait that starts after Esc still
+	// returns the report of a child that had already ended, and stops only the child still running.
+	it("D04a: Esc before the launch wait starts: the ended child's report is in the reply; the running child is stopped", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const abort = new AbortController();
+		const launch = launchTwo(parent, abort.signal, false);
 		await sleep(10);
-		const late = parent.sent.filter((entry) => entry.details.id === "id-child-two");
-		assert.equal(late.length, 1, "child 2 reports by message when it ends");
-		assert.equal(late[0].triggerTurn, true, "a child that ends later starts a turn");
+		launch.finish["child-one"](endOf("child-one", "ONE-ENDED-REPORT"));
+		await sleep(10);
+		abort.abort();
+		launch.releaseLaunch2();
+		const result = await launch.exec;
+		const children = (result.details as { children: Array<{ id: string; status?: string; error?: string }> }).children;
+		const one = children.find((child) => child.id === "id-child-one");
+		assert.equal(one?.error, undefined, "child 1's report is not hidden as interrupted");
+		assert.equal(one?.status, "completed");
+		assert.match(result.content[0].text, /ONE-ENDED-REPORT/);
+		const two = runningSubagents.get("id-child-two");
+		assert.equal(two?.stopRequestedBy, "parent", "child 2 still ran and was stopped");
+	});
+
+	it("D04a: a resume or single launch wait that starts after Esc returns the report of a child that already ended", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const running: RunningSubagent = { ...blockingRunning("ended-child"), async: undefined };
+		setRunningSubagentForTest(running);
+		const end = endOf("ended-child", "ENDED-REPORT");
+		running.completionPromise = Promise.resolve(end);
+		routeDetachedSubagentCompletionForTest(parent.pi, running, end);
+		const abort = new AbortController();
+		abort.abort();
+		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
+		assert.equal((result.details as { error?: string }).error, undefined);
+		assert.match(result.content[0].text, /ENDED-REPORT/);
+		assert.equal(running.stopRequestedBy, undefined, "an ended child is not stopped");
 	});
 
 	it("an early caller_ping is taken by the launch wait like any queued result", async () => {

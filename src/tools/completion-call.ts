@@ -31,9 +31,6 @@ export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry:
 	}
 }
 
-/** T64: the subagent_done fields an older typed call may hold as a JSON string; the parent parses them. */
-export const COMPLETION_JSON_FIELDS = ["artifacts", "data"] as const;
-
 interface SubagentDoneDeps {
 	/** D11: a person took over; the call ends the turn but writes no exit record and closes nothing. */
 	isTakenOver(): boolean;

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { cutText } from "./result-assembler.ts";
+import { cutText, NO_REPORT_LINE } from "./result-assembler.ts";
 import type { ResultStore } from "./result-files.ts";
 import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
 import { OUTCOME_WORDS, RESULT_TEXT_MAX_CHARS, renderResult } from "./result-render.ts";
@@ -43,6 +43,20 @@ export function renderLookup(store: ResultStore, record: ResultRecord, cwd: stri
 		store.storedRendering(record) ??
 		renderResult(record, { cwd, homeDir: homedir(), showContextUsage: record.contextUsage !== undefined })
 	);
+}
+
+/** D12: the heading of the full report that a lookup adds when the report file could not be written. */
+const UNSAVED_REPORT_HEADING = "Full report (not saved to a file):";
+
+/**
+ * D12 (cf6dbf4 delivered the full answer): a lookup by run id of a run whose report file failed adds
+ * the full report that this session keeps in memory. Only this explicit recovery carries it; every
+ * delivery and wait copy stays capped (D14, D15).
+ */
+export function withRecoveredReport(text: string, store: ResultStore | undefined, record: ResultRecord | null): string {
+	const report = record && store?.unsavedReport(record);
+	if (!report || report === record.summary || report === `${record.summary}\n\n${NO_REPORT_LINE}`) return text;
+	return `${text}\n\n${UNSAVED_REPORT_HEADING}\n${report}`;
 }
 
 /**

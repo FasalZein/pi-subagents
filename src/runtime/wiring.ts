@@ -151,6 +151,7 @@ export async function getLaunchedSubagentResult(running: RunningSubagent, signal
 		{
 			updateWidget,
 			waitForSubagentResult,
+			stopRunningSubagent: (child) => stopRunningSubagent(child),
 			asSubagentToolResult,
 		},
 		signal,

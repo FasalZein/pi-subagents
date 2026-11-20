@@ -19,6 +19,7 @@ import { isRunEndHeld, runDeliveryState } from "./wait-holds.ts";
 interface RunningRegistryRuntime {
 	updateWidget(): void;
 	waitForSubagentResult(params: { id: string }, signal?: AbortSignal): Promise<unknown>;
+	stopRunningSubagent(running: RunningSubagent): Promise<void>;
 	asSubagentToolResult(result: unknown): any;
 }
 
@@ -180,6 +181,11 @@ export async function getLaunchedSubagentResult(
 	const parentShouldWait = shouldAwaitSubagentLaunch(running);
 	if (!parentShouldWait) return getStartedSubagentResult(running);
 	const waited = (await runtime.waitForSubagentResult({ id: running.id }, signal)) as { details?: { error?: string } };
+	// D04a: as v2.9.2 (cf6dbf4), Esc during the wait of a launch or resume stops the child. subagent_wait
+	// keeps its own Esc, which stops only the wait.
+	if (waited.details?.error === "interrupted" && runningSubagents.get(running.id) === running) {
+		await runtime.stopRunningSubagent(running);
+	}
 	const result = waited.details?.error === "not_found" ? (lookUpEnded(running) ?? waited) : waited;
 	// The parent waited, so the report is already in this tool result. The
 	// coordinator-only turn stop exists for detached launches only; a stop mark

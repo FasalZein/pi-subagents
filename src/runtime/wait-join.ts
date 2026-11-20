@@ -2,7 +2,7 @@ import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { queuedRunEnd, queuedRunEndIds, settleWaitReply } from "./delivery-queue.ts";
 import type { ResultStore } from "./result-files.ts";
 import { parseRunId, type ResultRecord } from "./result-record.ts";
-import { lookUpRecord, noRecordText, renderLookup } from "./run-lookup.ts";
+import { lookUpRecord, noRecordText, renderLookup, withRecoveredReport } from "./run-lookup.ts";
 import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
 import { getSubagentWaitSuccessResult } from "./wait-result.ts";
@@ -119,12 +119,18 @@ function resolveTarget(query: string, session: SessionResults | undefined): Targ
 	if (named) return { runId: query, error: `Multiple running subagents match "${query}". Use the id instead.` };
 	if (queuedRunEnd(query)) return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: false };
 	// An ended run this process still knows, by id only (D16): a lookup returns its rendering.
-	if (completedSubagentResults.has(query))
-		return { kind: "ended", result: snapshotEnd(query, { sessionStore }), lookup: true };
+	if (completedSubagentResults.has(query)) {
+		const ended = snapshotEnd(query, { sessionStore });
+		return {
+			kind: "ended",
+			result: { ...ended, text: withRecoveredReport(ended.text, sessionStore, ended.record) },
+			lookup: true,
+		};
+	}
 	// After a reload, a restart or a compaction: the record file, or the record kept in memory (D13).
 	const record = lookUpRecord(sessionStore, query);
 	if (record && session) {
-		const text = renderLookup(session.store, record, session.cwd);
+		const text = withRecoveredReport(renderLookup(session.store, record, session.cwd), sessionStore, record);
 		return { kind: "ended", result: { runId: query, name: record.name, text, record }, lookup: true };
 	}
 	return { runId: query, error: noRecordText(sessionStore, query) };

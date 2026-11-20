@@ -5,10 +5,11 @@ import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
-import { assembleResult, endedByOf, NO_REPORT_LINE, type RunEnd, type RunFacts } from "./result-assembler.ts";
+import { assembleResult, endedByOf, type RunEnd, type RunFacts, type WrapUpFact } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { EndedBy, ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
+import type { ProcessOutput } from "./untyped-report.ts";
 
 /** Where a watched run publishes its result: the store of its parent session and its reserved id. */
 export interface ResultTarget {
@@ -89,6 +90,8 @@ export interface WatchedEnd {
 	errorMessage?: string;
 	/** The exit record that carries the completion call, if any. */
 	exitSignal: PollResult | null | undefined;
+	/** D12: a headless child's stdout and stderr tails (RunFacts.processOutput); a pane child has none. */
+	processOutput?: ProcessOutput;
 	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean };
 }
 
@@ -147,9 +150,10 @@ export function stoppedEnd(running: Pick<RunningSubagent, "stopRequestedBy">): R
 
 /**
  * D7 and D12: one decision per watched end. A stop wins over everything; a ping, which asks the
- * parent for help, outranks the time-limit kill; then the kill, a child error, a finished report-only
- * wrap-up, and an end of the child's own. A nonzero exit that is no operator close is a crash: it
- * fails with its exit code.
+ * parent for help, outranks the time-limit kill; then the kill, a child error, and an end of the
+ * child's own. A nonzero exit that is no operator close is a crash: it fails with its exit code.
+ * D21 (cf6dbf4): a report-only wrap-up that ended on its own is classified like any own end; its
+ * time limit travels apart from the end (wrapUpOf), so a failed wrap-up keeps it too.
  */
 function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
 	if (end.stopped) return stoppedEnd(running);
@@ -158,12 +162,18 @@ function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
 		return { kind: "timed_out", budget: end.timedOut.kind, seconds: end.timedOut.seconds, wrapUp: false };
 	}
 	if (end.errorMessage) return { kind: "failed", error: end.errorMessage, code: end.exitCode };
-	const wrapUp = running.timeoutWrapUp;
-	if (wrapUp && running.phase === "wrapping-up") {
-		return { kind: "timed_out", budget: wrapUp.kind, seconds: wrapUp.seconds, wrapUp: true };
-	}
 	if (end.exitCode === 0 || end.operatorClosed) return { kind: "exited", code: end.exitCode };
 	return { kind: "failed", error: `exited with code ${end.exitCode}`, code: end.exitCode };
+}
+
+/**
+ * D21: the time limit of a report-only wrap-up that ended by itself: a clean or nonzero exit or a
+ * child error. A stop, a hard-deadline kill and a ping keep their own verdicts and get none.
+ */
+function wrapUpOf(running: RunningSubagent, end: WatchedEnd): WrapUpFact | undefined {
+	const wrapUp = running.timeoutWrapUp;
+	if (!wrapUp || running.phase !== "wrapping-up" || end.stopped || end.ping || end.timedOut) return undefined;
+	return { budget: wrapUp.kind, seconds: wrapUp.seconds };
 }
 
 /** D14: an operator closed a manual pane with a nonzero status before the child answered. */
@@ -191,6 +201,8 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		// A nonzero operator close without an answer is a failure, not the child's own end.
 		failWithoutText: runEnd.kind === "exited" && end.exitCode !== 0,
 		closedByPerson: end.closedByPerson,
+		processOutput: end.processOutput,
+		wrapUp: wrapUpOf(running, end),
 	});
 }
 
@@ -231,6 +243,8 @@ interface PublishOptions {
 	closedByPerson: boolean;
 	/** T70: an ender the caller knows apart from the end kind. */
 	endedBy?: EndedBy;
+	processOutput?: ProcessOutput;
+	wrapUp?: WrapUpFact;
 }
 
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
@@ -253,23 +267,26 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			end: runEnd,
 			endedBy:
 				options.endedBy ??
-				endedByOf(runEnd, { stoppedBy: running.stopRequestedBy, closedByPerson: options.closedByPerson }),
+				endedByOf(runEnd, {
+					stoppedBy: running.stopRequestedBy,
+					closedByPerson: options.closedByPerson,
+					wrapUp: options.wrapUp !== undefined,
+				}),
 			entries,
 			launchEntryCount,
-			...(inMemory ? { processOutput: running.stdoutTail } : {}),
+			noTranscript: inMemory,
 			nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
 			acceptedCall: options.acceptedCall,
 			contextUsage: options.contextUsage,
 			resume: resumeFact(running, runEnd, options.contextWarned),
+			processOutput: options.processOutput,
+			wrapUp: options.wrapUp,
 		});
-	const hasNoText = (result: ReturnType<typeof assembleResult>) =>
-		!result.record.typed && result.report === `${result.record.summary}\n\n${NO_REPORT_LINE}`;
 	let assembled = assemble(end);
-	if (options.failWithoutText && hasNoText(assembled)) {
+	if (options.failWithoutText && assembled.summarySource === "runtime") {
 		end = { kind: "failed", error: CLOSED_WITHOUT_ANSWER_ERROR, code: end.kind === "exited" ? end.code : undefined };
 		assembled = assemble(end);
 	}
-	const noText = hasNoText(assembled);
 	const killUnconfirmed = end.kind === "timed_out" && running.timeoutKillFailed === true;
 	// D16: the store keeps this exact text with the record, so a lookup replays it.
 	const render = (published: ResultRecord) =>
@@ -283,7 +300,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 		});
 	const record = target.store.publish(target.reservation, assembled, render);
 	const text = render(record);
-	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
+	return { record, text, summary: record.summary, summarySource: assembled.summarySource };
 }
 
 /** An unconfirmed kill must not read as a clean one: the pane can still be running. */

@@ -357,12 +357,13 @@ function watchBackgroundGeneration(
 
 		const onAbort = () => {
 			terminateChildProcessGroup(running, "SIGTERM");
-			// Unref, like the time-limit escalation: it must not keep the parent alive after a stop.
+			// D21 (cf6dbf4): referenced, so the bounded SIGKILL escalation of a stop still fires when this
+			// timer is the parent's last handle.
 			setTimeout(() => {
 				if (processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 					terminateChildProcessGroup(running, "SIGKILL");
 				}
-			}, 5000).unref?.();
+			}, 5000);
 		};
 		const finalizeExit = (
 			code: number | null,
@@ -399,6 +400,7 @@ function watchBackgroundGeneration(
 				ping,
 				errorMessage,
 				exitSignal,
+				processOutput: { stdout: running.stdoutTail, stderr: running.stderrTail },
 				contextUsage: finalContextUsage,
 			});
 			const stderr = running.stderrTail?.trim();
