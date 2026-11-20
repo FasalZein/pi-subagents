@@ -4,17 +4,11 @@ import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
-import {
-	assembleResult,
-	endedByOf,
-	type ProcessOutput,
-	type RunEnd,
-	type RunFacts,
-	type WrapUpFact,
-} from "./result-assembler.ts";
+import { assembleResult, endedByOf, type RunEnd, type RunFacts, type WrapUpFact } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { EndedBy, ResultRecord } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
+import type { ProcessOutput } from "./untyped-report.ts";
 
 /** Where a watched run publishes its result: the store of its parent session and its reserved id. */
 export interface ResultTarget {
