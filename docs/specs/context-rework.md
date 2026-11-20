@@ -187,7 +187,7 @@ Pinned agents come first, by name; then the others, by name; lines are added unt
 
 **D23. Facts at the point of use.** The launch reply has one line per child: agent, name, run id, the model ref that runs, pane or headless. It has one line for the batch that says how results return. Warnings follow. An unknown agent name is refused with the three closest names among the agents the caller may launch. A launch that fails partway names the children that started (D16).
 
-**D24. One bad file.** A malformed agent file is skipped. The other agents load. A launch of the bad agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way; the global agent is not launched in its place. The person sees one notice per session that names the file.
+**D24. One bad file.** A malformed agent file is skipped. The other agents load. A launch of the bad agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way; the global agent is not launched in its place. The person sees one notice per session that names the file. A malformed file that a valid definition of the same name shadows is listed apart, and the notice does not call that agent refused (parity D19).
 
 ### Children
 

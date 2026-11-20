@@ -182,6 +182,44 @@ describe("malformed agent files (D24)", () => {
 		assert.deepEqual(good, { status: "completed" });
 	});
 
+	/** The header line of the notice section that lists the path. */
+	function sectionHeaderOf(notice: string, path: string): string | undefined {
+		let header: string | undefined;
+		for (const line of notice.split("\n")) {
+			if (!line.startsWith("- ")) header = line;
+			else if (line.includes(path)) return header;
+		}
+		return undefined;
+	}
+
+	for (const [label, shadowedDir, validDir, validFile] of [
+		["a malformed project file shadowed by a later valid project file", "project", "project", "z-broken.md"],
+		["a malformed global file shadowed by a valid project file", "global", "project", "broken.md"],
+	] as const) {
+		it(`D19: the notice does not call a name refused for ${label}; the effective malformed file stays refused`, async () => {
+			const { globalAgents, projectAgents, projectCwd } = setupRoots();
+			const dirs = { global: globalAgents, project: projectAgents };
+			const shadowedPath = writeAgent(dirs[shadowedDir], "a-broken.md", BAD_FRONTMATTER);
+			writeAgent(dirs[validDir], validFile, GOOD("broken"));
+			const effectivePath = writeAgent(projectAgents, "other.md", BAD_FRONTMATTER.replace("broken", "other"));
+			useFakePi();
+
+			const extension = await loadExtension(projectCwd);
+			const notices = await extension.startSession("startup");
+			const [broken] = await withCwd(projectCwd, () => runTurn(extension, [launch("broken")]));
+			const [other] = await withCwd(projectCwd, () => runTurn(extension, [launch("other")]));
+
+			assert.deepEqual(broken, { status: "completed" }, "the valid definition launches");
+			assert.ok(other.error?.includes(effectivePath), other.error);
+			assert.equal(notices.length, 1);
+			const notice = notices[0].message;
+			assert.match(sectionHeaderOf(notice, effectivePath) ?? "", /refused/);
+			const shadowedHeader = sectionHeaderOf(notice, shadowedPath);
+			assert.ok(shadowedHeader, "the notice still names the shadowed malformed file");
+			assert.doesNotMatch(shadowedHeader, /refused|cannot launch/);
+		});
+	}
+
 	it("gives no notice for a disabled bad file", async () => {
 		const { globalAgents, projectCwd } = setupRoots();
 		writeAgent(globalAgents, "alpha.md", GOOD("alpha"));

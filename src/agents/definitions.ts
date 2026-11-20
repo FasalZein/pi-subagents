@@ -482,11 +482,27 @@ export function loadAgentCatalog(baseCwd = process.cwd(), options: { includeDisa
 	return { definitions, malformedFiles, lookup: (name) => agents.get(name) };
 }
 
-/** One session notice naming every malformed agent file, or null when there is none. */
-export function formatMalformedAgentNotice(files: MalformedAgentFile[]): string | null {
-	if (files.length === 0) return null;
-	const lines = files.map((file) => `- ${file.path}: ${file.error}`);
-	return `Skipped ${files.length} malformed agent file(s); launches of these agents are refused:\n${lines.join("\n")}`;
+/**
+ * One session notice naming every malformed agent file, or null when there is none.
+ * Only a file whose name resolves to a malformed entry is called refused; a file that a
+ * valid definition of the same name shadows is listed apart, since that name launches (D19).
+ */
+export function formatMalformedAgentNotice(catalog: Pick<AgentCatalog, "malformedFiles" | "lookup">): string | null {
+	const refused: MalformedAgentFile[] = [];
+	const shadowed: MalformedAgentFile[] = [];
+	for (const file of catalog.malformedFiles) {
+		(catalog.lookup(file.name)?.kind === "agent" ? shadowed : refused).push(file);
+	}
+	const list = (files: MalformedAgentFile[]) => files.map((file) => `- ${file.path}: ${file.error}`).join("\n");
+	const sections = [
+		refused.length > 0
+			? `Skipped ${refused.length} malformed agent file(s); launches of these agents are refused:\n${list(refused)}`
+			: "",
+		shadowed.length > 0
+			? `Skipped ${shadowed.length} malformed agent file(s) that a valid definition of the same name shadows; that definition launches:\n${list(shadowed)}`
+			: "",
+	].filter(Boolean);
+	return sections.length > 0 ? sections.join("\n") : null;
 }
 
 /**

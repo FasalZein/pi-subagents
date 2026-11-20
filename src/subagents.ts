@@ -215,7 +215,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		// Pi has no print-mode notice channel and its fallback notify is a no-op.
 		// The launch refusal still names the file and its error. Revisit if Pi
 		// adds a print-mode notice channel.
-		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd).malformedFiles);
+		const malformedNotice = formatMalformedAgentNotice(loadAgentCatalog(ctx.cwd));
 		const noticeSession = ctx.sessionManager.getSessionId?.() ?? "";
 		const globalState = globalThis as Record<PropertyKey, unknown>;
 		if (malformedNotice && globalState[MALFORMED_AGENT_NOTICE_SESSION_KEY] !== noticeSession) {
