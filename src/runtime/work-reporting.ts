@@ -44,7 +44,9 @@ export function registerOutstandingWorkReporting(
 	pi.on("tool_result", async () => { await flush(); });
 	// D30: a run counts until the message that carries its result is committed, single or grouped.
 	// D11: under the old-Herdr settle rule a commit releases nothing; reading it and an idle settle do.
-	pi.on("message_end", (event) => { if (!stopped) outstandingWork.committed(...runEndIds(event.message)); });
+	pi.on("message_end", (event) => {
+		if (!stopped) outstandingWork.committed(...runEndIds(event.message));
+	});
 	pi.on("context", (event) => {
 		if (!stopped && outstandingWork.tracksReads) outstandingWork.consume(event.messages.flatMap(runEndIds));
 	});

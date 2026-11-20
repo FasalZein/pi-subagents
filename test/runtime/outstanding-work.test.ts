@@ -32,7 +32,11 @@ test("old Herdr: async launch publishes before yielding and keeps last result ou
 		sendMessage: (message: object, options: { deliverAs?: string }) => { messages.push(message); deliveries.push(options); } } as unknown as ExtensionAPI;
 	// SAFETY: The reporting lifecycle only reads mode and session identity from this context.
 	let idle = true;
-	const ctx = { mode: "tui", sessionManager: { getSessionFile: () => "session.jsonl" }, isIdle: () => idle } as unknown as ExtensionContext;
+	const ctx = {
+		mode: "tui",
+		sessionManager: { getSessionFile: () => "session.jsonl" },
+		isIdle: () => idle,
+	} as unknown as ExtensionContext;
 	const reporting = registerOutstandingWorkReporting(pi, async () => createHerdrWorkReporter(ctx,
 		{ HERDR_ENV: "1", HERDR_PANE_ID: "owned-parent" }, async (args) => {
 			if (args[0] === "status") return { running: true, compatible: true, protocol: 22 };
@@ -103,22 +107,48 @@ for (const settleRule of [true, false] as const) {
 		const messages: object[] = [];
 		const counts: number[] = [];
 		// SAFETY: Only event registration and result delivery are used at this Pi boundary.
-		const pi = { on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => events.set(name, handler),
-			sendMessage: (message: object) => { messages.push(message); } } as unknown as ExtensionAPI;
+		const pi = {
+			on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => events.set(name, handler),
+			sendMessage: (message: object) => {
+				messages.push(message);
+			},
+		} as unknown as ExtensionAPI;
 		let idle = false;
 		// SAFETY: The reporting lifecycle only reads mode, session identity and idleness from this context.
-		const ctx = { mode: "tui", sessionManager: { getSessionFile: () => "parent.jsonl" }, isIdle: () => idle } as unknown as ExtensionContext;
+		const ctx = {
+			mode: "tui",
+			sessionManager: { getSessionFile: () => "parent.jsonl" },
+			isIdle: () => idle,
+		} as unknown as ExtensionContext;
 		let connect: (() => void) | undefined;
-		const reporter = { ...(settleRule ? { releaseAfterSettle: true as const } : {}),
-			publish: async (count: number) => { counts.push(count); }, stop: async () => {} };
-		const reporting = registerOutstandingWorkReporting(pi, () => new Promise((resolve) => { connect = () => resolve(reporter); }));
-		const emit = async (name: string, event = {}) => { await events.get(name)?.(event, ctx); };
+		const reporter = {
+			...(settleRule ? { releaseAfterSettle: true as const } : {}),
+			publish: async (count: number) => {
+				counts.push(count);
+			},
+			stop: async () => {},
+		};
+		const reporting = registerOutstandingWorkReporting(
+			pi,
+			() =>
+				new Promise((resolve) => {
+					connect = () => resolve(reporter);
+				}),
+		);
+		const emit = async (name: string, event = {}) => {
+			await events.get(name)?.(event, ctx);
+		};
 		const started = reporting.start(ctx);
 		try {
 			// Startup adoption delivers a finished run before the reporter probe answers (src/vf/run/adopt.ts).
 			const running = child("adopted");
 			runningSubagents.set(running.id, running);
-			wireSubagentSteerBack(pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
+			wireSubagentSteerBack(
+				pi,
+				running,
+				Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }),
+				() => {},
+			);
 			await new Promise<void>((resolve) => setImmediate(resolve));
 			assert.equal(messages.length, 1);
 			const committed = { ...messages[0], role: "custom" };
@@ -129,13 +159,22 @@ for (const settleRule of [true, false] as const) {
 			await mid;
 			await emit("tool_result");
 			if (!settleRule) {
-				assert.ok(counts.length > 0 && counts.every((count) => count === 0), `the delivery rule releases it: ${counts.join(",")}`);
+				assert.ok(
+					counts.length > 0 && counts.every((count) => count === 0),
+					`the delivery rule releases it: ${counts.join(",")}`,
+				);
 				return;
 			}
-			assert.ok(counts.every((count) => count > 0), `no zero before idle: ${counts.join(",")}`);
+			assert.ok(
+				counts.every((count) => count > 0),
+				`no zero before idle: ${counts.join(",")}`,
+			);
 			await emit("context", { messages: [committed] });
 			await emit("agent_settled");
-			assert.ok(counts.every((count) => count > 0), "a settle while not idle releases nothing");
+			assert.ok(
+				counts.every((count) => count > 0),
+				"a settle while not idle releases nothing",
+			);
 			idle = true;
 			await emit("agent_settled");
 			assert.equal(counts.at(-1), 0);
