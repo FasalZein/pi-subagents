@@ -297,6 +297,19 @@ export function getPersistedPromptLaunchArgs(metadata: PersistedSubagentLaunchMe
 	}).promptArgs;
 }
 
+/**
+ * The model ref a run passed to Pi, for resume and wrap-up to replay (D08). A record from before
+ * `invocationModelRef` rebuilds it from its model and thinking, as the launch built `--model`
+ * (bare when the call was bare); a record with only `modelRef` replays that.
+ */
+export function getPersistedInvocationModel(
+	metadata: Pick<PersistedSubagentLaunchMetadata, "invocationModelRef" | "model" | "thinking" | "modelRef">,
+): string | undefined {
+	if (metadata.invocationModelRef) return metadata.invocationModelRef;
+	if (metadata.model) return metadata.thinking ? `${metadata.model}:${metadata.thinking}` : metadata.model;
+	return metadata.modelRef;
+}
+
 export async function getPersistedSessionParityArgs(
 	metadata: PersistedSubagentLaunchMetadata | undefined,
 	modeOverride?: ResumeMode,
@@ -304,7 +317,7 @@ export async function getPersistedSessionParityArgs(
 ): Promise<string[]> {
 	const args: string[] = [];
 	if (!metadata) return args;
-	const modelArg = metadata.invocationModelRef ?? metadata.modelRef;
+	const modelArg = getPersistedInvocationModel(metadata);
 	if (modelArg) args.push("--model", modelArg);
 	if (metadata.noContextFiles) args.push("--no-context-files");
 	args.push(...getSubagentToolLaunchArgs(metadata.tools, new Set(metadata.denyTools), spawningAllowed));

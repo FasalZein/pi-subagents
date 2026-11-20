@@ -412,7 +412,7 @@ describe("subagent_agents tool", () => {
 				resolveCallModelRef({
 					model,
 					config: { allowedModels: "beta/small", agentName: "helper" },
-					inheritedModelRef: "alpha/base:high",
+					grantRef: "alpha/base:high",
 					fallbackThinking: "high",
 				}),
 			);

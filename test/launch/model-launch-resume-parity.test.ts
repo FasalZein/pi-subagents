@@ -223,10 +223,11 @@ const CASES: Array<{
 		resumed: "synthetic-a/target:low",
 	},
 	{
-		title: "the agent default is accepted at its effective level only",
+		title: "the agent default is granted at its effective level on launch and as written on resume (D08, cf6dbf4)",
 		frontmatter: "model: synthetic-a/base\nallowed-models: synthetic-b/mini",
 		model: "synthetic-a/base:high",
 		expected: "refused",
+		resumed: "synthetic-a/base:high",
 	},
 	{
 		title: "a registry id with a colon stays whole",
@@ -257,20 +258,11 @@ describe("launch and resume model parity (D22)", () => {
 			} else {
 				assert.equal(launched.modelRef, testCase.expected, launched.refusal);
 			}
-			if (testCase.resumed) {
-				assert.deepEqual(
-					{ modelRef: resumed.modelRef, refusal: resumed.refusal },
-					{
-						modelRef: testCase.resumed,
-						refusal: undefined,
-					},
-				);
-				return;
-			}
-			assert.deepEqual(
-				{ modelRef: resumed.modelRef, refusal: resumed.refusal },
-				{ modelRef: launched.modelRef, refusal: launched.refusal },
-			);
+			// cf6dbf4 resolves a resume like a launch except where `resumed` names its own outcome.
+			const expectedResume = testCase.resumed
+				? { modelRef: testCase.resumed, refusal: undefined }
+				: { modelRef: launched.modelRef, refusal: launched.refusal };
+			assert.deepEqual({ modelRef: resumed.modelRef, refusal: resumed.refusal }, expectedResume);
 		});
 	}
 });

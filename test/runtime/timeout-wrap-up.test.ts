@@ -131,7 +131,7 @@ cat > "${stdinFile}"
 		assert.match(prompt, /Report your result now/i);
 	});
 
-	it("replays the invocation ref, not the display ref (D08)", async () => {
+	async function wrapUpModelArg(metadata: Partial<PersistedSubagentLaunchMetadata>): Promise<string | undefined> {
 		const dir = createTestDir();
 		const argvFile = join(dir, "argv.txt");
 		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(
@@ -145,16 +145,25 @@ cat > "${stdinFile}"
 			`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
 		);
 		const running = makeRunning(dir, sessionFile);
-		// The first launch passed a bare default to Pi; the record names the one registry ref it runs on.
-		running.launchMetadata = { ...makeMetadata(dir), invocationModelRef: "model:off" };
-
+		running.launchMetadata = { ...makeMetadata(dir), ...metadata };
 		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
 		const child = running.childProcess;
 		assert.ok(child);
 		await once(child, "exit");
-
 		const argv = (await readNonEmptyFileEventually(argvFile)).split("\n");
-		assert.equal(argv[argv.indexOf("--model") + 1], "model:off");
+		return argv[argv.indexOf("--model") + 1];
+	}
+
+	it("replays the invocation ref, not the display ref (D08)", async () => {
+		// The first launch passed a bare default to Pi; the record names the one registry ref it runs on.
+		assert.equal(await wrapUpModelArg({ invocationModelRef: "model:off" }), "model:off");
+	});
+
+	it("replays a pre-T80 record's original bare argument, not its display ref (D08)", async () => {
+		// 9f90499 wrote model, thinking and the display ref after passing `--model model:off` (as cf6dbf4 did).
+		assert.equal(await wrapUpModelArg({ model: "model", thinking: "off", modelRef: "test/model:off" }), "model:off");
+		// A record with only a model ref replays it.
+		assert.equal(await wrapUpModelArg({ modelRef: "test/model:off" }), "test/model:off");
 	});
 
 	it("closes an interactive pane when restart fails after surface creation", async () => {

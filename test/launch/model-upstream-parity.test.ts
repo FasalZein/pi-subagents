@@ -27,12 +27,43 @@ const modelRegistry = {
 		})),
 };
 const REFUSED = "refused";
+type Registry = { getAvailable(): Array<{ provider: string; id: string; reasoning?: boolean }> };
+const registryOf = (models: Array<{ provider: string; id: string; reasoning?: boolean }>): Registry => ({
+	getAvailable: () => models,
+});
+const TWO_BASES = registryOf([
+	{ provider: "a", id: "base", reasoning: true },
+	{ provider: "b", id: "base", reasoning: true },
+	{ provider: "other", id: "x", reasoning: true },
+]);
+const UNIQUE_BASE = registryOf([
+	{ provider: "a", id: "base", reasoning: true },
+	{ provider: "other", id: "x", reasoning: true },
+]);
+const NON_REASONING_BASE = registryOf([
+	{ provider: "a", id: "base", reasoning: false },
+	{ provider: "other", id: "x", reasoning: true },
+]);
+
+/** A model refusal of the resolver; anything else (a TypeError, a launch failure) propagates. */
+function refusalOrThrow(error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	if (
+		/Ambiguous model override|Unknown model override|is not allowed for agent|does not support thinking level/.test(
+			message,
+		)
+	) {
+		return REFUSED;
+	}
+	throw error;
+}
 
 async function launchRef(
 	params: { model: string; thinking?: string },
 	agentDefs: AgentDefaults | null,
 	parentModelRef: string,
 	parentThinking: string,
+	registry: Registry = modelRegistry,
 ): Promise<string | undefined> {
 	const dir = createTestDir();
 	try {
@@ -41,13 +72,13 @@ async function launchRef(
 			agentDefs,
 			parentCwd: dir,
 			parentSessionDir: join(dir, "parent-sessions"),
-			modelRegistry,
+			modelRegistry: registry,
 			parentModelRef,
 			parentThinking,
 		});
 		return plan.effectiveModelRef;
-	} catch {
-		return REFUSED;
+	} catch (error) {
+		return refusalOrThrow(error);
 	}
 }
 
@@ -75,11 +106,12 @@ function resumeRef(
 	fields: Partial<PersistedSubagentLaunchMetadata>,
 	model: string | undefined,
 	thinking?: string,
+	registry: Registry = modelRegistry,
 ): string | undefined {
 	try {
-		return resolveResumeLaunchMetadataForInvocation(resumeMetadata(fields), model, thinking, modelRegistry)?.modelRef;
-	} catch {
-		return REFUSED;
+		return resolveResumeLaunchMetadataForInvocation(resumeMetadata(fields), model, thinking, registry)?.modelRef;
+	} catch (error) {
+		return refusalOrThrow(error);
 	}
 }
 
@@ -255,5 +287,78 @@ describe("resume replays the invocation ref (D08)", () => {
 		const args = await getPersistedSessionParityArgs(metadata);
 		// cf6dbf4 persisted and replayed the ref it passed to Pi: `target:low`.
 		assert.equal(args[args.indexOf("--model") + 1], "target:low");
+	});
+});
+
+describe("the default grant of an exact override as cf6dbf4 (D08, fix round 1)", () => {
+	const bareDefault = { model: "base", allowedModels: "other/x" };
+	it("launch: a bare default at two providers grants the parent's provider", async () => {
+		assert.equal(await launchRef({ model: "base" }, bareDefault, "a/parent", "high", TWO_BASES), "a/base:high");
+		assert.equal(await launchRef({ model: "a/base" }, bareDefault, "a/parent", "high", TWO_BASES), "a/base:high");
+		assert.equal(await launchRef({ model: "b/base" }, bareDefault, "a/parent", "high", TWO_BASES), REFUSED);
+	});
+
+	it("launch: a unique bare default drops an unsupported inherited level in the grant too", async () => {
+		assert.equal(await launchRef({ model: "base" }, bareDefault, "a/parent", "high", NON_REASONING_BASE), "a/base");
+	});
+
+	it("resume: a qualified default without a level grants every level, as written", () => {
+		const fields = {
+			modelRef: "a/base:low",
+			model: "a/base",
+			thinking: "low",
+			definitionModel: "a/base",
+			allowedModels: "other/x",
+			modelSource: "agent" as const,
+		};
+		assert.equal(resumeRef(fields, "a/base:high", undefined, UNIQUE_BASE), "a/base:high");
+	});
+
+	it("resume: a unique bare default grants only the bare name, as written", () => {
+		const fields = {
+			modelRef: "a/base:low",
+			model: "a/base",
+			thinking: "low",
+			definitionModel: "base",
+			allowedModels: "other/x",
+			modelSource: "agent" as const,
+		};
+		assert.equal(resumeRef(fields, "a/base", undefined, UNIQUE_BASE), REFUSED);
+	});
+});
+
+describe("model suffixes and an absent registry (D08, fix round 1)", () => {
+	it("a known Pi level suffix stays a level even when the whole ref is a registry id", async () => {
+		const ids = registryOf([
+			{ provider: "a", id: "base", reasoning: true },
+			{ provider: "a", id: "base:high", reasoning: true },
+		]);
+		// cf6dbf4 reads every suffix as a level.
+		assert.equal(await launchRef({ model: "a/base:high" }, null, "a/base", "low", ids), "a/base:high");
+	});
+
+	it("without a registry a fragment still matches the one accepted model", async () => {
+		assert.equal(
+			await launchRef({ model: "b/mi" }, { allowedModels: "b/mini" }, "a/base", "low", registryOf([])),
+			"b/mini:low",
+		);
+		assert.equal(
+			await launchRef({ model: "b/mini" }, { allowedModels: "b/mini" }, "a/base", "low", registryOf([])),
+			"b/mini:low",
+		);
+	});
+});
+
+describe("pre-T80 records replay the original launch argument (D08, fix round 1)", () => {
+	it("a record of a bare default replays the bare argument, not the qualified display ref", async () => {
+		// 9f90499 prep.ts:380-382 wrote this shape after passing `--model target:low`; cf6dbf4 passed the same.
+		const record = resumeMetadata({ model: "target", thinking: "low", modelRef: "a/target:low" });
+		const args = await getPersistedSessionParityArgs(record);
+		assert.equal(args[args.indexOf("--model") + 1], "target:low");
+	});
+
+	it("a record with only a model ref replays it", async () => {
+		const args = await getPersistedSessionParityArgs(resumeMetadata({ modelRef: "a/target:low" }));
+		assert.equal(args[args.indexOf("--model") + 1], "a/target:low");
 	});
 });

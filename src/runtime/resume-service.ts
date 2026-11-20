@@ -2,21 +2,17 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
-import { assertModelAllowed } from "../agents/model-refs.ts";
+import { assertModelAllowed, buildModelRef } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
-import {
-	type AgentModelConfig,
-	resolveCallModelRef,
-	resolveImplicitModelGrant,
-	splitModelRefThinking,
-} from "../launch/child-launch-plan.ts";
+import { type AgentModelConfig, resolveCallModelRef, splitModelRefThinking } from "../launch/child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
 import { parseEnvString } from "../launch/env.ts";
 import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
 import {
 	getExtensionLaunchArgs,
+	getPersistedInvocationModel,
 	getPersistedPromptLaunchArgs,
 	getPersistedSessionParityArgs,
 	normalizeModelRef,
@@ -107,8 +103,7 @@ export function resolveResumeLaunchMetadataForInvocation(
 			...(requestedThinking ? { ignoredThinkingOverride: requestedThinking } : {}),
 		};
 	}
-	const baseModel =
-		requestedModel ?? launchMetadata.invocationModelRef ?? launchMetadata.modelRef ?? launchMetadata.model;
+	const baseModel = requestedModel ?? getPersistedInvocationModel(launchMetadata);
 	if (!baseModel) {
 		throw new Error("Cannot apply thinking override without a persisted model.");
 	}
@@ -118,9 +113,10 @@ export function resolveResumeLaunchMetadataForInvocation(
 		allowedModels: launchMetadata.allowedModels,
 		agentName: launchMetadata.agent,
 	};
-	const inheritedModelRef =
-		!launchMetadata.definitionModel && launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined;
-	const grantThinking = launchMetadata.definitionThinking ?? launchMetadata.thinking;
+	// D08: the grant is the definition as written, else the parent's ref the first run inherited (v2.9.2).
+	const grantRef =
+		buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking) ??
+		(launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined);
 	// D08, D22: a resume with a model takes the launch path; as in v2.9.2 the prior run's level
 	// is the fallback and its provider breaks a bare-id tie. A thinking-only resume keeps the
 	// persisted invocation model as an exact ref.
@@ -129,13 +125,12 @@ export function resolveResumeLaunchMetadataForInvocation(
 				model: requestedModel,
 				thinking: requestedThinking,
 				config,
-				inheritedModelRef,
+				grantRef,
 				fallbackThinking: launchMetadata.thinking,
-				grantThinking,
 				tieBreakRef: launchMetadata.modelRef,
 				modelRegistry,
 			})
-		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, grantThinking, {
+		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, grantRef, {
 				modelRegistry,
 				tieBreakRef: launchMetadata.modelRef,
 			});
@@ -157,8 +152,7 @@ function resolveThinkingOnlyResume(
 	baseModel: string,
 	requestedThinking: string | undefined,
 	config: AgentModelConfig,
-	inheritedModelRef: string | undefined,
-	fallbackThinking: string | undefined,
+	implicitRef: string | undefined,
 	registry: { modelRegistry: ResumeServiceRuntime["modelRegistry"]; tieBreakRef: string | undefined },
 ): ReturnType<typeof normalizeModelRef> {
 	const { modelRegistry } = registry;
@@ -172,7 +166,6 @@ function resolveThinkingOnlyResume(
 		registry.tieBreakRef,
 	);
 	const normalized = normalizeModelRef(resolved.model, resolved.thinking);
-	const implicitRef = resolveImplicitModelGrant(config, modelRegistry, inheritedModelRef, fallbackThinking);
 	assertModelAllowed(
 		normalized.effectiveModelRef,
 		config.allowedModels,
@@ -192,9 +185,14 @@ function mergeResumeInvocationMetadata(
 		// A child can append metadata to its own session. Keep grant authority
 		// anchored to the first launch entry while allowing later entries to
 		// carry legitimate invocation changes such as model and thinking.
-		// The invocation ref pairs with the model ref of the same entry; an entry without one replays its model ref.
-		invocationModelRef:
-			laterMetadata.modelRef !== undefined ? laterMetadata.invocationModelRef : launchMetadata.invocationModelRef,
+		// Model, thinking and the invocation ref pair with the model ref of the same entry.
+		...(laterMetadata.modelRef !== undefined
+			? {
+					model: laterMetadata.model,
+					thinking: laterMetadata.thinking,
+					invocationModelRef: laterMetadata.invocationModelRef,
+				}
+			: {}),
 		spawnBudget: launchMetadata.spawnBudget,
 		spawnableAgents: launchMetadata.spawnableAgents,
 		denyTools: launchMetadata.denyTools,

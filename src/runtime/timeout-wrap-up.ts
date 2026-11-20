@@ -89,30 +89,29 @@ async function getWrapUpLaunchParts(
 	if (!metadata) throw new Error("The original launch metadata is unavailable.");
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
 	// D08: replay the invocation ref of the launch or resume metadata, never the display ref of running.modelRef.
-	const invocationMetadata = metadata;
-	const extensionArgs = getExtensionLaunchArgs(invocationMetadata.extensions, subagentDonePath, false);
+	const extensionArgs = getExtensionLaunchArgs(metadata.extensions, subagentDonePath, false);
 	const parityArgs = [
-		...getPersistedPromptLaunchArgs(invocationMetadata),
-		...(await getPersistedSessionParityArgs(invocationMetadata, running.mode, false)),
+		...getPersistedPromptLaunchArgs(metadata),
+		...(await getPersistedSessionParityArgs(metadata, running.mode, false)),
 	].filter((arg) => arg !== "--no-session");
 	throwIfAborted(signal);
 	const env: Record<string, string> = {};
-	if (invocationMetadata.env) Object.assign(env, parseEnvString(invocationMetadata.env));
+	if (metadata.env) Object.assign(env, parseEnvString(metadata.env));
 	Object.assign(
 		env,
 		buildAppendSystemInheritancePlan({
-			inheritAppendSystem: invocationMetadata.inheritAppendSystem === true,
-			systemPromptMode: invocationMetadata.systemPromptMode,
-			systemPrompt: invocationMetadata.systemPrompt,
-			boundarySystemPrompt: invocationMetadata.boundarySystemPrompt ? CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT : undefined,
+			inheritAppendSystem: metadata.inheritAppendSystem === true,
+			systemPromptMode: metadata.systemPromptMode,
+			systemPrompt: metadata.systemPrompt,
+			boundarySystemPrompt: metadata.boundarySystemPrompt ? CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT : undefined,
 		}).env,
 	);
-	if (invocationMetadata.agentConfigDir) env.PI_CODING_AGENT_DIR = invocationMetadata.agentConfigDir;
-	if (invocationMetadata.extensions !== undefined) {
-		env.PI_SUBAGENT_EXTENSIONS = invocationMetadata.extensions.join(",");
+	if (metadata.agentConfigDir) env.PI_CODING_AGENT_DIR = metadata.agentConfigDir;
+	if (metadata.extensions !== undefined) {
+		env.PI_SUBAGENT_EXTENSIONS = metadata.extensions.join(",");
 	}
-	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(invocationMetadata.skills);
-	const deniedTools = new Set(invocationMetadata.denyTools);
+	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(metadata.skills);
+	const deniedTools = new Set(metadata.denyTools);
 	for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);
 	// T69 (v2.9.2): a manual pane never gets subagent_done; the forced auto-exit below must not grant it.
 	if (running.mode === "interactive" && !running.autoExit) deniedTools.add(SUBAGENT_DONE_TOOL_NAME);
@@ -140,7 +139,7 @@ async function getWrapUpLaunchParts(
 	return {
 		args: [...extensionArgs, ...parityArgs],
 		env,
-		cwd: getResumeCwd(invocationMetadata),
+		cwd: getResumeCwd(metadata),
 		prompt: getWrapUpPrompt(running),
 	};
 }

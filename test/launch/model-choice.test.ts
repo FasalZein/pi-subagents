@@ -306,7 +306,7 @@ describe("short model names: review round 1 (D22)", () => {
 		);
 	});
 
-	it("accepts the unqualified agent default on resume as on launch", async () => {
+	it("grants an unqualified agent default on launch as resolved and on resume as written (D08, cf6dbf4)", async () => {
 		const known = ["synthetic-a/base", "synthetic-b/other"];
 		assert.equal(
 			await launchModel("synthetic-a/base", { model: "base", allowedModels: "synthetic-b/other" }, known),
@@ -320,9 +320,10 @@ describe("short model names: review round 1 (D22)", () => {
 			allowedModels: "synthetic-b/other",
 			modelSource: "agent" as const,
 		};
-		assert.equal(
-			resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known))?.modelRef,
-			"synthetic-a/base",
+		// cf6dbf4 resume grants `base` as written, which does not name the qualified ref.
+		assert.throws(
+			() => resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known)),
+			/Model 'synthetic-a\/base' is not allowed for agent 'picker'/,
 		);
 	});
 
