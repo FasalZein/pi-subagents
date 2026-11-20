@@ -42,7 +42,7 @@ export function launchErrorReason(error: unknown): string {
 
 /**
  * The reply to a batch whose later child failed to launch (D16, D23): the failed child, one line
- * per child that started, by run id, then the started children's warnings and dropped extensions.
+ * per child that started, by run id, then the started children's warnings.
  */
 export function renderLaunchFailure(
 	failed: { position: number; name: string; agent: string; error: string },
