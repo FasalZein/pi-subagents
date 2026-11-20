@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { after, before, mock } from "node:test";
 import { type FauxResponseStep, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
@@ -14,7 +15,6 @@ import {
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { getSubagentExitSidecarPath } from "../../src/session/exit-sidecar.ts";
-import { PI_SUBAGENT_TIMEOUT_WRAP_UP } from "../../src/tools/timeout-reminders.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
@@ -30,13 +30,7 @@ import {
 // exit record, the real background watcher and the published result files decide the result. Expected
 // values come from cf6dbf4 (`git show cf6dbf4:src/tools/subagent-done.ts`, `caller-ping.ts`).
 const DONE = SUBAGENT_DONE_TOOL_NAME;
-const ENV_KEYS = [
-	"PI_SUBAGENT_SESSION",
-	"PI_SUBAGENT_AUTO_EXIT",
-	"PI_SUBAGENT_SURFACE",
-	"PI_DENY_TOOLS",
-	PI_SUBAGENT_TIMEOUT_WRAP_UP,
-];
+const ENV_KEYS = ["PI_SUBAGENT_SESSION", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_DENY_TOOLS"];
 
 interface ChildRun {
 	sessionFile: string;
@@ -72,33 +66,23 @@ function afterKeyPress(reply: ReturnType<typeof fauxAssistantMessage>): FauxResp
 }
 
 /**
- * Runs the child extension in a real Pi session; later prompts are operator input. The session
- * closes like a pane close: session_shutdown, then dispose.
+ * Runs the child extension in a real Pi session on one task prompt. The session closes like a pane
+ * close: session_shutdown, then dispose.
  */
 async function runChild(options: {
 	autoExit: boolean;
 	pane?: boolean;
-	prompts: string[];
 	replies: FauxResponseStep[];
 	extensions?: ExtensionFactory[];
-	/** The defaultTools setting, for example ["+codemode"]. */
-	defaultTools?: string[];
-	/** D7: run as the report-only wrap-up continuation. */
-	wrapUp?: boolean;
-	/** Continue this session file in a new child process, as a time-limit restart does. */
-	sessionFile?: string;
 }): Promise<ChildRun> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
-	const sessionManager = options.sessionFile
-		? SessionManager.open(options.sessionFile, join(root, "sessions"))
-		: SessionManager.create(root, join(root, "sessions"));
+	const sessionManager = SessionManager.create(root, join(root, "sessions"));
 	const sessionFile = sessionManager.getSessionFile();
 	assert.ok(sessionFile, "the session has a file");
 	process.env.PI_SUBAGENT_SESSION = sessionFile;
 	if (options.autoExit) process.env.PI_SUBAGENT_AUTO_EXIT = "1";
 	if (options.pane) process.env.PI_SUBAGENT_SURFACE = "fake-pane";
-	if (options.wrapUp) process.env[PI_SUBAGENT_TIMEOUT_WRAP_UP] = "1";
 	const faux = fauxProvider();
 	faux.setResponses(options.replies);
 	const modelRuntime = await ModelRuntime.create({
@@ -124,7 +108,7 @@ async function runChild(options: {
 		modelRuntime,
 		model: faux.getModel(),
 		resourceLoader,
-		settingsManager: SettingsManager.inMemory(options.defaultTools ? { defaultTools: options.defaultTools } : {}),
+		settingsManager: SettingsManager.inMemory({}),
 		sessionManager,
 	});
 	let shutdownRequests = 0;
@@ -134,7 +118,7 @@ async function runChild(options: {
 			shutdownHandler: () => void shutdownRequests++,
 			...(options.pane ? { uiContext: paneUi as never } : {}),
 		});
-		for (const prompt of options.prompts) await session.prompt(prompt);
+		await session.prompt("task");
 		await new Promise((resolve) => setTimeout(resolve, 5)); // deferred shutdown requests
 		const exitFile = getSubagentExitSidecarPath(sessionFile);
 		exitBeforeClose = existsSync(exitFile) ? JSON.parse(readFileSync(exitFile, "utf8")) : null;
@@ -149,7 +133,7 @@ async function runChild(options: {
 }
 
 /** The real background watcher on a child process that exits 0; returns the published record. */
-async function watchAndPublish(sessionFile: string, runningFields: Partial<RunningSubagent> = {}) {
+async function watchAndPublish(sessionFile: string) {
 	const root = createTestDir();
 	const store = new ResultStore(join(root, "results"), () => {});
 	const reservation = store.reserve();
@@ -167,7 +151,6 @@ async function watchAndPublish(sessionFile: string, runningFields: Partial<Runni
 		sessionFile,
 		childProcess: child,
 		resultTarget: { store, reservation, parentCwd: root, warnings: [] },
-		...runningFields,
 	} as unknown as RunningSubagent;
 	const watch = watchBackgroundSubagent(
 		running,
@@ -212,6 +195,56 @@ const UPSTREAM_DONE_DESCRIPTION =
 	"Your LAST assistant message before calling this becomes the summary returned to the caller.";
 
 describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
+	// T72 review P1: caller_ping arms a real 750 ms process.exit backstop. Every suite of the aggregate
+	// run (test/test.ts) shares this process, so the suite intercepts the exit until the last case.
+	const exitCodes: unknown[] = [];
+	let exitMock: ReturnType<typeof mock.method> | undefined;
+	before(() => {
+		exitMock = mock.method(process, "exit", ((code?: unknown) => void exitCodes.push(code)) as never);
+	});
+	after(() => exitMock?.mock.restore());
+
+	it("a headless child without auto-exit gets no type from legacy completion arguments (T72 review)", async () => {
+		const legacy = { outcome: "partial", summary: "LEGACY-SUMMARY", artifacts: ["/x"], data: { a: 1 } };
+		const run = await runChild({
+			autoExit: false,
+			replies: [
+				fauxAssistantMessage([{ type: "text", text: "FINAL-31 report." }, fauxToolCall(DONE, legacy, { id: "d1" })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("after the call"),
+			],
+		});
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.typed, false);
+		assert.equal(record.outcome, "done");
+		assert.equal(record.summary, "FINAL-31 report.");
+		assert.equal(report, "FINAL-31 report.");
+		assert.deepEqual(record.artifacts, []);
+	});
+
+	it("a done+ping batch beside a tool that does not end the turn keeps the report before done (T72 review)", async () => {
+		const run = await runChild({
+			autoExit: false,
+			replies: [
+				fauxAssistantMessage(
+					[
+						{ type: "text", text: "REPORT-6 work so far." },
+						fauxToolCall(DONE, {}, { id: "d1" }),
+						fauxToolCall(CALLER_PING_TOOL_NAME, { message: "PING-MSG help" }, { id: "p1" }),
+						fauxToolCall("read", { path: "missing-file.txt" }, { id: "r1" }),
+					],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("ACK-9 acknowledged."),
+			],
+		});
+		assert.equal(run.unusedReplies, 0, "the read result gives the model one more turn");
+		const { record, report } = await watchAndPublish(run.sessionFile);
+		assert.equal(record.outcome, "done");
+		assert.equal(record.summary, "REPORT-6 work so far.");
+		assert.equal(report, "REPORT-6 work so far.");
+	});
 	for (const pane of [false, true]) {
 		const surface = pane ? "pane" : "headless";
 		it(`an auto-exit ${surface} child has no subagent_done, gets no nudge and exits after its answer, untyped`, async () => {
@@ -219,7 +252,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 			const run = await runChild({
 				autoExit: true,
 				pane,
-				prompts: ["task"],
 				replies: [fauxAssistantMessage("ANSWER-17 all files fixed."), fauxAssistantMessage("never sent")],
 				extensions: [toolProbe(probe)],
 			});
@@ -243,7 +275,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 		const probe = newProbe();
 		const run = await runChild({
 			autoExit: false,
-			prompts: ["task"],
 			replies: [
 				fauxAssistantMessage([{ type: "text", text: "FINAL-22 done." }, fauxToolCall(DONE, {}, { id: "d1" })], {
 					stopReason: "toolUse",
@@ -269,7 +300,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 		await runChild({
 			autoExit: false,
 			pane: true,
-			prompts: ["task"],
 			replies: [fauxAssistantMessage("hello")],
 			extensions: [toolProbe(probe)],
 		});
@@ -280,7 +310,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 	it("an autonomous caller_ping is typed blocked from the exit record, its message the report", async () => {
 		const run = await runChild({
 			autoExit: true,
-			prompts: ["task"],
 			replies: [
 				fauxAssistantMessage([fauxToolCall(CALLER_PING_TOOL_NAME, { message: "Need the API key." }, { id: "p1" })], {
 					stopReason: "toolUse",
@@ -308,7 +337,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 			};
 			const run = await runChild({
 				autoExit: false,
-				prompts: ["task"],
 				replies: [
 					fauxAssistantMessage([{ type: "text", text: "REPORT-5 work so far." }, ...order.map((k) => calls[k])], {
 						stopReason: "toolUse",
@@ -316,16 +344,20 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 					fauxAssistantMessage("after the batch"),
 				],
 			});
+			// Pi executes the batch in order, so the first call writes the exit record.
 			const winner = (run.exitBeforeClose as { type?: string } | null)?.type;
-			assert.ok(winner === "done" || winner === "ping", `an exit record exists: ${winner}`);
-			const { record } = await watchAndPublish(run.sessionFile);
+			assert.equal(winner, order[0]);
+			assert.equal(run.unusedReplies, 1, "both calls end the turn: no acknowledgement turn");
+			const { record, report } = await watchAndPublish(run.sessionFile);
 			if (winner === "ping") {
 				assert.equal(record.outcome, "blocked");
 				assert.equal(record.summary, "PING-MSG help");
+				assert.equal(report, "PING-MSG help");
 			} else {
 				assert.equal(record.outcome, "done", "a refused ping does not make the result blocked");
 				assert.equal(record.typed, false);
-				assert.doesNotMatch(record.summary, /PING-MSG/);
+				assert.equal(record.summary, "REPORT-5 work so far.");
+				assert.equal(report, "REPORT-5 work so far.");
 			}
 		});
 	}
@@ -334,7 +366,6 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 		const run = await runChild({
 			autoExit: true,
 			pane: true,
-			prompts: ["task"],
 			replies: [
 				afterKeyPress(
 					fauxAssistantMessage([fauxToolCall(CALLER_PING_TOOL_NAME, { message: "Need the API key." }, { id: "p1" })], {
@@ -348,5 +379,11 @@ describe("auto-exit children end as in cf6dbf4 (T72, D01)", () => {
 		const { record } = await watchAndPublish(run.sessionFile);
 		assert.equal(record.outcome, "blocked");
 		assert.equal(record.summary, "Need the API key.");
+	});
+
+	it("a later assertion still runs after the caller_ping backstop delay (T72 review)", async () => {
+		await new Promise((resolve) => setTimeout(resolve, 900));
+		assert.ok(exitCodes.length > 0, "the ping backstop fired and was intercepted");
+		assert.ok(exitCodes.every((code) => code === 0));
 	});
 });

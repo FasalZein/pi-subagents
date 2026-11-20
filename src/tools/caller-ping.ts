@@ -34,6 +34,9 @@ function armCallerPingExit(state: CallerPingState) {
 		// hard exit 0 is what actually delivers it to the parent.
 		process.exit(0);
 	}, CALLER_PING_FORCED_EXIT_DELAY_MS);
+	// The backstop is for a process that a running model keeps alive; it must never be the only
+	// thing that keeps a process alive (a test process, a session that already closed).
+	state.exitTimer.unref?.();
 }
 
 /** Operator takeover: the pane is theirs; cancel any pending hard exit. */
@@ -150,11 +153,19 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 			armCallerPingExit(state);
 			if (pingWrite === "owned") {
 				// A done outcome already owns this child, so the parent will see that verdict, not a ping.
-				// C38: fail the call (cf6dbf4 text) so the transcript never shows an accepted ping that
-				// the assembler could read as the result.
-				throw new Error(
-					"A final outcome was already recorded for this session; it is closing now. Do not call caller_ping again.",
-				);
+				// C38: an error result (cf6dbf4 text), so the transcript never shows an accepted ping that
+				// the assembler could read as the result; terminating, so it adds no model turn.
+				return {
+					isError: true,
+					terminate: true,
+					content: [
+						{
+							type: "text",
+							text: "A final outcome was already recorded for this session; it is closing now. Do not call caller_ping again.",
+						},
+					],
+					details: {},
+				};
 			}
 			return {
 				terminate: true,

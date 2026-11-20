@@ -4,8 +4,9 @@ import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
 /**
  * D12: session entry that holds one accepted completion call by tool call id. Since T72 the child
- * writes it only for a caller_ping in a taken-over pane, which writes no exit record; the parent
- * still reads it, and the typed subagent_done entries of older sessions.
+ * writes it for a caller_ping in a taken-over pane, which writes no exit record, and for every
+ * subagent_done with empty arguments, so stray legacy arguments in the request never type a new
+ * run. The parent still reads the typed subagent_done entries of older sessions.
  */
 export const SUBAGENT_ACCEPTED_CALL_ENTRY = "pi-subagent-accepted-call";
 
@@ -45,7 +46,10 @@ interface SubagentDoneDeps {
  * cf6dbf4: the zero-argument subagent_done of a headless child without auto-exit. The last
  * assistant message before the call is the result; the call itself carries nothing.
  */
-export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">, deps: SubagentDoneDeps) {
+export function registerSubagentDoneTool(
+	pi: Pick<ExtensionAPI, "registerTool" | "appendEntry">,
+	deps: SubagentDoneDeps,
+) {
 	const typebox = optionalRequire("typebox") as typeof import("typebox") | null;
 	const doneParams = typebox?.Type?.Object
 		? typebox.Type.Object({})
@@ -58,15 +62,23 @@ export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">,
 			"It will close this session and return your results to the main session. " +
 			"Your LAST assistant message before calling this becomes the summary returned to the caller.",
 		parameters: doneParams,
-		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-			if (deps.isTakenOver()) {
+		async execute(toolCallId, _params, _signal, _onUpdate, ctx) {
+			// T72 review: TypeBox accepts extra fields and Pi keeps the raw request, so a call that still
+			// sends the removed outcome/summary/artifacts/data would type the run. The executed
+			// arguments, recorded here and in the exit record, win over the request in the assembler.
+			const autonomous = !deps.isTakenOver();
+			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args: {}, autonomous });
+			if (!autonomous) {
 				return {
 					terminate: true,
 					content: [{ type: "text", text: "A person took over this session, so it stays open until they close it." }],
 					details: {},
 				};
 			}
-			deps.writeExitSignal({ type: "done", outputTokens: deps.getOutputTokens() }, { supersede: true });
+			deps.writeExitSignal(
+				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args: {} } },
+				{ supersede: true },
+			);
 			deps.requestShutdown(ctx);
 			// Kept from D12: end the agent loop here. Print mode installs no shutdown handler, so another
 			// model turn would replace the last message, which the description promises as the result.

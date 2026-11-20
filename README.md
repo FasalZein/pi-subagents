@@ -681,8 +681,8 @@ function entry(id, record, fallback) {
 		summary: record.summary.length > SUMMARY_CHARS ? `${record.summary.slice(0, SUMMARY_CHARS)} [cut]` : record.summary,
 		report: record.report.saved ? record.report.path : `not saved: ${record.report.error}`,
 	};
-	if (!record.typed) run.check = "untyped: no valid completion call; read the report";
-	else if (record.dataError) run.check = `data error: ${record.dataError.slice(0, SUMMARY_CHARS)}`;
+	// An untyped done run is an ordinary success; a data error exists only in records of older sessions.
+	if (record.dataError) run.check = `data error: ${record.dataError.slice(0, SUMMARY_CHARS)}`;
 	else if (record.data !== undefined) {
 		const size = JSON.stringify(record.data).length;
 		if (size <= DATA_CHARS) run.data = record.data;
