@@ -373,7 +373,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		setRunningSubagentForTest(running);
 		const end = endOf("ended-child", "ENDED-REPORT");
 		running.completionPromise = Promise.resolve(end);
-		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
+		routeDetachedSubagentCompletionForTest(parent.pi, running, end);
 		const abort = new AbortController();
 		abort.abort();
 		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
