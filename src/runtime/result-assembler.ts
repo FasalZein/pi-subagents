@@ -2,7 +2,7 @@ import type { SessionEntry } from "../session/session.ts";
 import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../tools/written-files.ts";
-import type { SubagentTimeoutKind } from "../types.ts";
+import type { SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
 import {
 	type AssembledRecord,
 	CALL_OUTCOMES,
@@ -18,6 +18,7 @@ import {
 	SUMMARY_MAX_CHARS,
 	type TimeLimitFacts,
 } from "./result-record.ts";
+import { type ProcessOutput, selectUntypedReport, type UntypedReport } from "./untyped-report.ts";
 
 /** D12: the report line of a run without assistant text. */
 export const NO_REPORT_LINE = "no report beyond the summary";
@@ -59,6 +60,22 @@ export interface RunFacts {
 	acceptedCall?: AcceptedPayload;
 	contextUsage?: ContextUsage;
 	resume: ResumeFacts;
+	/** D12: the child's captured process output (selectUntypedReport). */
+	processOutput?: ProcessOutput;
+	/** D12 and T73: true when the child ran without a session file, so its entries hold no transcript. */
+	noTranscript?: boolean;
+	/**
+	 * D21: the run's report-only wrap-up continuation ended by itself (a clean exit, a nonzero exit or a
+	 * child error). The outcome comes from that end; the record keeps the time limit and its ender.
+	 * Unset for a stop, a hard-deadline kill or a ping.
+	 */
+	wrapUp?: WrapUpFact;
+}
+
+/** D21: the time limit whose soft threshold started the report-only wrap-up. */
+export interface WrapUpFact {
+	budget: SubagentTimeoutKind;
+	seconds: number;
 }
 
 /** An accepted completion payload; dataError is set when its data failed the launch schema twice (D12). */
@@ -71,6 +88,8 @@ export interface AcceptedPayload {
 export interface AssembledResult {
 	record: AssembledRecord;
 	report: string;
+	/** Who wrote the summary: the child, or the runtime when the run left no report of its own. */
+	summarySource: SubagentSummarySource;
 }
 
 /**
@@ -228,7 +247,10 @@ function readTranscript(entries: readonly SessionEntry[], launchEntryCount: numb
  * overlay operator, else the parent); a time limit and a wrap-up are the time limit; a ping and a
  * crash are the child's own end; a clean or failed exit is the child's unless a person closed the pane.
  */
-export function endedByOf(end: RunEnd, facts: { stoppedBy?: "operator" | "parent"; closedByPerson: boolean }): EndedBy {
+export function endedByOf(
+	end: RunEnd,
+	facts: { stoppedBy?: "operator" | "parent"; closedByPerson: boolean; wrapUp?: boolean },
+): EndedBy {
 	switch (end.kind) {
 		case "cancelled":
 			return facts.stoppedBy ?? "parent";
@@ -238,7 +260,9 @@ export function endedByOf(end: RunEnd, facts: { stoppedBy?: "operator" | "parent
 			return "child";
 		case "exited":
 		case "failed":
-			return facts.closedByPerson ? "operator" : "child";
+			// D21: a wrap-up ran because of the time limit; a person who closed its pane still ended it.
+			if (facts.closedByPerson) return "operator";
+			return facts.wrapUp ? "time_limit" : "child";
 	}
 }
 
@@ -373,12 +397,14 @@ function exitFacts(end: RunEnd): ExitFacts {
 	}
 }
 
-function timeLimitFacts(end: RunEnd): TimeLimitFacts | undefined {
-	return end.kind === "timed_out" ? { kind: end.budget, seconds: end.seconds, wrapUp: end.wrapUp } : undefined;
+function timeLimitFacts(end: RunEnd, wrapUp: WrapUpFact | undefined): TimeLimitFacts | undefined {
+	if (end.kind === "timed_out") return { kind: end.budget, seconds: end.seconds, wrapUp: end.wrapUp };
+	return wrapUp && { kind: wrapUp.budget, seconds: wrapUp.seconds, wrapUp: true };
 }
 
 interface Body {
 	typing: ResultTyping;
+	summarySource: SubagentSummarySource;
 	outcome: ResultOutcome;
 	summary: string;
 	report: string;
@@ -420,6 +446,7 @@ function typedBody(
 	const typing: ResultTyping = dataError !== undefined ? { typed: true, dataError } : { typed: true, data: args.data };
 	return {
 		typing,
+		summarySource: "subagent",
 		outcome,
 		summary: cutText(fullSummary, SUMMARY_MAX_CHARS),
 		report,
@@ -437,6 +464,7 @@ function pingBody(value: unknown): Body | undefined {
 	if (!message) return undefined;
 	return {
 		typing: { typed: true },
+		summarySource: "subagent",
 		outcome: "blocked",
 		summary: cutText(message, SUMMARY_MAX_CHARS),
 		report: message,
@@ -444,21 +472,48 @@ function pingBody(value: unknown): Body | undefined {
 	};
 }
 
-/** T70: an untyped run names the files it wrote, as no completion call listed them. */
-function untypedBody(facts: RunFacts, text: string | undefined): Body {
-	const outcome = endOutcome(facts.end);
-	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
-	if (!text) {
-		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
-		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts };
+/**
+ * The untyped report boundary: older sessions with a nudge entry keep the pre-T72 rule; otherwise the
+ * selector reads this run's entries, up to a completion call that ended the run.
+ */
+function untypedReport(
+	facts: RunFacts,
+	texts: readonly AssistantText[],
+	call: CompletionCall | undefined,
+	final: boolean,
+	callEnds: boolean,
+): UntypedReport {
+	if (facts.nudgeEntryIndex !== undefined) {
+		return { text: reportText(texts, call, final, facts.nudgeEntryIndex), end: facts.end };
 	}
-	return {
-		typing: { typed: false },
-		outcome,
-		summary: cutAtLineEnd(text, SUMMARY_MAX_CHARS),
-		report: text,
-		artifacts,
-	};
+	if (facts.noTranscript) return selectUntypedReport(undefined, facts.end, facts.processOutput);
+	const stop = call && callEnds ? call.at[0] + 1 : facts.entries.length;
+	return selectUntypedReport(
+		facts.entries.slice(Math.max(0, facts.launchEntryCount), stop),
+		facts.end,
+		facts.processOutput,
+	);
+}
+
+/** T70: an untyped run names the files it wrote, as no completion call listed them. */
+function untypedBody(facts: RunFacts, selected: UntypedReport): Body {
+	const { text, diagnostic, end } = selected;
+	const outcome = endOutcome(end);
+	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
+	const typing: ResultTyping = { typed: false };
+	if (text) {
+		const summary = cutAtLineEnd(text, SUMMARY_MAX_CHARS);
+		return { typing, summarySource: "subagent", outcome, summary, report: text, artifacts };
+	}
+	const described = describeEnd(end, facts.sessionFile);
+	if (!diagnostic) {
+		const summary = cutText(described, SUMMARY_MAX_CHARS);
+		return { typing, summarySource: "runtime", outcome, summary, report: withNoReportLine(summary), artifacts };
+	}
+	// cf6dbf4 put a failed child's stderr into its runtime-owned summary; the report keeps all of it.
+	const report = `${described}\n\n${diagnostic}`;
+	const summary = cutAtLineEnd(report, SUMMARY_MAX_CHARS);
+	return { typing, summarySource: "runtime", outcome, summary, report, artifacts };
 }
 
 /**
@@ -481,13 +536,19 @@ function endOverridesCall(end: RunEnd): boolean {
  */
 export function assembleResult(facts: RunFacts): AssembledResult {
 	const { texts, accepted, dataErrors, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
-	const final = call !== undefined && autonomous.has(call.id);
-	const text = reportText(texts, call, final, facts.nudgeEntryIndex);
-	const typing = call && (final || !textAfterCall(texts, call)) && !endOverridesCall(facts.end);
-	const body =
+	// D21: a report-only wrap-up is untyped; a call from before its restart never decides its verdict.
+	const runCall = facts.wrapUp ? undefined : call;
+	const final = runCall !== undefined && autonomous.has(runCall.id);
+	const callEnds = runCall !== undefined && (final || !textAfterCall(texts, runCall));
+	const typing = runCall && callEnds && !endOverridesCall(facts.end);
+	const typed =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
-		(typing ? typedBody(call, text, facts, accepted, dataErrors) : undefined) ??
-		untypedBody(facts, text);
+		(typing
+			? typedBody(runCall, reportText(texts, runCall, final, facts.nudgeEntryIndex), facts, accepted, dataErrors)
+			: undefined);
+	const untyped = typed ? undefined : untypedReport(facts, texts, runCall, final, callEnds);
+	const body = typed ?? untypedBody(facts, untyped ?? { end: facts.end });
+	const end = untyped?.end ?? facts.end;
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,
@@ -502,10 +563,10 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 		artifacts: body.artifacts,
 		endedAt: facts.endedAt,
 		elapsedSeconds: Math.max(0, (facts.endedAt - facts.startedAt) / 1000),
-		exit: exitFacts(facts.end),
-		timeLimit: timeLimitFacts(facts.end),
+		exit: exitFacts(end),
+		timeLimit: timeLimitFacts(end, facts.wrapUp),
 		contextUsage: facts.contextUsage,
 		resume: facts.resume,
 	};
-	return { record, report: body.report };
+	return { record, report: body.report, summarySource: body.summarySource };
 }

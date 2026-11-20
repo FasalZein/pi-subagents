@@ -329,15 +329,16 @@ describe("end outcome displays (T09 fix round 1)", () => {
 		}
 	});
 
-	it("shows a finished report-only wrap-up as timed out with its notice, not completed", async () => {
+	// T77 (D21): cf6dbf4 showed a finished wrap-up as completed; the report outcome shows, the limit stays named.
+	it("shows a finished report-only wrap-up with its report outcome and its notice", async () => {
 		const running = setup(DONE_CALL, {
 			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
 			phase: "wrapping-up",
 		});
 		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: running.timeoutWrapUp });
 		for (const shown of [renderedMessage(running, result).text, await renderedWaitingLaunch(running, result)]) {
-			assert.match(shown, /worker \(scout\) — timed out/);
-			assert.doesNotMatch(shown, /— completed/);
+			assert.match(shown, /worker \(scout\) — done/);
+			assert.doesNotMatch(shown, /timed out/);
 			assert.ok(shown.replace(/\s+/g, " ").includes(WRAP_UP_NOTICE.replace(/\s+/g, " ")), shown);
 		}
 	});
