@@ -173,10 +173,11 @@ describe("Rex placement (T71, D28)", () => {
 		assert.deepEqual(creates.map(verb), ["window new", "window new", "window new"]);
 		for (const call of creates) {
 			assert.deepEqual(call.slice(0, 4), ["window", "new", "-s", FAKE_REX_SESSION]);
-			assert.match(call[4]!, LABEL, "the window carries the launch label");
+			assert.match(call[4] ?? "", LABEL, "the window carries the launch label");
 			assert.ok(call.includes("--focus=false"));
 		}
-		const windows = new Set(readRexBlocks(stateDir).filter((b) => children.includes(b.block_id)).map((b) => b.window_id));
+		const own = readRexBlocks(stateDir).filter((block) => children.includes(block.block_id));
+		const windows = new Set(own.map((block) => block.window_id));
 		assert.equal(windows.size, 3, "each child has its own window");
 	}
 

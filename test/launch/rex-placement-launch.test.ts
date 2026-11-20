@@ -4,7 +4,6 @@ import { launchInteractiveSubagent } from "../../src/launch/interactive.ts";
 import { coordinateSubagentLaunch } from "../../src/launch/launch-coordinator.ts";
 import { LaunchUndo } from "../../src/launch/launch-undo.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
-import { testResultsDir } from "../support/result-fixtures.ts";
 import { FAKE_REX, FAKE_REX_PARENT, FAKE_REX_SESSION, readRexCalls } from "../mux/fake-rex.ts";
 import {
 	ASSISTANT_MSG,
@@ -23,6 +22,7 @@ import {
 	writeFileSync,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
+import { testResultsDir } from "../support/result-fixtures.ts";
 
 /** Every name that detection or placement reads; restored after each test. */
 const ENV_KEYS = [
