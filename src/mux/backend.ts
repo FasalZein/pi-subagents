@@ -3,6 +3,7 @@ import type { WorkReporter, WorkReporterSession } from "../runtime/work-reportin
 import type { MuxBackend } from "./core.ts";
 import type { HerdrPlacementContext, HerdrPlacementPolicy } from "./herdr-surfaces.ts";
 import type { PollResult } from "./poll.ts";
+import type { RexPlacementContext, RexPlacementPolicy } from "./rex.ts";
 import type { ZellijPlacementContext } from "./zellij-placement.ts";
 
 export type SurfaceSplitDirection = "left" | "right" | "up" | "down";
@@ -10,6 +11,7 @@ export type SurfaceSplitDirection = "left" | "right" | "up" | "down";
 /** Placement requests that a backend reads when it opens a surface; other backends ignore them. */
 export interface SurfaceCreationOptions {
 	herdr?: HerdrPlacementContext;
+	rex?: RexPlacementContext;
 	zellij?: ZellijPlacementContext;
 	/** A backend reports here when a started surface runs with degraded placement; the launch goes on. */
 	onPlacementWarning?: (warning: string) => void;
@@ -85,6 +87,8 @@ export interface MuxBackendAdapter {
 	readonly paneIdentity?: PaneIdentityPolicy;
 	/** Optional ability: the backend places surfaces by a herdr placement policy, which a launch stores. */
 	resolveHerdrPlacementPolicy?(value: string | undefined): HerdrPlacementPolicy;
+	/** Optional ability: the backend places surfaces by a Rex placement policy, which a launch stores. */
+	resolveRexPlacementPolicy?(value: string | undefined): RexPlacementPolicy;
 	/** Optional status ability: publish the count of outstanding children for the session. */
 	connectWorkReporter?(session: WorkReporterSession): Promise<WorkReporter | undefined>;
 	/** Optional ability: resolve the live session for direct-program starts. */

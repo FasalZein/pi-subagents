@@ -67,7 +67,7 @@ The backend command must exist, and Pi must be able to see the current pane or s
 Normal launches use a backend-specific surface:
 
 - The Herdr app opens a child as a split beside the parent pane. The split moves the app's focus, so Pi focuses the parent pane, splits it, and puts the saved focus back; the parent pane can show focus for under a second. When the split fails, the child gets a tab in the parent's space. Pi starts the child launcher as the program of the new terminal, with no shell and no startup delay.
-- Rex opens a child in the parent's Rex session: as a split to the right of the parent block, at most 2 per window, and then in a new window of the same session. Pi never moves the focus. Pi reads the Rex API revision from `rex whoami` and accepts revision 16; another revision makes the backend unavailable with a hint. Remote Rex servers and minimized layers are not supported.
+- Rex opens each child in a new window (the app's tab) of the parent's Rex session by default. With `PI_SUBAGENT_REX_PLACEMENT=split`, it opens a child as a split to the right of the parent block, at most 2 per window, and then in a new window of the same session. Pi never moves the focus. See [Rex placement](#rex-placement). Pi reads the Rex API revision from `rex whoami` and accepts revision 16; another revision makes the backend unavailable with a hint. Remote Rex servers and minimized layers are not supported.
 - The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
 - Other backends may use windows, splits, or stacked panes.
 
@@ -172,7 +172,7 @@ env: |
   SOME_VALUE=value,with,commas
 ```
 
-Pi splits `env` by line. It does not split values by comma. When you set `PI_CODING_AGENT_DIR`, the child uses that directory for its Pi config and sessions. For per-agent Herdr or Zellij placement, set `PI_SUBAGENT_HERDR_PLACEMENT` or `PI_SUBAGENT_ZELLIJ_PLACEMENT` here. The parent reads placement before the child pane exists. See [Herdr placement](#herdr-placement) and [Zellij placement](#zellij-placement).
+Pi splits `env` by line. It does not split values by comma. When you set `PI_CODING_AGENT_DIR`, the child uses that directory for its Pi config and sessions. For per-agent Herdr, Rex or Zellij placement, set `PI_SUBAGENT_HERDR_PLACEMENT`, `PI_SUBAGENT_REX_PLACEMENT` or `PI_SUBAGENT_ZELLIJ_PLACEMENT` here. The parent reads placement before the child pane exists. See [Herdr placement](#herdr-placement), [Rex placement](#rex-placement) and [Zellij placement](#zellij-placement).
 
 Children inherit every environment variable from the parent Pi process, in every launch mode. This includes API keys and tokens that you exported before you started Pi. `deny-env` in an agent file removes names from this inheritance. You can also set `PI_SUBAGENT_ENV_DENY` in the parent environment. Both lists apply.
 
@@ -1196,6 +1196,7 @@ User-facing knobs:
 | `PI_SUBAGENT_HERDR_PLACEMENT` | Herdr policy: `auto`, `right-stack`, `down-stack`, `right`, `down`, or `tab` |
 | `PI_SUBAGENT_HERDR_MIN_COLUMNS` | Minimum columns preserved by Herdr `auto` placement (default: `50`) |
 | `PI_SUBAGENT_HERDR_MIN_ROWS` | Minimum rows preserved by Herdr `auto` placement (default: `12`) |
+| `PI_SUBAGENT_REX_PLACEMENT` | Rex policy: `window` (default, a new window per child) or `split` |
 | `PI_SUBAGENT_ZELLIJ_PLACEMENT` | Zellij policy: `auto`, `right-stack`, `down-stack`, `floating`, or `tab-stack` |
 | `PI_SUBAGENT_ZELLIJ_MIN_COLUMNS` | Minimum usable columns for each side of a Zellij split (default: `50`) |
 | `PI_SUBAGENT_ZELLIJ_MIN_ROWS` | Minimum usable rows for each side of a Zellij split (default: `10`) |
@@ -1251,6 +1252,15 @@ env: PI_SUBAGENT_HERDR_PLACEMENT=tab
 ```
 
 The parent reads this value before it creates the child surface. The agent value overrides the parent default. `PI_SUBAGENT_HERDR_MIN_COLUMNS` and `PI_SUBAGENT_HERDR_MIN_ROWS` remain parent-wide settings. On resume, a persisted per-agent `env` value wins; without one, the current parent default wins, then the originally persisted policy is the fallback.
+
+## Rex placement
+
+Set `PI_SUBAGENT_REX_PLACEMENT` to choose where a Rex child opens:
+
+- `window` (default): each child opens in its own new window (the app's tab) of the parent's Rex session.
+- `split`: a child opens as a split to the right of the parent block, at most 2 per window; later children open in a new window.
+
+Every create uses `--focus=false`. An unknown value stops the launch with an error before Rex creates anything. An agent can set the variable for its own launches through [`env`](#agent-definitions) frontmatter, for example `env: PI_SUBAGENT_REX_PLACEMENT=split`. On resume, the precedence is the Herdr one: a persisted per-agent `env` value, then the current parent default, then the persisted policy.
 
 ## Zellij placement
 
