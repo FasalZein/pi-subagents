@@ -6,6 +6,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../agents/definitions.ts";
 import { AGENT_INDEX_SECTION_NAME } from "../agents/index-section.ts";
 import type { HerdrPlacementPolicy } from "../mux/herdr-surfaces.ts";
+import type { RexPlacementPolicy } from "../mux/rex.ts";
 import type { ZellijPlacementPolicy } from "../mux/zellij-placement.ts";
 import type { ParentClosePolicy, SubagentParamsInput } from "../types.ts";
 import { getEntries } from "./session.ts";
@@ -78,6 +79,7 @@ export interface PersistedSubagentLaunchMetadata {
 	contextWarnStep?: string;
 	reportContextUsage?: boolean;
 	herdrPlacementPolicy?: HerdrPlacementPolicy;
+	rexPlacementPolicy?: RexPlacementPolicy;
 	zellijPlacementPolicy?: ZellijPlacementPolicy;
 	zellijPlacementGroupKey?: string;
 

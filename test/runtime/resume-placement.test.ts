@@ -1,5 +1,6 @@
 import {
 	resolveResumeHerdrPlacementPolicy,
+	resolveResumeRexPlacementPolicy,
 	resolveResumeZellijPlacementPolicy,
 } from "../../src/runtime/resume-placement.ts";
 import {
@@ -62,6 +63,35 @@ describe("subagent_resume Herdr placement", () => {
 				"",
 			),
 			"auto",
+		);
+	});
+});
+
+describe("subagent_resume Rex placement (T71)", () => {
+	type Metadata = Parameters<typeof resolveResumeRexPlacementPolicy>[0];
+
+	it("treats empty agent or parent values as the window default", () => {
+		const metadata = { env: "PI_SUBAGENT_REX_PLACEMENT=", rexPlacementPolicy: "split" } as Metadata;
+		assert.equal(resolveResumeRexPlacementPolicy(metadata, "split"), "window");
+		assert.equal(resolveResumeRexPlacementPolicy({ rexPlacementPolicy: "split" } as Metadata, ""), "window");
+	});
+
+	it("gives old metadata without a policy or a parent value the window default", () => {
+		assert.equal(resolveResumeRexPlacementPolicy(undefined, undefined), "window");
+	});
+
+	it("rejects an unknown saved policy when neither env value is set", () => {
+		const metadata = { rexPlacementPolicy: "tab" } as unknown as Metadata;
+		assert.throws(
+			() => resolveResumeRexPlacementPolicy(metadata, undefined),
+			/Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/,
+		);
+	});
+
+	it("rejects an unknown persisted agent value", () => {
+		assert.throws(
+			() => resolveResumeRexPlacementPolicy({ env: "PI_SUBAGENT_REX_PLACEMENT=tab" } as Metadata, undefined),
+			/Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/,
 		);
 	});
 });

@@ -347,7 +347,7 @@ export function buildPersistedSubagentLaunchMetadata(
 	systemPrompt?: string,
 	placement?: Pick<
 		PersistedSubagentLaunchMetadata,
-		"herdrPlacementPolicy" | "zellijPlacementPolicy" | "zellijPlacementGroupKey"
+		"herdrPlacementPolicy" | "rexPlacementPolicy" | "zellijPlacementPolicy" | "zellijPlacementGroupKey"
 	>,
 ): PersistedSubagentLaunchMetadata {
 	const allowModelOverride = prepared.agentDefs?.allowModelOverride !== false;
@@ -425,6 +425,7 @@ export function buildPersistedSubagentLaunchMetadata(
 				}
 			: {}),
 		...(placement?.herdrPlacementPolicy ? { herdrPlacementPolicy: placement.herdrPlacementPolicy } : {}),
+		...(placement?.rexPlacementPolicy ? { rexPlacementPolicy: placement.rexPlacementPolicy } : {}),
 		...(placement?.zellijPlacementPolicy ? { zellijPlacementPolicy: placement.zellijPlacementPolicy } : {}),
 		...(placement?.zellijPlacementGroupKey ? { zellijPlacementGroupKey: placement.zellijPlacementGroupKey } : {}),
 
