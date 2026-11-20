@@ -21,6 +21,7 @@ export {
 	sendShellCommand,
 } from "./mux/io.ts";
 export { consumeSubagentExitSignal, pollForExit } from "./mux/poll.ts";
+export { resolveRexPlacementPolicy } from "./mux/rex.ts";
 export {
 	createSurface,
 	createSurfaceSplit,

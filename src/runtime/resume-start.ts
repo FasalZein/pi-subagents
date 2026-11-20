@@ -11,7 +11,11 @@ import { closeSurface, createSurface, currentMuxAdapter, sendShellCommand } from
 import { getSubagentExitSidecarPath } from "../session/exit-sidecar.ts";
 import { getDoneSentinelFile, type PersistedSubagentLaunchMetadata } from "../session/session-files.ts";
 import type { RunningSubagent } from "../types.ts";
-import { resolveResumeHerdrPlacementPolicy, resolveResumeZellijPlacementPolicy } from "./resume-placement.ts";
+import {
+	resolveResumeHerdrPlacementPolicy,
+	resolveResumeRexPlacementPolicy,
+	resolveResumeZellijPlacementPolicy,
+} from "./resume-placement.ts";
 import { addResultWarning } from "./run-result.ts";
 
 /**
@@ -90,6 +94,9 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 	const herdrContext = adapter?.resolveHerdrPlacementPolicy
 		? { policy: resolveResumeHerdrPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_HERDR_PLACEMENT) }
 		: undefined;
+	const rexContext = adapter?.resolveRexPlacementPolicy
+		? { policy: resolveResumeRexPlacementPolicy(invocationMetadata, process.env.PI_SUBAGENT_REX_PLACEMENT) }
+		: undefined;
 	const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
 	const configuredZellijPolicy = resolveResumeZellijPlacementPolicy(
 		invocationMetadata,
@@ -108,6 +115,7 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 		? undefined
 		: await createSurface(surfaceName, {
 				herdr: herdrContext,
+				rex: rexContext,
 				zellij: zellijContext,
 			});
 	if (ordinarySurface) undo.add(() => closeSurface(ordinarySurface));

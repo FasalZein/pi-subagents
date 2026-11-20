@@ -86,6 +86,7 @@ async function startInteractiveSubagent(
 	const herdrContext = {
 		policy: launch.launchMetadata.herdrPlacementPolicy,
 	};
+	const rexContext = { policy: launch.launchMetadata.rexPlacementPolicy };
 	const parentPaneId = Number(process.env.ZELLIJ_PANE_ID);
 	const zellijContext =
 		launch.launchMetadata.zellijPlacementGroupKey && Number.isInteger(parentPaneId)
@@ -179,6 +180,7 @@ async function startInteractiveSubagent(
 		: (options?.surface ??
 			(await createSurface(surfaceName, {
 				herdr: herdrContext,
+				rex: rexContext,
 				zellij: zellijContext,
 			})));
 	// A caller-made surface stays the caller's to close.

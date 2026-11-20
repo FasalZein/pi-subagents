@@ -84,6 +84,10 @@ export async function coordinateSubagentLaunch(
 	const herdrPlacementPolicy = resolveHerdrPolicy?.(
 		agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT,
 	);
+	const resolveRexPolicy = options.mode === "interactive" ? currentMuxAdapter()?.resolveRexPlacementPolicy : undefined;
+	const rexPlacementPolicy = resolveRexPolicy?.(
+		agentEnv.PI_SUBAGENT_REX_PLACEMENT ?? process.env.PI_SUBAGENT_REX_PLACEMENT,
+	);
 	const zellijPlacementPolicy =
 		options.mode === "interactive" && process.env.ZELLIJ_PANE_ID
 			? resolveZellijPlacementPolicy(agentEnv.PI_SUBAGENT_ZELLIJ_PLACEMENT ?? process.env.PI_SUBAGENT_ZELLIJ_PLACEMENT)
@@ -103,6 +107,7 @@ export async function coordinateSubagentLaunch(
 		systemPrompt?.text ?? (prepared.identityInSystemPrompt ? prepared.identity : options.systemPrompt),
 		{
 			...(herdrPlacementPolicy ? { herdrPlacementPolicy } : {}),
+			...(rexPlacementPolicy ? { rexPlacementPolicy } : {}),
 			...zellijPlacement,
 		},
 	);

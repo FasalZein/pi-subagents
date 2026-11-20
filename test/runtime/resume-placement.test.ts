@@ -1,5 +1,6 @@
 import {
 	resolveResumeHerdrPlacementPolicy,
+	resolveResumeRexPlacementPolicy,
 	resolveResumeZellijPlacementPolicy,
 } from "../../src/runtime/resume-placement.ts";
 import {
@@ -62,6 +63,40 @@ describe("subagent_resume Herdr placement", () => {
 				"",
 			),
 			"auto",
+		);
+	});
+});
+
+describe("subagent_resume Rex placement (T71)", () => {
+	type Metadata = Parameters<typeof resolveResumeRexPlacementPolicy>[0];
+
+	it("keeps the persisted per-agent env value over the current parent default", () => {
+		const metadata = { env: "PI_SUBAGENT_REX_PLACEMENT=split", rexPlacementPolicy: "split" } as Metadata;
+		assert.equal(resolveResumeRexPlacementPolicy(metadata, "window"), "split");
+	});
+
+	it("lets the current parent default override a persisted policy without agent env", () => {
+		assert.equal(resolveResumeRexPlacementPolicy({ rexPlacementPolicy: "split" } as Metadata, "window"), "window");
+	});
+
+	it("uses the persisted policy when neither the agent env nor the parent sets the variable", () => {
+		assert.equal(resolveResumeRexPlacementPolicy({ rexPlacementPolicy: "split" } as Metadata, undefined), "split");
+	});
+
+	it("treats empty agent or parent values as the window default", () => {
+		const metadata = { env: "PI_SUBAGENT_REX_PLACEMENT=", rexPlacementPolicy: "split" } as Metadata;
+		assert.equal(resolveResumeRexPlacementPolicy(metadata, "split"), "window");
+		assert.equal(resolveResumeRexPlacementPolicy({ rexPlacementPolicy: "split" } as Metadata, ""), "window");
+	});
+
+	it("leaves the policy to the backend for old metadata without a policy or a parent value", () => {
+		assert.equal(resolveResumeRexPlacementPolicy(undefined, undefined), undefined);
+	});
+
+	it("rejects an unknown persisted agent value", () => {
+		assert.throws(
+			() => resolveResumeRexPlacementPolicy({ env: "PI_SUBAGENT_REX_PLACEMENT=tab" } as Metadata, undefined),
+			/Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/,
 		);
 	});
 });

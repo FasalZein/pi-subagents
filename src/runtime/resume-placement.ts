@@ -1,5 +1,5 @@
 import { parseEnvString } from "../launch/env.ts";
-import { resolveHerdrPlacementPolicy, resolveZellijPlacementPolicy } from "../mux.ts";
+import { resolveHerdrPlacementPolicy, resolveRexPlacementPolicy, resolveZellijPlacementPolicy } from "../mux.ts";
 import type { PersistedSubagentLaunchMetadata } from "../session/session-files.ts";
 
 export function resolveResumeHerdrPlacementPolicy(
@@ -10,6 +10,17 @@ export function resolveResumeHerdrPlacementPolicy(
 	if (agentPolicy !== undefined) return resolveHerdrPlacementPolicy(agentPolicy);
 	if (parentPolicy !== undefined) return resolveHerdrPlacementPolicy(parentPolicy);
 	return launchMetadata?.herdrPlacementPolicy;
+}
+
+/** Same precedence as Herdr: persisted per-agent env, then the current parent default, then the persisted policy. */
+export function resolveResumeRexPlacementPolicy(
+	launchMetadata: PersistedSubagentLaunchMetadata | undefined,
+	parentPolicy: string | undefined,
+): ReturnType<typeof resolveRexPlacementPolicy> | undefined {
+	const agentPolicy = parseEnvString(launchMetadata?.env).PI_SUBAGENT_REX_PLACEMENT;
+	if (agentPolicy !== undefined) return resolveRexPlacementPolicy(agentPolicy);
+	if (parentPolicy !== undefined) return resolveRexPlacementPolicy(parentPolicy);
+	return launchMetadata?.rexPlacementPolicy;
 }
 
 export function resolveResumeZellijPlacementPolicy(
