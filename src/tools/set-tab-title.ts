@@ -1,7 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { isSetTabTitleToolEnabled } from "../agents/titles.ts";
-import { isMuxAvailable, muxSetupHint, renameCurrentTab, renameWorkspace } from "../mux.ts";
+import {
+	canRenameTitle,
+	getMuxBackend,
+	isMuxAvailable,
+	muxSetupHint,
+	renameCurrentTab,
+	renameWorkspace,
+} from "../mux.ts";
 import { asSubagentToolResult } from "../runtime/state.ts";
 import { SET_TAB_TITLE_TOOL_NAME } from "./tool-names.ts";
 
@@ -43,6 +50,18 @@ export function registerSetTabTitleTool(pi: ExtensionAPI): void {
 						{
 							type: "text" as const,
 							text: `Terminal multiplexer not available. ${muxSetupHint()}`,
+						},
+					],
+					details: { error: "mux not available" },
+				});
+			}
+			// D10: a backend without a rename ability (Rex) sets no title, so the reply must not say it did.
+			if (!canRenameTitle()) {
+				return asSubagentToolResult({
+					content: [
+						{
+							type: "text" as const,
+							text: `Terminal multiplexer not available. The ${getMuxBackend()} backend cannot set a tab or workspace title.`,
 						},
 					],
 					details: { error: "mux not available" },

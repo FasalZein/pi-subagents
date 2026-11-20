@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { getMuxBackend, muxSetupHint } from "../../src/mux/core.ts";
 import { resolveRexPlacementPolicy, rexBackend } from "../../src/mux/rex.ts";
 import { REX_CAPTURE_MAX_BYTES } from "../../src/mux/rex-cli.ts";
+import { registerSetTabTitleTool } from "../../src/tools/set-tab-title.ts";
 import { writeExecutable } from "../support/index.ts";
 import {
 	armRexCreateFault,
@@ -299,6 +300,33 @@ describe("Rex lost create (T48, D28)", () => {
 	}
 });
 
+describe("Rex title (D10)", () => {
+	useFakeRex();
+
+	it("set_tab_title reports unavailable, as on cf6dbf4 where no backend served a Rex session", async () => {
+		const saved = process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+		process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = "1";
+		try {
+			let tool: { execute(id: string, params: { title: string }): Promise<unknown> } | undefined;
+			registerSetTabTitleTool({ registerTool: (definition: typeof tool) => { tool = definition; } } as never);
+			assert.ok(tool, "the opt-in registers set_tab_title");
+			const before = readRexCalls(stateDir).length;
+			const result = (await tool.execute("call", { title: "Phase 2" })) as {
+				content: { text: string }[];
+				details: { error?: string; title?: string };
+			};
+			// cf6dbf4 (src/tools/set-tab-title.ts): text "Terminal multiplexer not available. <hint>", details.error "mux not available".
+			assert.match(result.content[0]!.text, /^Terminal multiplexer not available\./);
+			assert.doesNotMatch(result.content[0]!.text, /Title set to/);
+			assert.deepEqual(result.details, { error: "mux not available" });
+			assert.ok(callsFrom(before).every((call) => verb(call) === "whoami"), "no rename call reaches rex");
+		} finally {
+			if (saved === undefined) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
+			else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = saved;
+		}
+	});
+});
+
 describe("Rex parent block (T48, D28)", () => {
 	useFakeRex();
 
@@ -316,8 +344,8 @@ describe("Rex parent block (T48, D28)", () => {
 		assert.throws(() => rexBackend.readScreen(FAKE_REX_PARENT, 5), /parent's own Rex block/);
 		await assert.rejects(rexBackend.readScreenAsync(FAKE_REX_PARENT, 5), /parent's own Rex block/);
 		await assert.rejects(async () => rexBackend.closeSurface(FAKE_REX_PARENT), /parent's own Rex block/);
-		rexBackend.renameCurrentTab("Title");
-		rexBackend.renameWorkspace("Title");
+		assert.equal(rexBackend.renameCurrentTab, undefined);
+		assert.equal(rexBackend.renameWorkspace, undefined);
 		assert.deepEqual(callsFrom(before), []);
 	});
 

@@ -285,8 +285,7 @@ export const herdrCoreBackend: MuxBackendAdapter = {
 	renameCurrentTab: (title) => {
 		hcSync(["label", callerTerminal(), `${TITLE_LABEL_KEY}=${title}`]);
 	},
-	// herdr-core has no workspace to rename.
-	renameWorkspace: () => {},
+	// herdr-core has no workspace to rename, so it has no renameWorkspace.
 	paneIdentity: HERDR_CORE_PANE_IDENTITY,
 	connectWorkReporter: (session) => createOscWorkReporter(session, "herdr-core", herdrCoreUsable),
 	openProgramSession: async (): Promise<DirectProgramSession> => ({
