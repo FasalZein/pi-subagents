@@ -56,7 +56,6 @@ function longText(length: number, marker: string): string {
 const kinds = [
 	{ name: "an auto-exit pane child", options: { autoExit: true, pane: true } },
 	{ name: "a headless child", options: { autoExit: true, pane: false } },
-	{ name: "a manual pane child", options: { autoExit: false, pane: true } },
 ];
 
 describe("completion call (D12)", () => {
@@ -78,6 +77,20 @@ describe("completion call (D12)", () => {
 			}),
 		);
 	}
+
+	// T69 (v2.9.2): a manual pane child ends only when a person closes the pane, so it has no
+	// completion tool, also without a deny entry, and it gets no nudge.
+	it(
+		"a manual pane child has no subagent_done without a deny entry, and no nudge",
+		withChild({ autoExit: false, pane: true }, (child) => {
+			assert.equal(child.tools.has(DONE), false);
+			child.emit("agent_start", {});
+			child.emit("agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "answer" }] }] });
+			assert.deepEqual(child.nudges, []);
+			assert.equal(child.shutdowns, 0);
+			for (const tool of child.tools.values()) assert.doesNotMatch(tool.description ?? "", /subagent_done/);
+		}),
+	);
 
 	it("with subagent_done on deny-tools the tool is absent", async () => {
 		process.env.PI_DENY_TOOLS = DONE;
@@ -281,22 +294,13 @@ describe("completion call (D12)", () => {
 		}),
 	);
 
+	// T69: a manual pane child has no completion call; only the person's close ends it, untyped (D12).
 	describe("after operator input in a manual pane child", () => {
-		const call = { outcome: "done", summary: "Finished with the operator." };
-		const beforeClose = [
-			sessionHeader(),
-			user("task"),
-			assistant("first answer"),
-			user("operator: also check the tests"),
-			toolCall(DONE, call, "c1", "tests checked"),
-			toolResult(DONE, "c1", "Result recorded in this session."),
-		];
-
 		it(
-			"the call writes no exit record; the close writes the shutdown record",
-			withChild({ autoExit: false, pane: true }, async (child) => {
+			"nothing ends the child before the close; the close writes the shutdown record",
+			withChild({ autoExit: false, pane: true }, (child) => {
 				child.takeOver();
-				await callDone(child, call);
+				child.emit("agent_end", { messages: [{ role: "assistant", content: [{ type: "text", text: "answer" }] }] });
 				assert.equal(child.shutdowns, 0);
 				assert.equal(child.readExit(), null);
 				child.emit("session_shutdown", { reason: "quit" });
@@ -306,16 +310,18 @@ describe("completion call (D12)", () => {
 
 		it("more text and a manual close give one untyped result built from the last text", () => {
 			const { record, report } = assembleResult(
-				facts([...beforeClose, user("operator: thanks"), assistant("last words")]),
+				facts([
+					sessionHeader(),
+					user("task"),
+					assistant("first answer"),
+					user("operator: also check the tests"),
+					assistant("tests checked"),
+					user("operator: thanks"),
+					assistant("last words"),
+				]),
 			);
 			assert.equal(record.typed, false);
 			assert.equal(report, "last words");
-		});
-
-		it("a close right after the call gives the typed result", () => {
-			const { record } = assembleResult(facts(beforeClose));
-			assert.equal(record.typed, true);
-			assert.equal(record.summary, "Finished with the operator.");
 		});
 	});
 });

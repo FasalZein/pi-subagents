@@ -687,6 +687,72 @@ describe("Herdr interactive launch parity", () => {
 		assert.doesNotMatch(taskArtifact, /set_tab_title/);
 	});
 
+	// T69: expected texts are the v2.9.2 (cf6dbf4) src/launch/interactive.ts modeHint and summaryInstruction.
+	const MANUAL_MODE_HINT =
+		"Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
+	const MANUAL_SUMMARY =
+		"After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
+
+	async function launchManualPane(options: { fork: boolean; deny: boolean }) {
+		const { logFile } = useFakeHerdr();
+		const cwd = createTestDir();
+		process.env.PI_ARTIFACT_PROJECT_ROOT = join(cwd, "artifacts");
+		mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+		writeFileSync(
+			join(cwd, ".pi", "agents", "planner.md"),
+			[
+				"---",
+				"name: planner",
+				"auto-exit: false",
+				"tools: read,bash",
+				...(options.fork ? ["session-mode: fork"] : []),
+				...(options.deny ? ["deny-tools: subagent_done"] : []),
+				"---",
+				"Plan with the operator.",
+			].join("\n"),
+		);
+		const parentSession = writeParentSession(cwd);
+		await launchInteractiveSubagent(
+			{ name: "planner-child", title: "Planner child", task: "Draft the plan.", agent: "planner" },
+			{
+				cwd,
+				sessionManager: {
+					getSessionFile: () => parentSession,
+					getSessionId: () => "parent-session-id",
+					getLeafId: () => "asst-001",
+				},
+			},
+			{ getContextWindow: () => undefined, getShellReadyDelayMs: () => 0 },
+		);
+		const capsule = readLaunchCapsule(readHerdrRunScript(readFileSync(logFile, "utf8")));
+		const taskArg = capsule.args.find((arg: string) => arg.startsWith("@"));
+		assert.ok(taskArg, "expected capsule argv to carry the @task artifact");
+		const argAfter = (flag: string) => capsule.args[capsule.args.indexOf(flag) + 1];
+		return {
+			task: readFileSync(taskArg.slice(1), "utf8"),
+			tools: argAfter("--tools"),
+			excludeTools: argAfter("--exclude-tools"),
+		};
+	}
+
+	for (const fork of [false, true]) {
+		it(`briefs a manual pane child${fork ? " (fork task)" : ""} to stay open, with no subagent_done, deny line or not`, async () => {
+			const plain = await launchManualPane({ fork, deny: false });
+			const denied = await launchManualPane({ fork, deny: true });
+			for (const launch of [plain, denied]) {
+				assert.doesNotMatch(launch.task, /subagent_done|When your task is complete/);
+				assert.doesNotMatch(launch.tools, /subagent_done/);
+				if (!fork) {
+					assert.ok(launch.task.includes(MANUAL_MODE_HINT), launch.task);
+					assert.ok(launch.task.trimEnd().endsWith(MANUAL_SUMMARY), launch.task);
+				}
+			}
+			assert.equal(denied.task, plain.task);
+			assert.equal(denied.tools, plain.tools);
+			assert.equal(denied.excludeTools, plain.excludeTools);
+		});
+	}
+
 	it("keeps background launches independent of Herdr mux availability", async () => {
 		const { dir, logFile: herdrLogFile } = useFakeHerdr();
 		const cwd = createTestDir();

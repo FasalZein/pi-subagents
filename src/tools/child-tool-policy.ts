@@ -2,7 +2,7 @@ import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
 // Child-side tool policy: which tools PI_DENY_TOOLS removes and whether subagent_done registers.
 
-/** D12: every child keeps subagent_done unless PI_DENY_TOOLS names it, auto-exit children included. */
+/** The names PI_DENY_TOOLS lists; the child removes these tools from its active set. */
 export function getDeniedToolNames(deniedEnv = process.env.PI_DENY_TOOLS ?? ""): string[] {
 	return deniedEnv
 		.split(",")
@@ -20,7 +20,27 @@ export function filterToolNames(toolNames: string[], deniedTools: string[]): str
 	});
 }
 
-/** D12: auto-exit, headless and manual pane children all register it; only a deny entry removes it. */
-export function shouldRegisterSubagentDone(deniedTools: readonly string[]): boolean {
+/** How this child process runs: from PI_SUBAGENT_AUTO_EXIT and PI_SUBAGENT_SURFACE. */
+export interface ChildLifecycle {
+	autoExit: boolean;
+	/** The child runs in a pane (PI_SUBAGENT_SURFACE is set). */
+	pane: boolean;
+}
+
+export function readChildLifecycle(env: NodeJS.ProcessEnv = process.env): ChildLifecycle {
+	return { autoExit: env.PI_SUBAGENT_AUTO_EXIT === "1", pane: !!env.PI_SUBAGENT_SURFACE };
+}
+
+/** T69 (v2.9.2): a pane child with auto-exit off ends only when a person closes the pane. */
+export function isManualPaneChild(lifecycle: ChildLifecycle): boolean {
+	return lifecycle.pane && !lifecycle.autoExit;
+}
+
+/**
+ * D12: auto-exit pane and headless children register it unless a deny entry removes it. A manual
+ * pane child never does (T69, as v2.9.2): only the person at the pane closes it, launch or resume.
+ */
+export function shouldRegisterSubagentDone(deniedTools: readonly string[], lifecycle: ChildLifecycle): boolean {
+	if (isManualPaneChild(lifecycle)) return false;
 	return !deniedTools.includes(SUBAGENT_DONE_TOOL_NAME);
 }
