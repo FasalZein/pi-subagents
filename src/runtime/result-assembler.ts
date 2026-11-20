@@ -1,4 +1,4 @@
-import type { SessionEntry } from "../session/session.ts";
+import { findLastSubagentOutputWithSource, type SessionEntry } from "../session/session.ts";
 import { COMPLETION_JSON_FIELDS, SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { parseJsonFields } from "../tools/json-string-args.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
@@ -25,7 +25,11 @@ export const NO_REPORT_LINE = "no report beyond the summary";
 
 /** How the run ended, as the watcher saw it. */
 export type RunEnd =
-	| { kind: "exited"; code?: number; signal?: string }
+	/**
+	 * D21: wrapUp is set when the run's report-only wrap-up continuation ended on its own after a time
+	 * limit; the outcome comes from its report and the record keeps the time limit.
+	 */
+	| { kind: "exited"; code?: number; signal?: string; wrapUp?: { budget: SubagentTimeoutKind; seconds: number } }
 	| { kind: "failed"; error: string; code?: number; signal?: string }
 	| { kind: "timed_out"; budget: SubagentTimeoutKind; seconds: number; wrapUp: boolean }
 	| { kind: "cancelled"; reason: string }
@@ -60,6 +64,11 @@ export interface RunFacts {
 	acceptedCall?: AcceptedPayload;
 	contextUsage?: ContextUsage;
 	resume: ResumeFacts;
+	/**
+	 * D12 (cf6dbf4): a headless child's process output tails, the report source of an untyped run
+	 * whose session has no final answer: stdout after a clean exit, stderr after a failed one.
+	 */
+	processOutput?: { stdout?: string; stderr?: string };
 }
 
 /** An accepted completion payload; dataError is set when its data failed the launch schema twice (D12). */
@@ -238,6 +247,8 @@ export function endedByOf(end: RunEnd, facts: { stoppedBy?: "operator" | "parent
 		case "pinged":
 			return "child";
 		case "exited":
+			if (end.wrapUp) return "time_limit";
+			return facts.closedByPerson ? "operator" : "child";
 		case "failed":
 			return facts.closedByPerson ? "operator" : "child";
 	}
@@ -375,6 +386,9 @@ function exitFacts(end: RunEnd): ExitFacts {
 }
 
 function timeLimitFacts(end: RunEnd): TimeLimitFacts | undefined {
+	if (end.kind === "exited" && end.wrapUp) {
+		return { kind: end.wrapUp.budget, seconds: end.wrapUp.seconds, wrapUp: true };
+	}
 	return end.kind === "timed_out" ? { kind: end.budget, seconds: end.seconds, wrapUp: end.wrapUp } : undefined;
 }
 
@@ -447,12 +461,14 @@ function pingBody(value: unknown): Body | undefined {
 }
 
 /** T70: an untyped run names the files it wrote, as no completion call listed them. */
-function untypedBody(facts: RunFacts, text: string | undefined): Body {
-	const outcome = endOutcome(facts.end);
+function untypedBody(facts: RunFacts, end: RunEnd, text: string | undefined): Body {
+	const outcome = endOutcome(end);
 	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
 	if (!text) {
-		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
-		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts };
+		const summary = cutText(describeEnd(end, facts.sessionFile), SUMMARY_MAX_CHARS);
+		const stderr = end.kind === "failed" ? facts.processOutput?.stderr?.trim() : undefined;
+		const report = stderr ? `${summary}\n\n${stderr}` : withNoReportLine(summary);
+		return { typing: { typed: false }, outcome, summary, report, artifacts };
 	}
 	return {
 		typing: { typed: false },
@@ -461,6 +477,24 @@ function untypedBody(facts: RunFacts, text: string | undefined): Body {
 		report: text,
 		artifacts,
 	};
+}
+
+/**
+ * D12 (cf6dbf4 session.ts findLastSubagentOutputWithSource), read only from this run's entries: the
+ * report of an untyped run without a completion call is the last assistant text, or the trailing
+ * meaningful tool result after a tool-use turn, else the headless process output. An empty terminal
+ * stop is runtime text, never the report: as cf6dbf4 state.ts did, it fails a clean exit by its reason.
+ */
+function upstreamSource(facts: RunFacts): { text: string | undefined; end: RunEnd } {
+	const output = findLastSubagentOutputWithSource(facts.entries.slice(Math.max(0, facts.launchEntryCount)));
+	const { end } = facts;
+	if (output?.summarySource === "runtime") {
+		if (end.kind !== "exited") return { text: undefined, end };
+		return { text: undefined, end: { kind: "failed", error: output.summary, code: end.code, signal: end.signal } };
+	}
+	if (output) return { text: output.summary, end };
+	const stdout = end.kind === "exited" ? facts.processOutput?.stdout?.trim() : undefined;
+	return { text: stdout || undefined, end };
 }
 
 /**
@@ -484,12 +518,17 @@ function endOverridesCall(end: RunEnd): boolean {
 export function assembleResult(facts: RunFacts): AssembledResult {
 	const { texts, accepted, dataErrors, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const final = call !== undefined && autonomous.has(call.id);
-	const text = reportText(texts, call, final, facts.nudgeEntryIndex);
 	const typing = call && (final || !textAfterCall(texts, call)) && !endOverridesCall(facts.end);
+	const untyped =
+		call === undefined && facts.nudgeEntryIndex === undefined
+			? upstreamSource(facts)
+			: { text: reportText(texts, call, final, facts.nudgeEntryIndex), end: facts.end };
+	const text = typing ? reportText(texts, call, final, facts.nudgeEntryIndex) : untyped.text;
 	const body =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
 		(typing ? typedBody(call, text, facts, accepted, dataErrors) : undefined) ??
-		untypedBody(facts, text);
+		untypedBody(facts, untyped.end, untyped.text);
+	const end = body.typing.typed ? facts.end : untyped.end;
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,
@@ -504,8 +543,8 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 		artifacts: body.artifacts,
 		endedAt: facts.endedAt,
 		elapsedSeconds: Math.max(0, (facts.endedAt - facts.startedAt) / 1000),
-		exit: exitFacts(facts.end),
-		timeLimit: timeLimitFacts(facts.end),
+		exit: exitFacts(end),
+		timeLimit: timeLimitFacts(end),
 		contextUsage: facts.contextUsage,
 		resume: facts.resume,
 	};

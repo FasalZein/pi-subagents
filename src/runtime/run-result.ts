@@ -88,6 +88,8 @@ export interface WatchedEnd {
 	errorMessage?: string;
 	/** The exit record that carries the completion call, if any. */
 	exitSignal: PollResult | null | undefined;
+	/** D12: a headless child's stdout and stderr tails (RunFacts.processOutput); a pane child has none. */
+	processOutput?: RunFacts["processOutput"];
 	contextUsage: { contextTokens?: number; contextWindow?: number; contextWarned?: boolean };
 }
 
@@ -146,9 +148,10 @@ export function stoppedEnd(running: Pick<RunningSubagent, "stopRequestedBy">): R
 
 /**
  * D7 and D12: one decision per watched end. A stop wins over everything; a ping, which asks the
- * parent for help, outranks the time-limit kill; then the kill, a child error, a finished report-only
- * wrap-up, and an end of the child's own. A nonzero exit that is no operator close is a crash: it
- * fails with its exit code.
+ * parent for help, outranks the time-limit kill; then the kill, a child error, and an end of the
+ * child's own. A nonzero exit that is no operator close is a crash: it fails with its exit code.
+ * D21 (cf6dbf4): a report-only wrap-up that ended on its own is a completed run whose outcome comes
+ * from its report; the end keeps the time limit so the record and the text name it.
  */
 function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
 	if (end.stopped) return stoppedEnd(running);
@@ -158,10 +161,12 @@ function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
 	}
 	if (end.errorMessage) return { kind: "failed", error: end.errorMessage, code: end.exitCode };
 	const wrapUp = running.timeoutWrapUp;
-	if (wrapUp && running.phase === "wrapping-up") {
-		return { kind: "timed_out", budget: wrapUp.kind, seconds: wrapUp.seconds, wrapUp: true };
+	if (end.exitCode === 0 || end.operatorClosed) {
+		if (wrapUp && running.phase === "wrapping-up") {
+			return { kind: "exited", code: end.exitCode, wrapUp: { budget: wrapUp.kind, seconds: wrapUp.seconds } };
+		}
+		return { kind: "exited", code: end.exitCode };
 	}
-	if (end.exitCode === 0 || end.operatorClosed) return { kind: "exited", code: end.exitCode };
 	return { kind: "failed", error: `exited with code ${end.exitCode}`, code: end.exitCode };
 }
 
@@ -190,6 +195,7 @@ export function publishRunResult(running: RunningSubagent, end: WatchedEnd): Pub
 		// A nonzero operator close without an answer is a failure, not the child's own end.
 		failWithoutText: runEnd.kind === "exited" && end.exitCode !== 0,
 		closedByPerson: end.closedByPerson,
+		processOutput: end.processOutput,
 	});
 }
 
@@ -230,6 +236,7 @@ interface PublishOptions {
 	closedByPerson: boolean;
 	/** T70: an ender the caller knows apart from the end kind. */
 	endedBy?: EndedBy;
+	processOutput?: RunFacts["processOutput"];
 }
 
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
@@ -257,9 +264,10 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			acceptedCall: options.acceptedCall,
 			contextUsage: options.contextUsage,
 			resume: resumeFact(running, runEnd, options.contextWarned),
+			processOutput: options.processOutput,
 		});
 	const hasNoText = (result: ReturnType<typeof assembleResult>) =>
-		!result.record.typed && result.report === `${result.record.summary}\n\n${NO_REPORT_LINE}`;
+		!result.record.typed && result.report === withNoReportLine(result.record.summary);
 	let assembled = assemble(end);
 	if (options.failWithoutText && hasNoText(assembled)) {
 		end = { kind: "failed", error: CLOSED_WITHOUT_ANSWER_ERROR, code: end.kind === "exited" ? end.code : undefined };
@@ -269,17 +277,38 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 	const killUnconfirmed = end.kind === "timed_out" && running.timeoutKillFailed === true;
 	// D16: the store keeps this exact text with the record, so a lookup replays it.
 	const render = (published: ResultRecord) =>
-		renderResult(published, {
-			cwd: target.parentCwd,
-			homeDir: homedir(),
-			warnings: target.warnings,
-			// The pane can still run: this warning keeps its place even beside a time-limit line.
-			requiredWarnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING] : [],
-			showContextUsage: running.reportContextUsage !== false,
-		});
+		withUnsavedReport(
+			renderResult(published, {
+				cwd: target.parentCwd,
+				homeDir: homedir(),
+				warnings: target.warnings,
+				// The pane can still run: this warning keeps its place even beside a time-limit line.
+				requiredWarnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING] : [],
+				showContextUsage: running.reportContextUsage !== false,
+			}),
+			published,
+			assembled.report,
+		);
 	const record = target.store.publish(target.reservation, assembled, render);
 	const text = render(record);
 	return { record, text, summary: record.summary, summarySource: noText ? "runtime" : "subagent" };
+}
+
+/** D12: the heading of the full report that a rendering carries when report storage failed. */
+export const UNSAVED_REPORT_HEADING = "Full report (not saved to a file):";
+
+/**
+ * D12 (cf6dbf4 delivered the full answer): when the report file could not be written, the rendering
+ * carries the full report, so the delivered text and the in-memory rendering of the store stay a
+ * readable full-text fallback. A report that the summary already holds whole adds nothing.
+ */
+function withUnsavedReport(text: string, record: ResultRecord, report: string): string {
+	if (record.report.saved || report === record.summary || report === withNoReportLine(record.summary)) return text;
+	return `${text}\n\n${UNSAVED_REPORT_HEADING}\n${report}`;
+}
+
+function withNoReportLine(summary: string): string {
+	return `${summary}\n\n${NO_REPORT_LINE}`;
 }
 
 /** An unconfirmed kill must not read as a clean one: the pane can still be running. */
