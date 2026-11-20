@@ -52,9 +52,9 @@ export function forRelease(scenario, release) {
 }
 
 /**
- * T64: a model may send an object or array argument as a JSON string, and the
- * candidate parses it before the tool runs (src/tools/json-string-args.ts). Pi
- * records the raw argument, so the scorer parses it the same way.
+ * T64 and D05: a model may send the launch children list as a JSON string, and the
+ * candidate parses only that field before the tool runs (src/tools/json-string-args.ts).
+ * Pi records the raw argument, so the scorer parses it the same way.
  */
 function parseJsonContainer(value) {
 	if (typeof value !== "string" || !/^\s*[[{]/.test(value)) return value;
@@ -66,17 +66,31 @@ function parseJsonContainer(value) {
 	}
 }
 
-// The fields each candidate tool parses (subagent-tools.ts, wait-tool.ts).
-const JSON_FIELDS = { subagent: ["children"], [WAIT_TOOL]: ["ids"] };
-
 function normalizedArguments(name, args) {
 	const value = parseJsonContainer(args);
 	if (typeof value !== "object" || value === null || Array.isArray(value))
 		return {};
 	const out = { ...value };
-	for (const field of JSON_FIELDS[name] ?? [])
-		out[field] = parseJsonContainer(out[field]);
+	if (name === "subagent") out.children = parseJsonContainer(out.children);
+	// D05: the wait tool parses no string. Pi's validation wraps a string for an array of
+	// strings as one element, so stringified ids name one id equal to the whole string.
+	if (name === WAIT_TOOL && typeof out.ids === "string") out.ids = [out.ids];
 	return out;
+}
+
+/**
+ * The children one launch call starts, normalized as cf6dbf4 and the candidate do
+ * (getLaunchCallChildren): each entry of a nonempty children list, else the top-level
+ * fields as one child, also when the list is empty.
+ * @returns {object[]}
+ */
+export function launchChildren(args) {
+	const children = args?.children;
+	if (Array.isArray(children) && children.length > 0)
+		return children.filter((child) => child && typeof child === "object");
+	if (!args || typeof args !== "object") return [];
+	const { children: _children, ...single } = args;
+	return [single];
 }
 
 /**
@@ -108,10 +122,10 @@ export function nestedCalls(events) {
 	});
 }
 
-/** Run folders whose launch name a launch argument names. */
-function foldersNamed(runFolders, children) {
+/** Run folders whose launch name a launch call names, in either launch form. */
+function foldersNamed(runFolders, args) {
 	const names = new Set(
-		(Array.isArray(children) ? children : [])
+		launchChildren(args)
 			.map((child) => child?.name)
 			.filter((name) => typeof name === "string"),
 	);
@@ -136,7 +150,7 @@ export function scriptCoverage(events, runFolders = [], launchTool = "subagent")
 		};
 		scripts.set(call.scriptAt, script);
 		if (call.name === launchTool)
-			for (const f of foldersNamed(runFolders, call.arguments.children))
+			for (const f of foldersNamed(runFolders, call.arguments))
 				script.launched.add(f.runId);
 	}
 	for (const call of calls) {
@@ -144,10 +158,11 @@ export function scriptCoverage(events, runFolders = [], launchTool = "subagent")
 		const args = call.arguments;
 		if (args.recent === true || args.mode === "any") continue;
 		const script = scripts.get(call.scriptAt);
-		if (!Array.isArray(args.ids)) {
+		if (args.ids === undefined) {
 			for (const id of script.launched) script.joined.add(id);
 			continue;
 		}
+		if (!Array.isArray(args.ids)) continue;
 		for (const f of runFolders)
 			if (args.ids.includes(f.runId) || (f.name && args.ids.includes(f.name)))
 				script.joined.add(f.runId);
