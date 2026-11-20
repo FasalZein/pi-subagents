@@ -240,12 +240,12 @@ describe("T23: launches that wait use the delivery owner", () => {
 	// D04a: expected values from cf6dbf4 src/runtime/wait-result.ts (a launch or resume wait that starts
 	// aborted stops the child); subagent_resume calls the same getLaunchedSubagentResult with its signal.
 	it("D04a: a launch or resume wait that starts aborted stops its child", async () => {
-		const running = { ...blockingRunning("resumed-child"), async: undefined };
-		setRunningSubagentForTest(running as any);
+		const running: RunningSubagent = { ...blockingRunning("resumed-child"), async: undefined };
+		setRunningSubagentForTest(running);
 		running.completionPromise = new Promise<SubagentResult>(() => {});
 		const abort = new AbortController();
 		abort.abort();
-		const result = await getLaunchedSubagentResultForTest(running as any, abort.signal);
+		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
 		assert.equal((result.details as { error?: string }).error, "interrupted");
 		assert.equal(running.stopRequestedBy, "parent");
 		assert.equal(running.phase, "stopping");

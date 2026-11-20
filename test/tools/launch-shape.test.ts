@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../../src/agents/definitions.ts";
+import { stripInternalLaunchOverrides } from "../../src/launch/launch-overrides.ts";
+import { getLaunchCallChildren } from "../../src/runtime/batch-classifier.ts";
 import {
 	markInitialPromptLaunchComplete,
 	registerSubagentCoreTools,
@@ -25,8 +27,6 @@ import {
 import "../support/ambient-spawn-grant.ts";
 import { loadExtension, useFakePi } from "../support/extension-host.ts";
 import { upstreamUnknownAgentError } from "../support/upstream-wording.ts";
-import { getLaunchCallChildren } from "../../src/runtime/batch-classifier.ts";
-import { stripInternalLaunchOverrides } from "../../src/launch/launch-overrides.ts";
 
 // D21 and D23: the launch tool takes only a children list; its reply has one
 // line per child, one line on how results return, and an unknown agent is

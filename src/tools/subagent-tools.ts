@@ -12,9 +12,11 @@ import {
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
+import { getLaunchCallChildren } from "../runtime/batch-classifier.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
+import { launchWaitSignal } from "../runtime/running-registry.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -23,7 +25,6 @@ import {
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
-import { getLaunchCallChildren } from "../runtime/batch-classifier.ts";
 import { asSubagentToolResult, getSubagentBatchStopMetadata, markSubagentBatchBlocking } from "../runtime/state.ts";
 import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
@@ -76,10 +77,7 @@ export const SubagentChildParams = Type.Object({
 	),
 });
 
-/**
- * D05: the v2.9.2 (cf6dbf4) input forms. A nonempty children list starts each entry; otherwise the
- * top-level fields are the one child, also when children is an empty list.
- */
+/** D05: the v2.9.2 (cf6dbf4) forms: each entry of a nonempty children list, else the top-level fields. */
 export const SubagentParams = Type.Object({
 	agent: Type.Optional(launchFields.agent),
 	name: Type.Optional(launchFields.name),
@@ -355,11 +353,6 @@ export function shouldForceSynchronousLaunch(hasUI: boolean, argv = process.argv
 	return isHeadlessLaunchSession(hasUI, argv) || startupPromptActive;
 }
 
-/** D04a: as v2.9.2 (cf6dbf4), Esc does not reach the wait of an explicitly synchronous launch (async: false). */
-function getToolWaitSignal(running: RunningSubagent, signal: AbortSignal | undefined): AbortSignal | undefined {
-	return running.async === false ? undefined : signal;
-}
-
 function resultText(result: ToolResult): string {
 	return result.content
 		.filter((block): block is { type: "text"; text: string } => block.type === "text")
@@ -479,7 +472,7 @@ export function registerSubagentCoreTools(
 					});
 				}
 				const results = await Promise.all(
-					launched.map((running) => runtime.getLaunchedSubagentResult(running, getToolWaitSignal(running, signal))),
+					launched.map((running) => runtime.getLaunchedSubagentResult(running, launchWaitSignal(running, signal))),
 				);
 				const reportedIds = reportedRunIds(results);
 				settleWaitReply(

@@ -4,7 +4,7 @@ import { formats } from "@earendil-works/pi-schema/formats";
 import { DRAFT_7_META_SCHEMA, DRAFT_2020_12_META_SCHEMA } from "./json-schema-meta.ts";
 
 /** D12: data over this many characters as JSON is refused; the child writes a file and names it in artifacts. */
-export const DATA_MAX_CHARS = 32_000;
+const DATA_MAX_CHARS = 32_000;
 
 /** D12: a refusal and a data error name at most this many violations. */
 const MAX_VIOLATIONS = 10;
