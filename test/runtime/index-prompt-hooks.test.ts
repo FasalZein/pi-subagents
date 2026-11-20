@@ -376,7 +376,7 @@ describe("agent index at prompt start", () => {
 	});
 
 	for (const order of ["earlier", "later"] as const)
-		it(`keeps the index in a parent whose prompt an ${order} handler replaces with literal text (D06)`, async () => {
+		it(`keeps the index in a parent whose prompt ${order === "earlier" ? "an earlier" : "a later"} handler replaces with literal text (D06)`, async () => {
 			const { handlers, ctx } = setup();
 			const composeWhole: Handler = () => ({ systemPrompt: "WHOLE PARENT PROMPT" });
 			const index = handlers.get("before_agent_start") ?? [];
