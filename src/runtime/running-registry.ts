@@ -316,6 +316,7 @@ export function wireSubagentSteerBack(
 					agent: running.agent,
 					status: "failed",
 					outcome: failed.resultOutcome ?? "failed",
+					...(failed.resultEndedBy ? { endedBy: failed.resultEndedBy } : {}),
 					exitCode: failed.exitCode,
 					elapsed: failed.elapsed,
 					// The durable session target only; an ephemeral session is never exposed.

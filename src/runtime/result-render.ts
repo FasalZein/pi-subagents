@@ -78,7 +78,7 @@ function headerLine(record: ResultRecord): string {
 		record.typed ? "typed" : "untyped",
 	];
 	// A record stored before T70 has no endedBy and gets no words.
-	const endedBy = ENDED_BY_WORDS[record.endedBy];
+	const endedBy = record.endedBy && ENDED_BY_WORDS[record.endedBy];
 	if (endedBy) parts.push(endedBy);
 	if (record.dataError !== undefined) parts.push("data error");
 	return parts.join(" · ");

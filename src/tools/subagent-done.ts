@@ -13,7 +13,8 @@ import { createExitSignalWriter } from "./exit-signal.ts";
 import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
-import { createPaneTakeover, requestShutdown } from "./pane-takeover.ts";
+import { createPaneTakeover } from "./pane-takeover.ts";
+import { installWrittenFileRecorder } from "./written-files.ts";
 import { isMissingOptionalDependency } from "./optional-dependency.ts";
 import {
 	ProviderErrorRecoveryController,
@@ -61,6 +62,7 @@ export default function (pi: ExtensionAPI) {
 	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: hasSubagentDone });
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
+	installWrittenFileRecorder(pi);
 	// D13: after a continue detach the parent is gone; this child deletes its no-session file at exit.
 	deleteMarkedSessionFileOnProcessExit(process.env.PI_SUBAGENT_SESSION);
 
@@ -241,10 +243,14 @@ export default function (pi: ExtensionAPI) {
 		takeover.stopWatchingPaneKeys();
 		providerErrorRecovery.cancelPendingRecovery();
 		cancelPendingPiRecovery();
+		// T70: a pane shutdown this child's code did not request came from a person (a manual close,
+		// also after a takeover) or from the parent closing the pane, whose own stop or time-limit fact
+		// outranks this one. A headless child has no person.
+		const closedBy = isInteractive && !takeover.childRequestedShutdown ? { endedBy: "operator" as const } : {};
 		// A run that ended on an error and was never recovered reports that error,
 		// also when a person closes a taken-over pane (D12).
 		if (takeover.unrecoveredError) {
-			writeExitSignal(takeover.unrecoveredError);
+			writeExitSignal({ ...takeover.unrecoveredError, ...closedBy });
 			return;
 		}
 		if (pendingProviderError) {
@@ -253,11 +259,12 @@ export default function (pi: ExtensionAPI) {
 				errorMessage: pendingProviderError.errorMessage,
 				stopReason: pendingProviderError.stopReason,
 				outputTokens,
+				...closedBy,
 			});
 			return;
 		}
 		// A shutdown is a lifecycle event, not the child deciding to stop.
-		writeExitSignal({ type: "done", outputTokens }, { autonomous: false });
+		writeExitSignal({ type: "done", outputTokens, ...closedBy }, { autonomous: false });
 	});
 
 	pi.on("session_before_compact", (event) => {
@@ -471,7 +478,7 @@ export default function (pi: ExtensionAPI) {
 			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
 			if (completionNudge.nudgeOnce(hasAssistantText(messages))) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
-			requestShutdown(ctx);
+			takeover.requestShutdown(ctx);
 		});
 
 		// /auto-exit re-enables auto-exit after operator interaction disabled it.
@@ -508,7 +515,7 @@ export default function (pi: ExtensionAPI) {
 	if (!isInteractive || autoExit) {
 		registerCallerPingTool(pi, callerPingState, {
 			writeExitSignal,
-			requestShutdown,
+			requestShutdown: takeover.requestShutdown,
 			getOutputTokens: () => outputTokens,
 			isTakenOver: () => takeover.tookOver,
 			onAccepted: onCompletionAccepted,
@@ -519,7 +526,7 @@ export default function (pi: ExtensionAPI) {
 		registerSubagentDoneTool(pi, {
 			isTakenOver: () => takeover.tookOver,
 			writeExitSignal,
-			requestShutdown,
+			requestShutdown: takeover.requestShutdown,
 			getOutputTokens: () => outputTokens,
 			onAccepted: onCompletionAccepted,
 		});

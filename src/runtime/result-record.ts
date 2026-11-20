@@ -58,15 +58,14 @@ export interface ContextUsage {
 	window?: number;
 }
 
-/** The record the assembler builds; the publisher (T06) adds where the report went. */
-export type AssembledRecord = ResultTyping & {
+/** The fields every record has, published before T70 or after. */
+type RecordFields = {
 	runId: RunId;
 	name: string;
 	agent: string;
 	title?: string;
 	modelRef?: string;
 	outcome: ResultOutcome;
-	endedBy: EndedBy;
 	/** At most SUMMARY_MAX_CHARS characters. */
 	summary: string;
 	sessionFile?: string;
@@ -80,7 +79,14 @@ export type AssembledRecord = ResultTyping & {
 	resume: ResumeFacts;
 };
 
+/** The record the assembler builds; every new record names its ender (T70). The publisher adds the report. */
+export type AssembledRecord = ResultTyping & RecordFields & { endedBy: EndedBy };
+
 /** D13: a result names a saved report file, or says why the report was not saved. */
 export type ReportStorage = { saved: true; path: string } | { saved: false; error: string };
 
-export type ResultRecord = AssembledRecord & { report: ReportStorage };
+/**
+ * A record as readers get it. A record stored before T70 has no endedBy, so a reader may not rely on
+ * it; publication still requires it (AssembledRecord).
+ */
+export type ResultRecord = ResultTyping & RecordFields & { endedBy?: EndedBy; report: ReportStorage };

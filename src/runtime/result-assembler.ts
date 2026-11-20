@@ -1,8 +1,8 @@
-import { isAbsolute, resolve } from "node:path";
 import type { SessionEntry } from "../session/session.ts";
 import { COMPLETION_JSON_FIELDS, SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { parseJsonFields } from "../tools/json-string-args.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
+import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../tools/written-files.ts";
 import type { SubagentTimeoutKind } from "../types.ts";
 import {
 	type AssembledRecord,
@@ -44,10 +44,7 @@ export interface RunFacts {
 	/** Epoch milliseconds. */
 	endedAt: number;
 	end: RunEnd;
-	/**
-	 * T70: who ended the run, as the watcher's end facts say (endedByOf). The assembler adds one fact of
-	 * the session: a completion call made after a takeover means a person closed the pane.
-	 */
+	/** T70: who ended the run, as the watcher's end facts say (endedByOf). */
 	endedBy: EndedBy;
 	/** Every entry of the child session file, in file order. */
 	entries: readonly SessionEntry[];
@@ -246,48 +243,17 @@ export function endedByOf(end: RunEnd, facts: { stoppedBy?: "operator" | "parent
 	}
 }
 
-/** Pi's file-writing tools; both name their target in `path`. */
-const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(["write", "edit"]);
-
-/** The working directory in the child session's header, which session seeding writes with the child's cwd. */
-function sessionCwd(entries: readonly SessionEntry[]): string | undefined {
-	const header = entries[0] as { type?: unknown; cwd?: unknown } | undefined;
-	return header?.type === "session" && isNonBlank(header.cwd) ? header.cwd : undefined;
-}
-
 /**
- * T70: the files this run wrote: the paths of its successful write and edit calls, direct or nested (a
- * codemode script), after the launch entry, absolute against the child's cwd, deduplicated, in the
- * order their results were recorded.
+ * T70: the files this run wrote: the targets the child recorded for its successful write and edit
+ * calls (SUBAGENT_WRITTEN_FILE_ENTRY, already absolute), after the launch entry, deduplicated, in the
+ * order of the first write.
  */
-function writtenPaths(entries: readonly SessionEntry[], launchEntryCount: number): string[] {
-	const cwd = sessionCwd(entries);
-	const requested = new Map<string, string>();
+export function writtenFiles(entries: readonly SessionEntry[], launchEntryCount: number): string[] {
 	const paths = new Set<string>();
-	const add = (path: unknown) => {
-		if (isNonBlank(path)) paths.add(cwd && !isAbsolute(path) ? resolve(cwd, path) : path);
-	};
 	for (let i = Math.max(0, launchEntryCount); i < entries.length; i++) {
-		const entry = entries[i];
-		if (entry.type !== "message" || !isRecord(entry.message)) continue;
-		const message = entry.message;
-		if (message.role === "assistant" && Array.isArray(message.content)) {
-			for (const block of message.content) {
-				if (!isRecord(block) || block.type !== "toolCall" || typeof block.id !== "string") continue;
-				if (WRITE_TOOL_NAMES.has(String(block.name)) && isRecord(block.arguments)) {
-					requested.set(block.id, String(block.arguments.path ?? ""));
-				}
-			}
-		} else if (message.role === "toolResult") {
-			if (typeof message.toolCallId === "string" && message.isError === false) add(requested.get(message.toolCallId));
-			const nested = message.nestedCalls;
-			if (!isRecord(nested) || !Array.isArray(nested.calls)) continue;
-			for (const call of nested.calls) {
-				if (isRecord(call) && call.status === "ok" && WRITE_TOOL_NAMES.has(String(call.name))) {
-					add(isRecord(call.arguments) ? call.arguments.path : undefined);
-				}
-			}
-		}
+		const raw = entries[i] as { type?: unknown; customType?: unknown; data?: unknown };
+		if (raw.type !== "custom" || raw.customType !== SUBAGENT_WRITTEN_FILE_ENTRY || !isRecord(raw.data)) continue;
+		if (isNonBlank(raw.data.path)) paths.add(raw.data.path);
 	}
 	return [...paths];
 }
@@ -483,7 +449,7 @@ function pingBody(value: unknown): Body | undefined {
 /** T70: an untyped run names the files it wrote, as no completion call listed them. */
 function untypedBody(facts: RunFacts, text: string | undefined): Body {
 	const outcome = endOutcome(facts.end);
-	const artifacts = writtenPaths(facts.entries, facts.launchEntryCount);
+	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
 	if (!text) {
 		const summary = cutText(describeEnd(facts.end, facts.sessionFile), SUMMARY_MAX_CHARS);
 		return { typing: { typed: false }, outcome, summary, report: withNoReportLine(summary), artifacts };
@@ -524,9 +490,6 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
 		(typing ? typedBody(call, text, facts, accepted, dataErrors) : undefined) ??
 		untypedBody(facts, text);
-	// D11: a call the child's tool accepted after a takeover writes no exit record; the person closes the pane.
-	const takenOver = call !== undefined && accepted.has(call.id) && !final;
-	const endedBy = facts.endedBy === "child" && facts.end.kind === "exited" && takenOver ? "operator" : facts.endedBy;
 	const record: AssembledRecord = {
 		...body.typing,
 		runId: facts.runId,
@@ -535,7 +498,7 @@ export function assembleResult(facts: RunFacts): AssembledResult {
 		title: facts.title,
 		modelRef: facts.modelRef,
 		outcome: body.outcome,
-		endedBy,
+		endedBy: facts.endedBy,
 		summary: body.summary,
 		sessionFile: facts.sessionFile,
 		artifacts: body.artifacts,
