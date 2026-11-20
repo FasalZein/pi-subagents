@@ -183,10 +183,11 @@ export async function getLaunchedSubagentResult(
 	const waited = (await runtime.waitForSubagentResult({ id: running.id }, signal)) as { details?: { error?: string } };
 	// D04a: as v2.9.2 (cf6dbf4), Esc during the wait of a launch or resume stops the child. subagent_wait
 	// keeps its own Esc, which stops only the wait. T81: the runtime records this stop as the operator's.
-	if (waited.details?.error === "interrupted" && runningSubagents.get(running.id) === running) {
+	const error = waited.details?.error;
+	if (error === "interrupted" && runningSubagents.get(running.id) === running) {
 		await runtime.stopRunningSubagent(running);
 	}
-	const result = waited.details?.error === "not_found" ? (lookUpEnded(running) ?? waited) : waited;
+	const result = error === "not_found" ? (lookUpEnded(running) ?? waited) : waited;
 	// The parent waited, so the report is already in this tool result. The
 	// coordinator-only turn stop exists for detached launches only; a stop mark
 	// here would end the turn before the model reads the report.
@@ -200,8 +201,9 @@ export async function getLaunchedSubagentResult(
  */
 function lookUpEnded(running: RunningSubagent) {
 	const target = running.resultTarget;
-	const record = target?.store.read(target.reservation.runId);
-	if (!target || !record) return undefined;
+	if (!target) return undefined;
+	const record = target.store.read(target.reservation.runId);
+	if (!record) return undefined;
 	const status =
 		record.outcome === "cancelled"
 			? "cancelled"
