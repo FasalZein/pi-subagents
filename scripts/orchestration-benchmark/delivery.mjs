@@ -46,6 +46,7 @@
  * contains it; auxiliary otherwise.
  */
 import {
+	launchChildren,
 	nestedCalls,
 	reportReads,
 	scriptCoverage,
@@ -87,10 +88,7 @@ export function launchedRuns(events, launchTool, runFolders = []) {
 	// still started the children before it (their run folders exist).
 	for (const call of nestedCalls(events)) {
 		if (call.name !== launchTool) continue;
-		const children = Array.isArray(call.arguments.children)
-			? call.arguments.children
-			: [];
-		for (const entry of children) {
+		for (const entry of launchChildren(call.arguments)) {
 			const folders = runFolders.filter(
 				(f) => f.name && f.name === entry?.name,
 			);

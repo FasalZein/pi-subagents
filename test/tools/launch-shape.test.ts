@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentDefaults } from "../../src/agents/definitions.ts";
+import { stripInternalLaunchOverrides } from "../../src/launch/launch-overrides.ts";
+import { getLaunchCallChildren } from "../../src/runtime/batch-classifier.ts";
 import {
 	markInitialPromptLaunchComplete,
 	registerSubagentCoreTools,
@@ -109,6 +111,7 @@ function fakeLaunchTool(agents: Record<string, Partial<AgentDefaults>>, { hasUI 
 	return {
 		launched,
 		call,
+		callRaw: (params: unknown) => tool.execute("call-1", params, undefined, undefined, ctx),
 		launch: async (children: SubagentParamsInput[]) => (await call(children)).content[0].text as string,
 	};
 }
@@ -352,5 +355,71 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 			assert.doesNotMatch(error.message, /secrets\b|coordinator|helper/);
 			return true;
 		});
+	});
+});
+
+/**
+ * D05 oracle: getRequestedChildren verbatim from `git show cf6dbf4:src/tools/subagent-tools.ts`.
+ * The one intended difference: the fork's single form drops the empty children key from the child.
+ */
+function cf6dbf4RequestedChildren(params: Partial<SubagentParamsInput> & { children?: SubagentParamsInput[] }) {
+	if (Array.isArray(params.children) && params.children.length > 0) {
+		return params.children.map((child) => stripInternalLaunchOverrides(child));
+	}
+	return [stripInternalLaunchOverrides(params as SubagentParamsInput)];
+}
+
+describe("D05: both v2.9.2 launch input forms", () => {
+	beforeEach(() => resetSubagentStateForTest());
+	afterEach(() => resetSubagentStateForTest());
+	const agents = { worker: { spawning: true, async: true } as Partial<AgentDefaults> };
+
+	it("a top-level single-form launch starts its child", async () => {
+		const tool = fakeLaunchTool(agents);
+		const result = await tool.callRaw(child("worker", "solo-worker"));
+		assert.deepEqual(tool.launched, ["solo-worker"]);
+		assert.notEqual(result.isError, true);
+	});
+
+	it("a single-form launch without task is refused before any child starts", async () => {
+		const tool = fakeLaunchTool(agents);
+		const { task: _task, ...noTask } = child("worker", "solo-worker");
+		await assert.rejects(tool.callRaw(noTask), /task is required/);
+		assert.deepEqual(tool.launched, []);
+	});
+
+	it("an empty children list with top-level fields starts the top-level child", async () => {
+		const tool = fakeLaunchTool(agents);
+		await tool.callRaw({ ...child("worker", "solo-worker"), children: [] });
+		assert.deepEqual(tool.launched, ["solo-worker"]);
+	});
+
+	it("normalizes the launch inputs as cf6dbf4 did (differential)", () => {
+		const a = child("worker", "first-worker");
+		const b = { ...child("worker", "second-worker"), model: "stub/m", thinking: "high" };
+		const inputs: Array<Partial<SubagentParamsInput> & { children?: SubagentParamsInput[] }> = [
+			a,
+			{ children: [a, b] },
+			{ ...a, children: [] },
+			{ ...a, children: [b] },
+			{ ...a, forcedCwd: "/tmp/x", launchEnv: { A: "1" } } as never,
+			{ children: [{ ...b, forcedCwd: "/tmp/y" } as never] },
+			{},
+		];
+		for (const input of inputs) {
+			const expected = cf6dbf4RequestedChildren(input).map((entry) => {
+				const { children: _children, ...rest } = entry as SubagentParamsInput & { children?: unknown };
+				return rest;
+			});
+			const actual = getLaunchCallChildren(input).map((entry) =>
+				stripInternalLaunchOverrides(entry as SubagentParamsInput),
+			);
+			assert.deepEqual(actual, expected, JSON.stringify(input));
+		}
+	});
+
+	it("a children list sent as a JSON string normalizes like the native list", () => {
+		const list = [child("worker", "first-worker")];
+		assert.deepEqual(getLaunchCallChildren({ children: JSON.stringify(list) }), list);
 	});
 });

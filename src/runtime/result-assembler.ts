@@ -1,6 +1,5 @@
 import { findLastSubagentOutputWithSource, type SessionEntry } from "../session/session.ts";
-import { COMPLETION_JSON_FIELDS, SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
-import { parseJsonFields } from "../tools/json-string-args.ts";
+import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../tools/written-files.ts";
 import type { SubagentTimeoutKind } from "../types.ts";
@@ -402,8 +401,7 @@ interface Body {
 
 /**
  * The arguments the child's tool executed, from the session or the exit record, else the call's
- * transcript arguments. T64: the transcript keeps the model's raw arguments, so they are parsed as the
- * child's prepareArguments did; Pi's coercion after that step is visible only in the executed ones.
+ * transcript arguments. D05: a JSON string in them keeps its string type, as the child's tool saw it.
  */
 function callArgs(
 	call: CompletionCall,
@@ -412,7 +410,7 @@ function callArgs(
 ): Record<string, unknown> | undefined {
 	const executed = recorded.get(call.id) ?? (accepted?.toolCallId === call.id ? accepted.args : undefined);
 	if (executed) return executed;
-	return call.args && (parseJsonFields(call.args, COMPLETION_JSON_FIELDS) as Record<string, unknown>);
+	return call.args;
 }
 
 /** A typed body from an accepted call, or undefined when the call does not make the result typed (D12). */

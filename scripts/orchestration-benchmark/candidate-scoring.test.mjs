@@ -223,10 +223,32 @@ test("[T72 review P1] a current autonomous caller_ping ends the child only with 
 });
 
 test("[T59a P1-6] a launch whose children list came as a JSON string binds the same runs", () => {
-	const raw = [...script("c1", [launchNested(NAMES, true), { name: "subagent_wait", arguments: { ids: JSON.stringify(IDS) } }], ALL_LINES), answer()];
+	const raw = [...script("c1", [launchNested(NAMES, true), waitNested(IDS)], ALL_LINES), answer()];
 	assert.deepEqual(launchedRuns(raw, "subagent", FOLDERS).map((r) => r.runId), launchedRuns(SCRIPTED, "subagent", FOLDERS).map((r) => r.runId));
 	assert.equal(launchedRuns(raw, "subagent", FOLDERS).length, 8);
 	assert.equal(verdict(raw).result, "pass");
+});
+
+// T78 fix round 1 (review P1). D05: the candidate parses only a children string. Pi's validation wraps an
+// ids string as one id (validateToolArguments on Type.Array(Type.String()) gives ["[\"a\",\"b\"]"]), so a
+// wait with stringified ids joins no run, and the scorer must not credit one.
+test("[T78] a wait whose ids came as a JSON string joins no run; an absent ids list joins the script's launches", () => {
+	const stringIds = [...script("c1", [launchNested(NAMES), waitNested(JSON.stringify(IDS))], ALL_LINES), answer()];
+	const { result, delivery } = verdict(stringIds);
+	assert.equal(delivery.workflowScript, false, "no join happened");
+	assert.equal(result, "wrong-delegation");
+	const noIds = [...script("c1", [launchNested(NAMES), { name: "subagent_wait", arguments: {} }], ALL_LINES), answer()];
+	assert.equal(verdict(noIds).result, "pass");
+});
+
+// T78 (D05): cf6dbf4's top-level single form starts one child, also with an empty children list.
+const singleNested = (name, extra = {}) => ({ name: "subagent", arguments: { ...launchArgs([name]).children[0], ...extra } });
+test("[T78] single-form launches, and an empty children list with top-level fields, bind their runs", () => {
+	for (const extra of [{}, { children: [] }, { children: "[]" }]) {
+		const events = [...script("c1", [...NAMES.map((name) => singleNested(name, extra)), waitNested(IDS)], ALL_LINES), answer()];
+		assert.equal(launchedRuns(events, "subagent", FOLDERS).length, 8, JSON.stringify(extra));
+		assert.equal(verdict(events).result, "pass", JSON.stringify(extra));
+	}
 });
 
 test("[T59a P1-7] a repeated batch on the candidate is a counted failure", () => {

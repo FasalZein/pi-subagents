@@ -63,6 +63,7 @@ test("old Herdr: async launch publishes before yielding and keeps last result ou
 		wireSubagentSteerBack(pi, running, result, () => {});
 		const launch = await getLaunchedSubagentResult(running, {
 			updateWidget() {}, waitForSubagentResult: async () => assert.fail("must remain async"),
+			stopRunningSubagent: async () => assert.fail("must remain async"),
 			asSubagentToolResult: (value) => value,
 		});
 		await emit("tool_result", { toolName: "subagent" });
