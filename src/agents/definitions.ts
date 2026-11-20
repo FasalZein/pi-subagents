@@ -499,7 +499,7 @@ export function formatMalformedAgentNotice(catalog: Pick<AgentCatalog, "malforme
 			? `Skipped ${refused.length} malformed agent file(s); launches of these agents are refused:\n${list(refused)}`
 			: "",
 		shadowed.length > 0
-			? `Skipped ${shadowed.length} malformed agent file(s) that a valid definition of the same name shadows; that definition launches:\n${list(shadowed)}`
+			? `Skipped ${shadowed.length} malformed agent file(s) that a valid definition of the same name shadows; that definition takes their place:\n${list(shadowed)}`
 			: "",
 	].filter(Boolean);
 	return sections.length > 0 ? sections.join("\n") : null;

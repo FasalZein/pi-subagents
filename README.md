@@ -516,7 +516,7 @@ A call with both `name` and `query` is refused. A malformed agent file is named 
 
 ### One malformed agent file
 
-Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file. When a valid definition of the same name shadows a malformed file, the notice lists that file apart and does not call the agent refused: the valid definition launches.
+Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file. When a valid definition of the same name shadows a malformed file, the notice lists that file apart and does not call the agent refused: the valid definition takes its place, under its own launch rules.
 
 ## Launching and waiting
 

@@ -96,6 +96,56 @@ test("old Herdr: async launch publishes before yielding and keeps last result ou
 	}
 });
 
+for (const settleRule of [true, false] as const) {
+	test(`a result committed while the ${settleRule ? "old-Herdr" : "Herdr app/Rex"} reporter connects ${settleRule ? "counts until read and idle (D11, cf6dbf4)" : "is released (D30)"}`, async () => {
+		resetRuntimeStateForTest(() => {});
+		const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+		const messages: object[] = [];
+		const counts: number[] = [];
+		// SAFETY: Only event registration and result delivery are used at this Pi boundary.
+		const pi = { on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => events.set(name, handler),
+			sendMessage: (message: object) => { messages.push(message); } } as unknown as ExtensionAPI;
+		let idle = false;
+		// SAFETY: The reporting lifecycle only reads mode, session identity and idleness from this context.
+		const ctx = { mode: "tui", sessionManager: { getSessionFile: () => "parent.jsonl" }, isIdle: () => idle } as unknown as ExtensionContext;
+		let connect: (() => void) | undefined;
+		const reporter = { ...(settleRule ? { releaseAfterSettle: true as const } : {}),
+			publish: async (count: number) => { counts.push(count); }, stop: async () => {} };
+		const reporting = registerOutstandingWorkReporting(pi, () => new Promise((resolve) => { connect = () => resolve(reporter); }));
+		const emit = async (name: string, event = {}) => { await events.get(name)?.(event, ctx); };
+		const started = reporting.start(ctx);
+		try {
+			// Startup adoption delivers a finished run before the reporter probe answers (src/vf/run/adopt.ts).
+			const running = child("adopted");
+			runningSubagents.set(running.id, running);
+			wireSubagentSteerBack(pi, running, Promise.resolve({ name: running.name, task: running.task, summary: "done", exitCode: 0, elapsed: 1 }), () => {});
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.equal(messages.length, 1);
+			const committed = { ...messages[0], role: "custom" };
+			const mid = events.get("message_end")?.({ message: committed }, ctx);
+			assert.ok(connect);
+			connect();
+			await started;
+			await mid;
+			await emit("tool_result");
+			if (!settleRule) {
+				assert.ok(counts.length > 0 && counts.every((count) => count === 0), `the delivery rule releases it: ${counts.join(",")}`);
+				return;
+			}
+			assert.ok(counts.every((count) => count > 0), `no zero before idle: ${counts.join(",")}`);
+			await emit("context", { messages: [committed] });
+			await emit("agent_settled");
+			assert.ok(counts.every((count) => count > 0), "a settle while not idle releases nothing");
+			idle = true;
+			await emit("agent_settled");
+			assert.equal(counts.at(-1), 0);
+		} finally {
+			await reporting.stop();
+			resetRuntimeStateForTest(() => {});
+		}
+	});
+}
+
 async function harness() {
 	resetRuntimeStateForTest(() => {});
 	const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
