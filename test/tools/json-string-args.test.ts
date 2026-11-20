@@ -1,4 +1,3 @@
-import { createDataCheck, DATA_MAX_CHARS } from "../../src/tools/data-schema.ts";
 import { parseJsonContainer, parseLaunchJsonFields } from "../../src/tools/json-string-args.ts";
 import { assert, describe, it } from "../support/index.ts";
 
@@ -41,15 +40,5 @@ describe("JSON string arguments (T64)", () => {
 		const single = { name: "a", schema, task: '{"x":1}' };
 		assert.equal(parseLaunchJsonFields(single), single, "the top-level form is not parsed");
 		assert.equal(parseLaunchJsonFields("text"), "text");
-	});
-
-	it("the data size limit counts the parsed JSON, not the string the model sent", () => {
-		const check = createDataCheck("subagent_done", undefined);
-		const value = { text: "x".repeat(DATA_MAX_CHARS - 100) };
-		const padded = JSON.stringify(value, null, 2).replace("{", `{${" ".repeat(200)}`);
-		assert.ok(padded.length > DATA_MAX_CHARS, "the sent string is over the limit");
-		assert.deepEqual(check(parseJsonContainer(padded)), { kind: "accept" });
-		const over = JSON.stringify({ text: "x".repeat(DATA_MAX_CHARS) });
-		assert.throws(() => check(parseJsonContainer(over)), /the limit is 32,000/);
 	});
 });

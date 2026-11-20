@@ -237,6 +237,20 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.match(messages[0].content, /LATE REPORT/);
 	});
 
+	// D04a: expected values from cf6dbf4 src/runtime/wait-result.ts (a launch or resume wait that starts
+	// aborted stops the child); subagent_resume calls the same getLaunchedSubagentResult with its signal.
+	it("D04a: a launch or resume wait that starts aborted stops its child", async () => {
+		const running = { ...blockingRunning("resumed-child"), async: undefined };
+		setRunningSubagentForTest(running as any);
+		running.completionPromise = new Promise<SubagentResult>(() => {});
+		const abort = new AbortController();
+		abort.abort();
+		const result = await getLaunchedSubagentResultForTest(running as any, abort.signal);
+		assert.equal((result.details as { error?: string }).error, "interrupted");
+		assert.equal(running.stopRequestedBy, "parent");
+		assert.equal(running.phase, "stopping");
+	});
+
 	// D04a: expected value from cf6dbf4 src/tools/subagent-tools.ts getToolWaitSignal: an explicitly
 	// synchronous run (async: false) waits without the abort signal, so Esc does not stop it.
 	it("replay 7c and D04a: the wait for a child of an async:false agent does not receive the abort signal", async () => {
