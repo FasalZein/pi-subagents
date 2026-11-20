@@ -493,7 +493,7 @@ A flag shows only where an agent differs from the common case:
 
 - `[pane]`: the child opens in a pane.
 - `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
-- `[manual]`: the agent has `auto-exit` off, so the pane stays open after a normal completion. The child can still close it with `subagent_done`. For a pane that only a person closes, add `subagent_done` to `deny-tools` (see [`subagent_done`](#subagent_done)).
+- `[manual]`: the agent has `auto-exit` off, so the pane stays open until a person closes it. The child has no `subagent_done` and cannot close the pane itself (see [`subagent_done`](#subagent_done)).
 - `[waits]`: the launch call waits for the result (`async: false`).
 
 An agent without a `description` is not in the index, and it stays launchable. A child with `spawning` gets the section filtered to the agents it may launch. A child that may launch nothing gets no section and no launch tools.
@@ -897,7 +897,7 @@ A summary over the limit is refused once. A second one is accepted: its first 1,
 
 The report is the last assistant text of this run, before the completion call. It is never the output of another tool, fork history, or the text of an earlier run. A run with no assistant text gets its summary and the line `no report beyond the summary`. After a person takes over the pane, a completion call does not end the run: the parent still shows it running. When the pane closes, the result uses the last completion call if no assistant text came after it, else it is untyped and built from the last text.
 
-Every child that can end by itself has `subagent_done` unless its agent lists `subagent_done` in `deny-tools`. If you want an interactive child that only the operator can close, add `subagent_done` to `deny-tools`.
+Every child that can end by itself, an auto-exit pane child or a headless child, has `subagent_done` unless its agent lists `subagent_done` in `deny-tools`. A pane child with `auto-exit` off never has it, also after a resume: only a person closes its pane, and its result is untyped. Its brief tells it to stay in the pane and not to exit.
 
 An auto-exit child that is about to exit without calling `subagent_done` or `caller_ping` gets one nudge per run (launch or resume) to make the call. If it still makes no call, it exits and the parent builds an untyped result; the report keeps the text the child wrote before the nudge. After a person takes over the pane, the report is the last text instead. A child in time-limit wrap-up, or one with `subagent_done` denied, gets no nudge.
 

@@ -80,7 +80,7 @@ function renderChild(entry: AgentListEntry, launch: IndexLaunchPolicy): string {
 	const closesItself = !pane || launch.forcesWait || entry.autoExit === true;
 	return [
 		`child: ${pane ? "pane" : "headless"}`,
-		closesItself ? "closes itself" : "stays open until a human or the agent finishes",
+		closesItself ? "closes itself" : "stays open until a person closes it",
 		launch.forcesWait || entry.async === false ? "launch waits for the result" : "launch returns at once",
 		...(verified ? [`verified fan-out (${verified})`] : []),
 	].join(", ");

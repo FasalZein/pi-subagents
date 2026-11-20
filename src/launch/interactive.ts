@@ -7,7 +7,7 @@ import { closeSurface, createSurface, currentMuxAdapter, sendShellCommand } from
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
 import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
-import { SET_TAB_TITLE_TOOL_NAME } from "../tools/tool-names.ts";
+import { SET_TAB_TITLE_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
@@ -97,18 +97,18 @@ async function startInteractiveSubagent(
 				}
 			: undefined;
 	const doneSentinelFile = getDoneSentinelFile(prepared.subagentSessionFile, id);
-	// D12: a manual pane child with subagent_done may end itself once the task is complete.
-	const completionBrief = completionCallBrief(prepared.denySet);
+	// T69 (v2.9.2): a manual pane child has no subagent_done (child-tool-policy.ts), so its launch
+	// treats the tool as denied: no completion line, and the tool list does not name it.
+	const childDenySet = prepared.agentDefs?.autoExit
+		? prepared.denySet
+		: new Set([...prepared.denySet, SUBAGENT_DONE_TOOL_NAME]);
+	const completionBrief = completionCallBrief(childDenySet);
 	const modeHint = prepared.agentDefs?.autoExit
 		? "Complete your task autonomously."
-		: completionBrief
-			? "Manual lifecycle: stay in this foreground pane and wait for the operator to interact with you. The operator can interact with you at any time. End the session yourself only with subagent_done, once the task is complete."
-			: "Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
+		: "Manual lifecycle: the operator must close this foreground pane when done. Stay in this pane and wait for the operator to interact with you. Do not exit on your own. The operator can interact with you at any time.";
 	const summaryInstruction = prepared.agentDefs?.autoExit
 		? "Your FINAL assistant message should summarize what you accomplished."
-		: completionBrief
-			? "After writing your response, stay in this pane for operator interaction until the task is complete."
-			: "After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
+		: "After writing your response, stay in this pane for operator interaction. Do not exit. The operator will close the pane when finished.";
 	const agentType = params.agent ?? params.name;
 	const tabTitleInstruction =
 		!isSetTabTitleToolEnabled() || prepared.denySet.has(SET_TAB_TITLE_TOOL_NAME)
@@ -121,7 +121,7 @@ async function startInteractiveSubagent(
 		enabled: prepared.agentDefs?.taskExpansion === "shell",
 		cwd: prepared.runtimePaths.effectiveCwd ?? ctx.cwd,
 	});
-	// D12: a fork task keeps its own text first; the completion line follows it.
+	// D12: a fork task keeps its own text first; the completion line, when there is one, follows it.
 	let fullTask = withCompletionBrief(
 		directTask
 			? expandedTask
@@ -160,7 +160,7 @@ async function startInteractiveSubagent(
 	}
 	for (const arg of getSubagentToolLaunchArgs(
 		prepared.effectiveTools,
-		prepared.denySet,
+		childDenySet,
 		isPreparedChildSpawningAllowed(prepared),
 	)) {
 		piArgs.push(arg);

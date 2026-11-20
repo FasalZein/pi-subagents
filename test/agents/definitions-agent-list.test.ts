@@ -423,13 +423,13 @@ describe("agent definitions and catalog", () => {
 		});
 		// Bound each assertion to one agent block.
 		const blockFor = (name: string) => details.split("\n\n").find((block) => block.startsWith(`${name} (`)) ?? "";
-		const manual = /closes itself|stays open until a human or the agent finishes/;
+		const manual = /closes itself|stays open until a person closes it/;
 		// Interactive children without `auto-exit` are told to stay open for the
 		// operator and never receive `subagent_done`, so their results only
 		// arrive after the pane is closed. The roster must not promise otherwise.
 		// An omitted `mode` takes the interactive launch path as well.
-		assert.equal(blockFor("pairing").match(manual)?.[0], "stays open until a human or the agent finishes");
-		assert.equal(blockFor("no-mode").match(manual)?.[0], "stays open until a human or the agent finishes");
+		assert.equal(blockFor("pairing").match(manual)?.[0], "stays open until a person closes it");
+		assert.equal(blockFor("no-mode").match(manual)?.[0], "stays open until a person closes it");
 		assert.equal(blockFor("fire-and-forget").match(manual)?.[0], "closes itself");
 		// Background children must call `subagent_done` themselves, so the
 		// default contract stays exits_automatically for them.
