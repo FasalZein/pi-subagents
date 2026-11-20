@@ -77,7 +77,7 @@ describe("resume model launch configuration", () => {
 					],
 				}),
 			// D22 names the agent, not the run name; this metadata has no agent.
-			/Model 'openai-ws\/gpt-5\.5:low' is not allowed for agent 'subagent': no accepted model matches/,
+			/Model 'openai-ws\/gpt-5\.5:low' is not allowed for agent 'subagent'\. Allowed models: /,
 		);
 
 		const defaultAllowed = resolveResumeLaunchMetadataForInvocationForTest(base, "zai-messages/glm-5.1:high", {

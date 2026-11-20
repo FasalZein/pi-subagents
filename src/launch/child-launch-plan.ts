@@ -5,8 +5,8 @@ import type { AgentDefaults } from "../agents/definitions.ts";
 import {
 	assertModelAllowed,
 	buildModelRef,
+	matchModelFragment,
 	parseAllowedModels,
-	resolveModelChoice,
 	splitModelRef,
 } from "../agents/model-refs.ts";
 import { buildSubagentSessionTitle } from "../agents/titles.ts";
@@ -211,46 +211,95 @@ interface CallModelRequest {
 	/** The thinking parameter of the call. */
 	thinking?: string;
 	config: AgentModelConfig;
-	/** The ref the child ran on without an agent default (the parent's model); accepted, never a provider source. */
-	inheritedModelRef?: string;
-	/** The level used when neither the call nor the accepted list fixes one. */
+	/**
+	 * The ref the agent's default adds to its accepted list, computed by the caller as v2.9.2 did:
+	 * on launch the default resolved like the child's own default, on resume the definition as written.
+	 */
+	grantRef?: string;
+	/** The level used when neither the call's model suffix nor its thinking parameter names one. */
 	fallbackThinking?: string;
+	/** Its provider breaks a tie when an exact bare id exists at several providers: the parent's model, or the prior run's on resume. */
+	tieBreakRef?: string;
 	modelRegistry?: ModelRegistryLike;
 }
 
+/** Whether Pi knows the model as an exact id; with no registry every name counts as exact. */
+function hasExactModel(model: string, modelRegistry: ModelRegistryLike | undefined): boolean {
+	const available = modelRegistry?.getAvailable() ?? [];
+	if (available.length === 0) return true;
+	return isKnownModel(model, available);
+}
+
+function isKnownModel(model: string, available: ReturnType<ModelRegistryLike["getAvailable"]>): boolean {
+	const slash = model.indexOf("/");
+	return slash === -1
+		? available.some((candidate) => candidate.id === model)
+		: available.some(
+				(candidate) => candidate.provider === model.slice(0, slash) && candidate.id === model.slice(slash + 1),
+			);
+}
+
 /**
- * Resolve the model of a launch or resume call (D22). Launch and resume both
- * call this, so the same agent and the same call give the same child ref.
+ * Split the call's model and level: a known Pi level suffix is always a level;
+ * otherwise a whole known id stays whole, colons included, and a suffix after a
+ * known id is its level even when Pi does not know the level, so the refusal
+ * names it (as v2.9.2).
+ */
+function splitCallModel(
+	model: string,
+	fallbackThinking: string | undefined,
+	modelRegistry: ModelRegistryLike | undefined,
+): ReturnType<typeof splitModelRefThinking> {
+	if (splitModelRef(model).thinking !== undefined) return splitModelRefThinking(model, fallbackThinking);
+	if ((modelRegistry?.getAvailable().length ?? 0) > 0) {
+		if (hasExactModel(model, modelRegistry)) return { model, thinking: fallbackThinking, explicitThinking: false };
+		const idx = model.lastIndexOf(":");
+		if (idx !== -1 && hasExactModel(model.slice(0, idx), modelRegistry)) {
+			return { model: model.slice(0, idx), thinking: model.slice(idx + 1), explicitThinking: true };
+		}
+	}
+	return splitModelRefThinking(model, fallbackThinking);
+}
+
+/**
+ * Resolve the model of a launch or resume call (D08, D22). Exact ids, the
+ * bare-id provider tie-break and level precedence follow v2.9.2: the call's
+ * `:level` suffix, else its thinking parameter, else `fallbackThinking`; an
+ * accepted list validates the level and never picks one. A fragment resolves
+ * only when no exact id matches.
  *
- * Recorded limits:
- * - A bare default (`model: base`) that two registry providers carry stays unqualified, so an exact call for one of them can be refused.
- * - An unrestricted resume without a thinking parameter takes the configured thinking level, not the previous run's level.
- * - A literal registry id that ends in a known thinking level (`base:high`) is read as a model plus a level.
+ * Recorded limit: a literal registry id that ends in a known thinking level
+ * (`base:high`) is read as a model plus a level.
  */
 export function resolveCallModelRef(request: CallModelRequest): ReturnType<typeof normalizeModelRef> {
-	const defaultRef = resolveAgentDefaultRef(request.config, request.modelRegistry);
-	const implicitRef = resolveImplicitModelGrant(
-		request.config,
-		request.modelRegistry,
-		request.inheritedModelRef,
-		request.fallbackThinking,
-	);
+	const implicitRef = request.grantRef;
+	const split = splitCallModel(request.model, request.thinking ?? request.fallbackThinking, request.modelRegistry);
+	const explicitThinking = split.explicitThinking || request.thinking != null;
+	let model = split.model as string;
 	const accepted = parseAllowedModels(request.config.allowedModels);
-	const choice = resolveModelChoice({
-		requested: request.model,
-		requestedThinking: request.thinking,
-		accepted: accepted.length > 0 && implicitRef ? [implicitRef, ...accepted] : accepted,
-		known: request.modelRegistry?.getAvailable() ?? [],
-		defaultRef,
-		defaultThinking: (defaultRef ? splitModelRef(defaultRef).thinking : undefined) ?? request.config.definitionThinking,
-		fallbackThinking: request.fallbackThinking,
-		agentName: request.config.agentName,
-	});
+	const acceptedKeys = (accepted.length > 0 && implicitRef ? [implicitRef, ...accepted] : accepted).map(
+		(ref) => splitModelRef(ref).model,
+	);
+	// Without a registry an accepted list still tells an exact ref from a fragment.
+	const exact =
+		(request.modelRegistry?.getAvailable().length ?? 0) > 0
+			? hasExactModel(model, request.modelRegistry)
+			: accepted.length === 0 || acceptedKeys.includes(model);
+	if (!exact) {
+		model = matchModelFragment({
+			requested: model,
+			accepted: accepted.length > 0 && implicitRef ? [implicitRef, ...accepted] : accepted,
+			known: request.modelRegistry?.getAvailable() ?? [],
+			defaultRef: resolveAgentDefaultRef(request.config, request.modelRegistry),
+			agentName: request.config.agentName,
+		});
+	}
 	const available = resolveAvailableModelRef(
-		choice.model,
-		choice.thinking,
-		choice.explicitThinking,
+		model,
+		split.thinking,
+		explicitThinking,
 		request.modelRegistry,
+		request.tieBreakRef,
 	);
 	const resolved = normalizeModelRef(available.model, available.thinking);
 	assertModelAllowed(
@@ -294,25 +343,27 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		allowedModels: agentDefs?.allowedModels,
 		agentName: params.agent,
 	};
+	// The default grant resolves exactly as v2.9.2 did: the default (or the parent's model) at the
+	// inherited level, the parent's provider breaking a bare-id tie and an unsupported inherited level
+	// dropping. So a default that two providers carry is granted as the ref it runs on (M34, D08).
+	// A thinking-only call keeps the a0d0ad9 grant (T75): the default at the inherited level, so that
+	// grant cannot widen to every level.
 	const inheritedModelRef = agentDefs?.model
 		? undefined
 		: normalizeModelRef(options.parentModelRef, fallbackThinking).effectiveModelRef;
+	const implicitRef = !hasAllowedModels
+		? undefined
+		: params.model == null && params.thinking != null
+			? resolveImplicitModelGrant(modelConfig, options.modelRegistry, inheritedModelRef, fallbackThinking)
+			: resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
+					resolveAlways: false,
+					explicitThinking: false,
+				}).effectiveModelRef;
 	const resolveDefaultModel = () => {
 		const ref = resolveRef(agentDefs?.model ?? options.parentModelRef, params.thinking ?? fallbackThinking, {
 			resolveAlways: false,
 			explicitThinking: params.thinking != null,
 		});
-		// With neither a model nor a thinking override, the grant resolves exactly as v2.9.2 did: the
-		// parent's provider breaks a bare-id tie and an unsupported inherited level drops, so a default
-		// that two providers carry is granted as the ref it runs on (M34). A thinking-only call keeps the
-		// default at the inherited level, so that grant cannot widen to every level.
-		const implicitRef =
-			params.thinking == null
-				? resolveRef(agentDefs?.model ?? options.parentModelRef, fallbackThinking, {
-						resolveAlways: false,
-						explicitThinking: false,
-					}).effectiveModelRef
-				: resolveImplicitModelGrant(modelConfig, options.modelRegistry, inheritedModelRef, fallbackThinking);
 		if (hasAllowedModels) {
 			assertModelAllowed(
 				ref.effectiveModelRef,
@@ -338,8 +389,9 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 					model: params.model,
 					thinking: params.thinking,
 					config: modelConfig,
-					inheritedModelRef,
+					grantRef: implicitRef,
 					fallbackThinking,
+					tieBreakRef: options.parentModelRef,
 					modelRegistry: options.modelRegistry,
 				})
 			: resolveDefaultModel();

@@ -547,15 +547,14 @@ An unknown agent name is refused as in v2.9.2, with the requested name and the s
 
 ### Model names
 
-Without `model`, the child runs on the default model of its agent. With `model`, Pi searches the accepted models of the agent: its `model` and its `allowed-models`.
+Without `model`, the child runs on the default model of its agent. With `model`, exact model ids resolve as in v2.9.2:
 
-- An exact `provider/model` ref wins.
-- `provider/fragment` matches when exactly one accepted model of that provider contains the fragment.
-- A fragment without a provider that matches under several providers takes the provider of the agent's default model. The launch is refused when that provider is not among the matches.
-- When the accepted list has the matched model at several thinking levels, `thinking` picks one. Without it, the agent's default level applies if the list accepts it, else the first listed level.
-- An agent without `allowed-models` takes any exact ref that Pi knows, and matches a fragment against Pi's model list by the same rules.
+- An exact `provider/model` ref names that model. A literal id with a colon, such as `provider/name:free`, stays whole.
+- A model id without a provider that one provider carries resolves to that provider. When several providers carry it, the parent's provider wins on launch and the previous run's provider on resume; otherwise the call is refused as ambiguous.
+- The level is the `:level` suffix of `model`, else `thinking`, else the agent's `thinking` (on resume: the previous run's level), else the parent's level. `allowed-models` checks that level and never picks one.
+- Only when no exact id matches does `model` count as a fragment. Pi then searches the accepted models of the agent (its `model` and its `allowed-models`), or Pi's model list when the agent has no `allowed-models`. `provider/fragment` matches when exactly one model of that provider contains the fragment. A fragment without a provider that matches under several providers takes the provider of the agent's default model, and is refused when that provider is not among the matches.
 
-A refusal names at most 8 matching candidates, grouped by provider, and points to `subagent_agents` with the agent name. An agent with `allow-model-override: false` ignores `model` and says so in the launch reply. `subagent_resume` applies the same rules to its `model`. The launch reply names the model ref that runs.
+A refusal while matching a fragment names at most 8 matching candidates, grouped by provider, and points to `subagent_agents` with the agent name. A model that `allowed-models` refuses after it resolved, at its level, gets the v2.9.2 refusal that lists the allowed models. An agent with `allow-model-override: false` ignores `model` and says so in the launch reply. `subagent_resume` applies the same rules to its `model`. The launch reply names the model ref that runs. Resume and timeout wrap-up pass Pi the same model the run passed, even when the record names the registry ref of a bare default.
 
 ### Launch admission
 
