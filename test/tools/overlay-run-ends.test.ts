@@ -51,6 +51,7 @@ function publishRecord(
 			typed: false,
 		},
 		report: run.summary,
+		summarySource: "subagent",
 	});
 }
 

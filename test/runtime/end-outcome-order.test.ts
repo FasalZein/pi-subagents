@@ -197,7 +197,9 @@ describe("end outcome order and crash records (T09 fix round 1)", () => {
 		await wrapWatch;
 		const wrapRecord = wrap.store.read(wrap.reservation.runId)!;
 		const wrapGuardAllows = guardAllows(wrap.sessionFile);
-		assert.equal(wrapRecord.outcome, "timed_out");
+		// T77 (D21, cf6dbf4 completed wrap-up): the report outcome, with the time limit kept.
+		assert.equal(wrapRecord.outcome, "done");
+		assert.equal(wrapRecord.timeLimit?.wrapUp, true);
 		assert.equal(wrapRecord.resume.resumable, wrapGuardAllows, "record and guard agree for a finished wrap-up");
 		assert.equal(wrapGuardAllows, true);
 

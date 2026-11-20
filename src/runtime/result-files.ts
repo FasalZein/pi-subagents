@@ -219,6 +219,8 @@ export class ResultStore {
 	private readonly memory = new Map<RunId, ResultRecord>();
 	/** The renderings of the in-memory records (D16). */
 	private readonly memoryRenderings = new Map<RunId, string>();
+	/** D12: the full reports whose files failed, for an explicit lookup by run id only. */
+	private readonly memoryReports = new Map<RunId, string>();
 	/** Session files of the runs this process launched (D16), also when the folder failed. */
 	private readonly launches = new Map<RunId, string>();
 	/** Every id this store handed out: without a folder on disk, only this set keeps ids exclusive. */
@@ -250,6 +252,7 @@ export class ResultStore {
 		const record = publishResult(reservation, result, this.io, render);
 		if (!record.report.saved) {
 			this.memory.set(record.runId, record);
+			this.memoryReports.set(record.runId, result.report);
 			if (render) this.memoryRenderings.set(record.runId, render(record));
 			if (reservation.folder !== undefined) this.storageFailed(record.report.error);
 		}
@@ -344,6 +347,14 @@ export class ResultStore {
 		if (!record.report.saved) return this.memoryRenderings.get(record.runId);
 		// Read from the run's own folder by file name only: the record's path is not trusted.
 		return this.readContained(record.runId, basename(renderingPathFor(record.report.path)));
+	}
+
+	/**
+	 * D12: the full report of a record whose report file failed, kept in this session's memory. Only an
+	 * explicit lookup by run id returns it; ordinary deliveries stay capped.
+	 */
+	unsavedReport(record: ResultRecord): string | undefined {
+		return record.report.saved ? undefined : this.memoryReports.get(record.runId);
 	}
 
 	/** The newest record of a run: its committed file, else the in-memory record. */

@@ -224,7 +224,9 @@ describe("result assembler: report source (D12)", () => {
 		assert.equal(report, "final report");
 	});
 
-	it("a trailing bash result is ignored without a call", () => {
+	// T77 (D12): cf6dbf4 findLastSubagentOutputWithSource treats a tool-use turn as a boundary, so the
+	// trailing tool result is the report, never the stale text before it.
+	it("a trailing bash result after a tool-use turn is the report without a call (cf6dbf4)", () => {
 		const { record, report } = assembleResult(
 			facts([
 				sessionHeader(),
@@ -233,8 +235,9 @@ describe("result assembler: report source (D12)", () => {
 				toolResult("bash", "b1", "BASH OUTPUT"),
 			]),
 		);
-		assert.equal(report, "the real report");
-		assert.equal(record.summary, "the real report");
+		assert.equal(report, "BASH OUTPUT");
+		assert.equal(record.summary, "BASH OUTPUT");
+		assert.equal(record.outcome, "done");
 	});
 
 	it("text from before the launch entry count never counts", () => {
