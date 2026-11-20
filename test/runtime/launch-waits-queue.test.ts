@@ -247,7 +247,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		abort.abort();
 		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
 		assert.equal((result.details as { error?: string }).error, "interrupted");
-		assert.equal(running.stopRequestedBy, "parent");
+		assert.equal(running.stopRequestedBy, "operator");
 		assert.equal(running.phase, "stopping");
 	});
 
@@ -339,7 +339,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
 		const two = runningSubagents.get("id-child-two");
 		assert.equal(two?.phase, "stopping", "a stop was sent to child 2");
-		assert.equal(two?.stopRequestedBy, "parent");
+		assert.equal(two?.stopRequestedBy, "operator");
 		assert.equal(runningSubagents.get("id-child-one"), undefined, "child 1 had ended and is not stopped");
 	});
 
@@ -363,7 +363,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(one?.status, "completed");
 		assert.match(result.content[0].text, /ONE-ENDED-REPORT/);
 		const two = runningSubagents.get("id-child-two");
-		assert.equal(two?.stopRequestedBy, "parent", "child 2 still ran and was stopped");
+		assert.equal(two?.stopRequestedBy, "operator", "child 2 still ran and was stopped");
 	});
 
 	it("D04a: a resume or single launch wait that starts after Esc returns the report of a child that already ended", async () => {
