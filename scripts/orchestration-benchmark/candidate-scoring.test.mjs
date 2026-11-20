@@ -206,6 +206,22 @@ test("[T59a P1-5] the child's result is the report the candidate publishes, with
 	assert.equal(childFulfils(ping, contract, "/r/workspace").returned, false);
 });
 
+test("[T72 review P1] a current autonomous caller_ping ends the child only with the parent's blocked record", () => {
+	const head = [{ type: "session", cwd: "/r/workspace" }, { type: "custom", customType: "pi-subagents_launch_metadata", data: { name: "x" } }];
+	// T72: no accepted-call entry, a tool-use stop, maybe no persisted result before the exit.
+	const ping = [...head, assistant("toolUse", "", [call("p1", "caller_ping", { message: "?" })])];
+	assert.equal(childEnded(ping), false, "a ping request alone is no end");
+	assert.equal(childEnded(ping, true), true, "with the blocked record the ping ended the run");
+	assert.equal(childEnded([...ping, toolResult("p1", "caller_ping", "Ping sent.")], true), true);
+	// A refused ping (a second ping, or one after done owned the end) is no end.
+	const refused = [...ping, toolResult("p1", "caller_ping", "already", { isError: true })];
+	assert.equal(childEnded(refused, true), false);
+	// A call after a takeover keeps the pane open: its entry ends nothing.
+	const takenOver = [...head, assistant("toolUse", "", [call("d1", "subagent_done")]),
+		{ type: "custom", customType: "pi-subagent-accepted-call", data: { toolCallId: "d1", tool: "subagent_done", args: {}, autonomous: false } }];
+	assert.equal(childEnded(takenOver), false);
+});
+
 test("[T59a P1-6] a launch whose children list came as a JSON string binds the same runs", () => {
 	const raw = [...script("c1", [launchNested(NAMES, true), { name: "subagent_wait", arguments: { ids: JSON.stringify(IDS) } }], ALL_LINES), answer()];
 	assert.deepEqual(launchedRuns(raw, "subagent", FOLDERS).map((r) => r.runId), launchedRuns(SCRIPTED, "subagent", FOLDERS).map((r) => r.runId));
