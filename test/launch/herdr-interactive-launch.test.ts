@@ -727,7 +727,11 @@ describe("Herdr interactive launch parity", () => {
 		const capsule = readLaunchCapsule(readHerdrRunScript(readFileSync(logFile, "utf8")));
 		const taskArg = capsule.args.find((arg: string) => arg.startsWith("@"));
 		assert.ok(taskArg, "expected capsule argv to carry the @task artifact");
-		const argAfter = (flag: string) => capsule.args[capsule.args.indexOf(flag) + 1];
+		const argAfter = (flag: string) => {
+			const index = capsule.args.indexOf(flag);
+			assert.notEqual(index, -1, `expected ${flag} in the capsule argv`);
+			return capsule.args[index + 1];
+		};
 		return {
 			task: readFileSync(taskArg.slice(1), "utf8"),
 			tools: argAfter("--tools"),
@@ -741,7 +745,12 @@ describe("Herdr interactive launch parity", () => {
 			const denied = await launchManualPane({ fork, deny: true });
 			for (const launch of [plain, denied]) {
 				assert.doesNotMatch(launch.task, /subagent_done|When your task is complete/);
-				assert.doesNotMatch(launch.tools, /subagent_done/);
+				// Expected from the fixture: tools read,bash plus caller_ping; spawning off; subagent_done excluded.
+				assert.equal(launch.tools, "read,bash,caller_ping");
+				assert.equal(
+					launch.excludeTools,
+					"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,subagent_done",
+				);
 				if (!fork) {
 					assert.ok(launch.task.includes(MANUAL_MODE_HINT), launch.task);
 					assert.ok(launch.task.trimEnd().endsWith(MANUAL_SUMMARY), launch.task);

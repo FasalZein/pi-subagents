@@ -22,6 +22,7 @@ import {
 	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
+import { subagentDoneExtension } from "../support/project.ts";
 
 const savedPiCommand = process.env.PI_SUBAGENT_PI_COMMAND;
 
@@ -296,4 +297,68 @@ esac
 			rmSync(capsuleRoot, { recursive: true, force: true });
 		}
 	});
+
+	// T69: a manual pane's report-only replacement still exits by itself (forced auto-exit), but like
+	// v2.9.2 it gets no subagent_done; an auto-exit pane's replacement keeps the tool.
+	for (const autoExit of [false, true]) {
+		it(`a ${autoExit ? "auto-exit" : "manual"} pane's wrap-up child ${autoExit ? "keeps" : "has no"} subagent_done`, async () => {
+			const dir = createTestDir();
+			const capsuleRoot = join(dir, "capsules");
+			mkdirSync(capsuleRoot, { recursive: true });
+			const tmuxLog = join(dir, "tmux.log");
+			writeFileSync(tmuxLog, "");
+			writeExecutable(dir, "tmux", `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${tmuxLog}"\ncase "$1" in new-window) printf '%%42\\n' ;; esac\n`);
+			const saved = Object.fromEntries(
+				["PATH", "PI_SUBAGENT_MUX", "TMUX", "SHELL", "PI_SUBAGENT_ENV_CAPSULE_DIR"].map((key) => [key, process.env[key]]),
+			);
+			process.env.PATH = `${dir}:${saved.PATH ?? ""}`;
+			process.env.PI_SUBAGENT_MUX = "tmux";
+			process.env.TMUX = "fake-tmux-socket";
+			process.env.SHELL = "/bin/sh";
+			process.env.PI_SUBAGENT_ENV_CAPSULE_DIR = capsuleRoot;
+			const childKeys = ["PI_DENY_TOOLS", "PI_SUBAGENT_AUTO_EXIT", "PI_SUBAGENT_SURFACE", "PI_SUBAGENT_TIMEOUT_WRAP_UP"];
+			try {
+				const sessionFile = join(dir, "pane-child.jsonl");
+				writeFileSync(
+					sessionFile,
+					`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+				);
+				const running = makeRunning(dir, sessionFile);
+				running.mode = "interactive";
+				running.autoExit = autoExit;
+				running.launchMetadata = { ...running.launchMetadata!, mode: "interactive", autoExit };
+
+				await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+
+				const capsulePath = readFileSync(tmuxLog, "utf8").match(/run-child\.mjs' '([^']+)'/)?.[1];
+				assert.ok(capsulePath, "expected the wrap-up command to invoke the capsule launcher");
+				const { overrides } = JSON.parse(readFileSync(capsulePath, "utf8"));
+				assert.equal(overrides.PI_SUBAGENT_AUTO_EXIT, "1", "the replacement still exits by itself");
+				assert.ok(overrides.PI_SUBAGENT_SURFACE, "the replacement runs in a pane");
+				for (const key of childKeys) process.env[key] = overrides[key] ?? "";
+				const tools = new Set<string>();
+				subagentDoneExtension({
+					getAllTools: () => [],
+					getActiveTools: () => [],
+					setActiveTools() {},
+					registerTool(definition: { name: string }) {
+						tools.add(definition.name);
+						return definition;
+					},
+					on() {},
+					registerShortcut() {},
+					appendEntry() {},
+					registerCommand() {},
+				} as any);
+				assert.equal(tools.has("subagent_done"), autoExit);
+			} finally {
+				for (const key of childKeys) delete process.env[key];
+				for (const [key, value] of Object.entries(saved)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
 });

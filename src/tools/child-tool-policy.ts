@@ -31,16 +31,11 @@ export function readChildLifecycle(env: NodeJS.ProcessEnv = process.env): ChildL
 	return { autoExit: env.PI_SUBAGENT_AUTO_EXIT === "1", pane: !!env.PI_SUBAGENT_SURFACE };
 }
 
-/** T69 (v2.9.2): a pane child with auto-exit off ends only when a person closes the pane. */
-export function isManualPaneChild(lifecycle: ChildLifecycle): boolean {
-	return lifecycle.pane && !lifecycle.autoExit;
-}
-
 /**
  * D12: auto-exit pane and headless children register it unless a deny entry removes it. A manual
  * pane child never does (T69, as v2.9.2): only the person at the pane closes it, launch or resume.
  */
 export function shouldRegisterSubagentDone(deniedTools: readonly string[], lifecycle: ChildLifecycle): boolean {
-	if (isManualPaneChild(lifecycle)) return false;
+	if (lifecycle.pane && !lifecycle.autoExit) return false;
 	return !deniedTools.includes(SUBAGENT_DONE_TOOL_NAME);
 }

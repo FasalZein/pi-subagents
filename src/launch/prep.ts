@@ -373,7 +373,11 @@ export function buildPersistedSubagentLaunchMetadata(
 			? { autoExit: true }
 			: prepared.agentAutoExit !== undefined
 				? { autoExit: prepared.agentAutoExit }
-				: {}),
+				: // T69: a pane with no auto-exit key runs manual; record it, since a resume without
+					// the field defaults to auto-exit (the fallback for old sessions).
+					prepared.agentDefs?.autoExit !== true
+					? { autoExit: false }
+					: {}),
 		parentClosePolicy: resolveSubagentParentClosePolicy(prepared.agentDefs),
 		reportContextUsage: resolveSubagentReportContextUsage(prepared.agentDefs),
 		async: params.async !== false,
