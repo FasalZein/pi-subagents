@@ -2,33 +2,27 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAgentDefaults as loadAgentDefaultsFromDefinitions } from "../agents/definitions.ts";
-import { assertModelAllowed } from "../agents/model-refs.ts";
+import { assertModelAllowed, buildModelRef } from "../agents/model-refs.ts";
 import { getArtifactStorageRoot } from "../artifact-storage.ts";
-import { sessionResultStore } from "./result-files.ts";
-import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { buildAppendSystemInheritancePlan } from "../launch/append-system.ts";
-import {
-	type AgentModelConfig,
-	resolveCallModelRef,
-	resolveImplicitModelGrant,
-	splitModelRefThinking,
-} from "../launch/child-launch-plan.ts";
+import { type AgentModelConfig, resolveCallModelRef, splitModelRefThinking } from "../launch/child-launch-plan.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
 import { parseEnvString } from "../launch/env.ts";
-import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
+import { type LaunchUndo, withLaunchUndo } from "../launch/launch-undo.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
 import {
 	getExtensionLaunchArgs,
+	getPersistedInvocationModel,
 	getPersistedPromptLaunchArgs,
 	getPersistedSessionParityArgs,
 	normalizeModelRef,
 	resolveAvailableModelRef,
 } from "../launch/prep.ts";
 import { getResumeCwd, resolveResumeLaunchMetadata } from "../launch/resume.ts";
-import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { resolveSubagentCwd } from "../launch/runtime-paths.ts";
+import { getSkillVisibilitySpec, PI_SUBAGENT_SKILL_VISIBILITY } from "../launch/skill-visibility.ts";
+import { expandSubagentTask } from "../launch/task-expansion.ts";
 import { muxSetupHint } from "../mux.ts";
-import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import { getEntryCount, readSessionHeaderCwd } from "../session/session.ts";
 import {
 	isResumeMode,
@@ -38,12 +32,8 @@ import {
 	writeSubagentLaunchMetadataEntry,
 	writeSubagentModelStateEntries,
 } from "../session/session-files.ts";
-import {
-	buildResumeSpawnEnv,
-	narrowSpawnBudget,
-	parseSpawnEnv,
-	resolveSpawnPolicy,
-} from "../spawn/policy.ts";
+import { readSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
+import { buildResumeSpawnEnv, narrowSpawnBudget, parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
 import {
 	PI_SUBAGENT_IDLE_TIMEOUT,
@@ -52,9 +42,9 @@ import {
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
 import type { ResultParent, RunningSubagent, SubagentResult } from "../types.ts";
+import { sessionResultStore } from "./result-files.ts";
 import { assertResumeAllowed, reserveResumeSession, settleVerdictAfterRun } from "./resume-guards.ts";
 import { setAsidePreviousExitRecord, startResumedChild } from "./resume-start.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -112,7 +102,7 @@ export function resolveResumeLaunchMetadataForInvocation(
 			...(requestedThinking ? { ignoredThinkingOverride: requestedThinking } : {}),
 		};
 	}
-	const baseModel = requestedModel ?? launchMetadata.modelRef ?? launchMetadata.model;
+	const baseModel = requestedModel ?? getPersistedInvocationModel(launchMetadata);
 	if (!baseModel) {
 		throw new Error("Cannot apply thinking override without a persisted model.");
 	}
@@ -122,27 +112,35 @@ export function resolveResumeLaunchMetadataForInvocation(
 		allowedModels: launchMetadata.allowedModels,
 		agentName: launchMetadata.agent,
 	};
-	const inheritedModelRef =
-		!launchMetadata.definitionModel && launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined;
-	const fallbackThinking = launchMetadata.definitionThinking ?? launchMetadata.thinking;
-	// D22: a resume with a model takes the launch path. A thinking-only resume
-	// keeps the persisted model as an exact ref.
+	// D08: the grant is the definition as written, else the parent's ref the first run inherited (v2.9.2).
+	const grantRef =
+		buildModelRef(launchMetadata.definitionModel, launchMetadata.definitionThinking) ??
+		(launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined);
+	// D08, D22: a resume with a model takes the launch path; as in v2.9.2 the prior run's level
+	// is the fallback and its provider breaks a bare-id tie. A thinking-only resume keeps the
+	// persisted invocation model as an exact ref.
 	const { effectiveModel, effectiveThinking, effectiveModelRef } = requestedModel
 		? resolveCallModelRef({
 				model: requestedModel,
 				thinking: requestedThinking,
 				config,
-				inheritedModelRef,
-				fallbackThinking,
+				grantRef,
+				fallbackThinking: launchMetadata.thinking,
+				tieBreakRef: launchMetadata.modelRef,
 				modelRegistry,
 			})
-		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, fallbackThinking, modelRegistry);
+		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, grantRef, {
+				modelRegistry,
+				tieBreakRef: launchMetadata.modelRef,
+			});
 	return {
 		...launchMetadata,
 		timestamp: new Date().toISOString(),
 		model: effectiveModel,
 		thinking: effectiveThinking,
 		modelRef: effectiveModelRef,
+		// The resolved ref is also what this resume passes to Pi, so a later resume or wrap-up replays it.
+		invocationModelRef: effectiveModelRef,
 		modelSource: "resume-override",
 		...(requestedModel ? { requestedModelOverride: requestedModel } : {}),
 		...(requestedThinking ? { requestedThinkingOverride: requestedThinking } : {}),
@@ -153,16 +151,26 @@ function resolveThinkingOnlyResume(
 	baseModel: string,
 	requestedThinking: string | undefined,
 	config: AgentModelConfig,
-	inheritedModelRef: string | undefined,
-	fallbackThinking: string | undefined,
-	modelRegistry: ResumeServiceRuntime["modelRegistry"],
+	implicitRef: string | undefined,
+	registry: { modelRegistry: ResumeServiceRuntime["modelRegistry"]; tieBreakRef: string | undefined },
 ): ReturnType<typeof normalizeModelRef> {
+	const { modelRegistry } = registry;
 	const requested = splitModelRefThinking(baseModel, requestedThinking);
 	const explicitThinking = requested.explicitThinking || requestedThinking != null;
-	const resolved = resolveAvailableModelRef(requested.model, requested.thinking, explicitThinking, modelRegistry);
+	const resolved = resolveAvailableModelRef(
+		requested.model,
+		requested.thinking,
+		explicitThinking,
+		modelRegistry,
+		registry.tieBreakRef,
+	);
 	const normalized = normalizeModelRef(resolved.model, resolved.thinking);
-	const implicitRef = resolveImplicitModelGrant(config, modelRegistry, inheritedModelRef, fallbackThinking);
-	assertModelAllowed(normalized.effectiveModelRef, config.allowedModels, config.agentName, implicitRef ? [implicitRef] : []);
+	assertModelAllowed(
+		normalized.effectiveModelRef,
+		config.allowedModels,
+		config.agentName,
+		implicitRef ? [implicitRef] : [],
+	);
 	return normalized;
 }
 
@@ -176,6 +184,14 @@ function mergeResumeInvocationMetadata(
 		// A child can append metadata to its own session. Keep grant authority
 		// anchored to the first launch entry while allowing later entries to
 		// carry legitimate invocation changes such as model and thinking.
+		// Model, thinking and the invocation ref pair with the model ref of the same entry.
+		...(laterMetadata.modelRef !== undefined
+			? {
+					model: laterMetadata.model,
+					thinking: laterMetadata.thinking,
+					invocationModelRef: laterMetadata.invocationModelRef,
+				}
+			: {}),
 		spawnBudget: launchMetadata.spawnBudget,
 		spawnableAgents: launchMetadata.spawnableAgents,
 		denyTools: launchMetadata.denyTools,
@@ -297,14 +313,12 @@ async function resumeSubagentSessionWithoutWidth(
 		input.thinking,
 		runtime.modelRegistry,
 	);
-	const resumedAutoExit = metadata.mode === "background" ? true : invocationMetadata?.autoExit ?? metadata.autoExit ?? true;
+	const resumedAutoExit =
+		metadata.mode === "background" ? true : (invocationMetadata?.autoExit ?? metadata.autoExit ?? true);
 	// Without launch metadata the session header names the project, as Pi uses it on resume; the agent
 	// catalog of another directory could shadow the project's agent and its deny-env.
 	const targetCwd =
-		launchMetadata?.cwd ??
-		invocationMetadataSource?.cwd ??
-		readSessionHeaderCwd(sessionFile) ??
-		input.parent.parentCwd;
+		launchMetadata?.cwd ?? invocationMetadataSource?.cwd ?? readSessionHeaderCwd(sessionFile) ?? input.parent.parentCwd;
 	// A resume passes its saved list to Pi as saved, unresolved entries included (D10).
 	const savedExtensions = invocationMetadata ? invocationMetadata.extensions : readSubagentExtensionEntry(sessionFile);
 	const resumedInvocationMetadata =
@@ -318,8 +332,7 @@ async function resumeSubagentSessionWithoutWidth(
 		: null;
 	const denyEnv = resolveResumeDenyEnv(launchMetadata, targetAgent, targetDefs);
 	const callerEnv = parseSpawnEnv(process.env);
-	const targetSpawning =
-		launchMetadata?.spawnableAgents === true ? true : (launchMetadata?.spawnableAgents ?? false);
+	const targetSpawning = launchMetadata?.spawnableAgents === true ? true : (launchMetadata?.spawnableAgents ?? false);
 	const spawnPolicy = resolveSpawnPolicy({
 		callerAgent: callerEnv.callerAgent,
 		targetAgent: targetAgent ?? "",
@@ -335,11 +348,7 @@ async function resumeSubagentSessionWithoutWidth(
 	if (!spawnPolicy.allowed) {
 		throw new Error(`Error: ${spawnPolicy.reason ?? "Spawn policy denied this target."}`);
 	}
-	const narrowedSpawnBudget = narrowSpawnBudget(
-		launchMetadata,
-		callerEnv.callerBudget,
-		callerEnv.envDepthCeiling,
-	);
+	const narrowedSpawnBudget = narrowSpawnBudget(launchMetadata, callerEnv.callerBudget, callerEnv.envDepthCeiling);
 	const resumeSpawnEnv = buildResumeSpawnEnv(launchMetadata, narrowedSpawnBudget, spawnPolicy.effectiveWidth);
 	const name = invocationMetadata?.name ?? metadata.name ?? input.name ?? "Resume";
 	const displayName = input.name ?? name;
@@ -410,7 +419,9 @@ async function resumeSubagentSessionWithoutWidth(
 	if (launchMetadata?.denyTools?.length) {
 		for (const toolName of launchMetadata.denyTools) denyTools.add(toolName);
 	} else if (process.env.PI_DENY_TOOLS) {
-		for (const toolName of process.env.PI_DENY_TOOLS.split(",").map((name) => name.trim()).filter(Boolean)) {
+		for (const toolName of process.env.PI_DENY_TOOLS.split(",")
+			.map((name) => name.trim())
+			.filter(Boolean)) {
 			denyTools.add(toolName);
 		}
 	}
@@ -448,8 +459,6 @@ async function resumeSubagentSessionWithoutWidth(
 	}
 	resumeEnvVars.PI_SUBAGENT_NAME = invocationMetadata?.name ?? name;
 	resumeEnvVars.PI_SUBAGENT_AGENT = resumedAgent ?? "";
-	// D12: a resume names no schema; never pass on the resuming process's own or a frontmatter value.
-	resumeEnvVars[DATA_SCHEMA_ENV] = "";
 	resumeEnvVars.PI_SUBAGENT_SESSION = sessionFile;
 
 	const resumedAsync = invocationMetadata?.async ?? metadata.async ?? true;
@@ -516,7 +525,10 @@ async function resumeSubagentSessionWithoutWidth(
 			if (resumedInvocationMetadata) writeSubagentLaunchMetadataEntry(sessionFile, resumedInvocationMetadata);
 		} catch (error) {
 			const warning = `the resumed child runs, but its launch metadata was not saved to ${sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
-			running.resultTarget = { ...running.resultTarget!, warnings: [...(running.resultTarget?.warnings ?? []), warning] };
+			running.resultTarget = {
+				...running.resultTarget!,
+				warnings: [...(running.resultTarget?.warnings ?? []), warning],
+			};
 		}
 	}
 	runtime.runningSubagents.set(running.id, running);
@@ -531,4 +543,3 @@ async function resumeSubagentSessionWithoutWidth(
 
 	return running;
 }
-

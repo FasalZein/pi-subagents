@@ -152,12 +152,13 @@ function pendingChildren(parentEvents, root, probeDir) {
 		probedChildren,
 		evidence.children.length,
 	);
-	const ended = evidence.children.filter((c) => childEnded(c.events)).length;
+	const blocked = (file) => evidence.blockedSessions?.has(file) ?? false;
+	const ended = evidence.children.filter((c) => childEnded(c.events, blocked(c.file))).length;
 	// A resumed run is open until a completion after its own resume boundary: the
 	// first run's completion stays in the same session file (T68).
 	const openResumes = resumedRuns(parentEvents).filter((run) => {
 		const child = evidence.children.find((c) => c.file === run.sessionFile);
-		return !child || !resumeEnded(child.events, run.calledAt);
+		return !child || !resumeEnded(child.events, run.calledAt, blocked(child.file));
 	}).length;
 	return launched - ended + openResumes;
 }
@@ -331,7 +332,7 @@ export function classifyAttempt({
 			name: summary?.name ?? null,
 			role: summary?.role ?? null,
 			contract,
-			ended: childEnded(child.events),
+			ended: childEnded(child.events, evidence.blockedSessions?.has(child.file) ?? false),
 			phaseFacts,
 			fulfils: {
 				...(contract
@@ -545,7 +546,7 @@ export async function runAttempt({
 				return; // a half-written line: the next poll retries
 			}
 			for (const child of evidence.children)
-				if (!(child.file in phases) && childEnded(child.events))
+				if (!(child.file in phases) && childEnded(child.events, evidence.blockedSessions?.has(child.file) ?? false))
 					phases[child.file] = scenario.inspectPhase(home.workDir);
 		};
 		const observed = await observe({

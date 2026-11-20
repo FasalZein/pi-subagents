@@ -99,8 +99,6 @@ const COMMON_PARENT_ENV: Record<string, string> = {
 	T44_DENIED_MARKER: "denied",
 	T44_WILD_DENY_A: "wild",
 	SHELL: "/bin/sh",
-	// D12: this parent is itself a typed child; its own launch schema must not reach any child it starts.
-	PI_SUBAGENT_DATA_SCHEMA: "/parent/own-launch-schema.json",
 };
 const COMMON_MARKERS = ["T44_ALLOWED_MARKER", "T44_DENIED_MARKER", "T44_WILD_DENY_A", "T44_PANE_DENIED"];
 const COMMON_FLAGS = {
@@ -108,7 +106,6 @@ const COMMON_FLAGS = {
 	T44_DENIED_MARKER: "no",
 	T44_WILD_DENY_A: "no",
 	T44_PANE_DENIED: "no",
-	"equal:PI_SUBAGENT_DATA_SCHEMA": "yes",
 };
 
 /** One backend fake. Synthetic markers only; the parent has its own pane identity, the surface another. */
@@ -280,7 +277,6 @@ function useFakeParent(backend: BackendFake): Fixture {
 	const probe = makeProbeDir();
 	const { command, args } = presenceProbeCommand(probe.outFile, [...COMMON_MARKERS, ...backend.extraMarkers], {
 		...Object.fromEntries(backend.identity.map((name) => [name, backend.surfaceEnv[name]])),
-		PI_SUBAGENT_DATA_SCHEMA: "",
 		...(backend.derivedSurface ? { PI_SUBAGENT_SURFACE: backend.derivedSurface } : {}),
 	});
 	const probeScript = join(dir, "probe.cjs");

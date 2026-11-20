@@ -131,6 +131,41 @@ cat > "${stdinFile}"
 		assert.match(prompt, /Report your result now/i);
 	});
 
+	async function wrapUpModelArg(metadata: Partial<PersistedSubagentLaunchMetadata>): Promise<string | undefined> {
+		const dir = createTestDir();
+		const argvFile = join(dir, "argv.txt");
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(
+			dir,
+			"capture-pi",
+			`#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvFile}"\ncat > /dev/null\n`,
+		);
+		const sessionFile = join(dir, "child.jsonl");
+		writeFileSync(
+			sessionFile,
+			`${JSON.stringify({ type: "session", version: 3, id: "child", timestamp: new Date().toISOString(), cwd: dir })}\n`,
+		);
+		const running = makeRunning(dir, sessionFile);
+		running.launchMetadata = { ...makeMetadata(dir), ...metadata };
+		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
+		const child = running.childProcess;
+		assert.ok(child);
+		await once(child, "exit");
+		const argv = (await readNonEmptyFileEventually(argvFile)).split("\n");
+		return argv[argv.indexOf("--model") + 1];
+	}
+
+	it("replays the invocation ref, not the display ref (D08)", async () => {
+		// The first launch passed a bare default to Pi; the record names the one registry ref it runs on.
+		assert.equal(await wrapUpModelArg({ invocationModelRef: "model:off" }), "model:off");
+	});
+
+	it("replays a pre-T80 record's original bare argument, not its display ref (D08)", async () => {
+		// 9f90499 wrote model, thinking and the display ref after passing `--model model:off` (as cf6dbf4 did).
+		assert.equal(await wrapUpModelArg({ model: "model", thinking: "off", modelRef: "test/model:off" }), "model:off");
+		// A record with only a model ref replays it.
+		assert.equal(await wrapUpModelArg({ modelRef: "test/model:off" }), "test/model:off");
+	});
+
 	it("closes an interactive pane when restart fails after surface creation", async () => {
 		const dir = createTestDir();
 		const capsuleRoot = join(dir, "capsules");
@@ -270,10 +305,10 @@ esac
 		}
 	});
 
-	// T69: a manual pane's report-only replacement still exits by itself (forced auto-exit), but like
-	// v2.9.2 it gets no subagent_done; an auto-exit pane's replacement keeps the tool.
+	// T69/T72: a pane's report-only replacement exits by itself (forced auto-exit), so like v2.9.2
+	// (cf6dbf4 getDeniedToolNames with autoExit) it gets no subagent_done, manual or auto-exit.
 	for (const autoExit of [false, true]) {
-		it(`a ${autoExit ? "auto-exit" : "manual"} pane's wrap-up child ${autoExit ? "keeps" : "has no"} subagent_done`, async () => {
+		it(`a ${autoExit ? "auto-exit" : "manual"} pane's wrap-up child has no subagent_done`, async () => {
 			const dir = createTestDir();
 			const capsuleRoot = join(dir, "capsules");
 			mkdirSync(capsuleRoot, { recursive: true });
@@ -330,7 +365,7 @@ esac
 					appendEntry() {},
 					registerCommand() {},
 				} as any);
-				assert.equal(tools.has("subagent_done"), autoExit);
+				assert.equal(tools.has("subagent_done"), false);
 			} finally {
 				for (const key of childKeys) delete process.env[key];
 				for (const [key, value] of Object.entries(saved)) {

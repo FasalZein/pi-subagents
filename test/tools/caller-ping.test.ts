@@ -11,7 +11,7 @@ import {
 	writeFileSync,
 } from "../support/index.ts";
 describe("caller_ping loop guard", () => {
-	function registerPingToolForLoopGuard() {
+	function registerPingToolForLoopGuard(appendEntry: () => void = () => {}) {
 		const tools2 = new Map<string, any>();
 		// Arrays, not last-write-wins: the extension registers several handlers
 		// per event, and firing only the last one can pass a test vacuously.
@@ -31,7 +31,7 @@ describe("caller_ping loop guard", () => {
 				handlers.set(event, list);
 			},
 			registerShortcut() {},
-			appendEntry() {},
+			appendEntry,
 			registerCommand(name: string, definition: any) {
 				commands.set(name, definition);
 			},
@@ -120,10 +120,11 @@ describe("caller_ping loop guard", () => {
 		const { sessionFile, restore } = setupLoopGuardSession();
 		try {
 			writeFileSync(sessionFile + ".exit", JSON.stringify({ type: "done", outputTokens: 9 }));
-			const refused = await pingTool.execute("t1", { message: "tri-state" }, undefined, undefined, {
-				shutdown() {},
-			});
-			assert.match(String((refused as any).content?.[0]?.text ?? ""), /already recorded/);
+			// C38: a ping that lost the exit record is a terminating error result, with the cf6dbf4 text.
+			const refused = await pingTool.execute("t1", { message: "tri-state" }, undefined, undefined, { shutdown() {} });
+			assert.equal(refused.isError, true);
+			assert.equal(refused.terminate, true);
+			assert.match(String(refused.content?.[0]?.text ?? ""), /already recorded/);
 			await assert.rejects(
 				pingTool.execute("t2", { message: "tri-state" }, undefined, undefined, { shutdown() {} }),
 				/caller_ping/,
@@ -166,10 +167,9 @@ describe("caller_ping loop guard", () => {
 		const { sessionFile, restore } = setupLoopGuardSession();
 		try {
 			writeFileSync(sessionFile + ".exit", JSON.stringify({ type: "done", outputTokens: 3 }));
-			const result = await pingTool.execute("t1", { message: "placeholder" }, undefined, undefined, {
-				shutdown() {},
-			});
-			const text = String((result as any).content?.[0]?.text ?? "");
+			const result = await pingTool.execute("t1", { message: "placeholder" }, undefined, undefined, { shutdown() {} });
+			const text = String(result.content?.[0]?.text ?? "");
+			assert.equal(result.isError, true);
 			assert.match(text, /already recorded/);
 			assert.doesNotMatch(text, /Ping sent/);
 			assert.equal(JSON.parse(readFileSync(sessionFile + ".exit", "utf8")).type, "done");
@@ -182,6 +182,76 @@ describe("caller_ping loop guard", () => {
 				pingTool.execute("t2", { message: "placeholder" }, undefined, undefined, { shutdown() {} }),
 				/caller_ping/,
 			);
+		} finally {
+			exitMock.mock.restore();
+			mock.timers.reset();
+			restore();
+		}
+	});
+
+	it("a blank message is refused and does not use up the ping (T72 review)", async () => {
+		mock.timers.enable({ apis: ["setTimeout"] });
+		const exitMock = mock.method(process, "exit", (() => {}) as never);
+		const { pingTool } = registerPingToolForLoopGuard();
+		const { sessionFile, restore } = setupLoopGuardSession();
+		try {
+			await assert.rejects(
+				pingTool.execute("t1", { message: "  \n" }, undefined, undefined, { shutdown() {} }),
+				/needs a message/,
+			);
+			await pingTool.execute("t2", { message: "real question" }, undefined, undefined, { shutdown() {} });
+			assert.equal(JSON.parse(readFileSync(`${sessionFile}.exit`, "utf8")).message, "real question");
+		} finally {
+			exitMock.mock.restore();
+			mock.timers.reset();
+			restore();
+		}
+	});
+
+	// C39: a failed session-entry write cannot skip the shutdown or spend the one ping.
+	const failingAppend = () => {
+		throw new Error("disk full");
+	};
+	it("with a failing session-entry write, an autonomous ping still writes its exit record and requests shutdown", async () => {
+		mock.timers.enable({ apis: ["setTimeout"] });
+		const exitMock = mock.method(process, "exit", (() => {}) as never);
+		const { sessionFile, restore } = setupLoopGuardSession();
+		const { pingTool } = registerPingToolForLoopGuard(failingAppend);
+		try {
+			let shutdowns = 0;
+			await pingTool.execute("t1", { message: "help" }, undefined, undefined, {
+				shutdown() {
+					shutdowns += 1;
+				},
+			});
+			mock.timers.tick(5);
+			assert.equal(shutdowns, 1);
+			assert.equal(JSON.parse(readFileSync(sessionFile + ".exit", "utf8")).type, "ping");
+		} finally {
+			exitMock.mock.restore();
+			mock.timers.reset();
+			restore();
+		}
+	});
+
+	it("with a failing session-entry write after a takeover, the ping is not spent", async () => {
+		mock.timers.enable({ apis: ["setTimeout"] });
+		const exitMock = mock.method(process, "exit", (() => {}) as never);
+		const { restore } = setupLoopGuardSession();
+		let failing = true;
+		const { pingTool, handlers } = registerPingToolForLoopGuard(() => {
+			if (failing) failingAppend();
+		});
+		try {
+			for (const handler of handlers.get("agent_start") ?? []) handler();
+			for (const handler of handlers.get("input") ?? []) handler({}, { ui: { setStatus() {}, notify() {} } });
+			await assert.rejects(
+				pingTool.execute("t1", { message: "help" }, undefined, undefined, { shutdown() {} }),
+				/could not record/,
+			);
+			failing = false;
+			const result = await pingTool.execute("t2", { message: "help" }, undefined, undefined, { shutdown() {} });
+			assert.match(String((result as any).content?.[0]?.text ?? ""), /Ping recorded/);
 		} finally {
 			exitMock.mock.restore();
 			mock.timers.reset();

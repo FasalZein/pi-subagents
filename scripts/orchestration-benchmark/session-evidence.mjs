@@ -144,6 +144,28 @@ export function readRunFolders(root, sessions) {
 	});
 }
 
+/**
+ * T72: session files whose published record (results/<runId>/record.json) has the outcome blocked,
+ * the durable evidence of a caller_ping end: an autonomous ping ends at a tool-use stop and writes
+ * no session entry. Paths are the session list's own, so a caller compares them directly.
+ * @param {Array<{file: string, events: object[]}>} sessions
+ * @returns {Set<string>}
+ */
+export function readBlockedSessions(root, sessions) {
+	const blocked = new Set();
+	for (const file of listFiles(root, "/record.json")) {
+		const dir = dirname(file);
+		if (basename(dirname(dir)) !== "results") continue;
+		if (readJson(file)?.outcome !== "blocked") continue;
+		const launch = readJson(join(dir, "launch.json"));
+		const session = sessions.find(
+			(s) => typeof launch?.sessionFile === "string" && sameFile(s.file, launch.sessionFile),
+		);
+		if (session) blocked.add(session.file);
+	}
+	return blocked;
+}
+
 function sameFile(a, b) {
 	try {
 		return realpathSync(a) === realpathSync(b);
@@ -166,5 +188,6 @@ export function collectEvidence(root, probeDir) {
 		probes,
 		malformed,
 		runFolders: readRunFolders(root, sessions),
+		blockedSessions: readBlockedSessions(root, sessions),
 	};
 }

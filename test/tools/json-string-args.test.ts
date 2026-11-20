@@ -31,13 +31,13 @@ describe("JSON string arguments (T64)", () => {
 	});
 
 	// D05 (owner 2026-11-20T12:00Z): only children is parsed; a JSON string anywhere else keeps its type.
-	it("parses launch children only; a schema string, in a child or top-level, stays a string", () => {
-		const schema = JSON.stringify({ type: "object" });
-		const child = { name: "a", schema };
+	it("parses launch children only; a JSON string in a child or a top-level field stays a string", () => {
+		const task = JSON.stringify({ type: "object" });
+		const child = { name: "a", task };
 		assert.deepEqual(parseLaunchJsonFields({ children: JSON.stringify([child]) }), { children: [child] });
 		const native = { children: [child] };
 		assert.equal(parseLaunchJsonFields(native), native, "a native list is the same object");
-		const single = { name: "a", schema, task: '{"x":1}' };
+		const single = { name: "a", title: '["x"]', task: '{"x":1}' };
 		assert.equal(parseLaunchJsonFields(single), single, "the top-level form is not parsed");
 		assert.equal(parseLaunchJsonFields("text"), "text");
 	});

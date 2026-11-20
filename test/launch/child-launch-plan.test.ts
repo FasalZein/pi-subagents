@@ -417,7 +417,8 @@ describe("child launch plan", () => {
 						],
 					},
 				}),
-			/Model 'glm-5\.1' is not allowed for agent 'reviewer'/,
+			// cf6dbf4: the bare id resolves to its one registry ref at the inherited level before the check.
+			/Model 'zai-messages\/glm-5\.1:medium' is not allowed for agent 'reviewer'/,
 		);
 	});
 
