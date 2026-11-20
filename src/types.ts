@@ -59,13 +59,6 @@ export interface SubagentParamsInput {
 	 * model-callable tool input like `forcedCwd`.
 	 */
 	launchEnv?: Record<string, string>;
-	/** D12: the JSON Schema this child's completion data must match, as the launch named it. */
-	schema?: unknown;
-	/**
-	 * Internal, runtime-only: the file the launch wrote the checked schema to; the child reads it.
-	 * Stripped from model-callable tool input like `forcedCwd`.
-	 */
-	dataSchemaFile?: string;
 }
 
 export interface WaitParams {

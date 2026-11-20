@@ -11,7 +11,6 @@ import {
 	shouldUseBackgroundLaunch,
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
-import { writeDataSchemaArtifact } from "../launch/prompt-artifacts.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { getLaunchCapError, tryAcquireLaunchCapSlots } from "../runtime/launch-cap.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
@@ -29,7 +28,6 @@ import { parseSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import type { RunningSubagent, SubagentParamsInput, SubagentResult } from "../types.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
 import { launchVerifiedFanOut } from "../vf/run/launch.ts";
-import { parseDataSchema } from "./data-schema.ts";
 import { asPrepareArguments, parseJsonContainer, parseLaunchJsonFields } from "./json-string-args.ts";
 import { type ChildDelivery, launchErrorReason, renderLaunchFailure, renderLaunchReply } from "./launch-reply.ts";
 import {
@@ -63,12 +61,6 @@ export const SubagentChildParams = Type.Object({
 	),
 	thinking: Type.Optional(
 		Type.String({ description: "Thinking level for this child, such as high; the rule for model applies." }),
-	),
-	schema: Type.Optional(
-		Type.Unknown({
-			description:
-				"JSON Schema (draft 2020-12 or 7) that this child's completion data must match; every $ref stays inside it.",
-		}),
 	),
 });
 
@@ -373,13 +365,9 @@ export function registerSubagentCoreTools(
 					const agentDefs = runtime.loadAgentDefaults(child.agent, ctx.cwd);
 					const error = getLaunchError(child, agentDefs, currentAgent, launchable);
 					if (error) throw new Error(error);
-					// D12: a bad schema refuses the whole batch before any child starts.
-					const schema = child.schema === undefined ? undefined : parseDataSchema(child.schema);
-					if (schema && !schema.ok) throw new Error(`Error: child ${child.name}: ${schema.error}`);
 					return {
 						child,
 						agentDefs,
-						dataSchema: schema?.value,
 						blocking: resolveSubagentBlocking(child, agentDefs),
 						warning: getChildLaunchWarning(child, agentDefs, shouldUseBackgroundLaunch(child, agentDefs, ctx.hasUI)),
 					};
@@ -418,10 +406,7 @@ export function registerSubagentCoreTools(
 						const childCapSlots = unlaunchedCapSlots.split(slotCosts[index]);
 						let running: RunningSubagent;
 						try {
-							const { agentDefs, warning, dataSchema } = entry;
-							const child = dataSchema
-								? { ...entry.child, dataSchemaFile: writeDataSchemaArtifact(entry.child.name, dataSchema, ctx) }
-								: entry.child;
+							const { child, agentDefs, warning } = entry;
 							running = await launchOneSubagent(toolCallId, child, agentDefs, ctx, runtime, pi, childSlots, warning);
 						} catch (error) {
 							childSlots.release();

@@ -31,9 +31,13 @@ function withSetTabTitleEnv<T>(value: string | undefined, run: () => T): T {
 
 describe("tool policy", () => {
 	describe("deny-tools enforcement", () => {
-		it("denies only what PI_DENY_TOOLS names; subagent_done stays for auto-exit agents (D12)", () => {
-			assert.deepEqual(getDeniedToolNames("ask_user_question"), ["ask_user_question"]);
-			assert.deepEqual(getDeniedToolNames(" subagent_done , bash"), ["subagent_done", "bash"]);
+		// Expected values from cf6dbf4 getDeniedToolNames: auto-exit adds subagent_done once.
+		it("denies what PI_DENY_TOOLS names, plus subagent_done for an auto-exit child (cf6dbf4)", () => {
+			assert.deepEqual(getDeniedToolNames(false, "ask_user_question"), ["ask_user_question"]);
+			assert.deepEqual(getDeniedToolNames(true, "ask_user_question"), ["ask_user_question", "subagent_done"]);
+			assert.deepEqual(getDeniedToolNames(true, " subagent_done , bash"), ["subagent_done", "bash"]);
+			assert.deepEqual(getDeniedToolNames(false, ""), []);
+			assert.deepEqual(getDeniedToolNames(true, ""), ["subagent_done"]);
 		});
 
 		it("filters denied tool names and de-duplicates survivors", () => {

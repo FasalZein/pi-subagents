@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getSessionArtifactDir } from "../artifact-storage.ts";
-import type { DataSchema } from "../tools/data-schema.ts";
 
 interface ArtifactContext {
 	sessionManager: { getSessionId(): string };
@@ -73,20 +72,6 @@ export function writeResumeTaskArtifact(name: string, task: string, sessionFile:
 		cwd: header.cwd ?? cwd,
 		sessionManager: { getSessionId: () => header.id },
 	});
-}
-
-/**
- * D12: the checked launch schema of one child as JSON; the child's completion call reads it. Each
- * launch gets its own file, created exclusively under a random name, so same-name siblings never
- * share one; owner-only (0600 in a 0700 folder), because a schema can hold private values.
- */
-export function writeDataSchemaArtifact(name: string, schema: DataSchema, ctx: ArtifactContext): string {
-	const folder = join(getArtifactDir(ctx.cwd, ctx.sessionManager.getSessionId()), "schemas");
-	mkdirSync(folder, { recursive: true, mode: 0o700 });
-	chmodSync(folder, 0o700);
-	const artifactPath = join(folder, `${safeArtifactName(name) || "subagent"}-${randomUUID()}.json`);
-	writeFileSync(artifactPath, JSON.stringify(schema.schema), { encoding: "utf8", flag: "wx", mode: 0o600 });
-	return artifactPath;
 }
 
 export function writeSystemPromptArtifact(name: string, systemPrompt: string, ctx: ArtifactContext): string {

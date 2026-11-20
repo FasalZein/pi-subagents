@@ -24,7 +24,6 @@ import { registerSetTabTitleTool, shouldRegisterSetTabTitleTool } from "./set-ta
 import { createCallerPingState, registerCallerPingTool, rearmCallerPingExitAfterReenable, suppressCallerPingExit } from "./caller-ping.ts";
 import { SUBAGENT_LAUNCH_TOOL_NAMES } from "./tool-names.ts";
 import { registerSubagentDoneTool } from "./completion-call.ts";
-import { createCompletionNudge, hasAssistantText } from "./completion-nudge.ts";
 import {
 	filterToolNames,
 	getDeniedToolNames,
@@ -52,14 +51,13 @@ export default function (pi: ExtensionAPI) {
 	const lifecycle = readChildLifecycle();
 	const autoExit = lifecycle.autoExit;
 	const isInteractive = lifecycle.pane;
-	const denied: string[] = getDeniedToolNames();
+	const denied: string[] = getDeniedToolNames(autoExit);
 	const hasSubagentDone = shouldRegisterSubagentDone(denied, lifecycle);
 	let outputTokens = 0;
 	let finalContextUsage: FinalContextSnapshot | undefined;
 	// Factory-scoped because the takeover machinery that suppresses it lives
 	// inside the `if (autoExit)` block, while caller_ping registers outside it.
 	const callerPingState = createCallerPingState();
-	const completionNudge = createCompletionNudge(pi, { hasCompletionTool: hasSubagentDone });
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 	installWrittenFileRecorder(pi);
@@ -77,19 +75,6 @@ export default function (pi: ExtensionAPI) {
 	// nothing here requests shutdown or writes an exit record before it closes.
 	const takeover = createPaneTakeover({ writeExitSignal });
 	const endRunWithError = takeover.endRunWithError;
-	// D12: an autonomous accepted completion call is final. Pi ends the turn only when every call of
-	// the batch terminates, so a call inside codemode or beside another tool can get one more model
-	// turn; block every later tool call there, and the blocked batch ends the agent loop.
-	let finalCallAccepted = false;
-	const onCompletionAccepted = () => {
-		completionNudge.markCallAccepted();
-		if (!takeover.tookOver) finalCallAccepted = true;
-	};
-	pi.on("tool_call", () =>
-		finalCallAccepted
-			? { block: true, terminate: true, reason: "This session ended with an accepted completion call." }
-			: undefined,
-	);
 	// Set by the auto-exit or manual branch below; raw pane keys reach it.
 	let onOperatorKeystroke: (ctx: PaneUiContext) => void = () => {};
 
@@ -172,7 +157,7 @@ export default function (pi: ExtensionAPI) {
 
 	function enforceDeniedTools() {
 		try {
-			const deniedNames = getDeniedToolNames();
+			const deniedNames = getDeniedToolNames(autoExit);
 			const allowedTools = filterToolNames(pi.getActiveTools(), deniedNames);
 			pi.setActiveTools(allowedTools);
 		} catch {
@@ -308,7 +293,6 @@ export default function (pi: ExtensionAPI) {
 			const started = takeover.markTakenOver();
 			suppressCallerPingExit(callerPingState);
 			if (!started) return;
-			completionNudge.markTakenOver();
 			if (!isInteractive) return;
 			ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, AUTO_EXIT_DISABLED_MSG);
 			ctx.ui.notify(AUTO_EXIT_DISABLED_MSG, "warning");
@@ -475,8 +459,6 @@ export default function (pi: ExtensionAPI) {
 			providerErrorRecovery.cancelPendingRecovery(true);
 			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
-			// D12: one nudge per run toward the completion call; with still no call, exit untyped.
-			if (completionNudge.nudgeOnce(hasAssistantText(messages))) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			takeover.requestShutdown(ctx);
 		});
@@ -518,7 +500,6 @@ export default function (pi: ExtensionAPI) {
 			requestShutdown: takeover.requestShutdown,
 			getOutputTokens: () => outputTokens,
 			isTakenOver: () => takeover.tookOver,
-			onAccepted: onCompletionAccepted,
 		});
 	}
 
@@ -528,7 +509,6 @@ export default function (pi: ExtensionAPI) {
 			writeExitSignal,
 			requestShutdown: takeover.requestShutdown,
 			getOutputTokens: () => outputTokens,
-			onAccepted: onCompletionAccepted,
 		});
 	}
 

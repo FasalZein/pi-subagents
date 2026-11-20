@@ -298,10 +298,10 @@ esac
 		}
 	});
 
-	// T69: a manual pane's report-only replacement still exits by itself (forced auto-exit), but like
-	// v2.9.2 it gets no subagent_done; an auto-exit pane's replacement keeps the tool.
+	// T69/T72: a pane's report-only replacement exits by itself (forced auto-exit), so like v2.9.2
+	// (cf6dbf4 getDeniedToolNames with autoExit) it gets no subagent_done, manual or auto-exit.
 	for (const autoExit of [false, true]) {
-		it(`a ${autoExit ? "auto-exit" : "manual"} pane's wrap-up child ${autoExit ? "keeps" : "has no"} subagent_done`, async () => {
+		it(`a ${autoExit ? "auto-exit" : "manual"} pane's wrap-up child has no subagent_done`, async () => {
 			const dir = createTestDir();
 			const capsuleRoot = join(dir, "capsules");
 			mkdirSync(capsuleRoot, { recursive: true });
@@ -358,7 +358,7 @@ esac
 					appendEntry() {},
 					registerCommand() {},
 				} as any);
-				assert.equal(tools.has("subagent_done"), autoExit);
+				assert.equal(tools.has("subagent_done"), false);
 			} finally {
 				for (const key of childKeys) delete process.env[key];
 				for (const [key, value] of Object.entries(saved)) {

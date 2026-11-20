@@ -22,9 +22,8 @@ export interface LaunchRuntimeOverrides {
  * extra JSON properties through must not reach the privileged launch path.
  */
 export function stripInternalLaunchOverrides<T extends Partial<SubagentParamsInput>>(params: T): T {
-	if (params.forcedCwd === undefined && params.launchEnv === undefined && params.dataSchemaFile === undefined)
-		return params;
-	const { forcedCwd: _forcedCwd, launchEnv: _launchEnv, dataSchemaFile: _dataSchemaFile, ...rest } = params;
+	if (params.forcedCwd === undefined && params.launchEnv === undefined) return params;
+	const { forcedCwd: _forcedCwd, launchEnv: _launchEnv, ...rest } = params;
 	return rest as T;
 }
 

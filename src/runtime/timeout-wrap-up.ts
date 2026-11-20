@@ -31,7 +31,6 @@ import {
 	PI_SUBAGENT_TIMEOUT_WRAP_UP,
 } from "../tools/timeout-reminders.ts";
 import { SPAWNING_TOOL_NAMES, SUBAGENT_DONE_TOOL_NAME } from "../tools/tool-names.ts";
-import { DATA_SCHEMA_ENV } from "../tools/data-schema.ts";
 import type { RunningSubagent } from "../types.ts";
 import { addResultWarning } from "./run-result.ts";
 
@@ -135,8 +134,6 @@ async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSign
 	env[PI_SUBAGENT_TIMEOUT_WRAP_UP] = "1";
 	env.PI_SUBAGENT_NAME = running.name;
 	env.PI_SUBAGENT_AGENT = running.agent ?? "";
-	// D7 and D12: a report-only wrap-up is untyped; it checks no data against any schema.
-	env[DATA_SCHEMA_ENV] = "";
 	env.PI_SUBAGENT_SESSION = running.sessionFile;
 	env.PI_SUBAGENT_AUTO_EXIT = "1";
 	env.PI_SUBAGENT_SPAWN_BUDGET = "0";

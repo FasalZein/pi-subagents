@@ -1,35 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CALL_OUTCOMES, SUMMARY_MAX_CHARS } from "../runtime/result-record.ts";
-import { createDataCheck, type DataSchemaParse, readLaunchDataSchema } from "./data-schema.ts";
-import { asPrepareArguments, parseJsonFields } from "./json-string-args.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { SUBAGENT_DONE_TOOL_NAME } from "./tool-names.ts";
 
-/** The D12 limit as the child reads it in its brief and in a refusal. */
-export const COMPLETION_LIMIT_TEXT = `${SUMMARY_MAX_CHARS.toLocaleString("en-US")} characters`;
-
 /**
- * D12: the first text over the limit is refused with a tool error; a later one is accepted, and the
- * parent cuts its summary and keeps the full text in the report. One latch per tool and process.
- */
-export function createOversizeRefusal(tool: string, field: string) {
-	let refused = false;
-	return (text: unknown) => {
-		if (refused || typeof text !== "string" || text.length <= SUMMARY_MAX_CHARS) return;
-		refused = true;
-		throw new Error(
-			`${tool} refused: ${field} has ${text.length.toLocaleString("en-US")} characters; the limit is ${COMPLETION_LIMIT_TEXT}. ` +
-				`Shorten ${field} to ${COMPLETION_LIMIT_TEXT} or less and call ${tool} again. ` +
-				`A second ${field} over the limit is accepted: the summary is cut and marked, and the full text goes into the report.`,
-		);
-	};
-}
-
-/**
- * D12: session entry that holds one accepted completion call by tool call id. The child appends it
- * synchronously inside the tool, before any exit record, so the parent can type the result from it
- * when Pi has not yet persisted the tool result, or omitted the arguments of a nested call over its
- * 8 KiB limit, or a person took over the pane and no exit record exists.
+ * D12: session entry that holds one accepted completion call by tool call id. Since T72 the child
+ * writes it only for a caller_ping in a taken-over pane, which writes no exit record; the parent
+ * still reads it, and the typed subagent_done entries of older sessions.
  */
 export const SUBAGENT_ACCEPTED_CALL_ENTRY = "pi-subagent-accepted-call";
 
@@ -37,130 +13,63 @@ interface AcceptedCallEntry {
 	toolCallId: string;
 	tool: string;
 	args: Record<string, unknown>;
-	/**
-	 * True when no person had taken over: the call ends the run and is final for its result (D12). Pi
-	 * ends the turn only when every call of a batch terminates, so a call inside codemode or beside
-	 * another tool can get an acknowledgement turn; that later text never replaces the result.
-	 */
+	/** True when no person had taken over: the call ends the run. */
 	autonomous: boolean;
-	/** D12: data that failed the launch schema twice; the result is typed with this error and no data. */
-	dataError?: string;
 }
 
-export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry: AcceptedCallEntry): void {
-	pi.appendEntry<AcceptedCallEntry>(SUBAGENT_ACCEPTED_CALL_ENTRY, entry);
-}
-
-const OUTCOME_DESCRIPTION = "done, partial or blocked";
 /**
- * T66: one sentence for the brief and the summary field. The parent and keyed oracles (for example a
- * line "FACT-1: value") read the answer at the start of the summary, so prose around it scores wrong.
+ * Best effort (C39): a failed append must not skip the caller's shutdown or exit record. Returns
+ * whether the entry was written.
  */
-export const SUMMARY_ANSWER_FIRST =
-	"Begin the summary with the answer your task asks for, verbatim in the exact form the task names, each keyed value on its own line.";
-const SUMMARY_DESCRIPTION = `${SUMMARY_ANSWER_FIRST} Then say what you accomplished. At most ${COMPLETION_LIMIT_TEXT}.`;
-const ARTIFACTS_DESCRIPTION = "Paths of the files you wrote";
-const DATA_ANY_DESCRIPTION = "Any JSON value for the caller";
+export function recordAcceptedCall(pi: Pick<ExtensionAPI, "appendEntry">, entry: AcceptedCallEntry): boolean {
+	try {
+		pi.appendEntry<AcceptedCallEntry>(SUBAGENT_ACCEPTED_CALL_ENTRY, entry);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
-/** T64: the subagent_done fields a model may send as a JSON string. */
+/** T64: the subagent_done fields an older typed call may hold as a JSON string; the parent parses them. */
 export const COMPLETION_JSON_FIELDS = ["artifacts", "data"] as const;
 
-/**
- * D12 parameters. All optional and loose: a call without a valid outcome and a non-empty summary
- * (for example the old call with no arguments) still ends the child, untyped, so the schema must
- * not refuse it.
- */
-function buildSubagentDoneParams(launchSchema: DataSchemaParse | undefined) {
-	// D12: the child sees the launch schema where it writes data; the parent's context never holds it.
-	const DATA_DESCRIPTION = launchSchema?.ok
-		? `JSON data for the caller; it must match this JSON Schema: ${JSON.stringify(launchSchema.value.schema)}`
-		: DATA_ANY_DESCRIPTION;
-	const typebox = optionalRequire("typebox") as typeof import("typebox") | null;
-	if (typebox?.Type?.Object) {
-		const { Type } = typebox;
-		return Type.Object({
-			outcome: Type.Optional(Type.String({ description: OUTCOME_DESCRIPTION })),
-			summary: Type.Optional(Type.String({ description: SUMMARY_DESCRIPTION })),
-			artifacts: Type.Optional(Type.Array(Type.String(), { description: ARTIFACTS_DESCRIPTION })),
-			data: Type.Optional(Type.Unknown({ description: DATA_DESCRIPTION })),
-		});
-	}
-	return {
-		type: "object",
-		properties: {
-			outcome: { type: "string", description: OUTCOME_DESCRIPTION },
-			summary: { type: "string", description: SUMMARY_DESCRIPTION },
-			artifacts: { type: "array", items: { type: "string" }, description: ARTIFACTS_DESCRIPTION },
-			data: { description: DATA_DESCRIPTION },
-		},
-	};
-}
-
-/** D12: a call is typed only with a valid outcome and a non-empty summary. */
-function isTypedCall(args: Record<string, unknown>): boolean {
-	return (
-		CALL_OUTCOMES.some((outcome) => outcome === args.outcome) &&
-		typeof args.summary === "string" &&
-		args.summary.trim() !== ""
-	);
-}
-
 interface SubagentDoneDeps {
+	/** D11: a person took over; the call ends the turn but writes no exit record and closes nothing. */
 	isTakenOver(): boolean;
 	writeExitSignal: (payload: object, opts?: { supersede?: boolean }) => unknown;
 	requestShutdown: (ctx: { shutdown: () => void }) => void;
 	getOutputTokens: () => number;
-	/** D12: an accepted call; the run gets no missing-call nudge after it. */
-	onAccepted(): void;
 }
 
-export function registerSubagentDoneTool(
-	pi: Pick<ExtensionAPI, "registerTool" | "appendEntry">,
-	deps: SubagentDoneDeps,
-) {
-	const refuseOversizeSummary = createOversizeRefusal(SUBAGENT_DONE_TOOL_NAME, "summary");
-	const launchSchema = readLaunchDataSchema();
-	const checkData = createDataCheck(SUBAGENT_DONE_TOOL_NAME, launchSchema);
+/**
+ * cf6dbf4: the zero-argument subagent_done of a headless child without auto-exit. The last
+ * assistant message before the call is the result; the call itself carries nothing.
+ */
+export function registerSubagentDoneTool(pi: Pick<ExtensionAPI, "registerTool">, deps: SubagentDoneDeps) {
+	const typebox = optionalRequire("typebox") as typeof import("typebox") | null;
+	const doneParams = typebox?.Type?.Object
+		? typebox.Type.Object({})
+		: { type: "object", properties: {}, additionalProperties: false };
 	pi.registerTool({
 		name: SUBAGENT_DONE_TOOL_NAME,
 		label: "Subagent Done",
 		description:
-			"When your task is complete, close this session and return your result to the caller: outcome (done, partial or blocked), " +
-			`a summary of at most ${COMPLETION_LIMIT_TEXT}, the paths of files you wrote, and optional JSON data.`,
-		parameters: buildSubagentDoneParams(launchSchema),
-		// T64: before Pi's validation, so the size and schema checks see the parsed JSON.
-		prepareArguments: asPrepareArguments((args) => parseJsonFields(args, COMPLETION_JSON_FIELDS)),
-		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-			refuseOversizeSummary((params as { summary?: unknown }).summary);
-			const args = params as Record<string, unknown>;
-			// D12: only a typed call carries data, so only a typed call is checked.
-			const verdict = isTypedCall(args) ? checkData(args.data) : undefined;
-			const dataError = verdict?.kind === "data_error" ? verdict.error : undefined;
-			const autonomous = !deps.isTakenOver();
-			recordAcceptedCall(pi, { toolCallId, tool: SUBAGENT_DONE_TOOL_NAME, args, autonomous, dataError });
-			deps.onAccepted();
-			if (!autonomous) {
-				// D11/D12: the result stays in this session; the pane closes only
-				// when the person closes it. The model's turn still ends here.
+			"Call this tool when you have completed your task. " +
+			"It will close this session and return your results to the main session. " +
+			"Your LAST assistant message before calling this becomes the summary returned to the caller.",
+		parameters: doneParams,
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			if (deps.isTakenOver()) {
 				return {
 					terminate: true,
-					content: [
-						{
-							type: "text",
-							text: "Result recorded in this session. A person took over this pane, so it stays open until they close it.",
-						},
-					],
+					content: [{ type: "text", text: "A person took over this session, so it stays open until they close it." }],
 					details: {},
 				};
 			}
-			// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
-			deps.writeExitSignal(
-				{ type: "done", outputTokens: deps.getOutputTokens(), acceptedCall: { toolCallId, args, dataError } },
-				{ supersede: true },
-			);
+			deps.writeExitSignal({ type: "done", outputTokens: deps.getOutputTokens() }, { supersede: true });
 			deps.requestShutdown(ctx);
-			// D12: an accepted autonomous call is final. Print mode installs no shutdown handler, so
-			// end the agent loop here; another model turn would replace the typed result.
+			// Kept from D12: end the agent loop here. Print mode installs no shutdown handler, so another
+			// model turn would replace the last message, which the description promises as the result.
 			return {
 				terminate: true,
 				content: [{ type: "text", text: "Shutting down subagent session." }],

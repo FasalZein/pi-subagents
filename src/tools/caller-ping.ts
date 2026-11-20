@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { COMPLETION_LIMIT_TEXT, createOversizeRefusal, recordAcceptedCall } from "./completion-call.ts";
+import { recordAcceptedCall } from "./completion-call.ts";
 import { optionalRequire } from "./optional-dependency.ts";
 import { CALLER_PING_TOOL_NAME } from "./tool-names.ts";
 
@@ -59,8 +59,6 @@ interface CallerPingDeps {
 	getOutputTokens: () => number;
 	/** D11: a person took over the pane; no exit path of the child may close it. */
 	isTakenOver: () => boolean;
-	/** D12: an accepted ping; the run gets no missing-call nudge after it. */
-	onAccepted(): void;
 }
 
 function buildCallerPingParams() {
@@ -87,13 +85,12 @@ function buildCallerPingParams() {
  * the operator is in the pane and can handle things directly.
  */
 export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState, deps: CallerPingDeps) {
-	const refuseOversizeMessage = createOversizeRefusal(CALLER_PING_TOOL_NAME, "message");
 	pi.registerTool({
 		name: CALLER_PING_TOOL_NAME,
 		label: "Caller Ping",
 		description:
-			"Ask the launching chat for help once with your message and close this session, which that chat can continue later with instructions. " +
-			`Keep the message to ${COMPLETION_LIMIT_TEXT} or less.`,
+			"Ask the launching chat for help, send your message there, then close this helper session. " +
+			"The launching chat can later send follow-up instructions to continue this helper. Call it once.",
 		parameters: buildCallerPingParams(),
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const sessionFile = process.env.PI_SUBAGENT_SESSION;
@@ -104,8 +101,6 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
-			// D12: a refused oversize message does not use up the session's one ping.
-			refuseOversizeMessage(params.message);
 			state.count += 1;
 			// The count is attempts, not deliveries: a first ping refused
 			// because a done/error outcome already owns this child still
@@ -117,12 +112,14 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 				);
 			}
 
-			const autonomous = !deps.isTakenOver();
-			recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params, autonomous });
-			deps.onAccepted();
-			if (!autonomous) {
+			if (deps.isTakenOver()) {
 				// D11/D12: the ping stays in this session; no exit record, no shutdown. The parent
-				// reads it when the person closes the pane.
+				// reads it from this entry when the person closes the pane (best effort, C39).
+				if (!recordAcceptedCall(pi, { toolCallId, tool: CALLER_PING_TOOL_NAME, args: params, autonomous: false })) {
+					// C39: an unrecorded ping reached nobody, so it does not use up the session's one ping.
+					state.count -= 1;
+					throw new Error("caller_ping could not record the message in this session. Call caller_ping again.");
+				}
 				return {
 					terminate: true,
 					content: [
@@ -140,8 +137,6 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 					name: process.env.PI_SUBAGENT_NAME ?? "subagent",
 					message: params.message,
 					outputTokens: deps.getOutputTokens(),
-					// D12: Pi omits oversize nested-call arguments from the session; the parent reads them here.
-					acceptedCall: { toolCallId, args: params },
 				},
 				{ supersede: true },
 			);
@@ -154,18 +149,12 @@ export function registerCallerPingTool(pi: ExtensionAPI, state: CallerPingState,
 			// that exit — so the backstop arms either way.
 			armCallerPingExit(state);
 			if (pingWrite === "owned") {
-				// A done or error outcome already owns this child, so the parent
-				// will see that verdict, not a ping. Say so instead of pretending.
-				return {
-					terminate: true,
-					content: [
-						{
-							type: "text",
-							text: "A final outcome was already recorded for this session; it is closing now. Do not call caller_ping again.",
-						},
-					],
-					details: {},
-				};
+				// A done outcome already owns this child, so the parent will see that verdict, not a ping.
+				// C38: fail the call (cf6dbf4 text) so the transcript never shows an accepted ping that
+				// the assembler could read as the result.
+				throw new Error(
+					"A final outcome was already recorded for this session; it is closing now. Do not call caller_ping again.",
+				);
 			}
 			return {
 				terminate: true,
