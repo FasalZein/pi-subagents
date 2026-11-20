@@ -7,11 +7,13 @@ import {
 	assert,
 	createTestDir,
 	describe,
+	existsSync,
 	it,
 	join,
 	mkdirSync,
 	resetSubagentStateForTest,
 	subagentsExtension,
+	writeExecutable,
 	writeFileSync,
 } from "../support/index.ts";
 
@@ -65,6 +67,8 @@ function createCapturingPi(loadout: readonly string[] = ["read", "bash"]) {
 			return [...registered.values()].map((tool) => ({ name: tool.name, exposure: tool.exposure ?? "direct" }));
 		},
 		getThinkingLevel: () => "off",
+		// A resumed child's steer-back delivers its result here.
+		sendMessage() {},
 		registerCommand(name: string) {
 			captured.commands.push(name);
 		},
@@ -301,15 +305,29 @@ describe("extension registration gating", () => {
 		assert.equal(running.phase, "stopping");
 	});
 
-	it("lets a caller that may resume but not launch reach the resume itself (D07)", async () => {
+	it("lets a caller that may resume but not launch resume a saved session (D07)", async () => {
+		// cf6dbf4's resume tool never read the launch tool; a saved session starts its child again.
 		process.env.PI_DENY_TOOLS = "subagent";
 		const { registered, dir } = loadWithWorker();
+		assert.equal(registered.has("subagent"), false, "launch is denied");
 		const resume = registered.get("subagent_resume");
 		assert.ok(resume, "resume is registered");
-		const ctx = { cwd: dir, hasUI: false, sessionManager: { getSessionId: () => "gating" } };
-		await assert.rejects(
-			resume.execute("call-resume", { sessionFile: join(dir, "missing.jsonl") }, undefined, undefined, ctx),
-			/Session file not found/,
+		const marker = join(dir, "child-started");
+		process.env.PI_SUBAGENT_PI_COMMAND = writeExecutable(dir, "marker-pi", `#!/usr/bin/env bash\ntouch '${marker}'\n`);
+		process.env.PI_ARTIFACT_PROJECT_ROOT = dir;
+		const sessionFile = join(dir, "saved.jsonl");
+		const header = { type: "session", version: 3, id: "saved", timestamp: new Date().toISOString(), cwd: dir };
+		writeFileSync(sessionFile, `${JSON.stringify(header)}\n`);
+		const ctx = { cwd: dir, hasUI: true, sessionManager: { getSessionId: () => "gating" } };
+		const reply = await resume.execute(
+			"call-resume",
+			{ sessionFile, agent: "worker", mode: "background" },
+			undefined,
+			undefined,
+			ctx,
 		);
+		assert.equal(reply.details?.status, "started", JSON.stringify(reply.content));
+		await runningSubagents.get(reply.details.id)?.completionPromise;
+		assert.equal(existsSync(marker), true, "the resumed child process ran");
 	});
 });

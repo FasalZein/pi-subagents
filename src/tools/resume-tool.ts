@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
-import { parseRunId, type RunId } from "../runtime/result-record.ts";
+import { CALL_OUTCOMES, parseRunId, type ResultRecord, type RunId } from "../runtime/result-record.ts";
 import { type ResumeServiceRuntime, resumeSubagentSession } from "../runtime/resume-service.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import {
@@ -31,19 +31,40 @@ interface ResumeToolRuntime extends ResumeServiceRuntime {
 }
 
 /**
- * Record reasons that the session file itself carries (the timeout verdict, the context-pressure
- * end). A later resume can remove them, so the record only reports them; the guards inside the
- * resume read the session's current state (parity D14).
+ * Record reasons that a later run of the same session can supersede (the timeout verdict, the
+ * context-pressure end). Other reasons (no session file, a verified fan-out attempt) never change.
  */
 const SESSION_VERDICT_REASONS: ReadonlySet<string> = new Set([
 	TIME_LIMIT_RESUME_REASON,
 	CONTEXT_PRESSURE_RESUME_REASON,
 ]);
 
+const blocksBySessionVerdict = (record: ResultRecord): boolean =>
+	!record.resume.resumable && SESSION_VERDICT_REASONS.has(record.resume.reason);
+
+/**
+ * Parity D14: a session verdict in a record stops counting only when a later run of the same
+ * session ended with a published done, partial or blocked result, after every record of that
+ * session that carries such a verdict. A cancelled override, a failed run or a lost timeout
+ * sidecar supersedes nothing, so the record keeps refusing; the live guards still run afterwards.
+ */
+function isSessionVerdictSuperseded(record: ResultRecord, records: readonly ResultRecord[]): boolean {
+	if (!record.sessionFile) return false;
+	const sessionFile = resolve(record.sessionFile);
+	const sameSession = records.filter((other) => other.sessionFile && resolve(other.sessionFile) === sessionFile);
+	const lastVerdictEnd = Math.max(
+		record.endedAt,
+		...sameSession.filter(blocksBySessionVerdict).map((other) => other.endedAt),
+	);
+	return sameSession.some(
+		(other) => other.endedAt > lastVerdictEnd && (CALL_OUTCOMES as readonly string[]).includes(other.outcome),
+	);
+}
+
 /**
  * D8: a resume names a run id or a session file. A run id resolves through the parent session's
- * result record. A record refuses with its own reason only for a fact no later run changes (no
- * session file, a verified fan-out attempt); a session verdict is left to the resume's guards.
+ * result record. A record that says the run is not resumable refuses with its own reason, unless
+ * a later successful run of the session superseded its session verdict (parity D14).
  */
 function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string }, resultsDir: string): string {
 	if (params.runId && params.sessionFile) throw new Error("Give a run id or a session file, not both.");
@@ -55,9 +76,10 @@ function resolveResumeSessionFile(params: { runId?: string; sessionFile?: string
 	} catch {
 		throw new Error(`No result with run id "${params.runId}" in this session.`);
 	}
-	const record = sessionResultStore(resultsDir).read(runId);
+	const store = sessionResultStore(resultsDir);
+	const record = store.read(runId);
 	if (!record) throw new Error(`No result with run id "${params.runId}" in this session.`);
-	if (!record.resume.resumable && !SESSION_VERDICT_REASONS.has(record.resume.reason))
+	if (!record.resume.resumable && !(blocksBySessionVerdict(record) && isSessionVerdictSuperseded(record, store.list())))
 		throw new Error(`Run ${runId} cannot be resumed: ${record.resume.reason}`);
 	if (!record.sessionFile) throw new Error(`Run ${runId} cannot be resumed: its record names no session file.`);
 	return record.sessionFile;

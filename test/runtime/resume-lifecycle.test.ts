@@ -1,3 +1,4 @@
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
@@ -18,7 +19,7 @@ import {
 } from "../../src/runtime/wiring.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import { writeSubagentLaunchMetadataEntry } from "../../src/session/session-files.ts";
-import { readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
+import { getSubagentTimeoutSidecarPath, readSubagentTimeoutSidecar } from "../../src/session/timeout-sidecar.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -184,6 +185,16 @@ describe("resume and stop through the real tools and the real headless watcher (
 			assert.equal(record(stopped.id)?.outcome, "cancelled");
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);
 			await assert.rejects(() => resume.execute("c", { runId: stopped.id }, undefined, undefined, ctx), BLOCKED);
+			// 2b. Parity D14 (T74 review P1): with the sidecar lost after the cancelled override, the old
+			// time-limit record still refuses, because no later run ended done, partial or blocked.
+			const sidecarPath = getSubagentTimeoutSidecarPath(sessionFile);
+			const sidecar = readFileSync(sidecarPath, "utf8");
+			rmSync(sidecarPath);
+			await assert.rejects(
+				() => resume.execute("c", { runId: limited.id }, undefined, undefined, ctx),
+				new RegExp(`Run ${limited.id} cannot be resumed: ${TIME_LIMIT_RESUME_REASON}`),
+			);
+			writeFileSync(sidecarPath, sidecar);
 
 			// 3. The override again; the child answers. The done record removes the verdict.
 			setMode("answer");

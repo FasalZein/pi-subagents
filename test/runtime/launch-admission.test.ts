@@ -63,10 +63,8 @@ function report(running: RunningSubagent): SubagentResult {
 }
 
 /** The launch tool over a fake runtime; each child finishes at once, so spawn width never binds. */
-function fakeLaunchTool(
-	launch: (params: SubagentParamsInput) => Promise<RunningSubagent> = async (params) => makeRunning(params),
-	defaults: Partial<AgentDefaults> = { spawning: true },
-) {
+function fakeLaunchTool(defaults: Partial<AgentDefaults> = { spawning: true }) {
+	const launch = async (params: SubagentParamsInput) => makeRunning(params);
 	let tool: any;
 	const runtime: SubagentToolRuntime = {
 		loadAgentDefaults: () => defaults as AgentDefaults,
@@ -103,14 +101,11 @@ function fakeLaunchTool(
 		sessionManager: { getSessionFile: () => "/tmp/parent.jsonl", getSessionId: () => "parent" },
 	};
 	let calls = 0;
-	return (count = 1) => {
+	return () => {
 		calls++;
-		const children = Array.from({ length: count }, (_, index) => ({
-			agent: "worker",
-			name: `child-${calls}-${index}`,
-			title: "Launch admission check",
-			task: "Check launch admission",
-		}));
+		const children = [
+			{ agent: "worker", name: `child-${calls}`, title: "Launch admission check", task: "Check launch admission" },
+		];
 		return tool.execute(`call-${calls}`, { children }, undefined, undefined, ctx);
 	};
 }
@@ -152,7 +147,7 @@ describe("launch admission without a cumulative cap (D17)", () => {
 	it("admits a verified fan-out of 3 candidates after 64 finished runs", async () => {
 		const sequential = fakeLaunchTool();
 		for (let index = 0; index < 64; index++) assertStarted(await sequential(), `launch ${index + 1}`);
-		const verified = fakeLaunchTool(undefined, { spawning: true, llmAsVerifier: true, llmAsVerifierCandidates: 3 });
+		const verified = fakeLaunchTool({ spawning: true, llmAsVerifier: true, llmAsVerifierCandidates: 3 });
 		// Admitted: the fan-out reaches its own launch, which this fixture leaves without a verifier model.
 		await assert.rejects(verified(), /verifier model is not configured/);
 	});
