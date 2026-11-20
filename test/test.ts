@@ -66,6 +66,7 @@ import "./launch/launch-coordinator.test.ts";
 import "./launch/launch-overrides.test.ts";
 import "./launch/task-expansion.test.ts";
 import "./launch/herdr-interactive-launch.test.ts";
+import "./launch/rex-placement-launch.test.ts";
 import "./launch/config.test.ts";
 import "./launch/skill-visibility.test.ts";
 import "./launch/resume-model-config.test.ts";

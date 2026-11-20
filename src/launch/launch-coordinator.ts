@@ -79,10 +79,13 @@ export async function coordinateSubagentLaunch(
 	);
 	const systemPrompt = getCoordinatedSystemPrompt(prepared);
 	const agentEnv = parseEnvString(prepared.agentDefs?.env);
-	const resolveHerdrPolicy =
-		options.mode === "interactive" ? currentMuxAdapter()?.resolveHerdrPlacementPolicy : undefined;
-	const herdrPlacementPolicy = resolveHerdrPolicy?.(
+	// One detection for both placement resolvers.
+	const adapter = options.mode === "interactive" ? currentMuxAdapter() : undefined;
+	const herdrPlacementPolicy = adapter?.resolveHerdrPlacementPolicy?.(
 		agentEnv.PI_SUBAGENT_HERDR_PLACEMENT ?? process.env.PI_SUBAGENT_HERDR_PLACEMENT,
+	);
+	const rexPlacementPolicy = adapter?.resolveRexPlacementPolicy?.(
+		agentEnv.PI_SUBAGENT_REX_PLACEMENT ?? process.env.PI_SUBAGENT_REX_PLACEMENT,
 	);
 	const zellijPlacementPolicy =
 		options.mode === "interactive" && process.env.ZELLIJ_PANE_ID
@@ -103,6 +106,7 @@ export async function coordinateSubagentLaunch(
 		systemPrompt?.text ?? (prepared.identityInSystemPrompt ? prepared.identity : options.systemPrompt),
 		{
 			...(herdrPlacementPolicy ? { herdrPlacementPolicy } : {}),
+			...(rexPlacementPolicy ? { rexPlacementPolicy } : {}),
 			...zellijPlacement,
 		},
 	);

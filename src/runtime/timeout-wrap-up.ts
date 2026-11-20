@@ -214,6 +214,8 @@ export async function restartSubagentForTimeoutWrapUp(
 		if (!zellijTarget) {
 			surface = await createSurface(metadata.sessionTitle ?? running.title ?? running.name, {
 				herdr: { policy: metadata.herdrPlacementPolicy },
+				// The run's own policy (T71): a parent value set later, or an invalid one, cannot move or stop the report.
+				rex: { policy: running.rexPlacementPolicy ?? metadata.rexPlacementPolicy },
 				zellij: zellijContext,
 			});
 			running.surface = surface;
