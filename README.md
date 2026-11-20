@@ -62,7 +62,7 @@ Interactive children open in your current terminal backend. `pi-subagents` suppo
 
 Start `pi` inside the backend you want to use. Leave `PI_SUBAGENT_MUX` unset to let Pi detect it: Pi tries the backends in the order of the table. Set `PI_SUBAGENT_MUX` to one value of the first column to force that backend, also when the markers of several backends are present.
 
-The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`.
+The backend command must exist, and Pi must be able to see the current pane or session context. If no supported backend is active, or the parent has no UI, a new `subagent` launch of an interactive agent runs headless as a background child, with no pane. A resume of an interactive session fails with a setup hint instead, and so does `set_tab_title`. In Rex, `set_tab_title` also reports that the multiplexer is not available: Rex has no tab or workspace title that it can set.
 
 Normal launches use a backend-specific surface:
 
@@ -71,7 +71,7 @@ Normal launches use a backend-specific surface:
 - The Herdr TUI keeps children beside the parent while the tab has room, then uses dedicated tabs for overflow. Every Herdr child pane is labeled with its session title, such as `[reviewer] Auth implementation review`. See [Herdr placement](#herdr-placement).
 - Other backends may use windows, splits, or stacked panes.
 
-In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it.
+In the Herdr app and in Rex, the parent publishes a status record with the count of its outstanding children, and clears it at zero. A child counts from its launch until its result is delivered, or until a stop or a session close releases it. Old Herdr keeps its pane metadata count, where a delivered result counts until the parent has read it and settled idle.
 
 ### Removed: orchestrator mode and ambient awareness
 
@@ -481,17 +481,17 @@ At the start of each prompt, Pi writes one named system-prompt section, `index`,
 
 ```text
 Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
-Do not do delegated work yourself. A script that launches waits in the same script with a time limit and returns the pending ids.
+Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
 More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).
 - reviewer: Review a diff for bugs and missing tests. [pane] [manual]
 - scout: Inspect the codebase and report the relevant files.
 ```
 
-Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too.
+Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The index names only the tools that Pi lets the session call (an excluded, inactive or hidden tool is left out; a deferred one counts). Without `subagent_wait` the first line drops its clause. Without `subagent_agents` the agents that get no line, including agents without a description, are named on a last line, `More agents: a, b, c.`; agent lines give way to it until every name fits, and names that still do not fit are counted (`+<n> not shown`). When another extension replaces the whole system prompt, before or after this one, the index goes into each request as a leading message instead; the replaced prompt and the session file stay unchanged. In a child, a whole prompt composed earlier gets the section appended, as before.
 
 A flag shows only where an agent differs from the common case:
 
-- `[pane]`: the child opens in a pane.
+- `[pane]`: the child opens in a pane. A prompt start does not probe for a multiplexer: the flags follow the detection of the latest launch. Before the first launch, a UI session shows the flags with the line `[pane] and [manual] need a multiplexer; without one a helper runs headless and closes itself.`
 - `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
 - `[manual]`: the agent has `auto-exit` off, so the pane stays open until a person closes it. The child has no `subagent_done` and cannot close the pane itself (see [`subagent_done`](#subagent_done)).
 - `[waits]`: the launch call waits for the result (`async: false`).
@@ -516,7 +516,7 @@ A call with both `name` and `query` is refused. A malformed agent file is named 
 
 ### One malformed agent file
 
-Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file.
+Pi skips a malformed agent file and loads the other agents. A launch of that agent is refused with its parse error. A malformed project file whose name matches a valid global agent is refused the same way, and the global agent does not run in its place. The person sees one notice per session that names the file. When a valid definition of the same name shadows a malformed file, the notice lists that file apart and does not call the agent refused: the valid definition takes its place, under its own launch rules.
 
 ## Launching and waiting
 
@@ -543,7 +543,7 @@ Each report arrives later, and this turn may stop after this call so the reports
 
 A launch waits for its results, and the reply holds them, when the agent has `async: false`, when the parent has no durable turn, or when the call shares a tool batch with a sync launch (see [Mixed sync and async batches](#mixed-sync-and-async-batches)). A direct launch next to a call of another tool, such as `read`, also waits, unless `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`. Inside codemode, a launch returns at once unless it waits by these rules.
 
-An unknown agent name is refused with the three closest names among the agents the caller may launch. When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
+An unknown agent name is refused as in v2.9.2, with the requested name and the search locations and no other agent name: `Error: agent "<name>" was not found in .pi/agents/ or <agent dir>/agents.` When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
 
 ### Model names
 

@@ -39,11 +39,29 @@ export function isHerdrAvailable(): boolean {
 	return herdrBackend.isAvailable();
 }
 
+// The result of the latest detection, so the index can state pane flags
+// without a probe of its own at prompt start (D06). Undefined until a launch,
+// resume or other caller has detected once in this process.
+let lastDetectedBackend: MuxBackend | null | undefined;
+
 /** PI_SUBAGENT_MUX forces a backend, also when markers of several backends are present (spec D29). */
 export function getMuxBackend(): MuxBackend | null {
 	const pref = muxPreference();
-	if (pref) return muxBackendAdapter(pref).isAvailable() ? pref : null;
-	return DETECTION_ORDER.find((backend) => muxBackendAdapter(backend).isAvailable()) ?? null;
+	lastDetectedBackend = pref
+		? muxBackendAdapter(pref).isAvailable()
+			? pref
+			: null
+		: (DETECTION_ORDER.find((backend) => muxBackendAdapter(backend).isAvailable()) ?? null);
+	return lastDetectedBackend;
+}
+
+/** Whether the latest detection found a backend; "unknown" before the first one. Runs no probe. */
+export function lastMuxDetection(): boolean | "unknown" {
+	return lastDetectedBackend === undefined ? "unknown" : lastDetectedBackend !== null;
+}
+
+export function forgetMuxDetectionForTest(): void {
+	lastDetectedBackend = undefined;
 }
 
 /**

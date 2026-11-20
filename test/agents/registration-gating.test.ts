@@ -185,6 +185,9 @@ describe("extension registration gating", () => {
 				"agent_settled",
 				"agent_start",
 				"before_agent_start",
+				// D06: the index fallback when another extension's whole prompt replaces the sections.
+				// D11: the old-Herdr settle rule reads the model context, as cf6dbf4 did.
+				"context",
 				"input",
 				"message_end",
 				"session_shutdown",

@@ -101,8 +101,7 @@ export const zellijBackend: MuxBackendAdapter = {
 		if (paneId) zellijActionSync(["rename-pane", title], `pane:${paneId}`);
 		else zellijActionSync(["rename-tab", title]);
 	},
-	// zellij has no workspace to rename.
-	renameWorkspace: () => {},
+	// zellij has no workspace to rename, so it has no renameWorkspace.
 	openProgramSession: async () => {
 		const target = await resolveZellijTarget();
 		return {

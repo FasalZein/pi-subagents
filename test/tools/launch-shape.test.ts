@@ -24,6 +24,7 @@ import {
 } from "../support/index.ts";
 import "../support/ambient-spawn-grant.ts";
 import { loadExtension, useFakePi } from "../support/extension-host.ts";
+import { upstreamUnknownAgentError } from "../support/upstream-wording.ts";
 
 // D21 and D23: the launch tool takes only a children list; its reply has one
 // line per child, one line on how results return, and an unknown agent is
@@ -329,33 +330,26 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		assert.equal(result.details.status, "completed", result.content[0].text);
 	});
 
-	it("refuses a misspelled agent name and names the intended agent", async () => {
+	// D06: the refusal is the v2.9.2 error, read from cf6dbf4 (differential), and suggests no other agent.
+	it("refuses an unknown agent name with the cf6dbf4 error: the name and the search locations", async () => {
 		const launch = realLaunchTool({ reviewer: "", scout: "", worker: "" });
+		const expected = upstreamUnknownAgentError("reviwer", process.env.PI_CODING_AGENT_DIR ?? "");
 		await assert.rejects(launch("reviwer"), (error: Error) => {
-			assert.match(error.message, /Closest: reviewer\b/);
+			assert.equal(error.message, expected);
+			assert.doesNotMatch(error.message, /reviewer|scout|worker/);
 			return true;
 		});
 	});
 
-	it("refuses a long unknown name in one bounded line that does not echo it", async () => {
-		const launch = realLaunchTool({ reviewer: "", scout: "" });
-		const name = "x".repeat(5000);
-		await assert.rejects(launch(name), (error: Error) => {
-			assert.ok(!error.message.includes("xxxxxxxx"), error.message.slice(0, 200));
-			assert.ok(error.message.length < 200, `${error.message.length} characters`);
-			assert.match(error.message, /Closest: reviewer, scout\.$/);
-			return true;
-		});
-	});
-
-	it("never suggests an agent a restricted caller may not launch", async () => {
+	it("names no agent a restricted caller may not launch", async () => {
 		const launch = realLaunchTool({ coordinator: "spawning: helper\n", helper: "", secret: "", secrets: "" });
 		process.env.PI_SUBAGENT_AGENT = "coordinator";
 		process.env.PI_SUBAGENT_SPAWNABLE = "helper";
 		process.env.PI_SUBAGENT_SPAWN_BUDGET = "1";
+		const expected = upstreamUnknownAgentError("secrat", process.env.PI_CODING_AGENT_DIR ?? "");
 		await assert.rejects(launch("secrat"), (error: Error) => {
-			assert.match(error.message, /Closest: helper\.$/);
-			assert.doesNotMatch(error.message, /secret\b|secrets\b|coordinator/);
+			assert.equal(error.message, expected);
+			assert.doesNotMatch(error.message, /secrets\b|coordinator|helper/);
 			return true;
 		});
 	});
