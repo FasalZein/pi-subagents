@@ -12,15 +12,15 @@ import {
 	type PersistedSubagentLaunchMetadata,
 	type SubagentSessionMode,
 } from "../session/session-files.ts";
+import { parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
+import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
 import {
 	PI_SUBAGENT_IDLE_TIMEOUT,
 	PI_SUBAGENT_TIMEOUT,
 	PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD,
 } from "../tools/timeout-reminders.ts";
-import { getSubagentToolLaunchArgs } from "../tools/policy.ts";
 import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
-import { parseSpawnEnv, resolveSpawnPolicy, type SpawnPolicyResult } from "../spawn/policy.ts";
 import type { RunningSubagent, SubagentParamsInput } from "../types.ts";
 import { buildAppendSystemInheritancePlan } from "./append-system.ts";
 import { parseCommandWords } from "./child-command.ts";
@@ -29,7 +29,6 @@ import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "./context-boundary.ts";
 import { parseEnvString } from "./env.ts";
 import { isSubagentsExtensionEntry } from "./extension-entries.ts";
 import { getLaunchEnvCollisions } from "./launch-overrides.ts";
-import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import {
 	resolveSubagentNoContextFiles,
 	resolveSubagentNoSession,
@@ -38,6 +37,7 @@ import {
 } from "./policy.ts";
 import type { ResumeMode } from "./resume.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentCwd } from "./runtime-paths.ts";
+import { PI_SUBAGENT_SKILL_VISIBILITY } from "./skill-visibility.ts";
 import { buildSkillLaunchPlan, formatInjectedSkills, type SkillLaunchPlan } from "./skills.ts";
 
 export {
@@ -296,6 +296,19 @@ export function getPersistedPromptLaunchArgs(metadata: PersistedSubagentLaunchMe
 	}).promptArgs;
 }
 
+/**
+ * The model ref a run passed to Pi, for resume and wrap-up to replay (D08). A record from before
+ * `invocationModelRef` rebuilds it from its model and thinking, as the launch built `--model`
+ * (bare when the call was bare); a record with only `modelRef` replays that.
+ */
+export function getPersistedInvocationModel(
+	metadata: Pick<PersistedSubagentLaunchMetadata, "invocationModelRef" | "model" | "thinking" | "modelRef">,
+): string | undefined {
+	if (metadata.invocationModelRef) return metadata.invocationModelRef;
+	if (metadata.model) return metadata.thinking ? `${metadata.model}:${metadata.thinking}` : metadata.model;
+	return metadata.modelRef;
+}
+
 export async function getPersistedSessionParityArgs(
 	metadata: PersistedSubagentLaunchMetadata | undefined,
 	modeOverride?: ResumeMode,
@@ -303,7 +316,8 @@ export async function getPersistedSessionParityArgs(
 ): Promise<string[]> {
 	const args: string[] = [];
 	if (!metadata) return args;
-	if (metadata.modelRef) args.push("--model", metadata.modelRef);
+	const modelArg = getPersistedInvocationModel(metadata);
+	if (modelArg) args.push("--model", modelArg);
 	if (metadata.noContextFiles) args.push("--no-context-files");
 	args.push(...getSubagentToolLaunchArgs(metadata.tools, new Set(metadata.denyTools), spawningAllowed));
 	args.push(
@@ -354,6 +368,8 @@ export function buildPersistedSubagentLaunchMetadata(
 				: prepared.effectiveModel
 					? "parent"
 					: undefined;
+	// D08: the display ref can name the registry ref of a bare default; resume and wrap-up replay what Pi got.
+	const invocationModelRef = getPreparedModel(prepared);
 
 	return {
 		version: 1,
@@ -379,6 +395,7 @@ export function buildPersistedSubagentLaunchMetadata(
 		...(prepared.effectiveModel ? { model: prepared.effectiveModel } : {}),
 		...(prepared.effectiveThinking ? { thinking: prepared.effectiveThinking } : {}),
 		...(prepared.effectiveModelRef ? { modelRef: prepared.effectiveModelRef } : {}),
+		...(invocationModelRef ? { invocationModelRef } : {}),
 		...(prepared.agentDefs?.model ? { definitionModel: prepared.agentDefs.model } : {}),
 		...(prepared.agentDefs?.thinking ? { definitionThinking: prepared.agentDefs.thinking } : {}),
 		...(prepared.agentDefs?.allowedModels ? { allowedModels: prepared.agentDefs.allowedModels } : {}),
@@ -480,8 +497,7 @@ export function getBaseSubagentEnvVars(
 	envVars.PI_SUBAGENT_SPAWN_BUDGET = String(spawnPolicy.childBudget ?? 0);
 	envVars.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE =
 		spawnPolicy.effectiveWidth === null ? "" : String(spawnPolicy.effectiveWidth);
-	envVars.PI_SUBAGENT_SPAWNABLE =
-		spawnPolicy.spawnableAgents === true ? "true" : spawnPolicy.spawnableAgents.join(",");
+	envVars.PI_SUBAGENT_SPAWNABLE = spawnPolicy.spawnableAgents === true ? "true" : spawnPolicy.spawnableAgents.join(",");
 	const deniedTools = new Set(prepared.denySet);
 	if (spawnPolicy.childBudget === null) {
 		for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);

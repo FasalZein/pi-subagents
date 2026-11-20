@@ -119,19 +119,20 @@ describe("short model names (D22)", () => {
 		assert.equal(await launchModel("alpha-mini:medium", defs, KNOWN), "synthetic-a/alpha-mini:medium");
 		await assert.rejects(
 			() => launchModel("alpha-mini", defs, KNOWN, { thinking: "minimal" }),
-			/thinking level 'minimal' is not accepted for 'synthetic-a\/alpha-mini'\. Candidates: synthetic-a: alpha-mini:medium, alpha-mini:high\./,
+			// cf6dbf4: the accepted list validates the level and names the allowed refs.
+			/Model 'synthetic-a\/alpha-mini:minimal' is not allowed for agent 'picker'/,
 		);
 	});
 
-	it("takes the default level when the list accepts it, else the first listed level", async () => {
+	it("keeps the inherited level when the list accepts it and refuses it otherwise (D08, cf6dbf4)", async () => {
 		const list = "synthetic-a/alpha-mini:medium,synthetic-a/alpha-mini:high";
 		assert.equal(
 			await launchModel("alpha-mini", { model: "synthetic-c/gamma", thinking: "high", allowedModels: list }, KNOWN),
 			"synthetic-a/alpha-mini:high",
 		);
-		assert.equal(
-			await launchModel("alpha-mini", { model: "synthetic-c/gamma", thinking: "low", allowedModels: list }, KNOWN),
-			"synthetic-a/alpha-mini:medium",
+		await assert.rejects(
+			() => launchModel("alpha-mini", { model: "synthetic-c/gamma", thinking: "low", allowedModels: list }, KNOWN),
+			/Model 'synthetic-a\/alpha-mini:low' is not allowed for agent 'picker'/,
 		);
 	});
 
@@ -238,7 +239,8 @@ describe("short model names (D22)", () => {
 		);
 		assert.throws(
 			() => resolveResumeLaunchMetadataForInvocation(metadata, "gamma", undefined, known),
-			/Model 'gamma' is not allowed for agent 'picker': no accepted model matches\./,
+			// D08: `gamma` is an exact registry id, so it resolves as in cf6dbf4 and the accepted list refuses it.
+			/Model 'synthetic-c\/gamma' is not allowed for agent 'picker'\. Allowed models: /,
 		);
 		const ignored = resolveResumeLaunchMetadataForInvocation(
 			{ ...metadata, allowModelOverride: false },
@@ -274,15 +276,14 @@ describe("short model names: review round 1 (D22)", () => {
 		boundarySystemPrompt: true,
 	};
 
-	it("refuses an unqualified id that matches two models of one provider, even when one id equals it", async () => {
-		await assert.rejects(
-			() =>
-				launchModel("mini", { model: "synthetic-a/base", allowedModels: "synthetic-a/mini,synthetic-a/mini-v2" }, [
-					"synthetic-a/base",
-					"synthetic-a/mini",
-					"synthetic-a/mini-v2",
-				]),
-			/several models of one provider\. Candidates: synthetic-a: mini, mini-v2\./,
+	it("takes an exact unqualified id even when it is also a fragment of another id (D08, cf6dbf4)", async () => {
+		assert.equal(
+			await launchModel("mini", { model: "synthetic-a/base", allowedModels: "synthetic-a/mini,synthetic-a/mini-v2" }, [
+				"synthetic-a/base",
+				"synthetic-a/mini",
+				"synthetic-a/mini-v2",
+			]),
+			"synthetic-a/mini",
 		);
 	});
 
@@ -305,7 +306,7 @@ describe("short model names: review round 1 (D22)", () => {
 		);
 	});
 
-	it("accepts the unqualified agent default on resume as on launch", async () => {
+	it("grants an unqualified agent default on launch as resolved and on resume as written (D08, cf6dbf4)", async () => {
 		const known = ["synthetic-a/base", "synthetic-b/other"];
 		assert.equal(
 			await launchModel("synthetic-a/base", { model: "base", allowedModels: "synthetic-b/other" }, known),
@@ -319,9 +320,10 @@ describe("short model names: review round 1 (D22)", () => {
 			allowedModels: "synthetic-b/other",
 			modelSource: "agent" as const,
 		};
-		assert.equal(
-			resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known))?.modelRef,
-			"synthetic-a/base",
+		// cf6dbf4 resume grants `base` as written, which does not name the qualified ref.
+		assert.throws(
+			() => resolveResumeLaunchMetadataForInvocation(metadata, "synthetic-a/base", undefined, registry(known)),
+			/Model 'synthetic-a\/base' is not allowed for agent 'picker'/,
 		);
 	});
 

@@ -40,7 +40,10 @@ export interface PersistedSubagentLaunchMetadata {
 	async: boolean;
 	model?: string;
 	thinking?: string;
+	/** The resolved ref that records and displays name (D23). */
 	modelRef?: string;
+	/** The ref passed to Pi as `--model`, replayed on resume and wrap-up; absent in older sessions, which replay `modelRef`. */
+	invocationModelRef?: string;
 	definitionModel?: string;
 	definitionThinking?: string;
 	allowedModels?: string;

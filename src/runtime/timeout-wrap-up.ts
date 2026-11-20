@@ -7,11 +7,7 @@ import { getPiInvocation, getSubagentChildProcessEnv } from "../launch/child-com
 import { resolveDenyEnvPatterns } from "../launch/child-env.ts";
 import { CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT } from "../launch/context-boundary.ts";
 import { parseEnvString } from "../launch/env.ts";
-import {
-	getExtensionLaunchArgs,
-	getPersistedPromptLaunchArgs,
-	getPersistedSessionParityArgs,
-} from "../launch/prep.ts";
+import { getExtensionLaunchArgs, getPersistedPromptLaunchArgs, getPersistedSessionParityArgs } from "../launch/prep.ts";
 import { writeResumeTaskArtifact } from "../launch/prompt-artifacts.ts";
 import { buildResumePiArgs, getResumeCwd } from "../launch/resume.ts";
 import { buildInteractiveShellCommand } from "../launch/shell-command.ts";
@@ -79,7 +75,10 @@ function getWrapUpPrompt(running: RunningSubagent): string {
 	);
 }
 
-async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSignal): Promise<{
+async function getWrapUpLaunchParts(
+	running: RunningSubagent,
+	signal?: AbortSignal,
+): Promise<{
 	args: string[];
 	env: Record<string, string>;
 	cwd: string | undefined;
@@ -88,46 +87,39 @@ async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSign
 	const metadata = running.launchMetadata;
 	if (!metadata) throw new Error("The original launch metadata is unavailable.");
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
-	const invocationMetadata = {
-		...metadata,
-		...(running.modelRef ? { modelRef: running.modelRef } : {}),
-	};
-	const extensionArgs = getExtensionLaunchArgs(invocationMetadata.extensions, subagentDonePath, false);
+	// D08: replay the invocation ref of the launch or resume metadata, never the display ref of running.modelRef.
+	const extensionArgs = getExtensionLaunchArgs(metadata.extensions, subagentDonePath, false);
 	const parityArgs = [
-		...getPersistedPromptLaunchArgs(invocationMetadata),
-		...(await getPersistedSessionParityArgs(invocationMetadata, running.mode, false)),
+		...getPersistedPromptLaunchArgs(metadata),
+		...(await getPersistedSessionParityArgs(metadata, running.mode, false)),
 	].filter((arg) => arg !== "--no-session");
 	throwIfAborted(signal);
 	const env: Record<string, string> = {};
-	if (invocationMetadata.env) Object.assign(env, parseEnvString(invocationMetadata.env));
+	if (metadata.env) Object.assign(env, parseEnvString(metadata.env));
 	Object.assign(
 		env,
 		buildAppendSystemInheritancePlan({
-			inheritAppendSystem: invocationMetadata.inheritAppendSystem === true,
-			systemPromptMode: invocationMetadata.systemPromptMode,
-			systemPrompt: invocationMetadata.systemPrompt,
-			boundarySystemPrompt: invocationMetadata.boundarySystemPrompt ? CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT : undefined,
+			inheritAppendSystem: metadata.inheritAppendSystem === true,
+			systemPromptMode: metadata.systemPromptMode,
+			systemPrompt: metadata.systemPrompt,
+			boundarySystemPrompt: metadata.boundarySystemPrompt ? CHILD_CONTEXT_BOUNDARY_SYSTEM_PROMPT : undefined,
 		}).env,
 	);
-	if (invocationMetadata.agentConfigDir) env.PI_CODING_AGENT_DIR = invocationMetadata.agentConfigDir;
-	if (invocationMetadata.extensions !== undefined) {
-		env.PI_SUBAGENT_EXTENSIONS = invocationMetadata.extensions.join(",");
+	if (metadata.agentConfigDir) env.PI_CODING_AGENT_DIR = metadata.agentConfigDir;
+	if (metadata.extensions !== undefined) {
+		env.PI_SUBAGENT_EXTENSIONS = metadata.extensions.join(",");
 	}
-	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(invocationMetadata.skills);
-	const deniedTools = new Set(invocationMetadata.denyTools);
+	env[PI_SUBAGENT_SKILL_VISIBILITY] = getSkillVisibilitySpec(metadata.skills);
+	const deniedTools = new Set(metadata.denyTools);
 	for (const toolName of SPAWNING_TOOL_NAMES) deniedTools.add(toolName);
 	if (deniedTools.size > 0) env.PI_DENY_TOOLS = [...deniedTools].join(",");
 	env[PI_SUBAGENT_CONTEXT_WARN_THRESHOLD] = "";
 	env[PI_SUBAGENT_CONTEXT_WARN_STEP] = "";
-	env[PI_SUBAGENT_TIMEOUT] = running.timeoutBudget?.timeoutSeconds
-		? String(running.timeoutBudget.timeoutSeconds)
-		: "";
+	env[PI_SUBAGENT_TIMEOUT] = running.timeoutBudget?.timeoutSeconds ? String(running.timeoutBudget.timeoutSeconds) : "";
 	env[PI_SUBAGENT_IDLE_TIMEOUT] = running.timeoutBudget?.idleTimeoutSeconds
 		? String(running.timeoutBudget.idleTimeoutSeconds)
 		: "";
-	env[PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD] = running.timeoutWarnThreshold
-		? String(running.timeoutWarnThreshold)
-		: "";
+	env[PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD] = running.timeoutWarnThreshold ? String(running.timeoutWarnThreshold) : "";
 	env[PI_SUBAGENT_TIMEOUT_STARTED_AT] = String(running.startTime);
 	env[PI_SUBAGENT_TIMEOUT_WRAP_UP] = "1";
 	env.PI_SUBAGENT_NAME = running.name;
@@ -142,7 +134,7 @@ async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSign
 	return {
 		args: [...extensionArgs, ...parityArgs],
 		env,
-		cwd: getResumeCwd(invocationMetadata),
+		cwd: getResumeCwd(metadata),
 		prompt: getWrapUpPrompt(running),
 	};
 }
@@ -163,10 +155,7 @@ export async function restartSubagentForTimeoutWrapUp(
 	running.timeoutKillFailed = undefined;
 
 	if (running.mode === "background") {
-		const invocation = getPiInvocation([
-			...buildResumePiArgs(running.sessionFile, "background"),
-			...launch.args,
-		]);
+		const invocation = getPiInvocation([...buildResumePiArgs(running.sessionFile, "background"), ...launch.args]);
 		throwIfAborted(signal);
 		const child = spawn(invocation.command, invocation.args, {
 			...(launch.cwd ? { cwd: launch.cwd } : {}),
@@ -228,7 +217,11 @@ export async function restartSubagentForTimeoutWrapUp(
 		piArgs.push(`@${taskPath}`);
 		if (programSession) Object.assign(launch.env, programSession.childEnv);
 		if (surface) launch.env.PI_SUBAGENT_SURFACE = surface;
-		const { command, launch: programLaunch, dispose } = buildInteractiveShellCommand({
+		const {
+			command,
+			launch: programLaunch,
+			dispose,
+		} = buildInteractiveShellCommand({
 			cwd: launch.cwd ?? undefined,
 			piArgs,
 			envOverrides: launch.env,
