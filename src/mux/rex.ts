@@ -17,7 +17,21 @@ import {
 
 /** Prefix of the label that each child create carries; the rest is unique to the launch (D28). */
 const LABEL_PREFIX = "pi-subagent-";
-/** Child splits beside the parent per window; later children open in a new window (D28). */
+/** Where a new child opens (D28, T71): its own new window (default), or the split rule below. */
+export type RexPlacementPolicy = "window" | "split";
+
+export interface RexPlacementContext {
+	policy?: RexPlacementPolicy;
+}
+
+/** Same rule as PI_SUBAGENT_HERDR_PLACEMENT: trimmed, case-insensitive, empty means the default, else an error. */
+export function resolveRexPlacementPolicy(value = process.env.PI_SUBAGENT_REX_PLACEMENT): RexPlacementPolicy {
+	const policy = value?.trim().toLowerCase() || "window";
+	if (policy === "window" || policy === "split") return policy;
+	throw new Error(`Invalid PI_SUBAGENT_REX_PLACEMENT value "${value}". Expected window or split.`);
+}
+
+/** With the split policy: child splits beside the parent per window; later children open in a new window (D28). */
 const SPLITS_PER_WINDOW = 2;
 /** rex split --split values; right and below are the live-checked ones. */
 const SPLIT_SIDE: Record<SurfaceSplitDirection, string> = { right: "right", down: "below", left: "left", up: "above" };
@@ -159,11 +173,14 @@ export const rexBackend: MuxBackendAdapter = {
 	},
 	setupHint: () =>
 		rexRevisionHint() ?? "Start pi in a Rex block (REX_SESSION and REX_BLOCK set), with rex on PATH or in REX_BIN_DIR.",
-	// A split right of the parent while its window holds fewer than SPLITS_PER_WINDOW children, else a new window.
-	createSurface: async () => {
+	// window (default): a new window per child. split: a split right of the parent while its window holds
+	// fewer than SPLITS_PER_WINDOW children, else a new window.
+	createSurface: async (_name, options) => {
+		const policy = options?.rex?.policy ?? resolveRexPlacementPolicy();
 		const session = parentSession();
 		const blocks = listBlocks(session);
 		const parent = liveParent(session, blocks);
+		if (policy === "window") return createChild({ kind: "window" });
 		const splits = blocks.filter(
 			(block) => block.window_id === parent.window_id && block.label?.startsWith(LABEL_PREFIX),
 		).length;
@@ -171,6 +188,7 @@ export const rexBackend: MuxBackendAdapter = {
 			splits < SPLITS_PER_WINDOW ? { kind: "split", anchor: parent.block_id, side: "right" } : { kind: "window" },
 		);
 	},
+	resolveRexPlacementPolicy: (value) => resolveRexPlacementPolicy(value),
 	createSplit: (_name, direction, fromSurface) => {
 		const anchor = fromSurface ?? liveParent(parentSession()).block_id;
 		return createChild({ kind: "split", anchor, side: SPLIT_SIDE[direction] });

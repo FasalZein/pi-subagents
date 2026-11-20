@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { getMuxBackend, muxSetupHint } from "../../src/mux/core.ts";
-import { rexBackend } from "../../src/mux/rex.ts";
+import { resolveRexPlacementPolicy, rexBackend } from "../../src/mux/rex.ts";
 import { REX_CAPTURE_MAX_BYTES } from "../../src/mux/rex-cli.ts";
 import { writeExecutable } from "../support/index.ts";
 import {
@@ -20,6 +20,7 @@ import {
 const ENV_KEYS = [
 	"PATH",
 	"PI_SUBAGENT_MUX",
+	"PI_SUBAGENT_REX_PLACEMENT",
 	"FAKE_TERMINAL_STATE",
 	"FAKE_REX_REVISION",
 	"REX_SESSION",
@@ -125,7 +126,8 @@ describe("Rex detection (T48, D28, D29)", () => {
 describe("Rex launch (T48, D28)", () => {
 	useFakeRex();
 
-	it("splits right of the parent twice, then opens a window; every create names the parent's session", async () => {
+	it("split placement: splits right of the parent twice, then opens a window; every create names the parent's session", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "split";
 		const first = await rexBackend.createSurface("One");
 		const second = await rexBackend.createSurface("Two");
 		const third = await rexBackend.createSurface("Three");
@@ -160,8 +162,64 @@ describe("Rex launch (T48, D28)", () => {
 	});
 });
 
+describe("Rex placement (T71, D28)", () => {
+	useFakeRex();
+
+	/** Each child is a new window of the parent's session, labeled with the launch label; no split, focus unchanged. */
+	async function assertEveryChildInNewWindow(open: (name: string) => Promise<string>): Promise<void> {
+		const children = [await open("One"), await open("Two"), await open("Three")];
+		assert.equal(new Set(children).size, 3);
+		const creates = readRexCalls(stateDir).filter(isCreate);
+		assert.deepEqual(creates.map(verb), ["window new", "window new", "window new"]);
+		for (const call of creates) {
+			assert.deepEqual(call.slice(0, 4), ["window", "new", "-s", FAKE_REX_SESSION]);
+			assert.match(call[4]!, LABEL, "the window carries the launch label");
+			assert.ok(call.includes("--focus=false"));
+		}
+		const windows = new Set(readRexBlocks(stateDir).filter((b) => children.includes(b.block_id)).map((b) => b.window_id));
+		assert.equal(windows.size, 3, "each child has its own window");
+	}
+
+	it("unset: every child opens in its own new window of the parent's session", async () => {
+		await assertEveryChildInNewWindow((name) => rexBackend.createSurface(name));
+	});
+
+	it("window: every child opens in its own new window", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
+		await assertEveryChildInNewWindow((name) => rexBackend.createSurface(name));
+	});
+
+	it("the placement in the create options wins over the parent env", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "split";
+		await assertEveryChildInNewWindow((name) => rexBackend.createSurface(name, { rex: { policy: "window" } }));
+	});
+
+	it("split in the create options keeps the D28 split rule over a window parent env", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "window";
+		for (const name of ["One", "Two", "Three"]) await rexBackend.createSurface(name, { rex: { policy: "split" } });
+		assert.deepEqual(readRexCalls(stateDir).filter(isCreate).map(verb), ["split", "split", "window new"]);
+	});
+
+	it("an unknown value fails before any create and names the variable", async () => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "tab";
+		await assert.rejects(rexBackend.createSurface("Bad"), /Invalid PI_SUBAGENT_REX_PLACEMENT value "tab"/);
+		assert.ok(!readRexCalls(stateDir).some(isCreate), "no create after an unknown value");
+	});
+
+	it("resolves values like the Herdr variable: trimmed, case-insensitive, empty is the default", () => {
+		assert.equal(resolveRexPlacementPolicy(undefined), "window");
+		assert.equal(resolveRexPlacementPolicy(""), "window");
+		assert.equal(resolveRexPlacementPolicy(" Split "), "split");
+		assert.equal(resolveRexPlacementPolicy("WINDOW"), "window");
+		assert.throws(() => resolveRexPlacementPolicy("right"), /Expected window or split/);
+	});
+});
+
 describe("Rex lost create (T48, D28)", () => {
 	useFakeRex();
+	beforeEach(() => {
+		process.env.PI_SUBAGENT_REX_PLACEMENT = "split";
+	});
 
 	it("a split with a request timeout uses the one block with its label; no second create", async () => {
 		armRexCreateFault(stateDir, { command: "split", kind: "request-timeout", creates: 1 });
