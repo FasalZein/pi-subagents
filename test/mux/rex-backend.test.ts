@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -303,7 +303,11 @@ describe("Rex lost create (T48, D28)", () => {
 describe("Rex title (D10)", () => {
 	useFakeRex();
 
-	it("set_tab_title reports unavailable, as on cf6dbf4 where no backend served a Rex session", async () => {
+	/** cf6dbf4 `src/tools/set-tab-title.ts:46` and `src/mux/core.ts:90`: the reply in a session with no known backend. */
+	const CF6DBF4_UNAVAILABLE =
+		"Terminal multiplexer not available. Start pi inside Herdr (`herdr`, then run `pi`), cmux (`cmux pi`), tmux (`tmux new -A -s pi 'pi'`), zellij (`zellij --session pi`, then run `pi`), or WezTerm.";
+
+	async function setTitle(title: string) {
 		const saved = process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
 		process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = "1";
 		try {
@@ -314,24 +318,55 @@ describe("Rex title (D10)", () => {
 				},
 			} as never);
 			assert.ok(tool, "the opt-in registers set_tab_title");
-			const before = readRexCalls(stateDir).length;
-			const result = (await tool.execute("call", { title: "Phase 2" })) as {
+			const result = (await tool.execute("call", { title })) as {
 				content: { text: string }[];
 				details: { error?: string; title?: string };
 			};
-			// cf6dbf4 (src/tools/set-tab-title.ts): text "Terminal multiplexer not available. <hint>", details.error "mux not available".
-			const text = result.content[0]?.text ?? "";
-			assert.match(text, /^Terminal multiplexer not available\./);
-			assert.doesNotMatch(text, /Title set to/);
-			assert.deepEqual(result.details, { error: "mux not available" });
-			assert.ok(
-				callsFrom(before).every((call) => verb(call) === "whoami"),
-				"no rename call reaches rex",
-			);
+			return { text: result.content.map((block) => block.text).join(""), details: result.details };
 		} finally {
 			if (saved === undefined) delete process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE;
 			else process.env.PI_SUBAGENT_ENABLE_SET_TAB_TITLE = saved;
 		}
+	}
+
+	for (const forced of [undefined, "rex"]) {
+		it(`set_tab_title gives the cf6dbf4 unavailable reply in a Rex session${forced ? " with PI_SUBAGENT_MUX=rex" : ""}`, async () => {
+			if (forced) process.env.PI_SUBAGENT_MUX = forced;
+			const before = readRexCalls(stateDir).length;
+			assert.deepEqual(await setTitle("Phase 2"), {
+				text: CF6DBF4_UNAVAILABLE,
+				details: { error: "mux not available" },
+			});
+			assert.ok(
+				callsFrom(before).every((call) => verb(call) === "whoami"),
+				"no rename call reaches rex",
+			);
+		});
+	}
+
+	it("selects the backend once: the Herdr app that answers the first probe gets the rename, not Rex", async () => {
+		// An hc that answers two `get` probes and then stops, as an app that quits mid-call; labels are recorded.
+		writeExecutable(
+			binDir,
+			"hc",
+			`#!/bin/sh
+state="$FAKE_TERMINAL_STATE"
+case "$1" in
+  get)
+    n=$(( $(cat "$state/hc-gets" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$state/hc-gets"
+    [ "$n" -le 2 ] || exit 1
+    echo '{"address":"t1"}' ;;
+  label) echo "$3" >> "$state/hc-labels" ;;
+  *) exit 1 ;;
+esac
+`,
+		);
+		process.env.HC_TERMINAL_ID = "t1";
+		process.env.HC_TERMINAL_SOCKET = join(root, "hc.sock");
+		const reply = await setTitle("Phase 3");
+		const labels = existsSync(join(stateDir, "hc-labels")) ? readFileSync(join(stateDir, "hc-labels"), "utf8") : "";
+		assert.deepEqual(reply, { text: "Title set to: Phase 3", details: { title: "Phase 3" } });
+		assert.equal(labels, "pi-subagents.title=Phase 3\n", "the reported rename happened in the Herdr app");
 	});
 });
 

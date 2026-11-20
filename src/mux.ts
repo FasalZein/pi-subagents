@@ -23,7 +23,6 @@ export {
 export { consumeSubagentExitSignal, pollForExit } from "./mux/poll.ts";
 export { resolveRexPlacementPolicy } from "./mux/rex.ts";
 export {
-	canRenameTitle,
 	createSurface,
 	createSurfaceSplit,
 	renameCurrentTab,

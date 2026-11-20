@@ -13,12 +13,6 @@ export function createSurfaceSplit(name: string, direction: SurfaceSplitDirectio
 	return muxBackendAdapter(requireMuxBackend()).createSplit(name, direction, fromSurface);
 }
 
-/** Whether the selected backend can set any title: a backend without either rename sets none (D10). */
-export function canRenameTitle(): boolean {
-	const adapter = muxBackendAdapter(requireMuxBackend());
-	return adapter.renameCurrentTab !== undefined || adapter.renameWorkspace !== undefined;
-}
-
 export function renameCurrentTab(title: string): void {
 	muxBackendAdapter(requireMuxBackend()).renameCurrentTab?.(title);
 }
