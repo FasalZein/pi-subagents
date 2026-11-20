@@ -134,7 +134,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `inject-skills` | unset | Comma-separated skills to load into the child prompt before the task |
 | `no-context-files` | `false` | Skip project context-file discovery in the child, including `AGENTS.override.md`, `AGENTS.md`, and `CLAUDE.md`. Pi loads these files independently of project approval. |
 | `inherit-append-system` | `false` | Let Pi load the child's applicable global or trusted-project `APPEND_SYSTEM.md` file |
-| `no-session` | `false` | Run the child in Pi's in-memory mode (`--no-session`), except under a strict time-limit wrap-up. When the parent watches the run to its end, the report (from the child's process output) is kept in the result files. The run cannot be resumed |
+| `no-session` | `false` | Run the child in Pi's in-memory mode (`--no-session`), except under a strict time-limit wrap-up. When the parent watches the run to its end, the report (from the child's output or the final text in its exit record) is kept in the result files. The run cannot be resumed |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
 | `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
@@ -856,9 +856,11 @@ PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY=1
 
 ### `no-session: true`
 
-`no-session: true` runs the child in Pi's in-memory mode (`--no-session`). It writes no transcript, so the watching parent takes the report from the child's process output: a headless child's last 4,000 characters of output, and no text for a pane child. A temporary seed file carries the fork history and is deleted after the result. Only a strict time-limit wrap-up (`timeout-warn-threshold`) persists the child to its temporary session file, as described under time limits. An orderly detach (the parent session closes while a `continue` child still runs) gives that child no result. The result record says the run cannot be resumed.
+`no-session: true` runs the child in Pi's in-memory mode (`--no-session`). It writes no transcript. The watching parent takes the report from the child's output: a headless child's captured output (its last 4,000 characters), else the final text that the child writes into its exit record (the text Pi print mode prints). A pane child and a `continue` child have no captured output, so their report is that final text. A failed headless child without output keeps its error output in the report. Only a strict time-limit wrap-up (`timeout-warn-threshold`) persists the child to its temporary session file, as described under time limits. An orderly detach (the parent session closes while a `continue` child still runs) gives that child no result. The result record says the run cannot be resumed.
 
-For `fork`, Pi seeds that temporary file with the parent session content. For `lineage-only`, Pi also gives the child inherited context because there is no persistent child file where it can store lineage metadata.
+The launcher writes a temporary seed file with the parent's active branch for `fork` and `lineage-only`. In-memory mode ignores that file, so the child starts without the parent conversation, as in upstream v2.9.2. Only a strict time-limit wrap-up loads the seed, and then the child starts with the parent conversation. The seed is deleted after the result, and at once when the parent session exits.
+
+An in-memory child writes no session file, so `idle-timeout` sees no output from it: the idle clock runs from the launch and acts as a hard limit (upstream limitation).
 
 Use `no-session: true` for disposable children. Do not use it when you need resume, `caller_ping`, or durable child history.
 

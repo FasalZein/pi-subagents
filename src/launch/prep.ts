@@ -34,7 +34,8 @@ import {
 	resolveSubagentNoSession,
 	resolveSubagentParentClosePolicy,
 	resolveSubagentReportContextUsage,
-	shouldPersistNoSessionForTimeoutWrapUp,
+	resolveSubagentTimeoutState,
+	runsInMemory,
 } from "./policy.ts";
 import type { ResumeMode } from "./resume.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentCwd } from "./runtime-paths.ts";
@@ -282,8 +283,10 @@ export function getPreparedSessionLaunchArgs(
 	prepared: Pick<PreparedSubagentLaunch, "agentDefs" | "subagentSessionFile" | "sessionTitle">,
 ): string[] {
 	// D13 (T73): a no-session child runs in Pi's in-memory mode unless a strict wrap-up needs its transcript.
-	const useInMemorySession =
-		resolveSubagentNoSession(prepared.agentDefs) && !shouldPersistNoSessionForTimeoutWrapUp(prepared.agentDefs);
+	const useInMemorySession = runsInMemory({
+		noSession: resolveSubagentNoSession(prepared.agentDefs),
+		...resolveSubagentTimeoutState(prepared.agentDefs),
+	});
 	const args = useInMemorySession
 		? ["--session", prepared.subagentSessionFile, "--no-session"]
 		: ["--session", prepared.subagentSessionFile];
