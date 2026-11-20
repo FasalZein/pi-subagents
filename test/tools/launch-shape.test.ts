@@ -381,10 +381,11 @@ describe("D05: both v2.9.2 launch input forms", () => {
 		assert.notEqual(result.isError, true);
 	});
 
-	it("a children launch starts each child", async () => {
+	it("a single-form launch without task is refused before any child starts", async () => {
 		const tool = fakeLaunchTool(agents);
-		await tool.callRaw({ children: [child("worker", "first-worker"), child("worker", "second-worker")] });
-		assert.deepEqual(tool.launched, ["first-worker", "second-worker"]);
+		const { task: _task, ...noTask } = child("worker", "solo-worker");
+		await assert.rejects(tool.callRaw(noTask), /task is required/);
+		assert.deepEqual(tool.launched, []);
 	});
 
 	it("an empty children list with top-level fields starts the top-level child", async () => {

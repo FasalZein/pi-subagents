@@ -224,11 +224,6 @@ function lookUpEnded(running: RunningSubagent) {
 	};
 }
 
-/** D04a: as v2.9.2 (cf6dbf4), Esc does not reach the wait of an explicitly synchronous launch (async: false). */
-export function launchWaitSignal(running: RunningSubagent, signal: AbortSignal | undefined): AbortSignal | undefined {
-	return running.async === false ? undefined : signal;
-}
-
 /**
  * Whether the parent should await this subagent launch synchronously instead
  * of returning a started result. True when the agent is blocking

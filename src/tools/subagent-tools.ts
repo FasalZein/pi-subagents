@@ -15,7 +15,6 @@ import { getLaunchCallChildren } from "../runtime/batch-classifier.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
-import { launchWaitSignal } from "../runtime/running-registry.ts";
 import {
 	claimSpawnWidthSlot,
 	getLiveSlotCount,
@@ -166,6 +165,9 @@ function getLaunchError(
 ): string | null {
 	const nameError = getSubagentNameError(params.name);
 	if (nameError) return nameError;
+	// D05: the single form declares task optional as cf6dbf4 did; the README makes it required in both forms.
+	if (typeof params.task !== "string")
+		return "Error: task is required for subagent launches. Give the work for this child.";
 	if (!params.title?.trim())
 		return "Error: title is required for subagent launches. Provide a short sentence-case title for the child session/widget.";
 	if (params.agent && !agentDefs) return getUnknownAgentError(params.agent, launchable);
@@ -456,7 +458,10 @@ export function registerSubagentCoreTools(
 					});
 				}
 				const results = await Promise.all(
-					launched.map((running) => runtime.getLaunchedSubagentResult(running, launchWaitSignal(running, signal))),
+					// D04a: as v2.9.2 (cf6dbf4), Esc does not reach the wait of an explicitly synchronous launch.
+					launched.map((running) =>
+						runtime.getLaunchedSubagentResult(running, running.async === false ? undefined : signal),
+					),
 				);
 				const reportedIds = reportedRunIds(results);
 				settleWaitReply(
