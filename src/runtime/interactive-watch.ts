@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { runsInMemory } from "../launch/policy.ts";
 import { traceSubagentLaunch } from "../launch/trace.ts";
 import type { PollResult } from "../mux/poll.ts";
 import type { MuxBackendAdapter } from "../mux/backend.ts";
@@ -196,8 +197,9 @@ export async function watchSubagent(
 		}
 	} finally {
 		// D13: Pi appends by pathname, also in its shutdown handler after the done sidecar, so the
-		// temporary session file goes only after the pane launcher (which outlives Pi) has exited.
-		if (running.noSession) await waitForPaneLauncherExit(running);
+		// temporary session file of a strict wrap-up run goes only after the pane launcher (which
+		// outlives Pi) has exited. An in-memory run writes no transcript, so nothing waits (T73).
+		if (running.noSession && !runsInMemory(running)) await waitForPaneLauncherExit(running);
 		runtime.cleanupNoSessionSessionFile(running);
 	}
 }
@@ -460,7 +462,7 @@ function getSummary(
 	running: RunningSubagent,
 	pollResult: PollResult,
 ): { summary: string; summarySource: SubagentSummarySource } {
-	if (existsSync(running.sessionFile)) {
+	if (!runsInMemory(running) && existsSync(running.sessionFile)) {
 		const output = findLastSubagentOutputWithSource(getNewEntries(running.sessionFile, running.launchEntryCount ?? 0));
 		if (output) return output;
 	}

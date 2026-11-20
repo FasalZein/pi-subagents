@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { PollResult } from "../mux/poll.ts";
+import { runsInMemory } from "../launch/policy.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
@@ -26,7 +27,7 @@ export interface ResultTarget {
 export const CONTEXT_PRESSURE_RESUME_REASON =
 	"stopped early by its context-warning policy and its context window is spent; launch a fresh sub-agent for unfinished work";
 
-/** D13: why a no-session run cannot resume: its temporary session file is deleted after the result. */
+/** D13: why a no-session run cannot resume: it keeps no session file after the result. */
 export const NO_SESSION_RESUME_REASON =
 	"a no-session run keeps no session; launch a fresh sub-agent for unfinished work";
 
@@ -171,14 +172,14 @@ const CLOSED_WITHOUT_ANSWER_ERROR = "the pane closed with a nonzero status befor
 /**
  * D13 and D14: assembles, publishes and renders the result of a watched headless or pane child, for
  * every end the watcher decided (classifyWatchedEnd), a crash included. Returns undefined only for a
- * child that exited cleanly without a session file. An operator-closed pane with a nonzero status
- * and no answer publishes a failed record. A no-session child is assembled from its temporary session file, which the
- * watcher deletes after this returns, so its record names no session file and says that it cannot be
- * resumed.
+ * child that exited cleanly without a session file and did not run in memory. An operator-closed pane with a nonzero status
+ * and no answer publishes a failed record. A no-session child in Pi's in-memory mode is assembled from its process output
+ * (D13, T73); one under strict wrap-up from its temporary session file, which the watcher deletes after
+ * this returns. Either record names no session file and says that it cannot be resumed.
  */
 export function publishRunResult(running: RunningSubagent, end: WatchedEnd): PublishedResult | undefined {
 	const runEnd = classifyWatchedEnd(running, end);
-	if (runEnd.kind === "exited" && !existsSync(running.sessionFile)) return undefined;
+	if (runEnd.kind === "exited" && !runsInMemory(running) && !existsSync(running.sessionFile)) return undefined;
 	const { contextUsage } = end;
 	return publishEnd(running, runEnd, {
 		acceptedCall: end.exitSignal?.acceptedCall,
@@ -235,7 +236,9 @@ interface PublishOptions {
 function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptions): PublishedResult | undefined {
 	const target = running.resultTarget;
 	if (!target) return undefined;
-	const entries = existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [];
+	// D13 (T73): an in-memory run writes no transcript; its file holds only the launch seed.
+	const inMemory = runsInMemory(running);
+	const entries = !inMemory && existsSync(running.sessionFile) ? getEntries(running.sessionFile) : [];
 	const launchEntryCount = running.launchEntryCount ?? 0;
 	const assemble = (runEnd: RunEnd) =>
 		assembleResult({
@@ -253,6 +256,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 				endedByOf(runEnd, { stoppedBy: running.stopRequestedBy, closedByPerson: options.closedByPerson }),
 			entries,
 			launchEntryCount,
+			...(inMemory ? { processOutput: running.stdoutTail } : {}),
 			nudgeEntryIndex: findNudgeEntryIndex(entries, Math.max(launchEntryCount, running.processEntryCount ?? 0)),
 			acceptedCall: options.acceptedCall,
 			contextUsage: options.contextUsage,

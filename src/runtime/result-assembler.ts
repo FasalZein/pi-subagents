@@ -53,6 +53,11 @@ export interface RunFacts {
 	/** Index in `entries` of the missing-call nudge message, when one was sent. */
 	nudgeEntryIndex?: number;
 	/**
+	 * D13 (T73): the final text of an in-memory run (Pi --no-session), from its process output, as
+	 * cf6dbf4 used it; the report text when the transcript holds no assistant text.
+	 */
+	processOutput?: string;
+	/**
 	 * The arguments of the completion call as the child's completion tool accepted them, by tool call id
 	 * (D12). Pi omits nested-call arguments over 8 KiB per call or 32 KiB per result
 	 * (NESTED_CALL_LIMITS), so this is the payload source for such a call; recorded arguments win.
@@ -484,7 +489,7 @@ function endOverridesCall(end: RunEnd): boolean {
 export function assembleResult(facts: RunFacts): AssembledResult {
 	const { texts, accepted, dataErrors, autonomous, call } = readTranscript(facts.entries, facts.launchEntryCount);
 	const final = call !== undefined && autonomous.has(call.id);
-	const text = reportText(texts, call, final, facts.nudgeEntryIndex);
+	const text = reportText(texts, call, final, facts.nudgeEntryIndex) ?? (facts.processOutput?.trim() || undefined);
 	const typing = call && (final || !textAfterCall(texts, call)) && !endOverridesCall(facts.end);
 	const body =
 		(facts.end.kind === "pinged" ? pingBody(facts.end.message) : undefined) ??
