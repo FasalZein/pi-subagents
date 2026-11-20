@@ -315,14 +315,14 @@ For `idle-timeout`, the hard deadline that triggered the wrap-up is pinned. Outp
 If the wrap-up completes, the parent receives a result such as:
 
 ```text
-auth-scout · scout · timed out · 12m3s · untyped
+auth-scout · scout · done · 12m3s · untyped · ended by time limit
 Mapped the auth flow. The session layer still needs verification.
 report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 run: <run>
 wrap-up: 900s for the whole run: the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains
 ```
 
-The outcome of a wrap-up is `timed_out`, and the result is untyped, because the report-only run gets no completion call. The record keeps `wrapUp: true` in its `timeLimit`. Its session stays resumable unless another policy blocks it.
+A wrap-up that ends on its own shows the outcome of its report, as in v2.9.2: `done` after a clean exit, `failed` after a nonzero exit or a child error. The result is untyped, because the report-only run gets no completion call. The header says `ended by time limit`, the footer names the limit, and the record keeps `wrapUp: true` in its `timeLimit`. A wrap-up that the hard deadline kills is `timed_out`. Its session stays resumable unless another policy blocks it.
 
 The trade-off is deliberate: a legitimate slow tool is cancelled at the threshold. If losing that tool run is worse than losing the final report, leave `timeout-warn-threshold` off and use only the hard limits.
 
@@ -561,7 +561,7 @@ Only the spawn width limits launches. It counts the runs that run at the same ti
 
 ### The result of a run
 
-Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself.
+Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself. When the report file cannot be written, the rendering says `report not saved` and carries the full report after the line `Full report (not saved to a file):`, as v2.9.2 delivered the full answer; a lookup in the same session returns that text.
 
 The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. `endedBy` says who ended the run: `child` (its completion call, `caller_ping`, its own exit, or a crash), `operator` (a person closed the pane, also after a takeover, or stopped the run from the `/subagents` overlay), `parent` (`subagent_kill` or another stop of the parent), or `time_limit` (a hard kill or a report-only wrap-up). The header of the rendering names the ender only when it is not `child`, for example `· ended by operator`. A run is typed only when the child made a valid completion call: a `caller_ping`, or a typed `subagent_done` in a session from before auto-exit children lost that tool (see [`subagent_done`](#subagent_done)). An untyped summary is the start of the report, cut at a line end. A typed run's artifacts are the paths the child listed in its call. An untyped run's artifacts are the paths of the child's successful `write` and `edit` calls of this run, direct or from a script, as absolute paths against the child's working directory, without duplicates, in the order of the first write.
 
@@ -877,7 +877,7 @@ Once the operator interrupts (Escape) or sends input to the child, auto-exit is 
 
 An auto-exit child, in a pane or headless, has no `subagent_done`: it exits after its answer and any pending work, and its result is untyped and built from its last message. A pane child with `auto-exit` off never has it, also after a resume: only a person closes its pane, and its result is untyped. Its brief tells it to stay in the pane and not to exit. An agent that lists `subagent_done` in `deny-tools` never has it.
 
-The report is the last assistant text of this run. It is never the output of another tool, fork history, or the text of an earlier run. Sessions from before this change can hold a typed `subagent_done` call with `outcome`, `summary`, `artifacts` and `data`; the parent still reads them and renders those results typed.
+The report comes from this run only, by the v2.9.2 rules: the last assistant text; when the last assistant turn called a tool and had no text, the result of that trailing tool (never `subagent_done` or `caller_ping`); when the session has neither, a headless child's stdout after a clean exit. A final assistant turn with a terminal stop reason and no text (for example `length`) fails the run with that reason, also after exit code 0. It is never fork history or the text of an earlier run. Sessions from before this change can hold a typed `subagent_done` call with `outcome`, `summary`, `artifacts` and `data`; the parent still reads them and renders those results typed.
 
 ### `caller_ping`
 
