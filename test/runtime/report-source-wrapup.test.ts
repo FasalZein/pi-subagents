@@ -163,20 +163,21 @@ describe("D21 terminate reaper", () => {
 			if (ms === 5000) escalations.push(timer);
 			return timer;
 		}) as typeof setTimeout;
+		const watch = watchBackgroundSubagent(
+			running,
+			{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
+			ac.signal,
+		);
 		try {
-			const watch = watchBackgroundSubagent(
-				running,
-				{ cleanupNoSessionSessionFile() {}, terminateBackgroundChildProcess() {} },
-				ac.signal,
-			);
 			ac.abort();
 			assert.equal(escalations.length, 1, "one escalation timer per stop");
 			assert.equal(escalations[0].hasRef(), true, "an unreferenced timer may never fire");
-			child.emit("exit", null, "SIGTERM");
-			await watch;
 		} finally {
 			globalThis.setTimeout = original;
 			for (const timer of escalations) clearTimeout(timer);
+			// Settle the watcher also on a failed assertion: a pending watcher keeps node --test alive.
+			child.emit("exit", null, "SIGTERM");
+			await watch;
 		}
 	});
 });
