@@ -135,6 +135,7 @@ import "./runtime/interactive-watch-takeover.test.ts";
 import "./runtime/pane-result-outcome.test.ts";
 import "./runtime/end-outcomes.test.ts";
 import "./runtime/ended-by.test.ts";
+import "./runtime/ended-by-pane.test.ts";
 import "./runtime/end-outcome-order.test.ts";
 import "./tools/end-outcome-display.test.ts";
 import "./runtime/resume-grant.test.ts";

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { Value } from "typebox/value";
+import { __pollForExitTest__ } from "../../src/mux/poll.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
@@ -10,6 +11,7 @@ import { stopRunningSubagent } from "../../src/runtime/wiring.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
 import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../../src/tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
+import { SUBAGENT_WRITTEN_FILE_ENTRY } from "../../src/tools/written-files.ts";
 import type { CompletedSubagentResult, RunningSubagent } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
 import { assistant, facts, toolCall, toolResult, user } from "../support/result-fixtures.ts";
@@ -100,19 +102,30 @@ describe("run records say who ended the run (T70)", () => {
 		assert.equal(closed?.record.outcome, "done");
 		assert.equal(closed?.record.endedBy, "operator");
 		assert.match(textOf(closed).split("\n")[0], / · ended by operator$/);
+	});
 
+	it("child: a manual pane's shell status without the child's close record names no person", () => {
+		// A child that crashes before its exit record leaves only the launcher's status (review P1).
+		const answered = setup([user("task"), assistant("Notes.")], { mode: "interactive", autoExit: false });
+		const crashed = publishRunResult(answered.running, watchedEnd({ exitCode: 1, operatorClosed: true }));
+		assert.equal(crashed?.record.outcome, "done", "T69's outcome rule stays");
+		assert.equal(crashed?.record.endedBy, "child");
 		const silent = setup([user("task")], { mode: "interactive", autoExit: false });
 		const failed = publishRunResult(silent.running, watchedEnd({ exitCode: 130, operatorClosed: true }));
 		assert.equal(failed?.record.outcome, "failed");
-		assert.equal(failed?.record.endedBy, "operator");
+		assert.equal(failed?.record.endedBy, "child");
 	});
 
-	it("operator: a person closed the pane after a takeover and a later completion call", () => {
-		const entries = [user("task"), toolCall(DONE, DONE_ARGS, "d1", "Report."), acceptedEntry("d1", DONE_ARGS, false)];
+	it("child: a call accepted during a takeover is no evidence of who ended the run later", () => {
+		// Re-armed with /auto-exit, the child ended itself after the takeover call (review P1).
+		const entries = [
+			user("task"),
+			toolCall(DONE, DONE_ARGS, "d1", "Report."),
+			acceptedEntry("d1", DONE_ARGS, false),
+			assistant("Final answer."),
+		];
 		const { running } = setup(entries, { mode: "interactive", autoExit: true });
-		assert.equal(publishRunResult(running, watchedEnd())?.record.endedBy, "operator");
-		const autonomous = setup([user("task"), toolCall(DONE, DONE_ARGS, "d1"), acceptedEntry("d1", DONE_ARGS, true)]);
-		assert.equal(publishRunResult(autonomous.running, watchedEnd())?.record.endedBy, "child");
+		assert.equal(publishRunResult(running, watchedEnd())?.record.endedBy, "child");
 	});
 
 	it("operator and parent: a stop names who asked for it", async () => {
@@ -121,12 +134,16 @@ describe("run records say who ended the run (T70)", () => {
 		const operatorEnd = publishRunResult(byOperator.running, watchedEnd({ stopped: true }));
 		assert.equal(operatorEnd?.record.outcome, "cancelled");
 		assert.equal(operatorEnd?.record.endedBy, "operator");
+		// The whole rendering names one actor: the header and the summary agree (review P1).
+		assert.match(textOf(operatorEnd), /cancelled: stopped by the operator/);
+		assert.ok(!textOf(operatorEnd).includes("stopped by the parent"));
 
 		const byParent = setup([user("task")]);
 		await stopRunningSubagent(byParent.running);
 		const parentEnd = publishRunResult(byParent.running, watchedEnd({ stopped: true }));
 		assert.equal(parentEnd?.record.endedBy, "parent");
 		assert.match(textOf(parentEnd).split("\n")[0], / · ended by parent$/);
+		assert.match(textOf(parentEnd), /cancelled: stopped by the parent/);
 	});
 
 	it("time_limit: a hard kill and a report-only wrap-up", () => {
@@ -144,17 +161,17 @@ describe("run records say who ended the run (T70)", () => {
 		assert.equal(publishRunResult(wrapped.running, watchedEnd())?.record.endedBy, "time_limit");
 	});
 
-	for (const [autoExit, expected] of [
-		[false, "operator"],
-		[true, "child"],
+	for (const [record, expected] of [
+		[{ type: "done", endedBy: "operator" }, "operator"],
+		[{ type: "done" }, "child"],
 	] as const) {
-		it(`a pane watcher files a plain done record with auto-exit ${autoExit} as ended by ${expected}`, async () => {
+		it(`a pane watcher files the exit record ${JSON.stringify(record)} as ended by ${expected}`, async () => {
 			const savedMux = process.env.PI_SUBAGENT_MUX;
 			process.env.PI_SUBAGENT_MUX = "tmux";
 			try {
 				const { running, store, reservation } = setup([user("task"), assistant("Notes.")], {
 					mode: "interactive",
-					autoExit,
+					autoExit: false,
 					surface: "pi-subagents-nonexistent-surface",
 				});
 				const ac = new AbortController();
@@ -164,7 +181,7 @@ describe("run records say who ended the run (T70)", () => {
 						cleanupNoSessionSessionFile() {},
 						async closeRunningSurface() {},
 						async pollForExit() {
-							return { reason: "done", exitCode: 0 };
+							return __pollForExitTest__.interpretExitSidecar(record);
 						},
 					} as never,
 					ac.signal,
@@ -196,43 +213,32 @@ describe("run records say who ended the run (T70)", () => {
 });
 
 describe("untyped runs list the files they wrote (T70)", () => {
-	const nested = (id: string, name: string, path: string, status: "ok" | "error" = "ok") => ({
-		id,
-		name,
-		arguments: { path },
-		status,
-	});
+	const written = (path: string): SessionEntry =>
+		({
+			type: "custom",
+			id: `w-${path}`,
+			customType: SUBAGENT_WRITTEN_FILE_ENTRY,
+			data: { path },
+		}) as unknown as SessionEntry;
 	const entries = (): SessionEntry[] => [
 		header as SessionEntry,
-		toolCall("write", { path: "before-launch.md" }, "w0"),
-		toolResult("write", "w0", "ok"),
+		written("/work/child/before-launch.md"),
 		user("task"),
-		toolCall("write", { path: "notes/report.md" }, "w1"),
-		toolResult("write", "w1", "ok"),
-		toolCall("edit", { path: "/abs/plan.md" }, "e1"),
-		toolResult("edit", "e1", "ok"),
-		toolCall("write", { path: "denied.md" }, "w2"),
-		toolResult("write", "w2", "denied", true),
-		toolCall("codemode", { code: "..." }, "c1"),
-		toolResult("codemode", "c1", "ok", false, [
-			nested("n1", "write", "./notes/report.md"),
-			nested("n2", "edit", "design.md"),
-			nested("n3", "write", "failed.md", "error"),
-			nested("n4", "read", "read-only.md"),
-		]),
-		toolCall("edit", { path: "/work/child/design.md" }, "e2"),
-		toolResult("edit", "e2", "ok"),
+		written("/work/child/notes/report.md"),
+		written("/abs/plan.md"),
+		written("/work/child/notes/report.md"),
+		written("/work/child/design.md"),
 		assistant("Report."),
 	];
 
-	it("an untyped run lists this run's write and edit paths, absolute, deduplicated, in first-write order", () => {
-		const { record } = assembleResult(facts(entries(), { launchEntryCount: 3 }));
+	it("an untyped run lists this run's recorded write targets, deduplicated, in first-write order", () => {
+		const { record } = assembleResult(facts(entries(), { launchEntryCount: 2 }));
 		assert.equal(record.typed, false);
 		assert.deepEqual(record.artifacts, ["/work/child/notes/report.md", "/abs/plan.md", "/work/child/design.md"]);
 	});
 
 	it("a published untyped run lists them from its session file", () => {
-		const { running, store, reservation } = setup(entries(), { launchEntryCount: 3 });
+		const { running, store, reservation } = setup(entries(), { launchEntryCount: 2 });
 		publishRunResult(running, watchedEnd());
 		assert.deepEqual(store.read(reservation.runId)?.artifacts, [
 			"/work/child/notes/report.md",
@@ -243,7 +249,7 @@ describe("untyped runs list the files they wrote (T70)", () => {
 
 	it("a typed run keeps the child's own list", () => {
 		const typed = [...entries(), toolCall(DONE, DONE_ARGS, "d1"), toolResult(DONE, "d1", "ok")];
-		const { record } = assembleResult(facts(typed, { launchEntryCount: 3 }));
+		const { record } = assembleResult(facts(typed, { launchEntryCount: 2 }));
 		assert.equal(record.typed, true);
 		assert.deepEqual(record.artifacts, ["/abs/own.md"]);
 	});
