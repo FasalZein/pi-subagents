@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
+import type { RexPlacementPolicy } from "./mux/rex.ts";
 import type { ResultOutcome } from "./runtime/result-record.ts";
 import type { ResultTarget } from "./runtime/run-result.ts";
-import type { RexPlacementPolicy } from "./mux/rex.ts";
 import type { PersistedSubagentLaunchMetadata } from "./session/session-files.ts";
 
 /** What the rendered result needs from the receiving parent (D14); a resume passes it in. */
