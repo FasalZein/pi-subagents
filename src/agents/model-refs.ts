@@ -69,11 +69,9 @@ export function assertModelAllowed(
 /** Most candidates a refusal names (D22); the rest is counted, not listed. */
 const MAX_REFUSAL_CANDIDATES = 8;
 
-interface ModelChoiceRequest {
-	/** The model from the call: an exact ref, `provider/fragment` or a bare fragment, with an optional `:thinking`. */
+interface FragmentRequest {
+	/** The model part of the call without its level: `provider/fragment` or a bare fragment. */
 	requested: string;
-	/** The thinking parameter of the call. A `:thinking` suffix on `requested` wins over it. */
-	requestedThinking?: string;
 	/** The agent's accepted refs, its default ref included. Empty means the agent has no accepted list. */
 	accepted: readonly string[];
 	/** Pi's known models, searched only when `accepted` is empty. Ids stay whole, colons included. */
@@ -83,36 +81,12 @@ interface ModelChoiceRequest {
 	 * under several providers. A model inherited from the parent is not a default.
 	 */
 	defaultRef?: string;
-	/** The agent's default thinking level, picked when the accepted list names it for the chosen model. */
-	defaultThinking?: string;
-	/** The thinking level used when neither the call nor the accepted list fixes one. */
-	fallbackThinking?: string;
 	agentName?: string;
-}
-
-interface ModelChoice {
-	/** `provider/id` without thinking. */
-	model: string;
-	thinking: string | undefined;
-	/** True when the call or the accepted list fixed the level; false when it is only a fallback. */
-	explicitThinking: boolean;
 }
 
 function providerOf(modelKey: string): string | undefined {
 	const slash = modelKey.indexOf("/");
 	return slash === -1 ? undefined : modelKey.slice(0, slash);
-}
-
-/** Group refs by `provider/id`, in list order, with the thinking levels each one lists. */
-function groupRefsByModel(refs: readonly string[]): Map<string, Array<string | undefined>> {
-	const groups = new Map<string, Array<string | undefined>>();
-	for (const ref of refs) {
-		const { model, thinking } = splitModelRef(ref);
-		const levels = groups.get(model) ?? [];
-		if (!levels.includes(thinking)) levels.push(thinking);
-		groups.set(model, levels);
-	}
-	return groups;
 }
 
 /** Refs grouped by provider in list order, as `provider: a, b; other: c`; a ref without a provider stands alone. */
@@ -133,7 +107,7 @@ function formatCandidates(refs: readonly string[]): string {
 	return ` Candidates: ${formatRefsByProvider(refs.slice(0, MAX_REFUSAL_CANDIDATES))}${hidden > 0 ? ` (+${hidden} more)` : ""}.`;
 }
 
-function refuseModel(request: ModelChoiceRequest, reason: string, candidates: readonly string[]): never {
+function refuseModel(request: FragmentRequest, reason: string, candidates: readonly string[]): never {
 	const agent = request.agentName ?? "subagent";
 	const head =
 		request.accepted.length > 0
@@ -146,75 +120,20 @@ function refuseModel(request: ModelChoiceRequest, reason: string, candidates: re
 }
 
 /**
- * Resolve the model named in a launch or resume call (D22). An exact ref
- * wins; otherwise the provider part must be equal and the model part may be
- * a fragment. The search runs inside the accepted list, or inside Pi's known
- * models when the agent has no accepted list. Every refusal throws.
+ * Resolve a model fragment to one `provider/id` (D08, D22). The caller runs this
+ * only when no exact id matches, so an exact id never becomes ambiguous here.
+ * The provider part must be equal and the model part may be a fragment. The
+ * search runs inside the accepted list, or inside Pi's known models when the
+ * agent has no accepted list. Every refusal throws.
  */
-export function resolveModelChoice(request: ModelChoiceRequest): ModelChoice {
+export function matchModelFragment(request: FragmentRequest): string {
 	const restricted = request.accepted.length > 0;
-	const pool = restricted
-		? groupRefsByModel(request.accepted)
-		: new Map(
-				request.known.map((model): [string, Array<string | undefined>] => [
-					`${model.provider}/${model.id}`,
-					[undefined],
-				]),
-			);
-	const { model: name, thinking: suffixThinking } = splitRequestedRef(request.requested, pool);
-	const askedThinking = suffixThinking ?? request.requestedThinking;
-	// No accepted list and no known models: leave the name to Pi, as before.
-	if (pool.size === 0) {
-		return { model: name, thinking: askedThinking ?? request.fallbackThinking, explicitThinking: !!askedThinking };
-	}
-	const chosen = pool.has(name) ? name : matchFragment(request, name, pool, restricted);
-	const levels = pool.get(chosen) ?? [undefined];
-	const listedLevels = levels.filter((level): level is string => level !== undefined);
-	// A ref without a level accepts every level of its model.
-	if (!restricted || listedLevels.length < levels.length) {
-		return {
-			model: chosen,
-			thinking: askedThinking ?? request.fallbackThinking,
-			explicitThinking: !!askedThinking,
-		};
-	}
-	if (askedThinking) {
-		if (listedLevels.includes(askedThinking)) return { model: chosen, thinking: askedThinking, explicitThinking: true };
-		refuseModel(
-			request,
-			`thinking level '${askedThinking}' is not accepted for '${chosen}'`,
-			listedLevels.map((level) => `${chosen}:${level}`),
-		);
-	}
-	const defaultLevel =
-		request.defaultThinking && listedLevels.includes(request.defaultThinking)
-			? request.defaultThinking
-			: listedLevels[0];
-	return { model: chosen, thinking: defaultLevel, explicitThinking: true };
-}
-
-/**
- * Split the call's ref against the pool: a whole pool key stays whole, colons
- * included. A suffix after a known model is its level even when Pi does not
- * know it, so the refusal names the unsupported level.
- */
-function splitRequestedRef(ref: string, pool: Map<string, unknown>): { model: string; thinking?: string } {
-	if (pool.has(ref)) return { model: ref };
-	const idx = ref.lastIndexOf(":");
-	if (idx !== -1 && pool.has(ref.slice(0, idx))) return { model: ref.slice(0, idx), thinking: ref.slice(idx + 1) };
-	return splitModelRef(ref);
-}
-
-function matchFragment(
-	request: ModelChoiceRequest,
-	name: string,
-	pool: Map<string, Array<string | undefined>>,
-	restricted: boolean,
-): string {
+	const keys = restricted
+		? [...new Set(request.accepted.map((ref) => splitModelRef(ref).model))]
+		: request.known.map((model) => `${model.provider}/${model.id}`);
+	const name = request.requested;
 	const provider = providerOf(name);
 	const fragment = provider === undefined ? name : name.slice(provider.length + 1);
-	const keys = [...pool.keys()];
-	// Only an exact full ref is a fast path (resolveModelChoice); an unqualified id is a fragment like any other.
 	let matches = keys.filter(
 		(key) =>
 			(provider === undefined || providerOf(key) === provider) && key.slice(key.indexOf("/") + 1).includes(fragment),

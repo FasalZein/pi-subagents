@@ -112,7 +112,8 @@ export function resolveResumeLaunchMetadataForInvocation(
 			...(requestedThinking ? { ignoredThinkingOverride: requestedThinking } : {}),
 		};
 	}
-	const baseModel = requestedModel ?? launchMetadata.modelRef ?? launchMetadata.model;
+	const baseModel =
+		requestedModel ?? launchMetadata.invocationModelRef ?? launchMetadata.modelRef ?? launchMetadata.model;
 	if (!baseModel) {
 		throw new Error("Cannot apply thinking override without a persisted model.");
 	}
@@ -124,25 +125,33 @@ export function resolveResumeLaunchMetadataForInvocation(
 	};
 	const inheritedModelRef =
 		!launchMetadata.definitionModel && launchMetadata.modelSource === "parent" ? launchMetadata.modelRef : undefined;
-	const fallbackThinking = launchMetadata.definitionThinking ?? launchMetadata.thinking;
-	// D22: a resume with a model takes the launch path. A thinking-only resume
-	// keeps the persisted model as an exact ref.
+	const grantThinking = launchMetadata.definitionThinking ?? launchMetadata.thinking;
+	// D08, D22: a resume with a model takes the launch path; as in v2.9.2 the prior run's level
+	// is the fallback and its provider breaks a bare-id tie. A thinking-only resume keeps the
+	// persisted invocation model as an exact ref.
 	const { effectiveModel, effectiveThinking, effectiveModelRef } = requestedModel
 		? resolveCallModelRef({
 				model: requestedModel,
 				thinking: requestedThinking,
 				config,
 				inheritedModelRef,
-				fallbackThinking,
+				fallbackThinking: launchMetadata.thinking,
+				grantThinking,
+				tieBreakRef: launchMetadata.modelRef,
 				modelRegistry,
 			})
-		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, fallbackThinking, modelRegistry);
+		: resolveThinkingOnlyResume(baseModel, requestedThinking, config, inheritedModelRef, grantThinking, {
+				modelRegistry,
+				tieBreakRef: launchMetadata.modelRef,
+			});
 	return {
 		...launchMetadata,
 		timestamp: new Date().toISOString(),
 		model: effectiveModel,
 		thinking: effectiveThinking,
 		modelRef: effectiveModelRef,
+		// The resolved ref is also what this resume passes to Pi, so a later resume or wrap-up replays it.
+		invocationModelRef: effectiveModelRef,
 		modelSource: "resume-override",
 		...(requestedModel ? { requestedModelOverride: requestedModel } : {}),
 		...(requestedThinking ? { requestedThinkingOverride: requestedThinking } : {}),
@@ -155,11 +164,18 @@ function resolveThinkingOnlyResume(
 	config: AgentModelConfig,
 	inheritedModelRef: string | undefined,
 	fallbackThinking: string | undefined,
-	modelRegistry: ResumeServiceRuntime["modelRegistry"],
+	registry: { modelRegistry: ResumeServiceRuntime["modelRegistry"]; tieBreakRef: string | undefined },
 ): ReturnType<typeof normalizeModelRef> {
+	const { modelRegistry } = registry;
 	const requested = splitModelRefThinking(baseModel, requestedThinking);
 	const explicitThinking = requested.explicitThinking || requestedThinking != null;
-	const resolved = resolveAvailableModelRef(requested.model, requested.thinking, explicitThinking, modelRegistry);
+	const resolved = resolveAvailableModelRef(
+		requested.model,
+		requested.thinking,
+		explicitThinking,
+		modelRegistry,
+		registry.tieBreakRef,
+	);
 	const normalized = normalizeModelRef(resolved.model, resolved.thinking);
 	const implicitRef = resolveImplicitModelGrant(config, modelRegistry, inheritedModelRef, fallbackThinking);
 	assertModelAllowed(normalized.effectiveModelRef, config.allowedModels, config.agentName, implicitRef ? [implicitRef] : []);
@@ -176,6 +192,9 @@ function mergeResumeInvocationMetadata(
 		// A child can append metadata to its own session. Keep grant authority
 		// anchored to the first launch entry while allowing later entries to
 		// carry legitimate invocation changes such as model and thinking.
+		// The invocation ref pairs with the model ref of the same entry; an entry without one replays its model ref.
+		invocationModelRef:
+			laterMetadata.modelRef !== undefined ? laterMetadata.invocationModelRef : launchMetadata.invocationModelRef,
 		spawnBudget: launchMetadata.spawnBudget,
 		spawnableAgents: launchMetadata.spawnableAgents,
 		denyTools: launchMetadata.denyTools,

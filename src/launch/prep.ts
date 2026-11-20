@@ -304,7 +304,8 @@ export async function getPersistedSessionParityArgs(
 ): Promise<string[]> {
 	const args: string[] = [];
 	if (!metadata) return args;
-	if (metadata.modelRef) args.push("--model", metadata.modelRef);
+	const modelArg = metadata.invocationModelRef ?? metadata.modelRef;
+	if (modelArg) args.push("--model", modelArg);
 	if (metadata.noContextFiles) args.push("--no-context-files");
 	args.push(...getSubagentToolLaunchArgs(metadata.tools, new Set(metadata.denyTools), spawningAllowed));
 	args.push(
@@ -355,6 +356,8 @@ export function buildPersistedSubagentLaunchMetadata(
 				: prepared.effectiveModel
 					? "parent"
 					: undefined;
+	// D08: the display ref can name the registry ref of a bare default; resume and wrap-up replay what Pi got.
+	const invocationModelRef = getPreparedModel(prepared);
 
 	return {
 		version: 1,
@@ -380,6 +383,7 @@ export function buildPersistedSubagentLaunchMetadata(
 		...(prepared.effectiveModel ? { model: prepared.effectiveModel } : {}),
 		...(prepared.effectiveThinking ? { thinking: prepared.effectiveThinking } : {}),
 		...(prepared.effectiveModelRef ? { modelRef: prepared.effectiveModelRef } : {}),
+		...(invocationModelRef ? { invocationModelRef } : {}),
 		...(prepared.agentDefs?.model ? { definitionModel: prepared.agentDefs.model } : {}),
 		...(prepared.agentDefs?.thinking ? { definitionThinking: prepared.agentDefs.thinking } : {}),
 		...(prepared.agentDefs?.allowedModels ? { allowedModels: prepared.agentDefs.allowedModels } : {}),

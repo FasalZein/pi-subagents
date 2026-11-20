@@ -89,10 +89,8 @@ async function getWrapUpLaunchParts(running: RunningSubagent, signal?: AbortSign
 	const metadata = running.launchMetadata;
 	if (!metadata) throw new Error("The original launch metadata is unavailable.");
 	const subagentDonePath = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "subagent-done.ts");
-	const invocationMetadata = {
-		...metadata,
-		...(running.modelRef ? { modelRef: running.modelRef } : {}),
-	};
+	// D08: replay the invocation ref of the launch or resume metadata, never the display ref of running.modelRef.
+	const invocationMetadata = metadata;
 	const extensionArgs = getExtensionLaunchArgs(invocationMetadata.extensions, subagentDonePath, false);
 	const parityArgs = [
 		...getPersistedPromptLaunchArgs(invocationMetadata),
