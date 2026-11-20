@@ -343,6 +343,45 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(runningSubagents.get("id-child-one"), undefined, "child 1 had ended and is not stopped");
 	});
 
+	// T78 fix round 1 (review P1): expected values from cf6dbf4 src/runtime/wait-result.ts, where the
+	// cached-result branch comes before any abort check: a launch wait that starts after Esc still
+	// returns the report of a child that had already ended, and stops only the child still running.
+	it("D04a: Esc before the launch wait starts: the ended child's report is in the reply; the running child is stopped", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const abort = new AbortController();
+		const launch = launchTwo(parent, abort.signal, false);
+		await sleep(10);
+		launch.finish["child-one"](endOf("child-one", "ONE-ENDED-REPORT"));
+		await sleep(10);
+		abort.abort();
+		launch.releaseLaunch2();
+		const result = await launch.exec;
+		const children = (result.details as { children: Array<{ id: string; status?: string; error?: string }> }).children;
+		const one = children.find((child) => child.id === "id-child-one");
+		assert.equal(one?.error, undefined, "child 1's report is not hidden as interrupted");
+		assert.equal(one?.status, "completed");
+		assert.match(result.content[0].text, /ONE-ENDED-REPORT/);
+		const two = runningSubagents.get("id-child-two");
+		assert.equal(two?.stopRequestedBy, "parent", "child 2 still ran and was stopped");
+	});
+
+	it("D04a: a resume or single launch wait that starts after Esc returns the report of a child that already ended", async () => {
+		const parent = mockParent();
+		parent.fire("agent_start");
+		const running: RunningSubagent = { ...blockingRunning("ended-child"), async: undefined };
+		setRunningSubagentForTest(running);
+		const end = endOf("ended-child", "ENDED-REPORT");
+		running.completionPromise = Promise.resolve(end);
+		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
+		const abort = new AbortController();
+		abort.abort();
+		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
+		assert.equal((result.details as { error?: string }).error, undefined);
+		assert.match(result.content[0].text, /ENDED-REPORT/);
+		assert.equal(running.stopRequestedBy, undefined, "an ended child is not stopped");
+	});
+
 	it("an early caller_ping is taken by the launch wait like any queued result", async () => {
 		const parent = mockParent();
 		parent.fire("agent_start");

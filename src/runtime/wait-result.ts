@@ -78,12 +78,10 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	const match = runtime.findTrackedSubagent(params.id);
 	// A run end that is queued without a cached result (an early ping) is taken like any other.
 	const queued = !match.cached && !match.running ? queuedRunEnd(params.id) : undefined;
+	// D04a: only launch and resume wait here (subagent_wait joins in wait-join.ts). As in v2.9.2
+	// (cf6dbf4), an ended run's result wins over an abort; the aborted call's settleWaitReply still
+	// hands every result it holds back to the queue (R4).
 	if (queued) {
-		if (signal?.aborted) {
-			return getSubagentWaitErrorResult(`Waiting for sub-agent "${params.id}" was interrupted.`, "interrupted", {
-				id: params.id,
-			});
-		}
 		const status = queued.customType === "subagent_ping" ? "pinged" : queued.details.status;
 		return {
 			content: [{ type: "text", text: queued.content }],
@@ -97,12 +95,6 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 	}
 
 	const cached = match.cached;
-	if (cached && signal?.aborted) {
-		// R4: an aborted wait takes nothing; a queued result stays in the queue.
-		return getSubagentWaitErrorResult(`Waiting for sub-agent "${cached.name}" was interrupted.`, "interrupted", {
-			id: cached.id,
-		});
-	}
 	if (cached) {
 		if (cached.deliveryState !== "detached" && !cached.deliveredTo) {
 			return getSubagentWaitErrorResult(
@@ -123,8 +115,8 @@ export async function waitForSubagentResult(params: WaitParams, runtime: WaitRun
 		});
 	}
 
-	// R4 and D16: a wait that starts aborted takes nothing and stops nothing; the run keeps running
-	// and its end goes out as a message.
+	// R4: a wait that starts aborted on a running run takes nothing; the launch or resume that called it
+	// then stops the run (D04a, getLaunchedSubagentResult).
 	if (signal?.aborted) {
 		return getSubagentWaitErrorResult(`Waiting for sub-agent "${running.name}" was interrupted.`, "interrupted", {
 			id: running.id,
