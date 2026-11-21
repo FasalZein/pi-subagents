@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { runsInMemory } from "../launch/policy.ts";
 import { traceSubagentLaunch } from "../launch/trace.ts";
-import type { PollResult } from "../mux/poll.ts";
+import type { ChildProcessProof, PollResult } from "../mux/poll.ts";
 import type { MuxBackendAdapter } from "../mux/backend.ts";
 import { consumeSubagentExitSignal, currentMuxAdapter, pollForExit } from "../mux.ts";
 import { hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
@@ -309,7 +309,8 @@ async function watchInteractiveGeneration(
 				? { toolCallId: pollResult.acceptedCall.toolCallId, dataError: pollResult.acceptedCall.dataError !== undefined }
 				: undefined,
 		});
-		const lateExitSignal = pollResult.outputTokens === undefined ? consumeSubagentExitSignal(sessionFile) : undefined;
+		const lateExitSignal =
+			pollResult.outputTokens === undefined ? consumeSubagentExitSignal(sessionFile, "child-exited") : undefined;
 		// One outcome for storage and both carriers: the child's own exit record outranks the shell's
 		// exit status, so a late error record never becomes a success because the shell reported 0.
 		const end = lateExitSignal && pollResult.reason === "sentinel" ? lateExitSignal : pollResult;
@@ -485,13 +486,13 @@ async function pollForProgramSurfaceExit(
 	onTick: () => void,
 ): Promise<PollResult> {
 	while (!signal.aborted) {
-		const completion = readProgramCompletion(running);
+		const completion = readProgramCompletion(running, "child-may-run");
 		if (completion) return completion;
 		if (running.zellijTarget && running.surface) {
 			const exited = await adapter.checkExit?.(running.surface, running.zellijTarget);
 			// The child can write its completion and exit while the liveness query runs: a pane found
 			// gone is a watcher error only when no completion record or shell status exists by then.
-			if (exited) return readProgramCompletion(running) ?? exited;
+			if (exited) return readProgramCompletion(running, "child-exited") ?? exited;
 		}
 		onTick();
 		await waitForPoll(1000, signal);
@@ -500,8 +501,8 @@ async function pollForProgramSurfaceExit(
 }
 
 /** The child's exit record, else the shell's exit status from the done sentinel, else null. */
-function readProgramCompletion(running: RunningSubagent): PollResult | null {
-	const exit = consumeSubagentExitSignal(running.sessionFile);
+function readProgramCompletion(running: RunningSubagent, proof: ChildProcessProof): PollResult | null {
+	const exit = consumeSubagentExitSignal(running.sessionFile, proof);
 	if (exit) return exit;
 	if (running.doneSentinelFile && existsSync(running.doneSentinelFile)) {
 		const match = readFileSync(running.doneSentinelFile, "utf8").match(/__SUBAGENT_DONE_(\d+)__/);
