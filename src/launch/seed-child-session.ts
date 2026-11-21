@@ -1,10 +1,26 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import type { AgentDefaults } from "../agents/definitions.ts";
 import { ChildSessionStorage } from "../session/child-session-storage.ts";
-import type { SubagentSessionMode } from "../session/session-files.ts";
+import { resolveEffectiveSessionMode, type SubagentSessionMode } from "../session/session-files.ts";
 import type { SubagentParamsInput } from "../types.ts";
 import { buildChildContextBoundary, isChildContextBoundaryDisabled } from "./context-boundary.ts";
+import { definitionRunsInMemory, resolveSubagentNoSession } from "./policy.ts";
 import type { PreparedSubagentLaunch, SubagentLaunchContext } from "./prep.ts";
+
+/** The session a child gets: its seed mode, or an empty Pi in-memory session that ignores any seed. */
+export type ChildSessionKind = SubagentSessionMode | "in-memory";
+
+/**
+ * The session a launch of this definition gives the child, by the rules of the
+ * launch (getChildSeedMode, getPreparedSessionLaunchArgs), so the index and the
+ * agent detail say what the child sees (D19, D13).
+ */
+export function resolveChildSessionKind(agentDefs: AgentDefaults | null): ChildSessionKind {
+	if (definitionRunsInMemory(agentDefs)) return "in-memory";
+	const noSession = resolveSubagentNoSession(agentDefs);
+	return getChildSeedMode(resolveEffectiveSessionMode({}, agentDefs), noSession) ?? "standalone";
+}
 
 export function getNoSessionSeedMode(
 	sessionMode: SubagentSessionMode,

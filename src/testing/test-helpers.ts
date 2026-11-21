@@ -54,7 +54,7 @@ import {
 	resolveResumeLaunchMetadata,
 } from "../launch/resume.ts";
 import { resolveSubagentRuntimePaths } from "../launch/runtime-paths.ts";
-import { getNoSessionSeedMode } from "../launch/seed-child-session.ts";
+import { getNoSessionSeedMode, resolveChildSessionKind } from "../launch/seed-child-session.ts";
 import {
 	clearPublishedRunningSubagentCountForTest,
 	publishRunningSubagentCount,
@@ -66,7 +66,6 @@ import {
 	type PersistedSubagentLaunchMetadata,
 	readSubagentLaunchMetadata,
 	resolveEffectiveSessionMode,
-	resolveTaskSessionMode,
 	type SubagentSessionMode,
 	writeSubagentLaunchMetadataEntryWhenReady,
 	writeSubagentModelStateEntries,
@@ -96,9 +95,7 @@ export function getEffectiveAgentDefinitionsForTest(baseCwd = process.cwd()) {
 }
 
 export function getAgentListEntriesForTest(baseCwd = process.cwd()) {
-	return getAgentListEntries(baseCwd, (agentDefs) =>
-		resolveTaskSessionMode(agentDefs, resolveSubagentNoSession, getNoSessionSeedMode),
-	);
+	return getAgentListEntries(baseCwd, resolveChildSessionKind);
 }
 
 /**
@@ -192,7 +189,7 @@ export function seedSubagentSessionFileForTest(
 }
 
 export function resolveTaskSessionModeForTest(agentDefs: AgentDefaults | null) {
-	return resolveTaskSessionMode(agentDefs, resolveSubagentNoSession, getNoSessionSeedMode);
+	return resolveChildSessionKind(agentDefs);
 }
 
 export async function writeSubagentLaunchMetadataEntryForTest(path: string, metadata: PersistedSubagentLaunchMetadata) {

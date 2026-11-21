@@ -311,8 +311,18 @@ export function resolveCallModelRef(request: CallModelRequest): ReturnType<typeo
 	return resolved;
 }
 
-export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Promise<ChildLaunchPlan> {
-	const { params, agentDefs, parentCwd, parentSessionDir } = options;
+/** What the model of a launch depends on: the call, the definition, Pi's models and the parent's model. */
+interface LaunchModelOptions {
+	params: Pick<SubagentParamsInput, "model" | "thinking" | "agent">;
+	agentDefs: Pick<AgentDefaults, "model" | "thinking" | "allowedModels"> | null;
+	modelRegistry?: ModelRegistryLike;
+	parentModelRef?: string;
+	parentThinking?: string;
+}
+
+/** The model and level of a launch (D22); the agent detail shows its default with no model in the call. */
+export function resolveLaunchModel(options: LaunchModelOptions): Partial<ReturnType<typeof normalizeModelRef>> {
+	const { params, agentDefs } = options;
 	const hasAllowedModels = !!agentDefs?.allowedModels?.trim();
 	const resolveRef = (
 		model: string | undefined,
@@ -383,18 +393,22 @@ export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Pro
 		}
 		return ref;
 	};
-	const { effectiveModel, effectiveThinking, effectiveModelRef } =
-		params.model != null
-			? resolveCallModelRef({
-					model: params.model,
-					thinking: params.thinking,
-					config: modelConfig,
-					grantRef: implicitRef,
-					fallbackThinking,
-					tieBreakRef: options.parentModelRef,
-					modelRegistry: options.modelRegistry,
-				})
-			: resolveDefaultModel();
+	return params.model != null
+		? resolveCallModelRef({
+				model: params.model,
+				thinking: params.thinking,
+				config: modelConfig,
+				grantRef: implicitRef,
+				fallbackThinking,
+				tieBreakRef: options.parentModelRef,
+				modelRegistry: options.modelRegistry,
+			})
+		: resolveDefaultModel();
+}
+
+export async function buildChildLaunchPlan(options: ChildLaunchPlanOptions): Promise<ChildLaunchPlan> {
+	const { params, agentDefs, parentCwd, parentSessionDir } = options;
+	const { effectiveModel, effectiveThinking, effectiveModelRef } = resolveLaunchModel(options);
 
 	const runtimePaths = resolveSubagentRuntimePaths(params, agentDefs, parentCwd, parentSessionDir);
 	const subagentSessionFile = generateSubagentSessionFile(

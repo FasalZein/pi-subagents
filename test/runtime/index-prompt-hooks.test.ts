@@ -1,4 +1,4 @@
-import { cpSync } from "node:fs";
+import { cpSync, rmSync } from "node:fs";
 import {
 	buildSystemPrompt,
 	normalizeBuildSystemPromptOptions,
@@ -451,6 +451,19 @@ describe("agent index at prompt start", () => {
 		const lines = section.split("\n");
 		assert.ok(!lines.some((line) => line.startsWith("- agent-079: ")), "agent-079 has no line");
 		assert.match(lines.at(-1) ?? "", /^More agents: .*\bagent-079\b.*\.$/);
+		assert.doesNotMatch(section, /\bhidden\b/);
+	});
+
+	it("names a lone descriptionless agent without subagent_agents, and no denied one (T86)", async () => {
+		process.env.PI_SUBAGENT_AGENT = "coordinator";
+		process.env.PI_SUBAGENT_SPAWNABLE = "true";
+		process.env.PI_DENY_TOOLS = "subagent_agents";
+		const { agentsDir, handlers, ctx } = setup({ all: [{ name: "subagent" }], active: ["subagent"] });
+		for (const name of ["reviewer", "scout"]) rmSync(join(agentsDir, `${name}.md`));
+		writeAgent(agentsDir, "solo", "mode: background");
+		writeAgent(agentsDir, "hidden", "mode: background\nvisible-to: root");
+		const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
+		assert.equal(section.split("\n").at(-1), "More agents: solo.", section);
 		assert.doesNotMatch(section, /\bhidden\b/);
 	});
 

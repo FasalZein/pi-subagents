@@ -131,6 +131,11 @@ export function runsInMemory(running: Pick<RunningSubagent, "noSession" | "timeo
 	return running.noSession === true && running.timeoutWarnThreshold === undefined;
 }
 
+/** D13 (T73): a no-session child runs in Pi's in-memory mode unless a strict wrap-up needs its transcript. */
+export function definitionRunsInMemory(agentDefs: AgentDefaults | null): boolean {
+	return runsInMemory({ noSession: resolveSubagentNoSession(agentDefs), ...resolveSubagentTimeoutState(agentDefs) });
+}
+
 export function resolveSubagentParentClosePolicy(agentDefs: AgentDefaults | null): ParentClosePolicy {
 	return agentDefs?.parentClosePolicy ?? "terminate";
 }

@@ -428,18 +428,6 @@ export function resolveEffectiveSessionMode(
 	return "lineage-only";
 }
 
-type ResolveSubagentNoSession = (agentDefs: AgentDefaults | null) => boolean;
-
-export function resolveTaskSessionMode(
-	agentDefs: AgentDefaults | null,
-	resolveSubagentNoSession: ResolveSubagentNoSession,
-	getNoSessionSeedMode: (sessionMode: SubagentSessionMode) => Exclude<SubagentSessionMode, "standalone"> | null,
-): SubagentSessionMode {
-	const sessionMode = resolveEffectiveSessionMode({}, agentDefs);
-	if (!resolveSubagentNoSession(agentDefs)) return sessionMode;
-	return getNoSessionSeedMode(sessionMode) ?? sessionMode;
-}
-
 export function buildPiPromptArgs(skills: string[], taskArg: string, directTask: boolean): string[] {
 	const skillPrompts = skills.map((skill) => `/skill:${skill}`);
 	const isArtifactTask = taskArg.startsWith("@");

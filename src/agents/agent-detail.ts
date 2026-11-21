@@ -1,4 +1,4 @@
-import { type ModelRegistryLike, normalizeModelRef, resolveImplicitModelGrant } from "../launch/child-launch-plan.ts";
+import { type ModelRegistryLike, resolveAvailableModelRef, resolveLaunchModel } from "../launch/child-launch-plan.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
 import { formatTimeoutSeconds } from "../runtime/timeout-budget.ts";
 import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
@@ -9,7 +9,7 @@ import {
 } from "../tools/context-reminders.ts";
 import { type AgentListEntry, describeVerifiedFanOut } from "./agent-list.ts";
 import type { IndexLaunchPolicy } from "./index-section.ts";
-import { formatRefsByProvider, parseAllowedModels } from "./model-refs.ts";
+import { formatRefsByProvider, parseAllowedModels, splitModelRef } from "./model-refs.ts";
 
 /** The parent's model at the time of the call, which an agent without a default inherits (D22). */
 export interface ParentModel {
@@ -29,44 +29,58 @@ export interface AgentDetailContext {
 }
 
 /**
- * The default and accepted refs as the launch resolver computes them
- * (resolveImplicitModelGrant with the registry, the parent ref and the
- * effective level, as in buildChildLaunchPlan).
+ * The ref a launch without a model runs on: the launch resolver's ref
+ * (resolveLaunchModel), without a level that Pi drops because the model does
+ * not support it. That level is never explicit here, so Pi lowers it; a
+ * launch that names it is refused. A model the registry cannot resolve keeps
+ * its level, as the launch passes it.
  */
-function resolveModels(entry: AgentListEntry, parent: ParentModel): { defaultRef?: string; accepted?: string[] } {
-	const fallbackThinking = entry.thinking ?? parent.thinking;
-	const inheritedModelRef = entry.model ? undefined : normalizeModelRef(parent.ref, fallbackThinking).effectiveModelRef;
-	const defaultRef = resolveImplicitModelGrant(
-		{
-			definitionModel: entry.model,
-			definitionThinking: entry.thinking,
-			allowedModels: entry.allowedModels,
-			agentName: entry.name,
-		},
-		parent.registry,
-		inheritedModelRef,
-		fallbackThinking,
-	);
-	const allowed = parseAllowedModels(entry.allowedModels);
-	if (allowed.length === 0) return { defaultRef };
-	return { defaultRef, accepted: [...new Set([...(defaultRef ? [defaultRef] : []), ...allowed])] };
+function resolveDefaultRef(entry: AgentListEntry, parent: ParentModel): string | undefined {
+	const launched = resolveLaunchModel({
+		params: { agent: entry.name },
+		agentDefs: { model: entry.model, thinking: entry.thinking, allowedModels: entry.allowedModels },
+		modelRegistry: parent.registry,
+		parentModelRef: parent.ref,
+		parentThinking: parent.thinking,
+	}).effectiveModelRef;
+	if (!launched) return undefined;
+	const { model, thinking } = splitModelRef(launched);
+	if (!thinking) return launched;
+	try {
+		const runs = resolveAvailableModelRef(model, thinking, false, parent.registry, parent.ref);
+		return runs.thinking ? launched : model;
+	} catch {
+		return launched;
+	}
 }
 
 function renderModels(entry: AgentListEntry, parent: ParentModel): string[] {
-	const { defaultRef, accepted } = resolveModels(entry, parent);
+	let defaultRef: string | undefined;
+	let defaultLine: string;
+	try {
+		defaultRef = resolveDefaultRef(entry, parent);
+		defaultLine = `default model: ${defaultRef ?? "the parent's model"}`;
+	} catch (error) {
+		// The same error fails a launch without a model.
+		defaultLine = `default model: none, a launch without a model fails: ${(error as Error).message}`;
+	}
+	const allowed = parseAllowedModels(entry.allowedModels);
+	// The default counts as accepted (D22).
+	const accepted = allowed.length > 0 ? [...new Set([...(defaultRef ? [defaultRef] : []), ...allowed])] : undefined;
 	const models =
 		entry.allowModelOverride === false
 			? "models: the default only (overrides are ignored)"
 			: accepted
 				? `models: ${formatRefsByProvider(accepted)}`
 				: "models: any model ref";
-	return [`default model: ${defaultRef ?? "the parent's model"}`, models];
+	return [defaultLine, models];
 }
 
 const SESSION_MODES = {
 	standalone: "fresh chat, needs a full brief",
 	"lineage-only": "fresh chat linked to this session, needs a full brief",
 	fork: "copy of this chat",
+	"in-memory": "fresh chat in memory, not saved, needs a full brief",
 } as const satisfies Record<AgentListEntry["sessionMode"], string>;
 
 /**
