@@ -32,11 +32,11 @@ export interface RunDetailFacts {
  * for its model details. A row that knows nothing (an old session message) takes the session's model only
  * when every entry names the same one; otherwise it shows none rather than another run's.
  */
-export function readRunDetailFacts(sessionFile: string | undefined, own: RunModel = {}): RunDetailFacts {
+export function readRunDetailFacts(sessionFile: string | undefined, own: RunModel): RunDetailFacts {
 	const entries = sessionFile ? readSubagentLaunchMetadataEntries(sessionFile) : [];
 	const grants = entries[0];
 	if (own.facts) return { grants, model: { ref: own.ref ?? own.facts.modelRef, facts: own.facts } };
-	const refs = new Set(entries.flatMap((entry) => (entry.modelRef ? [entry.modelRef] : [])));
+	const refs = new Set(entries.map((entry) => entry.modelRef).filter(Boolean));
 	const ref = own.ref ?? (refs.size === 1 ? [...refs][0] : undefined);
 	return { grants, model: { ref, facts: ref ? entries.findLast((entry) => entry.modelRef === ref) : undefined } };
 }

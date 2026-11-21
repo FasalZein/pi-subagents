@@ -216,8 +216,8 @@ export function buildRunningItems(ctx: OverlayContext): OverlayItem[] {
 			stats.push(`${compactCount(ctxUsed)}/${compactCount(a.modelContextWindow)} ctx`);
 		} else if (a.contextLabel) {
 			stats.push(a.contextLabel);
-		} else if ((a.contextTokens ?? 0) > 0) {
-			stats.push(`${compactCount(a.contextTokens ?? 0)} tokens`);
+		} else if (ctxUsed > 0) {
+			stats.push(`${compactCount(ctxUsed)} tokens`);
 		}
 		stats.push(formatElapsed(a.startTime));
 
