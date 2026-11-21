@@ -177,13 +177,13 @@ describe("run records say who ended the run (T70)", () => {
 
 		const killed = setup([user("task")]);
 		setRunningSubagentForTest(killed.running);
-		let killTool: { execute: (id: string, params: { id: string }) => Promise<unknown> } | undefined;
+		let killTool: { execute: (id: string, params: { runId: string }) => Promise<unknown> } | undefined;
 		const pi = { registerTool: (tool: typeof killTool) => (killTool = tool) } as unknown as Parameters<
 			typeof registerSubagentKillTool
 		>[0];
 		registerSubagentKillTool(pi, () => true, stopRunningSubagent);
 		assert.ok(killTool, "subagent_kill is registered");
-		await killTool.execute("kill-1", { id: killed.running.id });
+		await killTool.execute("kill-1", { runId: killed.running.id });
 		const killEnd = publishRunResult(killed.running, watchedEnd({ stopped: true }));
 		assert.equal(killEnd?.record.endedBy, "parent");
 		assert.match(textOf(killEnd), /cancelled: stopped by the parent/);

@@ -44,7 +44,7 @@ import { runningSubagents } from ${JSON.stringify(srcUrl("src/runtime/state.ts")
 let tool;
 registerSubagentWaitTool({ registerTool: (definition) => (tool = definition) }, () => true, { mayLaunch: () => true });
 const ctx = { cwd: ${JSON.stringify(cwd)}, sessionManager: { getSessionId: () => ${JSON.stringify(sessionId)} } };
-const reply = await tool.execute("c1", { ids: [${JSON.stringify(runId)}] }, undefined, undefined, ctx);
+const reply = await tool.execute("c1", { runIds: [${JSON.stringify(runId)}] }, undefined, undefined, ctx);
 process.stdout.write(JSON.stringify({ text: reply.content[0].text, details: reply.details, running: runningSubagents.size }));
 `;
 }

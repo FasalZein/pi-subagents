@@ -4,6 +4,7 @@
 // Shapes come from real candidate sessions (T54 run-m1, T57 run-a-m1, the T59a smokes).
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { scriptCoverage } from "./candidate-evidence.mjs";
 import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
 	childEnded,
@@ -47,7 +48,9 @@ const launchNested = (names, raw = false) => ({
 	name: "subagent",
 	arguments: raw ? { children: JSON.stringify(launchArgs(names).children) } : launchArgs(names),
 });
-const waitNested = (ids, extra = {}) => ({ name: "subagent_wait", arguments: { ids, ...extra } });
+// The current wait key (T88); waitRecordedIds is the shape of calls recorded before T88.
+const waitNested = (runIds, extra = {}) => ({ name: "subagent_wait", arguments: { runIds, ...extra } });
+const waitRecordedIds = (ids) => ({ name: "subagent_wait", arguments: { ids } });
 const answer = (text = ALL_LINES) => assistant("stop", text);
 const children = (scenario) =>
 	scenario.expectedChildRoles.map((role, i) => ({
@@ -303,4 +306,32 @@ test("[T59a] a digest is no transfer; a result message after it is the run's one
 	assert.deepEqual([delivery.runs[0].handover, delivery.runs[0].transfers], ["delivered", 1]);
 	assert.deepEqual([delivery.runs[1].handover, delivery.runs[1].transfers], ["digest", 0]);
 	assert.deepEqual([delivery.transfers, delivery.extraCopies, delivery.digests, delivery.undelivered], [1, 0, 7, 0]);
+});
+
+// T88 fix round 1 (review P1): the wait tool takes runIds (the launch reply key). Differential: the runs
+// the real wait tool targets (its own schema through Pi's validation, then its id-or-name rule) against
+// the runs the scorer credits as joined. Older recorded calls that used ids keep their coverage.
+test("[T88] a wait by runIds joins exactly the runs the wait tool targets; recorded ids calls still score", async () => {
+	const { validateToolArguments } = await import("@earendil-works/pi-ai");
+	const { registerSubagentWaitTool } = await import("../../src/tools/wait-tool.ts");
+	let waitTool;
+	registerSubagentWaitTool({ registerTool: (tool) => (waitTool = tool) }, () => true, { mayLaunch: () => true });
+	const launched = new Set(IDS);
+	const targeted = (args) => {
+		const valid = validateToolArguments(waitTool, { type: "toolCall", id: "w", name: "subagent_wait", arguments: args });
+		if (valid.mode === "any") return new Set();
+		if (valid.runIds === undefined) return launched;
+		return new Set(FOLDERS.filter((f) => valid.runIds.includes(f.runId) || valid.runIds.includes(f.name)).map((f) => f.runId));
+	};
+	const shapes = [{ runIds: [IDS[0]] }, { runIds: IDS.slice(2, 5) }, { runIds: [NAMES[7], IDS[1]] }, { runIds: IDS }, {}, { runIds: IDS, mode: "any" }];
+	for (const args of shapes) {
+		const events = [...script("c1", [launchNested(NAMES), { name: "subagent_wait", arguments: args }], ALL_LINES), answer()];
+		const [coverage] = scriptCoverage(events, FOLDERS).values();
+		assert.deepEqual([...coverage.joined].sort(), [...targeted(args)].sort(), JSON.stringify(args));
+	}
+	// A call from before T88 (recorded transcripts) used ids; the scorer keeps reading it.
+	const recorded = [...script("c1", [launchNested(NAMES), waitRecordedIds([IDS[0]])], ALL_LINES), answer()];
+	assert.deepEqual([...[...scriptCoverage(recorded, FOLDERS).values()][0].joined], [IDS[0]]);
+	// The current tool refuses that key, so a new transcript with it records a failed call.
+	assert.throws(() => targeted({ ids: [IDS[0]] }));
 });

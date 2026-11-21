@@ -102,7 +102,7 @@ async function deliverAndLookUp(spec: Case) {
 		mayLaunch: () => true,
 	});
 	const ctx = { cwd, sessionManager: { getSessionId: () => sessionId } };
-	const sameProcess = await tool.execute("c1", { ids: [running.id] }, undefined, undefined, ctx);
+	const sameProcess = await tool.execute("c1", { runIds: [running.id] }, undefined, undefined, ctx);
 	return {
 		delivered: delivered[0]!,
 		sameProcess: sameProcess.content[0].text as string,

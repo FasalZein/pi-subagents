@@ -265,7 +265,7 @@ describe("extension registration gating", () => {
 			resume: await settle(
 				tool("subagent_resume").execute("call-1", { sessionFile: join(dir, "x.jsonl") }, undefined, undefined, ctx),
 			),
-			kill: await settle(tool("subagent_kill").execute("call-2", { id: "worker" })),
+			kill: await settle(tool("subagent_kill").execute("call-2", { runId: "worker" })),
 			agents: await settle(tool("subagent_agents").execute("call-3", {}, undefined, undefined, ctx)),
 			wait: await settle(tool("subagent_wait").execute("call-4", {}, undefined, undefined, ctx)),
 		});
@@ -303,7 +303,7 @@ describe("extension registration gating", () => {
 			sessionFile: join(dir, "stop-me.jsonl"),
 		};
 		runningSubagents.set(running.id, running);
-		const result = await kill.execute("call-kill", { id: running.id });
+		const result = await kill.execute("call-kill", { runId: running.id });
 		assert.equal(result.content[0]?.text, `Stopping subagent "stop-me" (stop-me-1).`);
 		assert.equal(running.phase, "stopping");
 	});

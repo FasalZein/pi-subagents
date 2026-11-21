@@ -222,7 +222,7 @@ function sequentialScript(count: number): string {
 	return [
 		`for (let i = 0; i < ${count}; i++) {`,
 		"  const launched = await tools.subagent({ children: [{ name: `seq-${i}`, task: 't', title: 'Seq', agent: 'worker-a' }] });",
-		"  await tools.subagent_wait({ ids: [launched.children[0].runId] });",
+		"  await tools.subagent_wait({ runIds: [launched.children[0].runId] });",
 		"}",
 		"throw new Error('workflow failed after its waits');",
 	].join("\n");
@@ -253,7 +253,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 			assert.ok(recent!.text.length <= 1900);
 
 			const first = parent.runIds[0]!;
-			await prompt(parent, "look up", [fauxToolCall("subagent_wait", { ids: [first] }, { id: "l1" })]);
+			await prompt(parent, "look up", [fauxToolCall("subagent_wait", { runIds: [first] }, { id: "l1" })]);
 			const lookup = parent.toolResults("subagent_wait")[1]!;
 			assert.match(lookup.text, /REPORT OF seq-0/);
 			assert.match(lookup.text, new RegExp(`run: ${first}`));
@@ -280,7 +280,7 @@ describe("T25: recovery by recent and lookup after a failed workflow script", ()
 			const [recent] = parent.toolResults("subagent_wait");
 			assert.match(recent!.text, new RegExp(`^${runId} · seq-0 · done · `));
 
-			await prompt(parent, "look up", [fauxToolCall("subagent_wait", { ids: [runId] }, { id: "l1" })]);
+			await prompt(parent, "look up", [fauxToolCall("subagent_wait", { runIds: [runId] }, { id: "l1" })]);
 			const lookup = parent.toolResults("subagent_wait")[1]!;
 			assert.match(lookup.text, /REPORT OF seq-0[\s\S]*report not saved/);
 			assert.equal(parent.runIds.length, 1, "recovery launched nothing");

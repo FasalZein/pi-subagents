@@ -571,8 +571,8 @@ describe("T28: a batch whose later child fails to launch", () => {
 			'const ended = r.children.filter((c) => c.state === "ended");',
 			'const running = r.children.filter((c) => c.state === "started");',
 			"const stops = [];",
-			"for (const c of running) stops.push(await tools.subagent_kill({ id: c.runId }));",
-			"const waited = await tools.subagent_wait({ ids: r.children.map((c) => c.runId), timeout: 5 });",
+			"for (const c of running) stops.push(await tools.subagent_kill({ runId: c.runId }));",
+			"const waited = await tools.subagent_wait({ runIds: r.children.map((c) => c.runId), timeout: 5 });",
 			'return "JSON " + JSON.stringify({ launch: r, ended: ended.map((c) => c.record.summary), stops, waited });',
 		].join("\n");
 		const harness = await startParent(

@@ -7,6 +7,7 @@ import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { CUT_MARK, type ReportStorage, type ResultRecord } from "../../src/runtime/result-record.ts";
 import {
 	FRAME_MAX_CHARS,
+	KILL_UNCONFIRMED_WARNING,
 	RESULT_TEXT_MAX_CHARS,
 	renderResult,
 	shortestReadLocator,
@@ -56,7 +57,11 @@ function frameLength(text: string, summary: string): number {
 }
 
 function renderedSummary(text: string): string {
-	return text.split("\n").slice(1, -1).join("\n").split("\nreport")[0];
+	return text
+		.split("\n")
+		.slice(1, -1)
+		.join("\n")
+		.split(/\n(?:run|resume): /)[0];
 }
 
 describe("result renderer: G1.3 bounded text", () => {
@@ -82,7 +87,7 @@ describe("result renderer: G1.3 bounded text", () => {
 				assert.ok(text.includes("run: r-0001"));
 				assert.ok(text.includes(VERIFIER_LINE), "the whole verifier footer fits with a short locator");
 				assert.ok(text.includes("context: 91000/100000 tokens"), "the requested context line stays");
-				assert.ok(text.includes("report: ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
+				assert.ok(text.includes("run: r-0001 · ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
 				assert.ok(!text.includes(SESSION_FILE), "no session path");
 				assert.ok(!/--session|--resume|subagent_resume\(/.test(text), "no resume command line");
 			});
@@ -97,7 +102,7 @@ describe("result renderer: G1.3 bounded text", () => {
 		const options = { cwd: CWD, homeDir: HOME, warnings: WARNINGS, verifierFooter: VERIFIER_FOOTER };
 		const text = renderResult(record, options);
 		const locator = `~/${path.slice(HOME.length + 1)}`;
-		assert.ok(text.includes(`report: ${locator}\n`), "the footer names the whole ~ locator");
+		assert.ok(text.includes(`run: r-0001 · ${locator}\n`), "the footer names the whole ~ locator");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
 		assert.ok(text.includes("\nverifier: winner staged"), "the verifier's staged fact is a required field (D18)");
 		for (const warning of WARNINGS) assert.ok(!text.includes(warning), "warnings get no room beyond 400 characters");
@@ -121,7 +126,7 @@ describe("result renderer: G1.3 bounded text", () => {
 					showContextUsage: true,
 				});
 				assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `path ${pathLength}, report ${reportLength}: ${text.length}`);
-				assert.ok(text.includes(`report: ${path}`), "the whole locator stays");
+				assert.ok(text.includes(` · ${path}`), "the whole locator stays");
 			}
 		}
 	});
@@ -214,8 +219,7 @@ describe("result renderer: frame budget (D14)", () => {
 		const text = renderResult(unsaved(), options);
 		assert.ok(frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS, `frame ${frameLength(text, "s".repeat(1_500))}`);
 		assert.ok(text.includes("s".repeat(1_500)), "the whole summary stays");
-		assert.ok(text.includes("\nreport not saved: EACCES"), "the storage fact stays");
-		assert.ok(text.includes("\nrun: r-0001\n"));
+		assert.ok(text.includes("\nrun: r-0001 · report not saved: EACCES"), "the storage fact stays");
 		assert.ok(text.includes("\nnot resumable: no-session child"), "the resume reason stays");
 		assert.ok(text.includes("\nverifier: winner staged"), "the staged fact stays (D18)");
 		assert.ok(text.includes("\ncontext: 91000/100000 tokens"));
@@ -251,5 +255,61 @@ describe("result renderer: frame budget (D14)", () => {
 		);
 		const text = renderResult({ ...failed, report: { saved: true, path: "/tmp/r.md" } }, { cwd: CWD, homeDir: HOME });
 		assert.ok(!text.includes(SESSION_FILE), text);
+	});
+});
+
+// T88: a result says its run id once, shows the context line only near the window, and a resumable
+// time-limit result names the resume call.
+describe("T88 result footer", () => {
+	const saved: ReportStorage = { saved: true, path: "/tmp/results/r-0001/report-1.md" };
+	const base = (): ResultRecord => ({
+		...recordFor(200, false, saved),
+		resume: { resumable: true },
+	});
+	const loc = shortestReadLocator(saved.path, CWD, HOME);
+	const render = (record: ResultRecord) => renderResult(record, { cwd: CWD, homeDir: HOME, showContextUsage: true });
+
+	it("says the run id once as a labelled fact, on one line with the report locator", () => {
+		const text = render(base());
+		assert.ok(text.includes(`\nrun: r-0001 · ${loc}`), text);
+		assert.equal(text.match(/\brun: /g)?.length, 1, text);
+	});
+
+	it("drops the context line below 80% of the window and keeps it from 80%", () => {
+		const below = render({ ...base(), contextUsage: { tokens: 79_999, window: 100_000 } });
+		assert.ok(!below.includes("context: "), below);
+		const near = render({ ...base(), contextUsage: { tokens: 80_000, window: 100_000 } });
+		assert.ok(near.includes("\ncontext: 80000/100000 tokens"), near);
+		const noWindow = render({ ...base(), contextUsage: { tokens: 900_000 } });
+		assert.ok(!noWindow.includes("context: "), noWindow);
+	});
+
+	const wrapUp = { kind: "timeout" as const, seconds: 900, wrapUp: true };
+	const resumeCall = 'subagent_resume({ runId: "r-0001", task: "<next smaller step>" })';
+
+	it("a resumable time-limit result names the resume call with its run id", () => {
+		for (const record of [
+			{ ...base(), timeLimit: wrapUp },
+			{ ...base(), outcome: "timed_out" as const, timeLimit: { ...wrapUp, wrapUp: false } },
+		]) {
+			const text = render(record);
+			assert.ok(text.includes(`\nresume: ${resumeCall} · ${loc}`), text);
+			assert.ok(!text.includes("run: r-0001"), "the run id stays once");
+		}
+	});
+
+	it("a time-limit result that cannot resume, or a result without a time limit, names no resume call", () => {
+		const blocked = render({ ...base(), timeLimit: wrapUp, resume: { resumable: false, reason: "blocked" } });
+		assert.ok(!blocked.includes("subagent_resume"), blocked);
+		assert.ok(blocked.includes("\nrun: r-0001 · "), blocked);
+		assert.ok(!render(base()).includes("subagent_resume"));
+	});
+
+	it("an unconfirmed time-limit kill names no resume call until the pane is closed", () => {
+		const killed = { ...base(), outcome: "timed_out" as const, timeLimit: { ...wrapUp, wrapUp: false } };
+		const text = renderResult(killed, { cwd: CWD, homeDir: HOME, killUnconfirmed: true });
+		assert.ok(!text.includes("subagent_resume"), text);
+		assert.ok(text.includes("\nrun: r-0001 · "), text);
+		assert.ok(text.includes(`\nwarning: ${KILL_UNCONFIRMED_WARNING}`), text);
 	});
 });

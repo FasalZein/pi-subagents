@@ -248,7 +248,7 @@ describe("resume by run id (D8)", () => {
 		const running = { id: "bbbb0001", name: "worker" } as RunningSubagent;
 		runningSubagents.set(running.id, running);
 		try {
-			await kill!.execute("k1", { id: "bbbb0001" });
+			await kill!.execute("k1", { runId: "bbbb0001" });
 			assert.deepEqual(stopped, ["bbbb0001"]);
 		} finally {
 			runningSubagents.delete(running.id);

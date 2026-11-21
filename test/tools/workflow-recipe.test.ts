@@ -425,9 +425,12 @@ describe("T51: the README workflow script recipe in a real Pi session", () => {
 			const auth = byName["auth-audit"];
 			assert.equal(auth?.data, undefined, "no part of the long value is in the digest");
 			const id = parent.idOf("auth-audit");
-			assert.ok(String(auth?.dataOmitted).includes(`subagent_wait({ ids: ["${id}"] })`), "the entry names the lookup");
+			assert.ok(
+				String(auth?.dataOmitted).includes(`subagent_wait({ runIds: ["${id}"] })`),
+				"the entry names the lookup",
+			);
 			assert.equal(digest.ok, true, "an omitted value is complete in the record");
-			await parent.run("look up", [fauxToolCall("subagent_wait", { ids: [id] }, { id: "lookup-1" })]);
+			await parent.run("look up", [fauxToolCall("subagent_wait", { runIds: [id] }, { id: "lookup-1" })]);
 			const [lookup] = parent.toolResults("subagent_wait");
 			assert.ok(lookup, "the lookup ran");
 			const record = (lookup.details as unknown as SubagentWaitStructured).results[0]?.record;

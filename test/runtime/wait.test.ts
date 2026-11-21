@@ -59,13 +59,13 @@ describe("subagent wait behavior", () => {
 			sessionFile: "/tmp/context-child.jsonl",
 			exitCode: 0,
 			elapsed: 2,
-			contextTokens: 145_000,
+			contextTokens: 182_000,
 			contextWindow: 200_000,
 		});
 		const text = (waited.content[0] as { text: string }).text;
-		assert.match(text, /\ncontext: 145000\/200000 tokens$/);
+		assert.match(text, /\ncontext: 182000\/200000 tokens$/);
 		assert.doesNotMatch(text, /Resume: pi --session/);
-		assert.equal((waited.details as any).contextTokens, 145_000);
+		assert.equal((waited.details as any).contextTokens, 182_000);
 		assert.equal((waited.details as any).contextWindow, 200_000);
 	});
 
@@ -78,13 +78,13 @@ describe("subagent wait behavior", () => {
 			sessionFile: "/tmp/quiet-context-child.jsonl",
 			exitCode: 0,
 			elapsed: 2,
-			contextTokens: 145_000,
+			contextTokens: 182_000,
 			contextWindow: 200_000,
 			reportContextUsage: false,
 		});
 		const text = (waited.content[0] as { text: string }).text;
 		assert.doesNotMatch(text, /context: /);
-		assert.equal((waited.details as any).contextTokens, 145_000);
+		assert.equal((waited.details as any).contextTokens, 182_000);
 		assert.equal((waited.details as any).contextWindow, 200_000);
 	});
 

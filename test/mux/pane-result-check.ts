@@ -78,7 +78,7 @@ async function assertCappedWithReport(result: SubagentResult, running: RunningSu
 	assert.ok(message.includes(START_MARKER), message);
 	assert.ok(!message.includes(END_MARKER));
 	assert.ok(message.includes(`run: ${running.id}`), message);
-	const locator = message.match(/^report: (.+)$/m)?.[1];
+	const locator = message.match(/^run: \S+ · (.+)$/m)?.[1];
 	assert.ok(locator, "the text names its report file");
 	const shown = locator.startsWith("~/") ? join(homedir(), locator.slice(2)) : resolve(root, locator);
 	assert.equal(readFileSync(shown, "utf8"), LONG_ANSWER);

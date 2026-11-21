@@ -140,7 +140,7 @@ describe("headless results through the assembler (T07)", () => {
 			process.chdir(previousCwd);
 		}
 		const { running, result } = finished;
-		const locator = /^report: (.+)$/m.exec(messageText(result, running))?.[1];
+		const locator = /^(?:run|resume): .* · (.+)$/m.exec(messageText(result, running))?.[1];
 		assert.ok(locator, "the text names the report");
 		assert.ok(result.reportFile);
 		// Pi's read tool expands a leading ~ and resolves any other relative path from its cwd.

@@ -294,7 +294,7 @@ const BOTH = ["id-child-one", "id-child-two"];
 
 describe("T24: subagent_wait in a real Pi session", () => {
 	it("check 1: a later call joins two running children; both results come back in the reply, no message", async () => {
-		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { ids: BOTH })] });
+		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { runIds: BOTH })] });
 		try {
 			await launchBoth(parent);
 			const run = parent.session.prompt("join");
@@ -339,7 +339,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 	});
 
 	it("check 3: mode any with one end returns it and lists the other as pending; the other reports by message", async () => {
-		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { ids: BOTH, mode: "any" })] });
+		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { runIds: BOTH, mode: "any" })] });
 		try {
 			await launchBoth(parent);
 			const run = parent.session.prompt("join");
@@ -364,7 +364,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 	it("check 3: a time limit returns the finished result and the pending id; the pending run reports by message", async () => {
 		const parent = await startParent({
 			delegate: LAUNCH,
-			join: [waitCall("wait-1", { ids: BOTH, timeout: 0.3 })],
+			join: [waitCall("wait-1", { runIds: BOTH, timeout: 0.3 })],
 		});
 		try {
 			await launchBoth(parent);
@@ -387,7 +387,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 
 	it("check 6 (fix round 1, P1): a codemode script receives each run's published record as an object", async () => {
 		const script = [
-			'const r = await tools.subagent_wait({ ids: ["id-child-one", "id-child-two"] });',
+			'const r = await tools.subagent_wait({ runIds: ["id-child-one", "id-child-two"] });',
 			'if (typeof r !== "object") return `TEXT ${r}`;',
 			'const one = r.results.find((x) => x.runId === "id-child-one").record;',
 			"return `OBJECT ${r.status} answer=${one.data?.answer} outcome=${one.outcome} typed=${one.typed} summary=${one.summary} saved=${one.report?.saved} resumable=${one.resume?.resumable}`;",
@@ -471,7 +471,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 	it("check 4: two overlapping waits on one run both return its result, no message", async () => {
 		const parent = await startParent({
 			delegate: LAUNCH,
-			join: [waitCall("wait-a", { ids: ["id-child-one"] }), waitCall("wait-b", { ids: ["id-child-one"] })],
+			join: [waitCall("wait-a", { runIds: ["id-child-one"] }), waitCall("wait-b", { runIds: ["id-child-one"] })],
 		});
 		try {
 			await launchBoth(parent);
@@ -498,7 +498,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 	it("check 4: one wait returns child 1, the overlapping wait is aborted: child 1 comes from the returned reply only, child 2 reports by message", async () => {
 		const parent = await startParent({
 			delegate: LAUNCH,
-			join: [waitCall("wait-a", { ids: ["id-child-one"] }), waitCall("wait-b", { ids: BOTH })],
+			join: [waitCall("wait-a", { runIds: ["id-child-one"] }), waitCall("wait-b", { runIds: BOTH })],
 		});
 		try {
 			await launchBoth(parent);
@@ -532,7 +532,7 @@ describe("T24: subagent_wait in a real Pi session", () => {
 	it("T26 fix round 1 (P1): Esc during a wait gives back one queued and one held end as one no-turn message; no lease leaks", async () => {
 		const script = [
 			"await tools.gate({});",
-			'await tools.subagent_wait({ ids: ["id-child-one", "id-child-two", "id-child-three"] });',
+			'await tools.subagent_wait({ runIds: ["id-child-one", "id-child-two", "id-child-three"] });',
 		].join("\n");
 		const launchThree = fauxToolCall(
 			"subagent",
@@ -587,7 +587,10 @@ describe("T24: subagent_wait in a real Pi session", () => {
 
 	it("T26 fix round 1 (P1): a held end given back on Esc commits with no message_end and still ends its work lease", async () => {
 		const workCounts: number[] = [];
-		const parent = await startParent({ delegate: LAUNCH, join: [waitCall("wait-1", { ids: BOTH })] }, { workCounts });
+		const parent = await startParent(
+			{ delegate: LAUNCH, join: [waitCall("wait-1", { runIds: BOTH })] },
+			{ workCounts },
+		);
 		try {
 			await launchBoth(parent);
 			const run = parent.session.prompt("join");

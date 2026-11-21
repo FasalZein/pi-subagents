@@ -102,7 +102,7 @@ async function killReplay(exitWith: (child: ChildProcess, sessionFile: string) =
 	);
 	wireSubagentSteerBack(pi as never, running, watch, () => {});
 	try {
-		await tools.get("subagent_kill")!.execute("k1", { id: running.id }, undefined, undefined, {});
+		await tools.get("subagent_kill")!.execute("k1", { runId: running.id }, undefined, undefined, {});
 		assert.ok(ac.signal.aborted);
 	} catch (error) {
 		// A failed stop must not leave the watcher pending: it would keep node --test alive.

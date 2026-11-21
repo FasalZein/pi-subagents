@@ -171,7 +171,7 @@ test("through the subagent_wait tool: runs in a long wait count, and an aborted 
 		};
 		const wait = tools
 			.get("subagent_wait")!
-			.execute("wait-1", { ids: [waited.id, other.id] }, abort.signal, undefined, toolCtx);
+			.execute("wait-1", { runIds: [waited.id, other.id] }, abort.signal, undefined, toolCtx);
 		// The wait stays open across many settles: the runs it waits on still count.
 		for (let turn = 0; turn < 3; turn++) await h.emit("agent_settled");
 		assert.equal(h.terminal.count, 2);

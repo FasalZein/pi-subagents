@@ -158,14 +158,14 @@ describe("T25: lookup by run id", () => {
 		assert.equal(before.outstanding, 1, "the committed message has not released the run yet");
 
 		// Same process (a compaction changes no extension state): the in-memory rendering.
-		const again = await tool.execute("c1", { ids: [run.runId] }, undefined, undefined, session.ctx);
+		const again = await tool.execute("c1", { runIds: [run.runId] }, undefined, undefined, session.ctx);
 		assert.equal(again.content[0].text, delivered[0]!.content);
 		assert.deepEqual(deliveryState(), before, "the lookup took nothing from the queue and released nothing");
 
 		// A reload forgets this process's runs; the lookup reads the record file.
 		resetSubagentStateForTest();
 		const afterReload = deliveryState();
-		const reloaded = await tool.execute("c2", { ids: [run.runId] }, undefined, undefined, session.ctx);
+		const reloaded = await tool.execute("c2", { runIds: [run.runId] }, undefined, undefined, session.ctx);
 		const text = reloaded.content[0].text as string;
 		assert.equal(text, delivered[0]!.content, "the same rendering from the record file");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS);
@@ -183,7 +183,7 @@ describe("T25: lookup by run id", () => {
 		const session = parentSession();
 		const store = sessionResultStore(session.resultsDir);
 		const runId = publishRecord(store, "long", 1_000, "x".repeat(5_000));
-		const reply = await waitTool().execute("c1", { ids: [runId] }, undefined, undefined, session.ctx);
+		const reply = await waitTool().execute("c1", { runIds: [runId] }, undefined, undefined, session.ctx);
 		assert.ok(reply.content[0].text.length <= RESULT_TEXT_MAX_CHARS);
 		assert.match(reply.content[0].text, new RegExp(`run: ${runId}`));
 	});
@@ -205,7 +205,7 @@ describe("T25: lookup by run id", () => {
 		const tool = waitTool();
 		const reply = await tool.execute(
 			"c1",
-			{ ids: [known.runId, gone.runId, noSession.runId, "feedbeef"] },
+			{ runIds: [known.runId, gone.runId, noSession.runId, "feedbeef"] },
 			undefined,
 			undefined,
 			session.ctx,
@@ -249,7 +249,13 @@ describe("T25: the recent list", () => {
 		publishRecord(sessionResultStore(other.resultsDir), "foreign-run", 1_800_000_000_000);
 		const before = deliveryState();
 
-		const reply = await waitTool().execute("c1", { recent: true, ids: ["ignored"] }, undefined, undefined, session.ctx);
+		const reply = await waitTool().execute(
+			"c1",
+			{ recent: true, runIds: ["ignored"] },
+			undefined,
+			undefined,
+			session.ctx,
+		);
 		const text = reply.content[0].text as string;
 		const lines = text.split("\n");
 		assert.equal(lines.length, 20);
@@ -285,7 +291,7 @@ describe("T25: the recent list", () => {
 		const delivered: Delivered[] = [];
 		const run = startRun(session, "mem", delivered);
 		const tool = waitTool();
-		const wait = tool.execute("w", { ids: [run.runId] }, undefined, undefined, session.ctx);
+		const wait = tool.execute("w", { runIds: [run.runId] }, undefined, undefined, session.ctx);
 		await tick();
 		run.end("MEMORY-REPORT");
 		const waited = await wait;
@@ -295,7 +301,7 @@ describe("T25: the recent list", () => {
 		resetSubagentStateForTest();
 		const recent = await tool.execute("r", { recent: true }, undefined, undefined, session.ctx);
 		assert.match(recent.content[0].text, new RegExp(`^${run.runId} · mem · done · `));
-		const lookup = await tool.execute("l", { ids: [run.runId] }, undefined, undefined, session.ctx);
+		const lookup = await tool.execute("l", { runIds: [run.runId] }, undefined, undefined, session.ctx);
 		assert.equal(lookup.content[0].text, waited.content[0].text);
 		assert.match(lookup.content[0].text, /MEMORY-REPORT[\s\S]*report not saved/);
 		setResultStorageNotice(() => {});
