@@ -372,6 +372,19 @@ export function getSubagentActivityStartIndex(
 	return 0;
 }
 
+/**
+ * Index of the first entry this session owns. A fork seed copies the parent's branch without its
+ * launch metadata, then the launch appends this child's first metadata entry: entries before it
+ * are inherited conversation. The first entry is the cut, not the newest, because a resume
+ * appends another. A session without a marker (a parent, an old child) owns every entry.
+ */
+export function getOwnedHistoryStartIndex(entries: ReadonlyArray<{ type?: unknown; customType?: unknown }>): number {
+	const marker = entries.findIndex(
+		(entry) => entry?.type === "custom" && entry.customType === SUBAGENT_LAUNCH_METADATA_CUSTOM_TYPE,
+	);
+	return marker === -1 ? 0 : marker + 1;
+}
+
 export function readSubagentLaunchMetadataEntries(path: string): PersistedSubagentLaunchMetadata[] {
 	const metadata: PersistedSubagentLaunchMetadata[] = [];
 	try {
