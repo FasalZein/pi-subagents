@@ -2,10 +2,10 @@ import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { runsInMemory } from "../launch/policy.ts";
 import { traceSubagentLaunch } from "../launch/trace.ts";
-import type { ChildProcessProof, PollResult } from "../mux/poll.ts";
+import { type ChildProcessProof, type PollResult, wakeOnCompletionFiles } from "../mux/poll.ts";
 import type { MuxBackendAdapter } from "../mux/backend.ts";
 import { consumeSubagentExitSignal, currentMuxAdapter, pollForExit } from "../mux.ts";
-import { hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
+import { getSubagentExitSidecarPath, hasSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { getInteractiveProcessFile, isProcessGone } from "../session/interactive-process.ts";
 import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "../session/session.ts";
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
@@ -479,23 +479,28 @@ function getSummary(
 }
 
 /** Polls the completion files and the backend's own exit check of a direct-program surface. */
-async function pollForProgramSurfaceExit(
+export async function pollForProgramSurfaceExit(
 	running: RunningSubagent,
 	adapter: MuxBackendAdapter,
 	signal: AbortSignal,
 	onTick: () => void,
 ): Promise<PollResult> {
-	while (!signal.aborted) {
-		const completion = readProgramCompletion(running, "child-may-run");
-		if (completion) return completion;
-		if (running.zellijTarget && running.surface) {
-			const exited = await adapter.checkExit?.(running.surface, running.zellijTarget);
-			// The child can write its completion and exit while the liveness query runs: a pane found
-			// gone is a watcher error only when no completion record or shell status exists by then.
-			if (exited) return readProgramCompletion(running, "child-exited") ?? exited;
+	const wake = wakeOnCompletionFiles([getSubagentExitSidecarPath(running.sessionFile), running.doneSentinelFile]);
+	try {
+		while (!signal.aborted) {
+			const completion = readProgramCompletion(running, "child-may-run");
+			if (completion) return completion;
+			if (running.zellijTarget && running.surface) {
+				const exited = await adapter.checkExit?.(running.surface, running.zellijTarget);
+				// The child can write its completion and exit while the liveness query runs: a pane found
+				// gone is a watcher error only when no completion record or shell status exists by then.
+				if (exited) return readProgramCompletion(running, "child-exited") ?? exited;
+			}
+			onTick();
+			await wake.wait(1000, signal);
 		}
-		onTick();
-		await waitForPoll(1000, signal);
+	} finally {
+		wake.close();
 	}
 	throw new Error("Aborted while waiting for subagent to finish");
 }
@@ -509,20 +514,6 @@ function readProgramCompletion(running: RunningSubagent, proof: ChildProcessProo
 		if (match) return { reason: "sentinel", exitCode: Number(match[1]) };
 	}
 	return null;
-}
-
-function waitForPoll(interval: number, signal: AbortSignal): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const abort = () => {
-			clearTimeout(timer);
-			reject(new Error("Aborted"));
-		};
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", abort);
-			resolve();
-		}, interval);
-		signal.addEventListener("abort", abort, { once: true });
-	});
 }
 
 function cleanupDoneSentinel(running: RunningSubagent): void {

@@ -6,6 +6,7 @@ import { groupRunEnds, isFinishedStatus, type RunEndMessage, runEndIds } from ".
 type Sink = Pick<ExtensionAPI, "sendMessage">;
 /** What the queue reads of the parent session: the entries Pi committed, in append order. */
 type CommittedEntries = Pick<ExtensionContext["sessionManager"], "getEntries">;
+type Notices = Pick<ExtensionContext["ui"], "notify">;
 
 /** A message that Pi commits without an extension message_end: a settle entry or a no-turn message. */
 interface InFlight {
@@ -42,6 +43,8 @@ class DeliveryQueue {
 	private settling = false;
 	private pi?: Sink;
 	private session?: CommittedEntries;
+	/** The parent's TUI, only when the session has one: a busy parent shows a notice there. */
+	private ui?: Notices;
 
 	register(pi: ExtensionAPI): void {
 		this.registered = true;
@@ -51,6 +54,7 @@ class DeliveryQueue {
 		});
 		pi.on("agent_start", (_event, ctx) => {
 			this.session = ctx.sessionManager;
+			this.ui = ctx.hasUI ? ctx.ui : undefined;
 			this.confirm();
 			this.busy = true;
 			this.settling = false;
@@ -104,6 +108,7 @@ class DeliveryQueue {
 			this.busy = false;
 			this.settling = false;
 			this.session = undefined;
+			this.ui = undefined;
 		});
 	}
 
@@ -171,6 +176,7 @@ class DeliveryQueue {
 		}
 		this.pending.set(message.details.id, message);
 		if (!this.busy) this.send(message, true);
+		else this.ui?.notify(queuedNotice(message), "info");
 	}
 
 	private send(message: RunEndMessage, triggerTurn: boolean): void {
@@ -257,7 +263,17 @@ class DeliveryQueue {
 		this.settling = false;
 		this.pi = undefined;
 		this.session = undefined;
+		this.ui = undefined;
 	}
+}
+
+/**
+ * Owner decision 2026-11-21: a busy parent tells the person that a result is ready. Pi hands the
+ * message to the model only at the next tool boundary; this notice is not model-visible.
+ */
+function queuedNotice(message: RunEndMessage): string {
+	const { name } = message.details as { name?: unknown };
+	return `The result of ${typeof name === "string" ? name : message.details.id} is ready and arrives after the current tool call.`;
 }
 
 const deliveryQueue = new DeliveryQueue();

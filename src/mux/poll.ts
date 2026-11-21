@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, type FSWatcher, readFileSync, watch } from "node:fs";
+import { basename, dirname } from "node:path";
 import { clearSubagentExitSidecar, getSubagentExitSidecarPath, HELD_EXIT_FIELD } from "../session/exit-sidecar.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { readScreenAsync } from "./io.ts";
@@ -136,19 +137,76 @@ export function consumeSubagentExitSignal(sessionFile: string, proof: ChildProce
 	}
 }
 
-async function waitForNextPoll(interval: number, signal: AbortSignal) {
-	await new Promise<void>((resolve, reject) => {
-		if (signal.aborted) return reject(new Error("Aborted"));
-		const timer = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort);
-			resolve();
-		}, interval);
-		function onAbort() {
-			clearTimeout(timer);
-			reject(new Error("Aborted"));
+/** The wait between two reads of a child's completion files; close it when the poll loop ends. */
+export interface CompletionWake {
+	/** Resolves after `interval` ms, or sooner when a watched file changed since the last wait began. */
+	wait(interval: number, signal: AbortSignal): Promise<void>;
+	close(): void;
+}
+
+/**
+ * Watches the directories of the given files, so a poll loop reads the child's exit record or done
+ * sentinel as soon as it is written. A watch that fails to start or misses an event leaves the poll
+ * interval as the fallback. A wake only triggers a read; the read keeps its own rules (T85).
+ */
+export function wakeOnCompletionFiles(files: readonly (string | undefined)[]): CompletionWake {
+	const namesByDir = new Map<string, Set<string>>();
+	for (const file of files) {
+		if (!file) continue;
+		const names = namesByDir.get(dirname(file)) ?? new Set<string>();
+		names.add(basename(file));
+		namesByDir.set(dirname(file), names);
+	}
+	let changed = false;
+	let wake: (() => void) | undefined;
+	const watchers: FSWatcher[] = [];
+	for (const [dir, names] of namesByDir) {
+		try {
+			const watcher = watch(dir, (_event, name) => {
+				// Without a file name the event may be ours; an extra read costs less than a missed one.
+				if (name !== null && !names.has(String(name))) return;
+				changed = true;
+				wake?.();
+			});
+			watcher.on("error", () => watcher.close());
+			watchers.push(watcher);
+		} catch {
+			// The poll interval alone decides when this directory is read.
 		}
-		signal.addEventListener("abort", onAbort, { once: true });
-	});
+	}
+	return {
+		wait: (interval, signal) =>
+			new Promise<void>((resolve, reject) => {
+				if (signal.aborted) return reject(new Error("Aborted"));
+				const finish = () => {
+					clearTimeout(timer);
+					signal.removeEventListener("abort", onAbort);
+					wake = undefined;
+					changed = false;
+				};
+				const onAbort = () => {
+					finish();
+					reject(new Error("Aborted"));
+				};
+				if (changed) {
+					changed = false;
+					return resolve();
+				}
+				const timer = setTimeout(() => {
+					finish();
+					resolve();
+				}, interval);
+				wake = () => {
+					finish();
+					resolve();
+				};
+				signal.addEventListener("abort", onAbort, { once: true });
+			}),
+		close: () => {
+			wake = undefined;
+			for (const watcher of watchers) watcher.close();
+		},
+	};
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {
@@ -206,8 +264,24 @@ export async function pollForExit(
 		onTick?: (elapsed: number) => void;
 	},
 ): Promise<PollResult> {
-	const start = Date.now();
+	const wake = wakeOnCompletionFiles([
+		options.sessionFile && getSubagentExitSidecarPath(options.sessionFile),
+		options.doneSentinelFile,
+	]);
+	try {
+		return await pollUntilExit(surface, signal, options, wake);
+	} finally {
+		wake.close();
+	}
+}
 
+async function pollUntilExit(
+	surface: string,
+	signal: AbortSignal,
+	options: Parameters<typeof pollForExit>[2],
+	wake: CompletionWake,
+): Promise<PollResult> {
+	const start = Date.now();
 	while (true) {
 		if (signal.aborted) {
 			throw new Error("Aborted while waiting for subagent to finish");
@@ -249,6 +323,6 @@ export async function pollForExit(
 
 		const elapsed = Math.floor((Date.now() - start) / 1000);
 		options.onTick?.(elapsed);
-		await waitForNextPoll(options.interval, signal);
+		await wake.wait(options.interval, signal);
 	}
 }

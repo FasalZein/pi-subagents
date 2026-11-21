@@ -253,7 +253,8 @@ async function startParent(options: { deepCwd?: boolean } = {}): Promise<Parent>
 		sessionManager,
 	});
 	// An interactive parent: a headless one awaits every launch, so no run would still be running.
-	const ui = new Proxy({}, { get: () => () => undefined });
+	// Pi spreads the UI context: a method that the parent calls (notify) must be an own key.
+	const ui = new Proxy({ notify() {} }, { get: () => () => undefined });
 	await session.bindExtensions({ uiContext: ui as never });
 	const toolResults = (name: string) =>
 		session.messages.flatMap((message) =>
