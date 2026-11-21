@@ -33,7 +33,7 @@ const HEADLESS: IndexLaunchPolicy = { paneAvailable: false, forcesWait: false };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
 // T87: the call forms a parent needs, so it does not look the signatures up (audit row 7).
 const MORE_TOOLS_LINE =
-	"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).";
+	"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).";
 // D06: the cf6dbf4 routing rules in short form. Sources (git show cf6dbf4:<path>):
 // src/tools/subagent-tools.ts promptSnippet "Do small direct work yourself: ... tiny one-shot edits",
 // "include each named agent exactly once. Do not substitute one agent for another",

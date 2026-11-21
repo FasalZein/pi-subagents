@@ -173,7 +173,7 @@ The launch and resume calls return structured data per child: run id, name, agen
 
     Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
     Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
-    More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).
+    More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).
     - reviewer: <first 100 characters of the description>
     - design: <first 100 characters> [pane] [manual]
     +488 more: subagent_agents with a query

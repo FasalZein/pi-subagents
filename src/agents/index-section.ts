@@ -70,7 +70,7 @@ const INDEX_CALL_FORMS: Record<IndexMoreTool, string> = {
 	subagent_wait: "subagent_wait({runIds?})",
 	subagent_resume: "subagent_resume({runId, task?})",
 	subagent_kill: "subagent_kill({runId})",
-	subagent_agents: "subagent_agents({query?}) (search, full detail)",
+	subagent_agents: "subagent_agents({query?, name?}) (search; name: full detail)",
 };
 
 /** The management tools this session may call, so the index names only usable tools (D06). */

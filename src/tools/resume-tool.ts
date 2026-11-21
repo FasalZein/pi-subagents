@@ -112,7 +112,8 @@ export function registerSubagentResumeTool(
 	pi.registerTool({
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
-		description: "Continue an earlier child session by run id or session file, optionally with a follow-up task.",
+		description:
+			"Continue an earlier child session by run id or session file, optionally with a follow-up task. A locked agent ignores model and thinking.",
 		outputSchema: SubagentLaunchOutput,
 		parameters: Type.Object({
 			runId: Type.Optional(
@@ -137,7 +138,7 @@ export function registerSubagentResumeTool(
 			),
 			agent: Type.Optional(
 				Type.String({
-					description: "Agent name for display.",
+					description: "Original agent of the session.",
 				}),
 			),
 			model: Type.Optional(

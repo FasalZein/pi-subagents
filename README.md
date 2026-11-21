@@ -478,7 +478,7 @@ At the start of each prompt, Pi writes one named system-prompt section, `index`,
 ```text
 Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
 Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
-More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).
+More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).
 - reviewer: Review a diff for bugs and missing tests. [pane] [manual]
   default_model: prov/model-a:high
   models: prov/model-a:high | prov/model-b | prov/model-c:low

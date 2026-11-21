@@ -407,7 +407,7 @@ describe("agent index at prompt start", () => {
 				"direct",
 				LOADOUT,
 				["subagent", ...MANAGEMENT],
-				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).",
+				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
 			],
 			[
 				"excluded by Pi",
@@ -420,7 +420,7 @@ describe("agent index at prompt start", () => {
 				"deferred",
 				[{ name: "subagent" }, ...MANAGEMENT.map((name) => ({ name, exposure: "deferred" }))],
 				["subagent"],
-				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).",
+				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
 			],
 		];
 		for (const [label, all, active, line] of cases) {
