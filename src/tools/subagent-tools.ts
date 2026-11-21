@@ -17,9 +17,10 @@ import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
 import {
 	claimSpawnWidthSlot,
-	getLiveSlotCount,
 	getSpawnWidthLimit,
 	releaseSpawnWidthSlotOnCompletion,
+	renderBatchWidthRefusal,
+	renderSpawnWidthBusyRefusal,
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
@@ -114,18 +115,6 @@ function getSpawnWidthError(text: string): ToolResult {
 		details: { error: "spawn_width" },
 		isError: true,
 	});
-}
-
-function getBatchWidthValidationError(count: number, limit: number): ToolResult {
-	return getSpawnWidthError(
-		`Error: batch of ${count} subagents exceeds the spawn width limit of ${limit}. Launch fewer children in this batch.`,
-	);
-}
-
-function getSpawnWidthLimitError(limit: number): ToolResult {
-	return getSpawnWidthError(
-		`Spawn width limit reached (${getLiveSlotCount()}/${limit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
-	);
 }
 
 export function getSubagentNameError(name: string | undefined): string | null {
@@ -371,7 +360,8 @@ export function registerSubagentCoreTools(
 					stripInternalLaunchOverrides(child as SubagentParamsInput),
 				);
 				const widthLimit = getSpawnWidthLimit();
-				if (children.length > widthLimit) return getBatchWidthValidationError(children.length, widthLimit);
+				if (children.length > widthLimit)
+					return getSpawnWidthError(renderBatchWidthRefusal(children.length, widthLimit));
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
 				const launchable = () => runtime.listLaunchableAgents(ctx.cwd);
 				const prepared = children.map((child) => {
@@ -396,7 +386,7 @@ export function registerSubagentCoreTools(
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
 				if (!unlaunchedSlots) {
-					return getSpawnWidthLimitError(widthLimit);
+					return getSpawnWidthError(renderSpawnWidthBusyRefusal(widthLimit));
 				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];

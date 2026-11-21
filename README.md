@@ -560,6 +560,20 @@ A refusal while matching a fragment names at most 8 matching candidates, grouped
 
 Only the spawn width limits launches. It counts the runs that run at the same time, not the runs that a session started before. A launch that the spawn width refuses starts nothing and returns an error result. In a codemode script, the refusal rejects the `tools.subagent` call.
 
+The refusal names the next call. When every slot is busy, a launch or a resume gets the run ids that hold the slots and the wait call that returns when one of them ends:
+
+```text
+Spawn width limit reached (2/2 slots busy, held by auth-scout-1, diff-reviewer-2). Next call: subagent_wait({ runIds: ["auth-scout-1", "diff-reviewer-2"], mode: "any" }), then launch again; or use subagent_kill on a running run to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.
+```
+
+A batch wider than the spawn width also says how many children fit now. Launch those, then wait, then launch the rest:
+
+```text
+Error: batch of 4 subagents exceeds the spawn width limit of 3. 1 fit now: launch 1 of them, then call subagent_wait({ runIds: ["auth-scout-1", "diff-reviewer-2", <the runIds that launch returns>], mode: "any" }) and launch the rest when it returns. Interactive children with auto-exit: false keep their slot until the pane closes.
+```
+
+A slot that a launch holds while it is still starting has no run id yet. When no holder has a run id, the wait call has no `runIds` and waits for any running run of the session.
+
 ### The result of a run
 
 Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself. When the report file cannot be written, the rendering says `report not saved` and stays capped like every other copy. The session keeps the full report in memory: `subagent_wait` with the run id of an already delivered run (a lookup) returns the rendering followed by the line `Full report (not saved to a file):` and the full report. Only that lookup is longer than 1,900 characters; deliveries, waits and the recent list stay capped. The full report is gone when the session closes or the process exits.

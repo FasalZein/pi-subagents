@@ -47,10 +47,10 @@ import { assertResumeAllowed, reserveResumeSession, settleVerdictAfterRun } from
 import { setAsidePreviousExitRecord, startResumedChild } from "./resume-start.ts";
 import {
 	claimSpawnWidthSlot,
-	getLiveSlotCount,
 	getSpawnWidthLimit,
 	releaseSpawnWidthSlot,
 	releaseSpawnWidthSlotOnCompletion,
+	renderSpawnWidthBusyRefusal,
 	tryAcquireSlots,
 } from "./spawn-width.ts";
 
@@ -236,9 +236,7 @@ export async function resumeSubagentSession(
 	const slot = tryAcquireSlots(1, widthLimit);
 	if (!slot) {
 		releaseSession();
-		throw new Error(
-			`Spawn width limit reached (${getLiveSlotCount()}/${widthLimit} slots busy). Wait for a running subagent to finish, or use subagent_kill to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.`,
-		);
+		throw new Error(renderSpawnWidthBusyRefusal(widthLimit));
 	}
 
 	let claimedRunning: RunningSubagent | undefined;

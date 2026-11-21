@@ -1,4 +1,5 @@
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
+import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import {
 	MAX_SPAWN_WIDTH,
 	claimSpawnWidthSlot,
@@ -8,6 +9,7 @@ import {
 	tryAcquireSlots,
 } from "../../src/runtime/spawn-width.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
+import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
@@ -86,6 +88,30 @@ function toolContext() {
 			getSessionId: () => "parent",
 		},
 	};
+}
+
+/** The wait call a refusal must name, built from the registered wait tool's own schema (T89b). */
+function waitAnyCall(runIdsSource: string): string {
+	type WaitDefinition = { name: string; parameters: { properties: Record<string, { anyOf?: { const?: string }[] }> } };
+	let wait: WaitDefinition | undefined;
+	registerSubagentWaitTool({ registerTool: (definition: WaitDefinition) => (wait = definition) } as never, () => true, {
+		mayLaunch: () => true,
+	});
+	assert.ok(wait);
+	const properties = wait.parameters.properties;
+	assert.ok(properties.runIds, "the wait tool takes runIds");
+	assert.ok(
+		properties.mode?.anyOf?.some((option: { const?: string }) => option.const === "any"),
+		"the wait tool takes mode any",
+	);
+	return `${wait.name}({ runIds: ${runIdsSource}, mode: "any" })`;
+}
+
+/** Claims one slot for a running run with this id, as a launched child holds it. */
+function holdSlot(id: string): void {
+	const slot = tryAcquireSlots(1, null);
+	assert.ok(slot);
+	claimSpawnWidthSlot(makeRunning(id), slot);
 }
 
 const child = (name: string) => ({
@@ -193,6 +219,55 @@ describe("spawn width semaphore", () => {
 		assert.match(result.content[0].text, /launch failed/);
 		assert.equal(launches, 2);
 		assert.equal(getLiveSlotCount(), 1);
+	});
+
+	it("names the busy runs and the wait call when a launch finds every slot busy", async () => {
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "2";
+		initializeSpawnWidthForSession();
+		holdSlot("busy-a");
+		holdSlot("busy-b");
+		const tool = registerToolWithRuntime();
+		const result = await tool.execute("call-4", { children: [child("worker-a")] }, undefined, undefined, toolContext());
+		assert.equal(result.isError, true);
+		const text = result.content[0].text;
+		assert.ok(text.includes(waitAnyCall('["busy-a", "busy-b"]')), text);
+		assert.match(text, /auto-exit: false keep their slot until the pane closes/);
+	});
+
+	it("says how many children of an oversized batch fit now and names the wait call", async () => {
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "3";
+		initializeSpawnWidthForSession();
+		holdSlot("busy-a");
+		const tool = registerToolWithRuntime();
+		const batch = ["worker-a", "worker-b", "worker-c", "worker-d"].map(child);
+		const result = await tool.execute("call-5", { children: batch }, undefined, undefined, toolContext());
+		assert.equal(result.isError, true);
+		const text = result.content[0].text;
+		assert.match(text, /batch of 4 subagents exceeds the spawn width limit of 3/);
+		assert.match(text, /\b2 fit now\b/);
+		assert.ok(text.includes(waitAnyCall('["busy-a", <the runIds that launch returns>]')), text);
+	});
+
+	it("names the busy runs and the wait call when a resume finds every slot busy", async () => {
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
+		initializeSpawnWidthForSession();
+		holdSlot("busy-a");
+		await assert.rejects(
+			resumeSubagentSession(
+				{
+					resultsDir: "/tmp/t89b-results",
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile: "/tmp/t89b-missing-session.jsonl",
+					mode: "background",
+				} as never,
+				{ runningSubagents: new Map() } as never,
+			),
+			(error: Error) => {
+				assert.ok(error.message.includes(waitAnyCall('["busy-a"]')), error.message);
+				assert.match(error.message, /auto-exit: false keep their slot until the pane closes/);
+				return true;
+			},
+		);
 	});
 
 	it("releases a claimed slot through the completion routing path", () => {
