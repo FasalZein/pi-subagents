@@ -248,7 +248,7 @@ describe("verified fan-out winner on adoption", () => {
 			assert.equal(message.details.verifiedRunId, finished.runId);
 			assert.equal(message.details.runId, finished.runId);
 			const reportFile = message.details.reportFile as string;
-			assert.ok(message.content.includes("report: "), "the text names the report");
+			assert.match(message.content, /^run: \S+ · \S+report-\d+\.md$/m, "the text names the report");
 			assert.ok(readFileSync(reportFile, "utf8").startsWith(longReport), "the report keeps the whole winner report");
 		}
 		// Back to test support's temporary root: deleting it would send later suites to ~/.pi/history.

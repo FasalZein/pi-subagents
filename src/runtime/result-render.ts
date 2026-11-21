@@ -134,7 +134,7 @@ function runAndReportLine(record: ResultRecord, options: RenderOptions): Require
 			detail: { text: record.report.error, max: FACT_MAX_CHARS, priority: 1 },
 		};
 	}
-	return { fact: `${run} · report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}` };
+	return { fact: `${run} · ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}` };
 }
 
 /**

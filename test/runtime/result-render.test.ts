@@ -87,7 +87,7 @@ describe("result renderer: G1.3 bounded text", () => {
 				assert.ok(text.includes("run: r-0001"));
 				assert.ok(text.includes(VERIFIER_LINE), "the whole verifier footer fits with a short locator");
 				assert.ok(text.includes("context: 91000/100000 tokens"), "the requested context line stays");
-				assert.ok(text.includes("report: ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
+				assert.ok(text.includes("run: r-0001 · ~/.pi/artifacts/pi-subagents/results/r-0001/report-1.md"));
 				assert.ok(!text.includes(SESSION_FILE), "no session path");
 				assert.ok(!/--session|--resume|subagent_resume\(/.test(text), "no resume command line");
 			});
@@ -102,7 +102,7 @@ describe("result renderer: G1.3 bounded text", () => {
 		const options = { cwd: CWD, homeDir: HOME, warnings: WARNINGS, verifierFooter: VERIFIER_FOOTER };
 		const text = renderResult(record, options);
 		const locator = `~/${path.slice(HOME.length + 1)}`;
-		assert.ok(text.includes(`report: ${locator}\n`), "the footer names the whole ~ locator");
+		assert.ok(text.includes(`run: r-0001 · ${locator}\n`), "the footer names the whole ~ locator");
 		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
 		assert.ok(text.includes("\nverifier: winner staged"), "the verifier's staged fact is a required field (D18)");
 		for (const warning of WARNINGS) assert.ok(!text.includes(warning), "warnings get no room beyond 400 characters");
@@ -126,7 +126,7 @@ describe("result renderer: G1.3 bounded text", () => {
 					showContextUsage: true,
 				});
 				assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `path ${pathLength}, report ${reportLength}: ${text.length}`);
-				assert.ok(text.includes(`report: ${path}`), "the whole locator stays");
+				assert.ok(text.includes(` · ${path}`), "the whole locator stays");
 			}
 		}
 	});
@@ -271,7 +271,7 @@ describe("T88 result footer", () => {
 
 	it("says the run id once as a labelled fact, on one line with the report locator", () => {
 		const text = render(base());
-		assert.ok(text.includes(`\nrun: r-0001 · report: ${loc}`), text);
+		assert.ok(text.includes(`\nrun: r-0001 · ${loc}`), text);
 		assert.equal(text.match(/\brun: /g)?.length, 1, text);
 	});
 
@@ -293,7 +293,7 @@ describe("T88 result footer", () => {
 			{ ...base(), outcome: "timed_out" as const, timeLimit: { ...wrapUp, wrapUp: false } },
 		]) {
 			const text = render(record);
-			assert.ok(text.includes(`\nresume: ${resumeCall} · report: ${loc}`), text);
+			assert.ok(text.includes(`\nresume: ${resumeCall} · ${loc}`), text);
 			assert.ok(!text.includes("run: r-0001"), "the run id stays once");
 		}
 	});
@@ -301,7 +301,7 @@ describe("T88 result footer", () => {
 	it("a time-limit result that cannot resume, or a result without a time limit, names no resume call", () => {
 		const blocked = render({ ...base(), timeLimit: wrapUp, resume: { resumable: false, reason: "blocked" } });
 		assert.ok(!blocked.includes("subagent_resume"), blocked);
-		assert.ok(blocked.includes("\nrun: r-0001 · report: "), blocked);
+		assert.ok(blocked.includes("\nrun: r-0001 · "), blocked);
 		assert.ok(!render(base()).includes("subagent_resume"));
 	});
 
@@ -309,7 +309,7 @@ describe("T88 result footer", () => {
 		const killed = { ...base(), outcome: "timed_out" as const, timeLimit: { ...wrapUp, wrapUp: false } };
 		const text = renderResult(killed, { cwd: CWD, homeDir: HOME, killUnconfirmed: true });
 		assert.ok(!text.includes("subagent_resume"), text);
-		assert.ok(text.includes("\nrun: r-0001 · report: "), text);
+		assert.ok(text.includes("\nrun: r-0001 · "), text);
 		assert.ok(text.includes(`\nwarning: ${KILL_UNCONFIRMED_WARNING}`), text);
 	});
 });

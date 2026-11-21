@@ -317,7 +317,7 @@ If the wrap-up completes, the parent receives a result such as:
 ```text
 auth-scout · scout · done · 12m3s · untyped · ended by time limit
 Mapped the auth flow. The session layer still needs verification.
-resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 wrap-up: 900s for the whole run: the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains
 ```
 
@@ -332,7 +332,7 @@ A stopped child cannot report its own result, so the parent reports it:
 ```text
 auth-scout · scout · timed out · 15m0s · untyped
 Mapped the auth flow. The session layer is untouched.
-resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 time limit: 900s for the whole run: resume this child with a smaller next step as its task; the resume gets the same limit
 ```
 
@@ -362,7 +362,7 @@ With the default value, the parent receives a result such as this:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run> · ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 context: 182000/200000 tokens
 ```
 
@@ -382,7 +382,7 @@ The parent then receives this result:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run> · ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 ```
 
 This field changes only the text that the parent receives. The TUI still shows the context use to the user.
@@ -571,10 +571,10 @@ The rendering has a header line, the summary, and a footer:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+run: <run> · ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 ```
 
-The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The first footer line says the run id once as a labelled fact (`run:` or the resume call) and names the report file by its shortest path that Pi's `read` tool resolves. That path can hold the run id again as its folder name; copy the id from the label. It never holds the session path or a `pi --session` command line; only a resumable time-limit result names the `subagent_resume` call.
+The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The first footer line says the run id once as a labelled fact (`run:` or the resume call) and, after ` · `, names the report file (`report-<n>.md`) by its shortest path that Pi's `read` tool resolves. That path can hold the run id again as its folder name; copy the id from the label. It never holds the session path or a `pi --session` command line; only a resumable time-limit result names the `subagent_resume` call.
 
 Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
 

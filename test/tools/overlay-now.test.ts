@@ -170,7 +170,7 @@ describe("overlay acts on and shows the run as it is now (T83)", () => {
 		const running = runningChild(join(createTestDir(), "child.jsonl"));
 		runningSubagents.set(running.id, running);
 		endRun(running);
-		let killTool: { execute: (id: string, params: { id: string }) => Promise<unknown> } | undefined;
+		let killTool: { execute: (id: string, params: { runId: string }) => Promise<unknown> } | undefined;
 		const pi = { registerTool: (tool: typeof killTool) => (killTool = tool) } as never;
 		registerSubagentKillTool(
 			pi,
@@ -181,7 +181,7 @@ describe("overlay acts on and shows the run as it is now (T83)", () => {
 		const stop = watchStop(running);
 		let result: { content: Array<{ text: string }>; details: { status?: string } };
 		try {
-			result = (await killTool.execute("kill-1", { id: running.id })) as typeof result;
+			result = (await killTool.execute("kill-1", { runId: running.id })) as typeof result;
 		} finally {
 			stop.restore();
 		}
