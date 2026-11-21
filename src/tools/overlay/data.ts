@@ -5,15 +5,9 @@ import { getEntries } from "../../session/session.ts";
 import {
 	getSubagentActivityStartIndex,
 	type PersistedSubagentLaunchMetadata,
-	readSubagentLaunchMetadata,
+	readSubagentLaunchMetadataEntries,
 } from "../../session/session-files.ts";
-import type {
-	CompletedSubagentResult,
-	RunningSubagent,
-	SessionContentBlock,
-	SessionMessageLike,
-	SessionUsage,
-} from "../../types.ts";
+import type { CompletedSubagentResult, RunningSubagent, SessionMessageLike, SessionUsage } from "../../types.ts";
 import {
 	newestRecordsBySession,
 	newestRunsBySession,
@@ -231,9 +225,25 @@ function buildRuntimeSection(isRunning: boolean, r: RunningSubagent | CompletedS
 
 // ─── Safe helpers ───────────────────────────────────────────────────────────
 
+/**
+ * Grants come from the first launch entry (readSubagentLaunchMetadataEntries keeps their order); the
+ * model shown is the one of the newest entry that names a model, as a resume on another model appends
+ * one (T83, D23). Same pairing as the resume's own merge: model, thinking and refs travel together.
+ */
 function safeMeta(f: string): PersistedSubagentLaunchMetadata | undefined {
 	try {
-		return readSubagentLaunchMetadata(f);
+		const entries = readSubagentLaunchMetadataEntries(f);
+		const launch = entries[0];
+		const current = entries.findLast((entry) => entry.modelRef !== undefined);
+		if (!launch || !current || current === launch) return launch;
+		return {
+			...launch,
+			model: current.model,
+			thinking: current.thinking,
+			modelRef: current.modelRef,
+			invocationModelRef: current.invocationModelRef,
+			modelSource: current.modelSource,
+		};
 	} catch {
 		return undefined;
 	}
@@ -279,6 +289,7 @@ function readCompletedSessionStats(sessionFile?: string): CompletedSessionStats 
 		for (let i = startIndex; i < entries.length; i++) {
 			const message = getSessionMessage(entries[i]);
 			if (!message) continue;
+			// One tool use per result, as the live widget counts; the assistant's call block is not counted again.
 			if (message.role === "toolResult") {
 				toolUses++;
 				continue;
@@ -293,11 +304,6 @@ function readCompletedSessionStats(sessionFile?: string): CompletedSessionStats 
 				contextTokens = usageTotal(message.usage);
 				inputTokens += message.usage.input ?? 0;
 				outputTokens += message.usage.output ?? 0;
-			}
-			if (Array.isArray(message.content)) {
-				toolUses += message.content.filter(
-					(block: SessionContentBlock) => block.type === "toolCall" || block.type === "toolUse",
-				).length;
 			}
 		}
 
@@ -412,6 +418,11 @@ export function buildRunningItems(ctx: OverlayContext): OverlayItem[] {
 			sessionFile: a.sessionFile,
 			onKill: async () => {
 				// Operator surface: a human may cancel even a non-recipient's run.
+				// The item can outlive the run: stop then leaves an ended run as it is (T83).
+				if (a.phase === "ended") {
+					ctx.ui.notify(`${a.name} already ended`, "info");
+					return;
+				}
 				await stopRunningSubagent(a, { operator: true });
 				ctx.ui.notify(`Stopped ${a.name}`, "info");
 			},
