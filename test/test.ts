@@ -129,6 +129,7 @@ import "./runtime/resume-verdict.test.ts";
 import "./runtime/resume-record-verdict.test.ts";
 import "./runtime/resume-lifecycle.test.ts";
 import "./runtime/resume-headless-await.test.ts";
+import "./runtime/resume-hint-e2e.test.ts";
 import "./runtime/final-context-usage.test.ts";
 import "./runtime/interactive-watch-usage-source.test.ts";
 import "./runtime/interactive-watch-timeout.test.ts";

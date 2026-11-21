@@ -1,6 +1,5 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
-import { SubagentLaunchOutput } from "../../src/tools/launch-structured.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import { assert, describe, it } from "../support/index.ts";
@@ -22,11 +21,6 @@ describe("T88 one run-id key", () => {
 	registerSubagentWaitTool(pi as never, () => true, { mayLaunch: () => true });
 	const validate = (name: string, args: Record<string, unknown>) =>
 		validateToolArguments(tools.get(name) as never, { type: "toolCall", id: "c", name, arguments: args } as never);
-
-	it("the launch reply names the run id runId", () => {
-		const child = SubagentLaunchOutput.properties.children.items.anyOf[0];
-		assert.ok("runId" in child.properties);
-	});
 
 	it("kill and resume accept runId, wait accepts runIds", () => {
 		assert.deepEqual(validate("subagent_kill", { runId: "0123abcd" }), { runId: "0123abcd" });

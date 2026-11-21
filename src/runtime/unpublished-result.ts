@@ -6,7 +6,6 @@ import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
 import { renderResult } from "./result-render.ts";
 import {
 	CONTEXT_PRESSURE_RESUME_REASON,
-	KILL_UNCONFIRMED_WARNING,
 	NO_SESSION_RESUME_REASON,
 	STOPPED_REASON,
 	TIME_LIMIT_RESUME_REASON,
@@ -96,11 +95,10 @@ export function resultTextOf(result: UnpublishedResult, parentCwd: string = proc
 	});
 	const record: ResultRecord = { ...assembled.record, report: { saved: false, error: UNPUBLISHED_REPORT } };
 	// The same unconfirmed-kill warning the published path adds: the pane can still be running.
-	const requiredWarnings = result.timedOut && result.timeoutKillFailed ? [KILL_UNCONFIRMED_WARNING] : [];
 	return renderResult(record, {
 		cwd: parentCwd,
 		homeDir: homedir(),
 		showContextUsage: result.reportContextUsage !== false,
-		requiredWarnings,
+		killUnconfirmed: Boolean(result.timedOut && result.timeoutKillFailed),
 	});
 }

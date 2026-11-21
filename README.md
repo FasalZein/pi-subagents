@@ -317,7 +317,7 @@ If the wrap-up completes, the parent receives a result such as:
 ```text
 auth-scout · scout · done · 12m3s · untyped · ended by time limit
 Mapped the auth flow. The session layer still needs verification.
-resume: subagent_resume({ runId: "<run>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 wrap-up: 900s for the whole run: the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains
 ```
 
@@ -332,11 +332,11 @@ A stopped child cannot report its own result, so the parent reports it:
 ```text
 auth-scout · scout · timed out · 15m0s · untyped
 Mapped the auth flow. The session layer is untouched.
-resume: subagent_resume({ runId: "<run>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+resume: subagent_resume({ runId: "<run>", task: "<next smaller step>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 time limit: 900s for the whole run: resume this child with a smaller next step as its task; the resume gets the same limit
 ```
 
-The summary is the start of the partial work. A resumable result that a time limit ended or wrapped up names the `subagent_resume` call with its run id instead of a `run:` line. Continue the same child with that call, which applies the same limit again, rather than launching a new child. A plain `pi --session` run has no limit.
+The summary is the start of the partial work. A resumable result that a time limit ended or wrapped up names the `subagent_resume` call with its run id instead of a `run:` line. Continue the same child with that call, which applies the same limit again, rather than launching a new child. Replace `<next smaller step>` with the next task: a resumed headless child gets that task as its only prompt, so a resume without a task does no work. After a time-limit kill that the system could not confirm, the result names no resume call and warns you to check and close the pane first. A plain `pi --session` run has no limit.
 
 #### Resume after a stop
 
@@ -574,7 +574,7 @@ Reviewed the authentication flow and found the files that require changes.
 run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 ```
 
-The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The first footer line says the run id once and names the report file by its shortest path that Pi's `read` tool resolves. It never holds the session path or a `pi --session` command line; only a resumable time-limit result names the `subagent_resume` call.
+The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The first footer line says the run id once as a labelled fact (`run:` or the resume call) and names the report file by its shortest path that Pi's `read` tool resolves. That path can hold the run id again as its folder name; copy the id from the label. It never holds the session path or a `pi --session` command line; only a resumable time-limit result names the `subagent_resume` call.
 
 Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
 
@@ -887,7 +887,7 @@ Use `caller_ping` when the child needs the parent. The child sends a message up,
 
 ## Resuming child sessions
 
-`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name, given as `runId`. The three tools take the key of the launch reply: `subagent_resume` and `subagent_kill` take `runId`, and `subagent_wait` takes `runIds`. They refuse an unknown key such as `id` or `ids`.
+`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name, given as `runId`. The three tools take the key of the launch reply: `subagent_resume` and `subagent_kill` take `runId`, and `subagent_wait` takes `runIds`. `subagent_kill` and `subagent_wait` refuse an unknown key such as `id` or `ids`; `subagent_resume` ignores extra keys next to a valid `runId` or `sessionFile`.
 
 Only one resume of a session runs at a time in one Pi process: a second resume of the same session is refused, also when both start together. Two Pi processes that resume one session at the same moment are not covered.
 

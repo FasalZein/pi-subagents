@@ -18,8 +18,11 @@ interface RenderOptions {
 	cwd: string;
 	homeDir: string;
 	warnings?: readonly string[];
-	/** Warnings that survive every cap, such as an unconfirmed kill; the other warnings get the rest. */
-	requiredWarnings?: readonly string[];
+	/**
+	 * A time-limit kill whose stop was not confirmed: its warning survives every cap, and the footer names
+	 * no resume call, because the pane can still run until a person closes it.
+	 */
+	killUnconfirmed?: boolean;
 	/** Verified fan-out footer (D18), kept inside the frame. */
 	verifierFooter?: VerifierFooter;
 	/** True when the agent asks for the context usage line. */
@@ -97,18 +100,33 @@ interface RequiredLine {
 /** Separates a fact from its detail. */
 const DETAIL_SEPARATOR = ": ";
 
+/** An unconfirmed kill must not read as a clean one: the pane can still be running. */
+export const KILL_UNCONFIRMED_WARNING =
+	"the system could not confirm that this sub-agent stopped; check its pane and close it before you trust this result";
+
+/**
+ * T88: the task the parent writes into the resume call. A resumed headless child gets the task as its
+ * only prompt (Pi's print mode prompts only with an initial message), so a call without one does no work.
+ */
+export const RESUME_TASK_PLACEHOLDER = "<next smaller step>";
+
 /**
  * T88: a resumable run that a time limit ended or wrapped up is continued, not relaunched: the footer
  * names the resume call instead of the bare run id (audit row 6: relaunches after a time-limit PARTIAL).
+ * An unconfirmed kill names none: the parent first checks and closes the pane (KILL_UNCONFIRMED_WARNING).
  */
-function resumeCall(record: ResultRecord): string | undefined {
-	if (!record.timeLimit || !record.resume.resumable) return undefined;
-	return `${SUBAGENT_RESUME_TOOL_NAME}({ runId: "${record.runId}" })`;
+function resumeCall(record: ResultRecord, options: RenderOptions): string | undefined {
+	if (!record.timeLimit || !record.resume.resumable || options.killUnconfirmed) return undefined;
+	return `${SUBAGENT_RESUME_TOOL_NAME}({ runId: "${record.runId}", task: "${RESUME_TASK_PLACEHOLDER}" })`;
 }
 
-/** T88: one line says the run id once, as the run fact or inside the resume call, then the report file. */
+/**
+ * T88: one line says the run id once as a labelled fact (the run fact or the resume call), then the
+ * report file. The report locator can hold the id again as its folder name; that path is a locator, not
+ * a second label, and a parent copies the id from the label.
+ */
 function runAndReportLine(record: ResultRecord, options: RenderOptions): RequiredLine {
-	const call = resumeCall(record);
+	const call = resumeCall(record, options);
 	const run = call ? `resume: ${call}` : `run: ${record.runId}`;
 	if (!record.report.saved) {
 		return {
@@ -153,7 +171,7 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 	}
 	const context = options.showContextUsage ? contextLine(record) : undefined;
 	if (context) lines.push(context);
-	for (const warning of options.requiredWarnings ?? []) lines.push({ fact: `warning: ${warning}` });
+	if (options.killUnconfirmed) lines.push({ fact: `warning: ${KILL_UNCONFIRMED_WARNING}` });
 	return lines;
 }
 

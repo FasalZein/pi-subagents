@@ -7,6 +7,7 @@ import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { CUT_MARK, type ReportStorage, type ResultRecord } from "../../src/runtime/result-record.ts";
 import {
 	FRAME_MAX_CHARS,
+	KILL_UNCONFIRMED_WARNING,
 	RESULT_TEXT_MAX_CHARS,
 	renderResult,
 	shortestReadLocator,
@@ -268,7 +269,7 @@ describe("T88 result footer", () => {
 	const loc = shortestReadLocator(saved.path, CWD, HOME);
 	const render = (record: ResultRecord) => renderResult(record, { cwd: CWD, homeDir: HOME, showContextUsage: true });
 
-	it("says the run id on one line with the report locator", () => {
+	it("says the run id once as a labelled fact, on one line with the report locator", () => {
 		const text = render(base());
 		assert.ok(text.includes(`\nrun: r-0001 · report: ${loc}`), text);
 		assert.equal(text.match(/\brun: /g)?.length, 1, text);
@@ -284,7 +285,7 @@ describe("T88 result footer", () => {
 	});
 
 	const wrapUp = { kind: "timeout" as const, seconds: 900, wrapUp: true };
-	const resumeCall = 'subagent_resume({ runId: "r-0001" })';
+	const resumeCall = 'subagent_resume({ runId: "r-0001", task: "<next smaller step>" })';
 
 	it("a resumable time-limit result names the resume call with its run id", () => {
 		for (const record of [
@@ -302,5 +303,13 @@ describe("T88 result footer", () => {
 		assert.ok(!blocked.includes("subagent_resume"), blocked);
 		assert.ok(blocked.includes("\nrun: r-0001 · report: "), blocked);
 		assert.ok(!render(base()).includes("subagent_resume"));
+	});
+
+	it("an unconfirmed time-limit kill names no resume call until the pane is closed", () => {
+		const killed = { ...base(), outcome: "timed_out" as const, timeLimit: { ...wrapUp, wrapUp: false } };
+		const text = renderResult(killed, { cwd: CWD, homeDir: HOME, killUnconfirmed: true });
+		assert.ok(!text.includes("subagent_resume"), text);
+		assert.ok(text.includes("\nrun: r-0001 · report: "), text);
+		assert.ok(text.includes(`\nwarning: ${KILL_UNCONFIRMED_WARNING}`), text);
 	});
 });

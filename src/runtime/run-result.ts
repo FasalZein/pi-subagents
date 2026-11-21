@@ -294,18 +294,14 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			cwd: target.parentCwd,
 			homeDir: homedir(),
 			warnings: target.warnings,
-			// The pane can still run: this warning keeps its place even beside a time-limit line.
-			requiredWarnings: killUnconfirmed ? [KILL_UNCONFIRMED_WARNING] : [],
+			// The pane can still run: its warning keeps its place even beside a time-limit line.
+			killUnconfirmed,
 			showContextUsage: running.reportContextUsage !== false,
 		});
 	const record = target.store.publish(target.reservation, assembled, render);
 	const text = render(record);
 	return { record, text, summary: record.summary, summarySource: assembled.summarySource };
 }
-
-/** An unconfirmed kill must not read as a clean one: the pane can still be running. */
-export const KILL_UNCONFIRMED_WARNING =
-	"the system could not confirm that this sub-agent stopped; check its pane and close it before you trust this result";
 
 /** D8 with the agent's time-limit policy: why a run that a time limit stopped cannot resume. */
 export const TIME_LIMIT_RESUME_REASON = "its agent does not allow a resume after a time limit stops it";
