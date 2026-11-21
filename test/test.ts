@@ -169,6 +169,8 @@ import "./agents/index-section.test.ts";
 import "./agents/model-refs-thinking-levels.test.ts";
 import "./agents/pi-loader-load.test.ts";
 import "./agents/agent-detail-limits.test.ts";
+import "./agents/index-launch-truth.test.ts";
+import "./agents/detail-model-roundtrip.test.ts";
 import "./agents/registration-gating.test.ts";
 import "./agents/malformed-agent.test.ts";
 

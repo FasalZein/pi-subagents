@@ -1,4 +1,3 @@
-import { type ModelRegistryLike, normalizeModelRef, resolveImplicitModelGrant } from "../launch/child-launch-plan.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
 import { formatTimeoutSeconds } from "../runtime/timeout-budget.ts";
 import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
@@ -8,16 +7,9 @@ import {
 	parseContextWarnThreshold,
 } from "../tools/context-reminders.ts";
 import { type AgentListEntry, describeVerifiedFanOut } from "./agent-list.ts";
+import { describeDefaultModel, type ParentModel } from "./default-model-view.ts";
 import type { IndexLaunchPolicy } from "./index-section.ts";
 import { formatRefsByProvider, parseAllowedModels } from "./model-refs.ts";
-
-/** The parent's model at the time of the call, which an agent without a default inherits (D22). */
-export interface ParentModel {
-	registry?: ModelRegistryLike;
-	/** provider/id of the session model, without a level. */
-	ref?: string;
-	thinking?: string;
-}
 
 /** What the detail of one agent depends on besides its definition: the caller and its session. */
 export interface AgentDetailContext {
@@ -28,45 +20,26 @@ export interface AgentDetailContext {
 	visibleNames: ReadonlySet<string>;
 }
 
-/**
- * The default and accepted refs as the launch resolver computes them
- * (resolveImplicitModelGrant with the registry, the parent ref and the
- * effective level, as in buildChildLaunchPlan).
- */
-function resolveModels(entry: AgentListEntry, parent: ParentModel): { defaultRef?: string; accepted?: string[] } {
-	const fallbackThinking = entry.thinking ?? parent.thinking;
-	const inheritedModelRef = entry.model ? undefined : normalizeModelRef(parent.ref, fallbackThinking).effectiveModelRef;
-	const defaultRef = resolveImplicitModelGrant(
-		{
-			definitionModel: entry.model,
-			definitionThinking: entry.thinking,
-			allowedModels: entry.allowedModels,
-			agentName: entry.name,
-		},
-		parent.registry,
-		inheritedModelRef,
-		fallbackThinking,
-	);
-	const allowed = parseAllowedModels(entry.allowedModels);
-	if (allowed.length === 0) return { defaultRef };
-	return { defaultRef, accepted: [...new Set([...(defaultRef ? [defaultRef] : []), ...allowed])] };
-}
-
 function renderModels(entry: AgentListEntry, parent: ParentModel): string[] {
-	const { defaultRef, accepted } = resolveModels(entry, parent);
+	const view = describeDefaultModel(entry, parent);
+	const allowed = parseAllowedModels(entry.allowedModels);
+	const accepted = [...new Set([...(view.usableRef ? [view.usableRef] : []), ...allowed])];
 	const models =
 		entry.allowModelOverride === false
 			? "models: the default only (overrides are ignored)"
-			: accepted
-				? `models: ${formatRefsByProvider(accepted)}`
-				: "models: any model ref";
-	return [`default model: ${defaultRef ?? "the parent's model"}`, models];
+			: allowed.length === 0
+				? "models: any model ref"
+				: view.grantError !== undefined
+					? `models: configured ${formatRefsByProvider(allowed)}, none usable while the default fails`
+					: `models: ${formatRefsByProvider(accepted)}`;
+	return [view.line, models];
 }
 
 const SESSION_MODES = {
 	standalone: "fresh chat, needs a full brief",
 	"lineage-only": "fresh chat linked to this session, needs a full brief",
 	fork: "copy of this chat",
+	"in-memory": "fresh chat in memory, not saved, needs a full brief",
 } as const satisfies Record<AgentListEntry["sessionMode"], string>;
 
 /**

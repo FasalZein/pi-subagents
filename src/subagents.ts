@@ -22,10 +22,9 @@ import {
 	getSubagentAgentOverrideError,
 	getSubagentAgentRequirementError,
 	resolveSubagentBlocking,
-	resolveSubagentNoSession,
 } from "./launch/policy.ts";
 import { resolveSubagentCwd } from "./launch/runtime-paths.ts";
-import { getNoSessionSeedMode } from "./launch/seed-child-session.ts";
+import { resolveChildSessionKind } from "./launch/seed-child-session.ts";
 import { initializeSpawnWidthForSession } from "./runtime/spawn-width.ts";
 import { publishRunningSubagentCount } from "./runtime/nested-lifecycle.ts";
 import { parseSpawnEnv } from "./spawn/policy.ts";
@@ -53,7 +52,6 @@ import {
 } from "./runtime/wiring.ts";
 import {
 	resolveEffectiveSessionMode as resolveEffectiveSessionModeFromSessionFiles,
-	resolveTaskSessionMode as resolveTaskSessionModeFromSessionFiles,
 	type SubagentSessionMode,
 } from "./session/session-files.ts";
 import { setResultStorageNotice } from "./runtime/result-files.ts";
@@ -137,7 +135,7 @@ function getSoloLaunchPolicy(hasUI: boolean): IndexLaunchPolicy {
 
 function getAgentListEntries(baseCwd = process.cwd()): AgentListEntry[] {
 	const callerEnv = parseSpawnEnv(process.env);
-	return getAgentListEntriesFromDefinitions(baseCwd, resolveTaskSessionMode, {
+	return getAgentListEntriesFromDefinitions(baseCwd, resolveChildSessionKind, {
 		callerAgent: callerEnv.callerAgent,
 		callerSpawnable: callerEnv.callerSpawnable,
 	});
@@ -150,9 +148,6 @@ function resolveEffectiveSessionMode(
 	return resolveEffectiveSessionModeFromSessionFiles(params, agentDefs);
 }
 
-function resolveTaskSessionMode(agentDefs: AgentDefaults | null): SubagentSessionMode {
-	return resolveTaskSessionModeFromSessionFiles(agentDefs, resolveSubagentNoSession, getNoSessionSeedMode);
-}
 
 // Pi reloads extension modules without a cache, so module state does not
 // survive /reload. The session that saw the malformed-agent notice is kept on
@@ -374,10 +369,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	registerSubagentCoreTools(pi, shouldRegister, {
 		listLaunchableAgents: (cwd) =>
-			selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, parseSpawnEnv(process.env)),
+			selectLaunchableAgents(loadAgentCatalog(cwd), resolveChildSessionKind, parseSpawnEnv(process.env)),
 		loadAgentDefaults: (agentName, cwd) => (agentName ? loadAgentDefaults(agentName, undefined, cwd) : null),
 		resolveEffectiveSessionMode,
-		resolveTaskSessionMode,
+		resolveTaskSessionMode: resolveChildSessionKind,
 		launchBackgroundSubagent,
 		launchSubagent,
 		watchBackgroundSubagent,
@@ -421,7 +416,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		{
 			spawnEnv: () => parseSpawnEnv(process.env),
 			listLaunchableAgents: (cwd, spawnEnv) =>
-				selectLaunchableAgents(loadAgentCatalog(cwd), resolveTaskSessionMode, spawnEnv),
+				selectLaunchableAgents(loadAgentCatalog(cwd), resolveChildSessionKind, spawnEnv),
 			launchPolicy: getSoloLaunchPolicy,
 		},
 		grant,
