@@ -1,5 +1,5 @@
 import { getEffectiveAgentDefinitions, setAgentEnabled } from "../../agents/definitions.ts";
-import { type AgentDetailDefaults, buildSections } from "./data.ts";
+import { type AgentDetailDefaults, buildSections } from "./detail-sections.ts";
 import { firstLine } from "./render-helpers.ts";
 import type { OverlayContext, OverlayItem } from "./render-types.ts";
 

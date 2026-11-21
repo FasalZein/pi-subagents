@@ -48,12 +48,12 @@ export function suppressCallerPingExit(state: CallerPingState) {
 	}
 }
 
-/** /auto-exit re-enabled autonomous closing: deliver a durable ping again. */
-export function rearmCallerPingExitAfterReenable(state: CallerPingState) {
-	if (state.outcomeDurable && state.exitSuppressed) {
-		state.exitSuppressed = false;
-		armCallerPingExit(state);
-	}
+/** /auto-exit re-enabled autonomous closing: deliver a durable ping again. Returns true when the exit is armed. */
+export function rearmCallerPingExitAfterReenable(state: CallerPingState): boolean {
+	if (!state.outcomeDurable || !state.exitSuppressed) return false;
+	state.exitSuppressed = false;
+	armCallerPingExit(state);
+	return true;
 }
 
 interface CallerPingDeps {

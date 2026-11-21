@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
 import { renderAgentIndexSection } from "../../src/agents/index-section.ts";
+import type { ModelRegistryLike } from "../../src/launch/child-launch-plan.ts";
 import { resolveCallModelRef } from "../../src/launch/child-launch-plan.ts";
 import {
 	afterEach,
@@ -16,6 +18,7 @@ import {
 	writeFileSync,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
+import { HIGH_AT_MOST, launch, NON_REASONING_BASE, TWO_BASES } from "../support/pi-model-run.ts";
 import { upstreamUnknownAgentError } from "../support/upstream-wording.ts";
 
 type AgentsTool = {
@@ -32,6 +35,7 @@ type AgentsTool = {
 interface SessionContext {
 	hasUI?: boolean;
 	model?: { provider: string; id: string };
+	modelRegistry?: ModelRegistryLike;
 }
 
 interface SessionOptions extends SessionContext {
@@ -69,7 +73,7 @@ function loadAgentsTool(
 ): (params: { name?: string; query?: string; limit?: number }) => Promise<string> {
 	const tool = loadExtensionTools(cwd, session).get("subagent_agents");
 	assert.ok(tool, "subagent_agents is registered");
-	const ctx = { cwd, hasUI: session.hasUI, model: session.model };
+	const ctx = { cwd, hasUI: session.hasUI, model: session.model, modelRegistry: session.modelRegistry };
 	return async (params) => (await tool.execute("call-1", params, undefined, undefined, ctx)).content[0].text;
 }
 
@@ -457,6 +461,35 @@ describe("subagent_agents tool", () => {
 			/^limits: timeout 15m \(report at 450s\), no resume after it, idle-timeout 2m, context warnings at 70%, 80%, 90%$/m,
 		);
 		assert.match(detail, /^may launch: any agent \(depth 2, width 3\)$/m);
+	});
+
+	it("shows a default model that a launch naming it runs like a launch without a model (T86 E2E)", async () => {
+		// The registered tool with the parent's registry, then the launch plan and Pi's
+		// resolution (test/support/pi-model-run.ts) for the shown ref and for no model.
+		const cases: Array<[string, ModelRegistryLike, { provider: string; id: string }, string, RegExp]> = [
+			["model: base\nallowed-models: other/x", TWO_BASES, { provider: "a", id: "parent" }, "high", /^a\/base:high$/],
+			["model: a/think", HIGH_AT_MOST, { provider: "a", id: "think" }, "xhigh", /^a\/think:high$/],
+			[
+				"model: a/base\nallowed-models: other/x",
+				NON_REASONING_BASE,
+				{ provider: "a", id: "parent" },
+				"high",
+				/^a\/base at level off \(a launch without a model runs on it; a call that names it is refused/,
+			],
+		];
+		for (const [frontmatter, modelRegistry, model, thinking, expected] of cases) {
+			const { cwd, agentsDir } = createAgentRoot();
+			writeAgent(agentsDir, "picker", `name: picker\ndescription: Picks\n${frontmatter}`);
+			const detail = await loadAgentsTool(cwd, { hasUI: true, model, thinking, modelRegistry })({ name: "picker" });
+			const shown = /^default model: (.*)$/m.exec(detail)?.[1] ?? "";
+			assert.match(shown, expected, detail);
+			const parent = { ref: `${model.provider}/${model.id}`, thinking };
+			const definition = getEffectiveAgentDefinitions(cwd).find((agent) => agent.name === "picker") ?? null;
+			const implicit = await launch(definition, cwd, modelRegistry, parent);
+			const named = await launch(definition, cwd, modelRegistry, parent, shown.split(" ")[0]);
+			if (shown.includes(" ")) assert.ok("refused" in named, JSON.stringify(named));
+			else assert.deepEqual(named, implicit, shown);
+		}
 	});
 
 	it("keeps a miss within one line (review 8)", async () => {

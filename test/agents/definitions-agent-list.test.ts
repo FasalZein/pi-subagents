@@ -143,10 +143,14 @@ describe("agent definitions and catalog", () => {
 
 		assert.equal(resolveEffectiveSessionModeForTest({ agent: "default" }, null), "lineage-only");
 		assert.equal(resolveTaskSessionModeForTest(null), "lineage-only");
+		// T86: Pi's in-memory mode ignores the seed; only a strict wrap-up continues the seeded fork.
+		assert.equal(resolveTaskSessionModeForTest({ sessionMode: "lineage-only", noSession: true }), "in-memory");
 		assert.equal(
 			resolveTaskSessionModeForTest({
 				sessionMode: "lineage-only",
 				noSession: true,
+				timeout: 600,
+				timeoutWarnThreshold: "80%",
 			}),
 			"fork",
 		);
@@ -265,7 +269,7 @@ describe("agent definitions and catalog", () => {
 		assert.equal(defs.at(-1)?.mode, "interactive");
 	});
 
-	it("uses descriptions for ambient catalog eligibility", () => {
+	it("lists every visible agent, a descriptionless one too, for the index to place (T86)", () => {
 		const dir = createTestDir();
 		const configDir = join(dir, "agent-root");
 		const agentsDir = join(configDir, "agents");
@@ -314,17 +318,14 @@ describe("agent definitions and catalog", () => {
 		const ambient = getAgentListEntriesForTest(dir);
 		assert.deepEqual(
 			ambient.map((entry) => entry.name),
-			["description-only", "global-agent", "lenient-enabled", "project-agent"],
+			["description-only", "global-agent", "hidden-agent", "lenient-enabled", "project-agent"],
 		);
 		assert.equal(ambient.find((entry) => entry.name === "project-agent")?.description, "Project description");
 		assert.equal(ambient.find((entry) => entry.name === "description-only")?.description, "Fallback description");
 		assert.equal(ambient.find((entry) => entry.name === "description-only")?.sessionMode, "lineage-only");
 		assert.equal(ambient.find((entry) => entry.name === "global-agent")?.sessionMode, "fork");
 		assert.equal(ambient.find((entry) => entry.name === "project-agent")?.sessionMode, "lineage-only");
-		assert.equal(
-			ambient.some((entry) => entry.name === "hidden-agent"),
-			false,
-		);
+		assert.equal(ambient.find((entry) => entry.name === "hidden-agent")?.description, undefined);
 	});
 
 	it("renders compact allowed model choices in the ambient catalog", () => {

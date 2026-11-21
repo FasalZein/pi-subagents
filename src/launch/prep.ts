@@ -30,12 +30,11 @@ import { parseEnvString } from "./env.ts";
 import { isSubagentsExtensionEntry } from "./extension-entries.ts";
 import { getLaunchEnvCollisions } from "./launch-overrides.ts";
 import {
+	definitionRunsInMemory,
 	resolveSubagentNoContextFiles,
 	resolveSubagentNoSession,
 	resolveSubagentParentClosePolicy,
 	resolveSubagentReportContextUsage,
-	resolveSubagentTimeoutState,
-	runsInMemory,
 } from "./policy.ts";
 import type { ResumeMode } from "./resume.ts";
 import { type ResolvedSubagentRuntimePaths, resolveSubagentCwd } from "./runtime-paths.ts";
@@ -282,12 +281,7 @@ export function getPreparedExtensionLaunchArgs(
 export function getPreparedSessionLaunchArgs(
 	prepared: Pick<PreparedSubagentLaunch, "agentDefs" | "subagentSessionFile" | "sessionTitle">,
 ): string[] {
-	// D13 (T73): a no-session child runs in Pi's in-memory mode unless a strict wrap-up needs its transcript.
-	const useInMemorySession = runsInMemory({
-		noSession: resolveSubagentNoSession(prepared.agentDefs),
-		...resolveSubagentTimeoutState(prepared.agentDefs),
-	});
-	const args = useInMemorySession
+	const args = definitionRunsInMemory(prepared.agentDefs)
 		? ["--session", prepared.subagentSessionFile, "--no-session"]
 		: ["--session", prepared.subagentSessionFile];
 	if (prepared.sessionTitle) args.push("--name", prepared.sessionTitle);

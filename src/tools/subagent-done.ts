@@ -11,6 +11,7 @@ import { getPublishedRunningSubagentCount } from "../runtime/nested-lifecycle.ts
 import { installSubagentContextReminders } from "./context-reminders.ts";
 import { createExitSignalWriter, inMemoryFinalOutput } from "./exit-signal.ts";
 import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.ts";
+import { holdSubagentExitSidecar, releaseSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
 import { createPaneTakeover } from "./pane-takeover.ts";
@@ -76,7 +77,18 @@ export default function (pi: ExtensionAPI) {
 	// D11: set when a person types or presses Escape in the pane after the run
 	// started; only /auto-exit clears it. While set, the person owns the pane:
 	// nothing here requests shutdown or writes an exit record before it closes.
-	const takeover = createPaneTakeover({ writeExitSignal });
+	const takeover = createPaneTakeover({
+		writeExitSignal,
+		holdExitRecord: () => {
+			const sessionFile = process.env.PI_SUBAGENT_SESSION;
+			if (sessionFile) holdSubagentExitSidecar(sessionFile);
+		},
+	});
+	/** T85: the real close releases an answer held by a takeover and records who closed the pane. */
+	const releaseHeldExitRecord = (closedBy: object) => {
+		const sessionFile = process.env.PI_SUBAGENT_SESSION;
+		return sessionFile !== undefined && releaseSubagentExitSidecar(sessionFile, closedBy);
+	};
 	const endRunWithError = takeover.endRunWithError;
 	// Set by the auto-exit or manual branch below; raw pane keys reach it.
 	let onOperatorKeystroke: (ctx: PaneUiContext) => void = () => {};
@@ -236,6 +248,7 @@ export default function (pi: ExtensionAPI) {
 		// also after a takeover) or from the parent closing the pane, whose own stop or time-limit fact
 		// outranks this one. A headless child has no person.
 		const closedBy = isInteractive && !takeover.childRequestedShutdown ? { endedBy: "operator" as const } : {};
+		if (releaseHeldExitRecord(closedBy)) return;
 		// A run that ended on an error and was never recovered reports that error,
 		// also when a person closes a taken-over pane (D12).
 		if (takeover.unrecoveredError) {
@@ -477,7 +490,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				takeover.release();
 				autoExitReArmed = true;
-				rearmCallerPingExitAfterReenable(callerPingState);
+				// The re-armed ping exits the process without a session shutdown, so its record is released here.
+				if (rearmCallerPingExitAfterReenable(callerPingState)) releaseHeldExitRecord({});
 				ctx.ui.setStatus(AUTO_EXIT_STATUS_KEY, undefined);
 				ctx.ui.notify("Auto-exit re-enabled — will close after next response.", "info");
 			},

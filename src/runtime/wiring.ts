@@ -121,6 +121,9 @@ export async function stopRunningSubagent(
 	running: RunningSubagent,
 	options: { operator?: boolean } = {},
 ): Promise<void> {
+	// T83 (D5, D7): an ended run has no child or surface left to stop; a later stop request
+	// (an overlay item opened before the end) must not reopen the phase or signal a dead group.
+	if (running.phase === "ended") return;
 	// A verified fan-out has no child process in this parent: its candidates
 	// belong to a detached supervisor. Kill = cancel the run (supervisor kills
 	// the candidate groups and terminalizes the manifest).

@@ -491,11 +491,11 @@ Each agent line holds the name and the first 100 characters of the `description`
 A flag shows only where an agent differs from the common case:
 
 - `[pane]`: the child opens in a pane. A prompt start does not probe for a multiplexer: the flags follow the detection of the latest launch. Before the first launch, a UI session shows the flags with the line `[pane] and [manual] need a multiplexer; without one a helper runs headless and closes itself.`
-- `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task.
+- `[fork]`: the child sees the parent transcript (`session-mode: fork`). Without the flag, the child sees only its task. A `no-session: true` child gets the flag only under a strict time-limit wrap-up, because Pi's in-memory mode ignores the copied transcript (see [`no-session: true`](#no-session-true)).
 - `[manual]`: the agent has `auto-exit` off, so the pane stays open until a person closes it. The child has no `subagent_done` and cannot close the pane itself (see [`subagent_done`](#subagent_done)).
 - `[waits]`: the launch call waits for the result (`async: false`).
 
-An agent without a `description` is not in the index, and it stays launchable. A child with `spawning` gets the section filtered to the agents it may launch. A child that may launch nothing gets no section and no launch tools.
+An agent without a `description` gets no agent line, and it stays launchable: `subagent_agents` finds it, and without `subagent_agents` the `More agents:` line names it. A child with `spawning` gets the section filtered to the agents it may launch. A child that may launch nothing gets no section and no launch tools.
 
 ### Find the management tools
 
@@ -507,7 +507,7 @@ An agent without a `description` is not in the index, and it stays launchable. A
 
 | Parameter | Reply |
 | --- | --- |
-| `name` | The full definition of that agent: description, default model ref, accepted model refs grouped by provider, kind of child, session mode, limits, and what it may launch |
+| `name` | The full definition of that agent: description, default model ref, accepted model refs grouped by provider, kind of child, session mode, limits, and what it may launch. The default model ref is shown only when a call that names it runs on the same model at the same level as a launch without `model` (after Pi's own model resolution and level clamp). Otherwise the line says what a launch without `model` does: it fails (for example a bare model id that several providers carry), or it runs on a model at a level that no `model` value reproduces, so leave `model` out. When the default cannot resolve at all, every launch fails, and the accepted list shows its refs as configured, not usable. The session mode is the session the child gets |
 | `query` | The best matches for the words, one line each. `limit` sets the number of matches: 1 to 50, default 5 |
 | neither | The count of agents and one line on how to search |
 
@@ -856,7 +856,7 @@ PI_SUBAGENT_DISABLE_CHILD_CONTEXT_BOUNDARY=1
 
 `no-session: true` runs the child in Pi's in-memory mode (`--no-session`). It writes no transcript. The watching parent takes the report from the child's output: a headless child's captured output (its last 4,000 characters), else the final text that the child writes into its exit record (the text Pi print mode prints). A pane child and a `continue` child have no captured output, so their report is that final text. A failed headless child without output keeps its error output in the report. Only a strict time-limit wrap-up (`timeout-warn-threshold`) persists the child to its temporary session file, as described under time limits. An orderly detach (the parent session closes while a `continue` child still runs) gives that child no result. The result record says the run cannot be resumed.
 
-The launcher writes a temporary seed file with the parent's active branch for `fork` and `lineage-only`. In-memory mode ignores that file, so the child starts without the parent conversation, as in upstream v2.9.2. Only a strict time-limit wrap-up loads the seed, and then the child starts with the parent conversation. The seed is deleted after the result, and at once when the parent session exits.
+The launcher writes a temporary seed file with the parent's active branch for `fork` and `lineage-only`. In-memory mode ignores that file, so the child starts without the parent conversation, as in upstream v2.9.2. Only a strict time-limit wrap-up loads the seed, and then the child starts with the parent conversation. The seed is deleted after the result, and at once when the parent session exits. The index and `subagent_agents` show the same: an in-memory child has no `[fork]` flag, and its detail says `session: fresh chat in memory, not saved, needs a full brief`.
 
 An in-memory child writes no session file, so `idle-timeout` sees no output from it: the idle clock runs from the launch and acts as a hard limit (upstream limitation).
 

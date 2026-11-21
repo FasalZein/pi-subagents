@@ -1,14 +1,14 @@
+import type { ChildSessionKind } from "../launch/seed-child-session.ts";
 import type { ResolvedAgentDefinition } from "./definitions.ts";
 import { getEffectiveAgentDefinitions } from "./definitions.ts";
 import { resolveVerifierCandidateCount } from "../vf/criteria.ts";
-
-type SubagentSessionMode = "standalone" | "lineage-only" | "fork";
 
 export interface AgentListEntry {
 	name: string;
 	source: "project" | "global";
 	mode?: "interactive" | "background";
-	sessionMode: SubagentSessionMode;
+	/** The session the child gets, not the frontmatter mode: a no-session child can run in memory. */
+	sessionMode: ChildSessionKind;
 	async?: boolean;
 	autoExit?: boolean;
 	description?: string;
@@ -39,15 +39,15 @@ interface AgentListOptions {
 	callerSpawnable: string[] | true;
 }
 
-export type ResolveSubagentSessionMode = (agent: ResolvedAgentDefinition) => SubagentSessionMode;
+export type ResolveSubagentSessionMode = (agent: ResolvedAgentDefinition) => ChildSessionKind;
 
 export function getAgentListEntries(
 	baseCwd: string,
 	resolveSessionMode: ResolveSubagentSessionMode,
 	options: AgentListOptions = { callerAgent: null, callerSpawnable: true },
 ): AgentListEntry[] {
+	// A descriptionless agent stays: the index names it on its names line (D06).
 	return getEffectiveAgentDefinitions(baseCwd)
-		.filter((agent) => agent.description?.trim())
 		.filter(
 			(agent) =>
 				(options.callerAgent === null ||
