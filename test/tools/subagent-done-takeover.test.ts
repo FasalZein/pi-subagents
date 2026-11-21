@@ -308,3 +308,71 @@ describe("subagent-done.ts deferred error shutdown (finding 3)", () => {
 		});
 	}
 });
+
+// T85 (F2): the answer writes its exit record, then queues the close for one tick. A person who
+// takes over in that window keeps the pane; the record already on disk still reaches the parent.
+// Same race in v2.9.2 (cf6dbf4 subagent-done.ts:115-123 requestShutdown has no takeover check).
+describe("subagent-done.ts deferred close after an answer (T85, F2)", () => {
+	type Child = ReturnType<typeof loadChild>;
+	const closePaths: Array<{
+		name: string;
+		options: { autoExit: boolean; pane: boolean };
+		exitType: string;
+		answer: (child: Child) => unknown;
+		takeOver: (child: Child) => void;
+	}> = [
+		{
+			name: "an auto-exit answer",
+			options: { autoExit: true, pane: true },
+			exitType: "done",
+			answer: (child) => child.emit("agent_end", answerEnd),
+			takeOver: (child) => child.press("h"),
+		},
+		{
+			name: "caller_ping",
+			options: { autoExit: true, pane: true },
+			exitType: "ping",
+			answer: (child) =>
+				child.tools.get("caller_ping").execute("p1", { message: "need a decision" }, undefined, undefined, child.ctx),
+			takeOver: (child) => child.press("h"),
+		},
+		{
+			name: "subagent_done",
+			options: { autoExit: false, pane: false },
+			exitType: "done",
+			answer: (child) => child.tools.get("subagent_done").execute("c1", {}, undefined, undefined, child.ctx),
+			takeOver: (child) => child.emit("input", { source: "interactive", text: "wait" }),
+		},
+	];
+	for (const path of closePaths) {
+		it(`a takeover between ${path.name} and the deferred close keeps the pane`, async () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild(path.options);
+			try {
+				child.emit("agent_start", {});
+				await path.answer(child);
+				path.takeOver(child);
+				mock.timers.tick(1_000);
+				assert.equal(child.shutdowns, 0);
+				assert.equal(child.readExit()?.type, path.exitType, "the answer is already on disk");
+				assert.equal(quitPane(child)?.type, path.exitType, "closing the pane keeps the answer");
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+
+		it(`without a takeover, ${path.name} closes the pane`, async () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild(path.options);
+			try {
+				child.emit("agent_start", {});
+				await path.answer(child);
+				mock.timers.tick(5);
+				assert.equal(child.shutdowns, 1);
+				assert.equal(child.readExit()?.type, path.exitType);
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+	}
+});

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { clearSubagentExitSidecar, getSubagentExitSidecarPath } from "../session/exit-sidecar.ts";
+import { clearSubagentExitSidecar, getSubagentExitSidecarPath, HELD_EXIT_FIELD } from "../session/exit-sidecar.ts";
 import { getInteractiveProcessFile } from "../session/interactive-process.ts";
 import { readScreenAsync } from "./io.ts";
 
@@ -75,6 +75,9 @@ function withOperatorClose(obj: PollResult, endedBy: unknown, output: unknown): 
  */
 function interpretExitSidecar(data: any): PollResult {
 	data ??= {};
+	// T85: a record still held when the child is gone was never released by the child's own close,
+	// so the person who took over the pane closed it.
+	if (data[HELD_EXIT_FIELD] === true) data = { ...data, endedBy: "operator" };
 	const tokens = typeof data.outputTokens === "number" ? data.outputTokens : undefined;
 	const contextTokens = typeof data.contextTokens === "number" ? data.contextTokens : undefined;
 	const contextWindow = typeof data.contextWindow === "number" ? data.contextWindow : undefined;
@@ -112,13 +115,21 @@ function interpretExitSidecar(data: any): PollResult {
 
 export const __pollForExitTest__ = { interpretExitSidecar };
 
-export function consumeSubagentExitSignal(sessionFile: string): PollResult | null {
+/**
+ * What the caller knows about the child process when it reads the exit record (T85). An exit record
+ * is the child's answer, not proof that the child exited: while the child may still run, a record
+ * held by a pane takeover stays in place until the child's real close releases it.
+ */
+export type ChildProcessProof = "child-exited" | "child-may-run";
+
+export function consumeSubagentExitSignal(sessionFile: string, proof: ChildProcessProof): PollResult | null {
 	const exitFile = getSubagentExitSidecarPath(sessionFile);
 	if (!existsSync(exitFile)) return null;
 
 	try {
 		const parsed = JSON.parse(readFileSync(exitFile, "utf8"));
 		if (!parsed || typeof parsed !== "object") return null;
+		if (proof === "child-may-run" && parsed[HELD_EXIT_FIELD] === true) return null;
 		clearSubagentExitSidecar(sessionFile);
 		return interpretExitSidecar(parsed);
 	} catch {
@@ -204,7 +215,7 @@ export async function pollForExit(
 		}
 
 		if (options.sessionFile) {
-			const exitSignal = consumeSubagentExitSignal(options.sessionFile);
+			const exitSignal = consumeSubagentExitSignal(options.sessionFile, "child-may-run");
 			if (exitSignal) return exitSignal;
 		}
 
@@ -225,8 +236,9 @@ export async function pollForExit(
 			const match = screen.match(/__SUBAGENT_DONE_(\d+)__/);
 			if (match) return { reason: "sentinel", exitCode: parseInt(match[1], 10) };
 		} catch {
+			// An unreadable surface means the pane is gone, and the child with it.
 			if (options.sessionFile) {
-				const exitSignal = consumeSubagentExitSignal(options.sessionFile);
+				const exitSignal = consumeSubagentExitSignal(options.sessionFile, "child-exited");
 				if (exitSignal) return exitSignal;
 			}
 			if (options.doneSentinelFile) {

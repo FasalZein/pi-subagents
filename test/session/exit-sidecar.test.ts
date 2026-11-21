@@ -5,6 +5,8 @@ import { consumeSubagentExitSignal } from "../../src/mux/poll.ts";
 import {
 	clearSubagentExitSidecar,
 	getSubagentExitSidecarPath,
+	holdSubagentExitSidecar,
+	releaseSubagentExitSidecar,
 	writeSubagentExitSidecar,
 } from "../../src/session/exit-sidecar.ts";
 import { assert, createTestDir } from "../support/index.ts";
@@ -18,13 +20,13 @@ describe("subagent exit sidecars", () => {
 		writeFileSync(exitFile, JSON.stringify({ type: "done", outputTokens: 7 }));
 
 		assert.equal(exitFile, `${sessionFile}.exit`);
-		assert.deepEqual(consumeSubagentExitSignal(sessionFile), {
+		assert.deepEqual(consumeSubagentExitSignal(sessionFile, "child-may-run"), {
 			reason: "done",
 			exitCode: 0,
 			outputTokens: 7,
 		});
 		assert.equal(existsSync(exitFile), false);
-		assert.equal(consumeSubagentExitSignal(sessionFile), null);
+		assert.equal(consumeSubagentExitSignal(sessionFile, "child-may-run"), null);
 	});
 
 	it("supersedes only existing error signals when requested", () => {
@@ -78,6 +80,44 @@ describe("subagent exit sidecars", () => {
 		assert.deepEqual(JSON.parse(readFileSync(exitFile, "utf8")), error);
 	});
 
+	// T85: both pane pollers read through consumeSubagentExitSignal; a record held by a takeover is
+	// the child's answer, not proof that the child exited.
+	it("a held record waits for the real close while the child may run", () => {
+		const sessionFile = join(createTestDir(), "child.jsonl");
+		writeSubagentExitSidecar(sessionFile, { type: "done", outputTokens: 5 });
+		holdSubagentExitSidecar(sessionFile);
+		assert.equal(consumeSubagentExitSignal(sessionFile, "child-may-run"), null);
+		assert.equal(releaseSubagentExitSidecar(sessionFile, { endedBy: "operator" }), true);
+		assert.deepEqual(consumeSubagentExitSignal(sessionFile, "child-may-run"), {
+			reason: "done",
+			exitCode: 0,
+			outputTokens: 5,
+			closedByOperator: true,
+		});
+	});
+
+	it("a held record that the child never released is the operator's close once the child is gone", () => {
+		const sessionFile = join(createTestDir(), "child.jsonl");
+		writeSubagentExitSidecar(sessionFile, { type: "ping", name: "w", message: "Which key?" });
+		holdSubagentExitSidecar(sessionFile);
+		assert.deepEqual(consumeSubagentExitSignal(sessionFile, "child-exited"), {
+			reason: "ping",
+			exitCode: 0,
+			ping: { name: "w", message: "Which key?" },
+			closedByOperator: true,
+		});
+	});
+
+	it("hold and release do nothing without a record, and release needs a held one", () => {
+		const sessionFile = join(createTestDir(), "child.jsonl");
+		holdSubagentExitSidecar(sessionFile);
+		assert.equal(existsSync(getSubagentExitSidecarPath(sessionFile)), false, "a consumed record is not recreated");
+		assert.equal(releaseSubagentExitSidecar(sessionFile, {}), false);
+		writeSubagentExitSidecar(sessionFile, { type: "done" });
+		assert.equal(releaseSubagentExitSidecar(sessionFile, { endedBy: "operator" }), false);
+		assert.deepEqual(consumeSubagentExitSignal(sessionFile, "child-may-run"), { reason: "done", exitCode: 0 });
+	});
+
 	it("clears stale sidecars before reusing a session path", () => {
 		const dir = createTestDir();
 		const sessionFile = join(dir, "resumed-child.jsonl");
@@ -88,7 +128,7 @@ describe("subagent exit sidecars", () => {
 		clearSubagentExitSidecar(sessionFile);
 
 		assert.equal(existsSync(exitFile), false);
-		assert.equal(consumeSubagentExitSignal(sessionFile), null);
+		assert.equal(consumeSubagentExitSignal(sessionFile, "child-may-run"), null);
 		writeFileSync(exitFile, JSON.stringify({ type: "done", outputTokens: 3 }));
 		assert.equal(readFileSync(exitFile, "utf8"), JSON.stringify({ type: "done", outputTokens: 3 }));
 	});
