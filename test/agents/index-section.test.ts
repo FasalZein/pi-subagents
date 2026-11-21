@@ -1,4 +1,5 @@
-import { cpSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { cpSync, readdirSync, writeFileSync } from "node:fs";
 import { type AgentListEntry, getAgentListEntries } from "../../src/agents/agent-list.ts";
 import {
 	AGENT_INDEX_MAX_CHARS,
@@ -36,6 +37,38 @@ const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
 // src/agents/agent-list.ts "do not suggest a different listed agent".
 const UPSTREAM_RULES_LINE =
 	"Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.";
+
+type ModelLineRenderer = (entry: AgentListEntry) => string | undefined;
+
+/**
+ * The differential oracle (D19, owner 2026-11-21): renderDefaultModelLine and
+ * renderModelsLine taken from `git show cf6dbf4:src/agents/agent-list.ts`, run
+ * on cf6dbf4's own src/agents/model-refs.ts.
+ */
+async function loadUpstreamModelLines(): Promise<{ defaultModel: ModelLineRenderer; models: ModelLineRenderer }> {
+	const show = (path: string) =>
+		execFileSync("git", ["show", `cf6dbf4:${path}`], { cwd: import.meta.dirname, encoding: "utf8" });
+	const agentList = show("src/agents/agent-list.ts");
+	const extract = (name: string) => {
+		const match = agentList.match(new RegExp(`^function ${name}\\([\\s\\S]*?\\n}\\n`, "m"));
+		assert.ok(match, `cf6dbf4 has ${name}`);
+		return `export ${match[0]}`;
+	};
+	const dir = createTestDir();
+	writeFileSync(join(dir, "model-refs.ts"), show("src/agents/model-refs.ts"));
+	writeFileSync(
+		join(dir, "model-lines.ts"),
+		[
+			'import { buildModelRef, parseAllowedModels } from "./model-refs.ts";',
+			// The extracted functions name this type; type stripping erases it.
+			"type AgentListEntry = any;",
+			extract("renderDefaultModelLine"),
+			extract("renderModelsLine"),
+		].join("\n"),
+	);
+	const oracle = await import(join(dir, "model-lines.ts"));
+	return { defaultModel: oracle.renderDefaultModelLine, models: oracle.renderModelsLine };
+}
 
 function entry(name: string, extra: Partial<AgentListEntry> = {}): AgentListEntry {
 	return {
@@ -102,6 +135,58 @@ describe("agent index section", () => {
 			assert.equal(lines.at(-1), `+${100 - shown} more: subagent_agents with a query`);
 		});
 	}
+
+	it("follows each agent line with the cf6dbf4 model lines of that agent, byte for byte (D19)", async () => {
+		const upstream = await loadUpstreamModelLines();
+		// Made-up refs. A suffix that is no Pi thinking level (`m:free`) is left
+		// out: the fork keeps it in the model id on purpose (model-refs.ts splitModelRef).
+		const cases = [
+			entry("bare"),
+			entry("default-only", { model: "prov/model-a", thinking: "high" }),
+			entry("suffixed", { model: "prov/model-a:low", thinking: "high" }),
+			entry("listed", {
+				model: "prov/model-a",
+				thinking: "medium",
+				allowedModels: "prov/model-b:xhigh, prov/model-a:medium ,prov/model-c,, ",
+			}),
+			entry("list-no-default", { allowedModels: "prov/model-b, prov/model-b" }),
+			entry("blank-list", { model: "prov/model-a", allowedModels: "  " }),
+			entry("locked", { model: "prov/model-a", thinking: "low", allowModelOverride: false }),
+			entry("locked-bare", { allowModelOverride: false, allowedModels: "prov/model-b" }),
+			entry("open", { model: "prov/model-a", allowModelOverride: true }),
+		];
+		for (const policy of [PANE, PRINT]) {
+			const lines = renderAgentIndexSection(cases, policy)?.split("\n") ?? [];
+			for (const item of cases) {
+				const at = lines.findIndex((line) => line.startsWith(`- ${item.name}: `));
+				assert.ok(at >= 0, item.name);
+				const end = lines.findIndex((line, i) => i > at && !line.startsWith("  "));
+				const expected = [upstream.defaultModel(item), upstream.models(item)].filter((line) => line !== undefined);
+				assert.deepEqual(lines.slice(at + 1, end === -1 ? undefined : end), expected, item.name);
+			}
+		}
+	});
+
+	it("keeps or drops an agent line together with its model lines, pinned agents first (D19)", () => {
+		const models = { model: "prov/model-a", thinking: "high", allowedModels: "prov/model-b, prov/model-c:low" };
+		const entries = Array.from({ length: 30 }, (_, i) =>
+			entry(`agent-${String(i).padStart(3, "0")}`, { ...models, pinned: i >= 25 }),
+		);
+		const section = renderAgentIndexSection(entries, PANE) ?? "";
+		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
+		const lines = section.split("\n");
+		const shown = lines.filter((line) => line.startsWith("- ")).map((line) => line.slice(2, line.indexOf(":")));
+		assert.ok(shown.length > 0 && shown.length < 30, `${shown.length} shown`);
+		assert.deepEqual(shown.slice(0, 5), ["agent-025", "agent-026", "agent-027", "agent-028", "agent-029"]);
+		for (const name of shown) {
+			const at = lines.findIndex((line) => line.startsWith(`- ${name}: `));
+			assert.deepEqual(lines.slice(at + 1, at + 3), [
+				"  default_model: prov/model-a:high",
+				"  models: prov/model-a:high | prov/model-b | prov/model-c:low",
+			]);
+		}
+		assert.equal(lines.at(-1), `+${30 - shown.length} more: subagent_agents with a query`);
+	});
 
 	it("puts a pinned definition before unpinned ones, each group by name", () => {
 		const section = renderAgentIndexSection(

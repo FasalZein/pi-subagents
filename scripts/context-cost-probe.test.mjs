@@ -7,8 +7,11 @@ import { generateAgentDir, LOADOUTS, probe } from "./context-cost-probe.mjs";
 
 const FIXTURE = fileURLToPath(new URL("./orchestration-benchmark/agent-fixture", import.meta.url));
 // Caps of the spec (docs/specs/context-rework.md, Measurement plan, G1.1 and G1.2).
-const TOTAL_CAP = 6_000;
-const SECTION_CAP = 1_600;
+// The total grew from 6,000 by the largest measured delta of the D19 model lines
+// (2,805 with 100 generated definitions; 1,869 with the fixture), and the section
+// cap is AGENT_INDEX_MAX_CHARS (owner 2026-11-21).
+const TOTAL_CAP = 8_805;
+const SECTION_CAP = 4_400;
 const AGENTS_NO_ARG_CAP = 200;
 // D21: management tools are direct without a discovery tool and deferred with codemode.
 const EXPECTED_DECLARED = {
