@@ -341,7 +341,7 @@ describe("T24: the tool gives scripts structured records", () => {
 		const sent: Sent[] = [];
 		const root = createTestDir();
 		const finish = startRun("one", sent, root);
-		const call = tool.execute("c1", { ids: ["id-one"] }, undefined, undefined, parentToolCtx(createTestDir(), {}));
+		const call = tool.execute("c1", { runIds: ["id-one"] }, undefined, undefined, parentToolCtx(createTestDir(), {}));
 		await tick();
 		finish("ONE-REPORT");
 		const result = await call;
@@ -385,7 +385,7 @@ describe("T67: wait entries join to the launch children by runId", () => {
 		const finishTwo = startRun("two", sent);
 		const finishThree = startRun("three", sent);
 		const ids = ["id-three", "one", "id-two", "nope"];
-		const call = waitTool().execute("c1", { ids }, undefined, undefined, parentToolCtx(createTestDir(), {}));
+		const call = waitTool().execute("c1", { runIds: ids }, undefined, undefined, parentToolCtx(createTestDir(), {}));
 		await tick();
 		finishTwo("TWO");
 		await tick();

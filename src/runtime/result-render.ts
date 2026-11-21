@@ -1,5 +1,6 @@
 import { isAbsolute, relative } from "node:path";
 import { formatElapsedSeconds } from "../tools/overlay/render-helpers.ts";
+import { SUBAGENT_RESUME_TOOL_NAME } from "../tools/tool-names.ts";
 import { cutText } from "./result-assembler.ts";
 import { CUT_MARK, type EndedBy, type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
 
@@ -96,11 +97,38 @@ interface RequiredLine {
 /** Separates a fact from its detail. */
 const DETAIL_SEPARATOR = ": ";
 
-function reportLine(record: ResultRecord, options: RenderOptions): RequiredLine {
+/**
+ * T88: a resumable run that a time limit ended or wrapped up is continued, not relaunched: the footer
+ * names the resume call instead of the bare run id (audit row 6: relaunches after a time-limit PARTIAL).
+ */
+function resumeCall(record: ResultRecord): string | undefined {
+	if (!record.timeLimit || !record.resume.resumable) return undefined;
+	return `${SUBAGENT_RESUME_TOOL_NAME}({ runId: "${record.runId}" })`;
+}
+
+/** T88: one line says the run id once, as the run fact or inside the resume call, then the report file. */
+function runAndReportLine(record: ResultRecord, options: RenderOptions): RequiredLine {
+	const call = resumeCall(record);
+	const run = call ? `resume: ${call}` : `run: ${record.runId}`;
 	if (!record.report.saved) {
-		return { fact: "report not saved", detail: { text: record.report.error, max: FACT_MAX_CHARS, priority: 1 } };
+		return {
+			fact: `${run} · report not saved`,
+			detail: { text: record.report.error, max: FACT_MAX_CHARS, priority: 1 },
+		};
 	}
-	return { fact: `report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}` };
+	return { fact: `${run} · report: ${shortestReadLocator(record.report.path, options.cwd, options.homeDir)}` };
+}
+
+/**
+ * T88: the context line costs every result about 10 tokens, so it shows only when the child used at
+ * least this share of a known window, where the parent may need it to size a resume or a next task.
+ */
+export const CONTEXT_LINE_MIN_PERCENT = 80;
+
+function contextLine(record: ResultRecord): RequiredLine | undefined {
+	const usage = record.contextUsage;
+	if (!usage?.window || usage.tokens * 100 < usage.window * CONTEXT_LINE_MIN_PERCENT) return undefined;
+	return { fact: `context: ${usage.tokens}/${usage.window} tokens` };
 }
 
 /**
@@ -109,7 +137,7 @@ function reportLine(record: ResultRecord, options: RenderOptions): RequiredLine 
  * reason gets room first, then the storage diagnostic, then the verifier's descriptive text.
  */
 function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLine[] {
-	const lines: RequiredLine[] = [reportLine(record, options), { fact: `run: ${record.runId}` }];
+	const lines: RequiredLine[] = [runAndReportLine(record, options)];
 	if (!record.resume.resumable) {
 		lines.push({ fact: "not resumable", detail: { text: record.resume.reason, max: FACT_MAX_CHARS, priority: 0 } });
 	}
@@ -123,17 +151,15 @@ function requiredLines(record: ResultRecord, options: RenderOptions): RequiredLi
 			detail: verifier.detail ? { text: verifier.detail, max: FRAME_MAX_CHARS, priority: 2 } : undefined,
 		});
 	}
-	if (options.showContextUsage && record.contextUsage) {
-		const { tokens, window } = record.contextUsage;
-		lines.push({ fact: window ? `context: ${tokens}/${window} tokens` : `context: ${tokens} tokens` });
-	}
+	const context = options.showContextUsage ? contextLine(record) : undefined;
+	if (context) lines.push(context);
 	for (const warning of options.requiredWarnings ?? []) lines.push({ fact: `warning: ${warning}` });
 	return lines;
 }
 
 /** D7: a time-limit kill's one line of guidance. */
 export const TIME_LIMIT_GUIDANCE =
-	"a resume gets the same limit and can stop at the same point; finish the work yourself or start a new sub-agent with a smaller task";
+	"resume this child with a smaller next step as its task; the resume gets the same limit";
 /** D7: the same guidance when the agent forbids a resume after a time limit. */
 export const TIME_LIMIT_NO_RESUME_GUIDANCE = "start a new sub-agent with a smaller task";
 /** D7: a report-only wrap-up's notice. */

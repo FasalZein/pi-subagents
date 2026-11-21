@@ -82,12 +82,12 @@ describe("result router", () => {
 				},
 			},
 			running,
-			result: makeResult({ contextTokens: 40_000, contextWindow: 200_000 }),
+			result: makeResult({ contextTokens: 170_000, contextWindow: 200_000 }),
 			updateWidget: () => {},
 		});
 
 		const content = sent[0]?.message?.content ?? "";
-		assert.match(content, /context: 40000\/200000 tokens/);
+		assert.match(content, /context: 170000\/200000 tokens/);
 		assert.doesNotMatch(content, /not resumable/);
 	});
 
@@ -299,16 +299,16 @@ describe("result router", () => {
 			},
 			running,
 			result: makeResult({
-				contextTokens: 145_000,
+				contextTokens: 182_000,
 				contextWindow: 200_000,
 			}),
 			updateWidget: () => {},
 		});
 
 		assert.match(sent[0].message.content, /Finished the delegated work\./);
-		assert.match(sent[0].message.content, /\ncontext: 145000\/200000 tokens$/);
+		assert.match(sent[0].message.content, /\ncontext: 182000\/200000 tokens$/);
 		assert.doesNotMatch(sent[0].message.content, /result-child\.jsonl/);
-		assert.equal(sent[0].message.details.contextTokens, 145_000);
+		assert.equal(sent[0].message.details.contextTokens, 182_000);
 		assert.equal(sent[0].message.details.contextWindow, 200_000);
 	});
 
@@ -325,14 +325,14 @@ describe("result router", () => {
 			},
 			running,
 			result: makeResult({
-				contextTokens: 145_000,
+				contextTokens: 182_000,
 				contextWindow: 200_000,
 			}),
 			updateWidget: () => {},
 		});
 
 		assert.doesNotMatch(sent[0].message.content, /context: /);
-		assert.equal(sent[0].message.details.contextTokens, 145_000);
+		assert.equal(sent[0].message.details.contextTokens, 182_000);
 		assert.equal(sent[0].message.details.contextWindow, 200_000);
 	});
 
@@ -351,7 +351,7 @@ describe("result router", () => {
 			result: makeResult({
 				summary: "Completed the requested implementation.",
 				errorMessage: "Provider unavailable",
-				contextTokens: 145_000,
+				contextTokens: 182_000,
 				contextWindow: 200_000,
 			}),
 			updateWidget: () => {},
@@ -359,7 +359,7 @@ describe("result router", () => {
 
 		assert.match(sent[0].message.content.split("\n")[0], / · failed · 3\.0s · untyped$/);
 		assert.match(sent[0].message.content, /Completed the requested implementation\./);
-		assert.match(sent[0].message.content, /\ncontext: 145000\/200000 tokens$/);
+		assert.match(sent[0].message.content, /\ncontext: 182000\/200000 tokens$/);
 	});
 
 	it("does not present runtime diagnostics as salvaged child output", () => {

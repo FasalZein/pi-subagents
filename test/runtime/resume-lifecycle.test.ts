@@ -180,7 +180,7 @@ describe("resume and stop through the real tools and the real headless watcher (
 			// 2. The operator override resumes it; subagent_kill stops it by run id. The record is
 			// cancelled and the verdict stays (parent decision), so a retry by the new run id is refused.
 			const stopped = await overlayResume();
-			await kill.execute("k", { id: stopped.id });
+			await kill.execute("k", { runId: stopped.id });
 			await settled(stopped);
 			assert.equal(record(stopped.id)?.outcome, "cancelled");
 			assert.equal(readSubagentTimeoutSidecar(sessionFile)?.blocksResume, true);

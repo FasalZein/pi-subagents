@@ -5,11 +5,15 @@ import { asSubagentToolResult } from "../runtime/state.ts";
 import type { RunningSubagent } from "../types.ts";
 import { SUBAGENT_KILL_TOOL_NAME } from "./tool-names.ts";
 
-const SubagentKillParams = Type.Object({
-	id: Type.String({
-		description: "Running subagent id or display name to stop",
-	}),
-});
+// T88: the key of the launch reply (children[].runId); an unknown key such as the old "id" is refused.
+const SubagentKillParams = Type.Object(
+	{
+		runId: Type.String({
+			description: "Run id or display name of the running subagent to stop",
+		}),
+	},
+	{ additionalProperties: false },
+);
 
 export function registerSubagentKillTool(
 	pi: ExtensionAPI,
@@ -25,7 +29,7 @@ export function registerSubagentKillTool(
 		description: "Stop a running subagent, pane or headless, by its run id or name.",
 		parameters: SubagentKillParams,
 		execute: async (_toolCallId, params) => {
-			const match = findRunningSubagent(params.id);
+			const match = findRunningSubagent(params.runId);
 			if (!match.running)
 				return asSubagentToolResult({
 					content: [

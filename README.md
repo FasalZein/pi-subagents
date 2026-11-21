@@ -317,8 +317,7 @@ If the wrap-up completes, the parent receives a result such as:
 ```text
 auth-scout · scout · done · 12m3s · untyped · ended by time limit
 Mapped the auth flow. The session layer still needs verification.
-report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
-run: <run>
+resume: subagent_resume({ runId: "<run>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 wrap-up: 900s for the whole run: the parent interrupted the run before its limit and kept the rest for this report; expect a short or partial report and check what remains
 ```
 
@@ -333,12 +332,11 @@ A stopped child cannot report its own result, so the parent reports it:
 ```text
 auth-scout · scout · timed out · 15m0s · untyped
 Mapped the auth flow. The session layer is untouched.
-report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
-run: <run>
-time limit: 900s for the whole run: a resume gets the same limit and can stop at the same point; finish the work yourself or start a new sub-agent with a smaller task
+resume: subagent_resume({ runId: "<run>" }) · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+time limit: 900s for the whole run: resume this child with a smaller next step as its task; the resume gets the same limit
 ```
 
-The summary is the start of the partial work. To continue, pass the run id to `subagent_resume`, which applies the same limit again. A plain `pi --session` run has no limit.
+The summary is the start of the partial work. A resumable result that a time limit ended or wrapped up names the `subagent_resume` call with its run id instead of a `run:` line. Continue the same child with that call, which applies the same limit again, rather than launching a new child. A plain `pi --session` run has no limit.
 
 #### Resume after a stop
 
@@ -364,12 +362,11 @@ With the default value, the parent receives a result such as this:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
-run: <run>
-context: 145000/200000 tokens
+run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
+context: 182000/200000 tokens
 ```
 
-The last line shows the context use when the child finished. The parent can use this number before it resumes the child.
+The last line shows the context use when the child finished. It appears only when the child used at least 80% of a known context window; below that, or without a known window, the result has no context line. The parent can use this number before it resumes the child.
 
 Set the field to `false` to remove the last line:
 
@@ -385,8 +382,7 @@ The parent then receives this result:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
-run: <run>
+run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 ```
 
 This field changes only the text that the parent receives. The TUI still shows the context use to the user.
@@ -525,7 +521,7 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 
 ### Launch children
 
-`subagent` takes one child as top-level fields, or several in `children`: a list of up to the spawn width of children, each with the same fields. An empty `children` list starts the child of the top-level fields, as in v2.9.2. When a model sends `children` as a JSON string, the launch parses it. No other argument string is parsed: a JSON string in a launch field or in the `ids` of `subagent_wait` stays a string. The fields are:
+`subagent` takes one child as top-level fields, or several in `children`: a list of up to the spawn width of children, each with the same fields. An empty `children` list starts the child of the top-level fields, as in v2.9.2. When a model sends `children` as a JSON string, the launch parses it. No other argument string is parsed: a JSON string in a launch field or in the `runIds` of `subagent_wait` stays a string. The fields are:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -575,11 +571,10 @@ The rendering has a header line, the summary, and a footer:
 ```text
 auth-scout · scout · done · 3.0s · untyped
 Reviewed the authentication flow and found the files that require changes.
-report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
-run: <run>
+run: <run> · report: ~/.pi/history/app/artifacts/<session>/results/<run>/report-1.md
 ```
 
-The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The footer names the report file by its shortest path that Pi's `read` tool resolves. It never holds the session path or a resume command line.
+The summary has at most 1,500 characters. The header and the footer together have at most 400 characters, and the whole text has at most 1,900 (a lookup of an unsaved report adds that report, see above). Only a report path that does not fit in the 400 characters makes the frame longer, and then Pi cuts the summary further. The first footer line says the run id once and names the report file by its shortest path that Pi's `read` tool resolves. It never holds the session path or a `pi --session` command line; only a resumable time-limit result names the `subagent_resume` call.
 
 Each run has its own folder: `results/<run id>/` under the artifact folder of the parent session, `~/.pi/history/<project>/artifacts/<session id>/` (`PI_ARTIFACT_PROJECT_ROOT` changes `~/.pi/history`). The folder holds `record.json` and the report files. Pi never deletes it.
 
@@ -597,10 +592,10 @@ Pi hands each result over once by itself and does not check whether the model re
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `ids` | every run of this session that is running or queued | Run ids or names to wait for |
+| `runIds` | every run of this session that is running or queued | Run ids or names to wait for |
 | `mode` | `all` | `all` returns when every run ended; `any` returns when one ended |
 | `timeout` | none | Time limit in seconds. Pending runs then report by message |
-| `recent` | `false` | `true` returns at once one line per ended run of this session: the last 20, newest first. `ids`, `mode`, and `timeout` are ignored |
+| `recent` | `false` | `true` returns at once one line per ended run of this session: the last 20, newest first. `runIds`, `mode`, and `timeout` are ignored |
 
 The wait returns when the mode is met or the time limit passes, and at once when there is nothing to wait for. The reply has the rendered results, the pending run ids, and the run ids it did not find. Two waits on one run both get its result. `Esc` stops the wait; its runs keep running and report by message.
 
@@ -640,7 +635,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `ids`, the entries come in the order of those ids, and without `ids` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -674,7 +669,7 @@ const launch = await tools.subagent({ children: BATCH });
 // The first output: if the script fails later, its partial output still names every run.
 text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
 
-const lookUp = (id) => `subagent_wait({ ids: ["${id}"] })`;
+const lookUp = (id) => `subagent_wait({ runIds: ["${id}"] })`;
 
 function entry(id, record, fallback) {
 	if (!record) return { id, outcome: "unknown", check: `no result record: ${fallback.slice(0, SUMMARY_CHARS)}` };
@@ -700,7 +695,7 @@ const started = launch.children.filter((child) => child.state === "started").map
 let pending = [];
 let missing = [];
 if (started.length > 0) {
-	const wait = await tools.subagent_wait({ ids: started, timeout: WAIT_SECONDS });
+	const wait = await tools.subagent_wait({ runIds: started, timeout: WAIT_SECONDS });
 	runs.push(...wait.results.map((result) => entry(result.runId, result.record, result.text)));
 	pending = wait.pending;
 	missing = wait.missing.map((item) => ({ id: item.runId, error: item.error.slice(0, SUMMARY_CHARS) }));
@@ -716,7 +711,7 @@ if (launch.status === "launch_failed")
 		note: "The children before it started and keep running. Launch only this child and the ones after it.",
 	};
 if (pending.length > 0)
-	digest.pending = { ids: pending, note: "These runs still work and report by message. Do not redo their work. Wait for them with subagent_wait({ ids })." };
+	digest.pending = { ids: pending, note: "These runs still work and report by message. Do not redo their work. Wait for them with subagent_wait({ runIds: ids })." };
 if (missing.length > 0) digest.missing = missing;
 
 // Measure the digest. If it is too long, leave out summaries and data, then everything but id, outcome and check.
@@ -729,11 +724,11 @@ for (const [level, shape] of shorter.entries()) {
 	const serialized = JSON.stringify({
 		...digest,
 		runs: runs.map(shape),
-		...(level > 0 ? { note: "Left out to fit the digest: read a whole result with subagent_wait({ ids: [id] })." } : {}),
+		...(level > 0 ? { note: "Left out to fit the digest: read a whole result with subagent_wait({ runIds: [id] })." } : {}),
 	});
 	if (serialized.length <= DIGEST_CHARS) return serialized;
 }
-return JSON.stringify({ ok: digest.ok, pending, runIds: runs.map((run) => run.id), note: "Too many runs for a digest: read each result with subagent_wait({ ids: [id] })." });
+return JSON.stringify({ ok: digest.ok, pending, runIds: runs.map((run) => run.id), note: "Too many runs for a digest: read each result with subagent_wait({ runIds: [id] })." });
 ```
 
 ### Recover after a failed script
@@ -741,7 +736,7 @@ return JSON.stringify({ ok: digest.ok, pending, runIds: runs.map((run) => run.id
 A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Recover with this script instead. It launches nothing.
 
 1. Copy the run ids from the `Run ids:` line of the partial output into `RUN_IDS`. If the output has no run ids, leave the list empty.
-2. Run the script. With run ids, it returns each ended run and waits for the runs that still work. Without run ids, it waits for every run of this session that is still running or queued, and then lists the last 20 ended runs of this session, newest first. Read an older run by its run id with `subagent_wait({ ids: [id] })`.
+2. Run the script. With run ids, it returns each ended run and waits for the runs that still work. Without run ids, it waits for every run of this session that is still running or queued, and then lists the last 20 ended runs of this session, newest first. Read an older run by its run id with `subagent_wait({ runIds: [id] })`.
 3. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry of the failed script names it or a later child. A missing entry in the result does not prove that a child never started: the recent list holds only the last 20 ended runs, and a verified run is never in it. Otherwise look for its `record.json` under `results/` in the session's artifact folder, or stop and decide.
 
 <!-- recipe: recover -->
@@ -757,7 +752,7 @@ const brief = (result) => ({
 	report: result.record?.report.saved ? result.record.report.path : undefined,
 });
 if (RUN_IDS.length > 0) {
-	const wait = await tools.subagent_wait({ ids: RUN_IDS, timeout: WAIT_SECONDS });
+	const wait = await tools.subagent_wait({ runIds: RUN_IDS, timeout: WAIT_SECONDS });
 	return { runs: wait.results.map(brief), pending: wait.pending, missing: wait.missing };
 }
 const running = await tools.subagent_wait({ timeout: WAIT_SECONDS });
@@ -892,7 +887,7 @@ Use `caller_ping` when the child needs the parent. The child sends a message up,
 
 ## Resuming child sessions
 
-`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name.
+`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name, given as `runId`. The three tools take the key of the launch reply: `subagent_resume` and `subagent_kill` take `runId`, and `subagent_wait` takes `runIds`. They refuse an unknown key such as `id` or `ids`.
 
 Only one resume of a session runs at a time in one Pi process: a second resume of the same session is refused, also when both start together. Two Pi processes that resume one session at the same moment are not covered.
 

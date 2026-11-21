@@ -9,27 +9,32 @@ import { type JoinOutcome, joinRuns } from "../runtime/wait-join.ts";
 import { formatLaunchGrantRefusal, type ManagementToolGrant } from "./tool-exposure.ts";
 import { SUBAGENT_WAIT_TOOL_NAME } from "./tool-names.ts";
 
-const SubagentWaitParams = Type.Object({
-	ids: Type.Optional(
-		Type.Array(Type.String(), {
-			description: "Run ids or names to wait for; default: every run of this session that is running or queued.",
-		}),
-	),
-	mode: Type.Optional(
-		Type.Union([Type.Literal("all"), Type.Literal("any")], {
-			description: "all (default): return when every run ended; any: return when one ended.",
-		}),
-	),
-	timeout: Type.Optional(
-		Type.Number({ minimum: 0, description: "Time limit in seconds; pending runs then report by message." }),
-	),
-	recent: Type.Optional(
-		Type.Boolean({
-			description:
-				"true: return at once one line per ended run of this session (last 20, newest first), ignoring ids, mode and timeout; look up an older run by its run id.",
-		}),
-	),
-});
+// T88: runIds holds the key of the launch reply (children[].runId); an unknown key such as the old
+// "ids" is refused, so a wait never falls back to every run by accident.
+const SubagentWaitParams = Type.Object(
+	{
+		runIds: Type.Optional(
+			Type.Array(Type.String(), {
+				description: "Run ids or names to wait for; default: every run of this session that is running or queued.",
+			}),
+		),
+		mode: Type.Optional(
+			Type.Union([Type.Literal("all"), Type.Literal("any")], {
+				description: "all (default): return when every run ended; any: return when one ended.",
+			}),
+		),
+		timeout: Type.Optional(
+			Type.Number({ minimum: 0, description: "Time limit in seconds; pending runs then report by message." }),
+		),
+		recent: Type.Optional(
+			Type.Boolean({
+				description:
+					"true: return at once one line per ended run of this session (last 20, newest first), ignoring runIds, mode and timeout; look up an older run by its run id.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 /** D16: what a codemode script gets instead of the text: the records and the pending ids. */
 export const SubagentWaitOutput = Type.Object({
@@ -117,7 +122,8 @@ export function registerSubagentWaitTool(
 			if (!grant.mayLaunch()) throw new Error(formatLaunchGrantRefusal(SUBAGENT_WAIT_TOOL_NAME));
 			const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
 			if (params.recent === true) return recentReply(recentRuns(store));
-			const outcome = await joinRuns(params, signal, { store, cwd: ctx.cwd });
+			const { runIds, ...rest } = params;
+			const outcome = await joinRuns({ ...rest, ids: runIds }, signal, { store, cwd: ctx.cwd });
 			const structured = toStructured(outcome);
 			return {
 				content: [{ type: "text" as const, text: replyText(outcome) }],
