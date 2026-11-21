@@ -113,7 +113,7 @@ export function registerSubagentResumeTool(
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
 		description:
-			"Continue an earlier child session by run id or session file, optionally with a follow-up task. A locked agent ignores model and thinking.",
+			"Continue an earlier child session by run id or session file, optionally with a follow-up task; a locked agent ignores model and thinking.",
 		outputSchema: SubagentLaunchOutput,
 		parameters: Type.Object({
 			runId: Type.Optional(
