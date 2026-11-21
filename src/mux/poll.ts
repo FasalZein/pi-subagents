@@ -74,7 +74,6 @@ function withOperatorClose(obj: PollResult, endedBy: unknown, output: unknown): 
  * consumeSubagentExitSignal and pollForExit decode the same way.
  */
 function interpretExitSidecar(data: any): PollResult {
-	data ??= {};
 	// T85: a record still held when the child is gone was never released by the child's own close,
 	// so the person who took over the pane closed it.
 	if (data[HELD_EXIT_FIELD] === true) data = { ...data, endedBy: "operator" };
