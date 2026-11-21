@@ -1,7 +1,5 @@
-import { clampThinkingLevel } from "@earendil-works/pi-ai";
-import { resolveCliModel } from "@earendil-works/pi-coding-agent";
 import { getEffectiveAgentDefinitions } from "../../src/agents/definitions.ts";
-import { buildChildLaunchPlan, type ModelRegistryLike } from "../../src/launch/child-launch-plan.ts";
+import type { ModelRegistryLike } from "../../src/launch/child-launch-plan.ts";
 import { getAgentListEntriesForTest, renderAgentDetailsForTest } from "../../src/testing/test-helpers.ts";
 import {
 	afterEach,
@@ -14,74 +12,25 @@ import {
 	resetSubagentStateForTest,
 	writeFileSync,
 } from "../support/index.ts";
+import {
+	HIGH_AT_MOST,
+	type Launch,
+	launch as launchAgent,
+	NON_REASONING_BASE,
+	type Parent,
+	TWO_BASES,
+} from "../support/pi-model-run.ts";
 
 /**
  * T86 fix round 1: the default model in subagent_agents detail round-trips.
- * Reference: the launch plan (buildChildLaunchPlan) gives Pi `--model <model>[:<level>]`
- * (prep.ts getPreparedModel), and Pi resolves it with resolveCliModel and clamps
- * the level (Pi 1.5.2 model-resolver.js, sdk.js clampThinkingLevel). A shown ref
+ * Reference: test/support/pi-model-run.ts. A shown ref
  * must run on the same model at the same level as a launch without a model;
  * otherwise the detail must say what happens instead. Synthetic refs only.
  */
 
-type Model = { provider: string; id: string; reasoning: boolean; thinkingLevelMap?: Record<string, string> };
-const registryOf = (models: Model[]): ModelRegistryLike => ({ getAvailable: () => models });
-const NON_REASONING_BASE = registryOf([
-	{ provider: "a", id: "base", reasoning: false },
-	{ provider: "other", id: "x", reasoning: true },
-]);
-const TWO_BASES = registryOf([
-	{ provider: "a", id: "base", reasoning: true },
-	{ provider: "b", id: "base", reasoning: true },
-	{ provider: "other", id: "x", reasoning: true },
-]);
-// A reasoning model without an xhigh mapping supports off to high (pi-ai getSupportedThinkingLevels).
-const HIGH_AT_MOST = registryOf([{ provider: "a", id: "think", reasoning: true }]);
-
-interface Parent {
-	ref: string;
-	thinking?: string;
-}
-
-/** What Pi runs for a `--model` argument: the model and its level, or Pi's refusal. */
-type PiRun = { ref: string; level: string | undefined } | { error: string };
-
-function piRun(arg: string, registry: ModelRegistryLike): PiRun {
-	const result = resolveCliModel({
-		cliModel: arg,
-		modelRuntime: { getModels: () => registry.getAvailable(), hasConfiguredAuth: () => true },
-	} as unknown as Parameters<typeof resolveCliModel>[0]);
-	if (!result.model) return { error: result.error ?? "no model" };
-	const model = result.model as unknown as Parameters<typeof clampThinkingLevel>[0];
-	// Without a level Pi takes the settings default, unknown here; a non-reasoning model clamps any level to off.
-	const level = result.thinkingLevel
-		? clampThinkingLevel(model, result.thinkingLevel as never)
-		: model.reasoning
-			? undefined
-			: "off";
-	return { ref: `${result.model.provider}/${result.model.id}`, level };
-}
-
-type Launch = { run: PiRun } | { refused: string };
-
 async function launch(dir: string, registry: ModelRegistryLike, parent: Parent, model?: string): Promise<Launch> {
 	const [definition] = getEffectiveAgentDefinitions(dir);
-	try {
-		const plan = await buildChildLaunchPlan({
-			params: { name: "n", title: "N", task: "t", agent: "picker", ...(model ? { model } : {}) },
-			agentDefs: definition,
-			parentCwd: dir,
-			parentSessionDir: join(dir, "parent-sessions"),
-			modelRegistry: registry,
-			parentModelRef: parent.ref,
-			parentThinking: parent.thinking,
-		});
-		const arg = plan.effectiveThinking ? `${plan.effectiveModel}:${plan.effectiveThinking}` : plan.effectiveModel;
-		assert.ok(arg, "every case has a model");
-		return { run: piRun(arg, registry) };
-	} catch (error) {
-		return { refused: (error as Error).message };
-	}
+	return launchAgent(definition, dir, registry, parent, model);
 }
 
 function detailOf(frontmatter: string, registry: ModelRegistryLike, parent: Parent): { dir: string; lines: string[] } {
