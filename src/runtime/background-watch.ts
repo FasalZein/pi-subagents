@@ -329,7 +329,7 @@ function watchBackgroundGeneration(
 				// The exit handler already consumed the sidecar; let its group waiter
 				// finalize the captured result instead of consuming it a second time.
 				if (groupExitPoll) return;
-				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile));
+				finalizeExit(child.exitCode, consumeSubagentExitSignal(running.sessionFile, "child-exited"));
 				return;
 			}
 			// The runtime already ends this generation; one more SIGTERM could force the child's exit.
@@ -472,7 +472,7 @@ function watchBackgroundGeneration(
 			});
 		};
 		const onExit = (code: number | null) => {
-			const exitSignal = consumeSubagentExitSignal(running.sessionFile);
+			const exitSignal = consumeSubagentExitSignal(running.sessionFile, "child-exited");
 			consumedExit = exitSignal;
 			const runtimeOwnsExit =
 				Boolean(running.timeoutExpiry) ||

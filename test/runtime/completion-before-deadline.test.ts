@@ -193,7 +193,7 @@ describe("a completion accepted during the soft interruption (D7)", () => {
 					}
 					// The close has not taken effect yet: the child's call is accepted and Pi exits.
 					acceptCompletion(sessionFile);
-					const end = consumeSubagentExitSignal(sessionFile);
+					const end = consumeSubagentExitSignal(sessionFile, "child-may-run");
 					if (!end) throw new Error("the accepted exit record is missing");
 					return end;
 				},

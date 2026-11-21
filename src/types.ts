@@ -130,6 +130,8 @@ export interface CompletedSubagentResult extends SubagentResult {
 	autoExit?: boolean;
 	reportContextUsage?: boolean;
 	deliveredTo: CompletedDelivery | null;
+	/** The model ref this run ran on (D23), for the overlay row of a run without a published record. */
+	modelRef?: string;
 }
 
 export interface RunningSubagent {
