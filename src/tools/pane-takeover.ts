@@ -30,6 +30,8 @@ function hasControlCharacter(data: string): boolean {
 
 interface PaneTakeoverDeps {
 	writeExitSignal(payload: ErrorExitPayload): unknown;
+	/** T85: keeps the exit record written before a takeover from reading as the child's exit. */
+	holdExitRecord(): void;
 }
 
 /**
@@ -43,6 +45,8 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 	// T70: set when this child's own code asked Pi to shut down; any other shutdown came from outside.
 	let childRequestedShutdown = false;
 	let unrecoveredError: ErrorExitPayload | null = null;
+	// T85: the child wrote its answer and its close waits for the next tick.
+	let answerClosePending = false;
 	let stopKeyWatch: (() => void) | undefined;
 
 	function showEndedRunInPane(ctx: unknown, message: string) {
@@ -91,7 +95,11 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 		 * Its exit record is already written, so a takeover before the tick only keeps the pane open.
 		 */
 		requestShutdown(ctx: ShutdownContext) {
-			shutdownOnNextTick(ctx);
+			answerClosePending = true;
+			const tickRan = () => {
+				answerClosePending = false;
+			};
+			shutdownOnNextTick(ctx, tickRan, tickRan);
 		},
 		/** T70: true once this child's own deferred close asked Pi to shut down. */
 		get childRequestedShutdown() {
@@ -101,6 +109,8 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 		markTakenOver(): boolean {
 			const started = !tookOver;
 			tookOver = true;
+			// The close will not run, so the answer already on disk must not read as an exit (T85).
+			if (answerClosePending) deps.holdExitRecord();
 			return started;
 		},
 		/** Only /auto-exit hands the pane back to the child. */
