@@ -12,6 +12,7 @@ import {
 	selectIndexTargets,
 } from "../../src/agents/index-section.ts";
 import { parseSpawnEnv } from "../../src/spawn/policy.ts";
+import { loadExtension } from "../support/extension-host.ts";
 import { afterEach, assert, createTestDir, describe, it, join, mkdirSync } from "../support/index.ts";
 
 const FIXTURE_AGENTS = join(
@@ -30,6 +31,9 @@ const PRINT: IndexLaunchPolicy = { paneAvailable: false, forcesWait: true };
 const STARTUP: IndexLaunchPolicy = { paneAvailable: true, forcesWait: true };
 const HEADLESS: IndexLaunchPolicy = { paneAvailable: false, forcesWait: false };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
+// T87: the call forms a parent needs, so it does not look the signatures up (audit row 7).
+const MORE_TOOLS_LINE =
+	"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?}) (search, full detail).";
 // D06: the cf6dbf4 routing rules in short form. Sources (git show cf6dbf4:<path>):
 // src/tools/subagent-tools.ts promptSnippet "Do small direct work yourself: ... tiny one-shot edits",
 // "include each named agent exactly once. Do not substitute one agent for another",
@@ -111,7 +115,7 @@ describe("agent index section", () => {
 			const lines = section.split("\n");
 			assert.match(lines[0], /^Helpers: launch with subagent \(a children list\)\./);
 			assert.equal(lines[1], UPSTREAM_RULES_LINE);
-			assert.match(lines[2], /^More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents/);
+			assert.equal(lines[2], MORE_TOOLS_LINE);
 			for (const name of names)
 				assert.ok(
 					lines.some((line) => line.startsWith(`- ${name}: `)),
@@ -268,7 +272,7 @@ describe("agent index section", () => {
 		const section =
 			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_wait", "subagent_kill"]) }) ?? "";
 		const lines = section.split("\n");
-		assert.equal(lines[2], "More tools: subagent_wait, subagent_kill.");
+		assert.equal(lines[2], "More tools: subagent_wait({runIds?}), subagent_kill({runId}).");
 		assert.ok(!section.includes("subagent_agents"), section);
 		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
 		// Every launchable name is in the section, on a line or on the names line, the descriptionless one too.
@@ -284,6 +288,31 @@ describe("agent index section", () => {
 			renderAgentIndexSection([entry("bare", { description: undefined })], PANE, { callable: new Set() }) ?? "",
 			/\nMore agents: bare\.$/,
 		);
+	});
+
+	it("names each management tool with a call form that its registered parameter schema accepts (T87)", async () => {
+		const { tools } = await loadExtension(createTestDir());
+		const line = renderAgentIndexSection([entry("solo")], PANE)?.split("\n")[2] ?? "";
+		const forms = [...line.matchAll(/(subagent_\w+)\(\{([^}]*)\}\)/g)];
+		assert.deepEqual(
+			forms.map(([, name]) => name),
+			["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"],
+			line,
+		);
+		for (const [form, name, args] of forms) {
+			const schema = (tools.get(name) as unknown as { parameters: { properties: object; required?: string[] } })
+				.parameters;
+			const named = args.split(", ").map((arg) => ({ key: arg.replace(/\?$/, ""), optional: arg.endsWith("?") }));
+			for (const { key, optional } of named) {
+				assert.ok(key in schema.properties, `${form}: ${key} is a parameter`);
+				if (optional) assert.ok(!schema.required?.includes(key), `${form}: ${key} is optional`);
+			}
+			for (const key of schema.required ?? [])
+				assert.ok(
+					named.some((arg) => arg.key === key && !arg.optional),
+					`${form}: names required ${key}`,
+				);
+		}
 	});
 
 	it("keeps 500 long names within the limit without subagent_agents and counts the unnamed ones", () => {
