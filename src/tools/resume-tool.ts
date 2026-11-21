@@ -112,50 +112,47 @@ export function registerSubagentResumeTool(
 	pi.registerTool({
 		name: SUBAGENT_RESUME_TOOL_NAME,
 		label: "Resume Subagent",
-		description:
-			"Continue an earlier child session by the run id of its result or by its session file, optionally with a follow-up task.",
+		description: "Continue an earlier child session by run id or session file, optionally with a follow-up task.",
 		outputSchema: SubagentLaunchOutput,
 		parameters: Type.Object({
 			runId: Type.Optional(
 				Type.String({
-					description: "Run id of an earlier result whose session to resume",
+					description: "Run id of an earlier result.",
 				}),
 			),
 			sessionFile: Type.Optional(
 				Type.String({
-					description: "Path to the session .jsonl file to resume; give this or runId",
+					description: "Session .jsonl path; instead of runId.",
 				}),
 			),
 			name: Type.Optional(
 				Type.String({
-					description: "Display name for the terminal tab. Default: 'Resume'",
+					description: "Tab name; default Resume.",
 				}),
 			),
 			task: Type.Optional(
 				Type.String({
-					description: "Optional follow-up task to send after resuming",
+					description: "Follow-up task to send.",
 				}),
 			),
 			agent: Type.Optional(
 				Type.String({
-					description: "Agent name for display; use the resumed session's original agent.",
+					description: "Agent name for display.",
 				}),
 			),
 			model: Type.Optional(
 				Type.String({
-					description:
-						"Model for this resume as provider/model[:thinking]; unset keeps the launch model, and allow-model-override: false ignores it.",
+					description: "provider/model[:thinking] for this resume; default: the launch model.",
 				}),
 			),
 			thinking: Type.Optional(
 				Type.String({
-					description:
-						"Thinking level for this resume; unset keeps the launch level, and allow-model-override: false ignores it.",
+					description: "Thinking level for this resume; default: the launch level.",
 				}),
 			),
 			mode: Type.Optional(
 				Type.Union([Type.Literal("background"), Type.Literal("interactive")], {
-					description: "Resume mode used only when the session has no launch metadata; saved metadata always wins.",
+					description: "Used only when the session has no launch metadata.",
 				}),
 			),
 		}),

@@ -9,7 +9,7 @@ import { SUBAGENT_KILL_TOOL_NAME } from "./tool-names.ts";
 const SubagentKillParams = Type.Object(
 	{
 		runId: Type.String({
-			description: "Run id or display name of the running subagent to stop",
+			description: "Run id or display name.",
 		}),
 	},
 	{ additionalProperties: false },
@@ -26,7 +26,7 @@ export function registerSubagentKillTool(
 	pi.registerTool({
 		name: SUBAGENT_KILL_TOOL_NAME,
 		label: "Kill Subagent",
-		description: "Stop a running subagent, pane or headless, by its run id or name.",
+		description: "Stop a running subagent by run id or name.",
 		parameters: SubagentKillParams,
 		execute: async (_toolCallId, params) => {
 			const match = findRunningSubagent(params.runId);

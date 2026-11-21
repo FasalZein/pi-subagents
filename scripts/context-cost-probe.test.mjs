@@ -27,6 +27,9 @@ describe("context cost probe (G1.1)", () => {
 			assert.ok(report.total > 0, "the extension adds prompt text");
 			assert.ok(report.total <= TOTAL_CAP, `total ${report.total}`);
 			assert.ok(report.section > 0 && report.section <= SECTION_CAP, `section ${report.section}`);
+			// Only the section grows with the agents, so the total cap holds for any agent count (T87).
+			const fixed = report.total - report.section;
+			assert.ok(fixed + SECTION_CAP <= TOTAL_CAP, `fixed part ${fixed}`);
 			assert.match(report.indexText, /^<index>\n[\s\S]*\n<\/index>$/);
 			// The section is the whole system prompt growth, up to the separator newlines.
 			assert.ok(report.systemPrompt.delta >= report.section, "section counted in the prompt delta");
