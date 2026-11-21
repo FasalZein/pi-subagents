@@ -8,6 +8,7 @@
  * Known limit: Pi records a nested call's name, status and raw arguments, not its
  * result. A wait counts as joining a run by its arguments (ids or names, or no ids
  * for the runs the same script launched; mode "any" and recent lookups join none).
+ * Since T88 the wait tool takes runIds; calls recorded before it used ids, and both count.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,6 +73,8 @@ function normalizedArguments(name, args) {
 		return {};
 	const out = { ...value };
 	if (name === "subagent") out.children = parseJsonContainer(out.children);
+	// T88: the wait tool takes runIds and refuses ids; a recorded call from before T88 has ids.
+	if (name === WAIT_TOOL && out.runIds !== undefined) out.ids = out.runIds;
 	// D05: the wait tool parses no string. Pi's validation wraps a string for an array of
 	// strings as one element, so stringified ids name one id equal to the whole string.
 	if (name === WAIT_TOOL && typeof out.ids === "string") out.ids = [out.ids];
