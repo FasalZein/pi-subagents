@@ -1,10 +1,16 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { getSessionResultsDir } from "../../src/artifact-storage.ts";
 import { sessionResultStore } from "../../src/runtime/result-files.ts";
 import type { ResultOutcome, ResultRecord } from "../../src/runtime/result-record.ts";
 import { groupRunEnds, type RunEndMessage } from "../../src/runtime/run-end-message.ts";
 import { completedSubagentResults } from "../../src/runtime/state.ts";
+import { ChildSessionStorage } from "../../src/session/child-session-storage.ts";
+import {
+	type PersistedSubagentLaunchMetadata,
+	writeSubagentLaunchMetadataEntry,
+} from "../../src/session/session-files.ts";
 import { buildCompletedItems } from "../../src/tools/overlay/data.ts";
 import type { CompletedSubagentResult } from "../../src/types.ts";
 import { afterEach, assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
@@ -307,5 +313,99 @@ describe("overlay rows from published records (g3 P1)", () => {
 		assert.deepEqual(await rows(), expected);
 		completedSubagentResults.clear();
 		assert.deepEqual(await rows(), expected);
+	});
+});
+
+// T84 (D15): a fork child inherits the parent's branch, run ends included. Those stay readable as
+// conversation, but the child's Completed tab lists only run ends after the child's own start.
+
+function forkLaunchMetadata(cwd: string, model: string): PersistedSubagentLaunchMetadata {
+	return {
+		version: 1,
+		timestamp: "2026-11-21T00:00:00.000Z",
+		name: "fork-child",
+		title: "Fork child",
+		sessionTitle: "[worker] Fork child",
+		agent: "worker",
+		mode: "background",
+		sessionMode: "fork",
+		parentClosePolicy: "terminate",
+		async: true,
+		model,
+		modelRef: model,
+		allowModelOverride: true,
+		modelSource: "launch-override",
+		tools: "read",
+		skills: "none",
+		denyTools: [],
+		extensions: [],
+		noContextFiles: false,
+		noSession: false,
+		agentConfigDir: cwd,
+		cwd,
+		boundarySystemPrompt: true,
+	};
+}
+
+const runEnd = (customType: string, id: string, extra: object = {}) => ({
+	customType,
+	content: `${id} text`,
+	details: { id, name: id, status: "completed", exitCode: 0, sessionFile: `/runs/${id}.jsonl`, ...extra },
+});
+
+describe("fork child Completed rows (T84)", () => {
+	afterEach(() => resetSubagentStateForTest());
+
+	it("a fork lists only its own run ends, before and after a resume on another model", async () => {
+		const dir = createTestDir();
+		const parent = join(dir, "parent.jsonl");
+		const ancestorResult = runEnd("subagent_result", "ancestor-result");
+		const ancestorPing = runEnd("subagent_ping", "ancestor-ping", { message: "help" });
+		const parentEntries = [
+			{ type: "session", version: 3, id: "parent-session", timestamp: "2026-11-21T00:00:00.000Z", cwd: dir },
+			{ type: "message", id: "u1", parentId: null, message: { role: "user", content: "go" } },
+			{ type: "message", id: "a1", parentId: "u1", message: { role: "assistant", content: [] } },
+			{ type: "custom_message", display: true, id: "r1", parentId: "a1", ...ancestorResult },
+			{ type: "custom_message", display: true, id: "p1", parentId: "r1", ...ancestorPing },
+		];
+		writeFileSync(parent, `${parentEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+		// The parent session itself (no fork seed) keeps every run end it holds.
+		assert.deepEqual(
+			(await buildCompletedItems(overlayCtx(parent))).map((item) => item.name),
+			["ancestor-result", "ancestor-ping"],
+		);
+
+		// Seed and start the fork child as the launch coordinator does.
+		const child = join(dir, "child.jsonl");
+		const storage = new ChildSessionStorage(child);
+		storage.seed("fork", parent, dir, { activeLeafId: "p1" });
+		storage.writeModelState({ model: "provider-a/model-a" });
+		await storage.writeLaunchMetadataWhenReady(forkLaunchMetadata(dir, "provider-a/model-a"), 0);
+		const own = (customType: RunEndMessage["customType"], id: string) =>
+			({ ...runEnd(customType, id), display: true }) as unknown as RunEndMessage;
+		const group = groupRunEnds([own("subagent_result", "own-done"), own("subagent_ping", "own-ping")]);
+		SessionManager.open(child, undefined, dir).appendCustomMessageEntry(
+			group.customType,
+			group.content,
+			true,
+			group.details,
+		);
+		const names = async () => (await buildCompletedItems(overlayCtx(child))).map((item) => item.name);
+		assert.deepEqual(await names(), ["own-done", "own-ping"]);
+
+		// A resume on another model appends model state and a second launch-metadata entry.
+		storage.writeModelState({ model: "provider-b/model-b" });
+		writeSubagentLaunchMetadataEntry(child, forkLaunchMetadata(dir, "provider-b/model-b"));
+		const after = runEnd("subagent_result", "own-after-resume");
+		SessionManager.open(child, undefined, dir).appendCustomMessageEntry(
+			after.customType,
+			after.content,
+			true,
+			after.details,
+		);
+		assert.deepEqual(await names(), ["own-done", "own-ping", "own-after-resume"]);
+		// The inherited reports stay in the child's conversation.
+		const conversation = SessionManager.open(child, undefined, dir).getEntries();
+		assert.ok(conversation.some((entry) => JSON.stringify(entry).includes("ancestor-result text")));
 	});
 });

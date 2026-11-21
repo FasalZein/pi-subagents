@@ -2,7 +2,7 @@ import { loadAgentDefaults } from "../../agents/definitions.ts";
 import { completedSubagentResults, runningSubagents } from "../../runtime/state.ts";
 import { stopRunningSubagent } from "../../runtime/wiring.ts";
 import { getEntries } from "../../session/session.ts";
-import { getSubagentActivityStartIndex } from "../../session/session-files.ts";
+import { getOwnedHistoryStartIndex, getSubagentActivityStartIndex } from "../../session/session-files.ts";
 import type { CompletedSubagentResult, RunningSubagent, SessionMessageLike, SessionUsage } from "../../types.ts";
 import { type AgentDetailDefaults, buildSections, readRunDetailFacts } from "./detail-sections.ts";
 import {
@@ -372,7 +372,9 @@ export async function buildCompletedItems(ctx: OverlayContext): Promise<OverlayI
 	if (sf) {
 		try {
 			const entries = getEntries(sf) as Array<{ [key: string]: unknown }>;
-			for (const [key, recovered] of newestRunsBySession(entries.flatMap(recoverResultDetails))) {
+			// Run ends a fork inherited stay conversation; only this session's own runs are rows.
+			const owned = entries.slice(getOwnedHistoryStartIndex(entries));
+			for (const [key, recovered] of newestRunsBySession(owned.flatMap(recoverResultDetails))) {
 				if (seen.has(key) || seen.has(recovered.id)) continue;
 				if (recovered.sessionFile && runningSessionFiles.has(recovered.sessionFile)) continue;
 				seen.add(key);
