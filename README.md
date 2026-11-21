@@ -511,7 +511,7 @@ An agent without a `description` gets no agent line, and it stays launchable: `s
 
 | Parameter | Reply |
 | --- | --- |
-| `name` | The full definition of that agent: description, default model ref, accepted model refs grouped by provider, kind of child, session mode, limits, and what it may launch. The default model ref is the ref a launch without `model` runs on, without a thinking level that the model does not support. The session mode is the session the child gets |
+| `name` | The full definition of that agent: description, default model ref, accepted model refs grouped by provider, kind of child, session mode, limits, and what it may launch. The default model ref is shown only when a call that names it runs on the same model at the same level as a launch without `model` (after Pi's own model resolution and level clamp). Otherwise the line says what a launch without `model` does: it fails (for example a bare model id that several providers carry), or it runs on a model at a level that no `model` value reproduces, so leave `model` out. When the default cannot resolve at all, every launch fails, and the accepted list shows its refs as configured, not usable. The session mode is the session the child gets |
 | `query` | The best matches for the words, one line each. `limit` sets the number of matches: 1 to 50, default 5 |
 | neither | The count of agents and one line on how to search |
 
