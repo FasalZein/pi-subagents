@@ -26,6 +26,8 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 - Tests live in `test/` (not `tests/`) and mirror source ownership. Each domain suite must be imported by `test/test.ts`, or `npm test` will not run it.
 - `test/support/` is split by ownership; do not recreate a fat `test/support.ts`.
 - A test that drives real tmux sets `PI_SUBAGENT_MUX=tmux`: backend detection prefers herdr and cmux, so inside herdr an unpinned test drives herdr.
+- `test/support/env.ts` restores PATH and the mux variables after each test: set fake-mux variables in `beforeEach`, not `before`.
+- Pi spreads the UI context into a new object: a test UI `Proxy` must hold each method the extension calls (such as `notify`) as an own key.
 - Temp-path assertions compare `realpathSync` paths: on macOS `tmpdir()` is `/var/...` while git and `pwd` report `/private/var/...`.
 - Do not use `// @ts-nocheck`. If a test probes a dynamic result shape, use a local cast at that assertion.
 
@@ -48,11 +50,11 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 Unit tests use fake mux backends. For changes to subagent runtime behavior, also run live repros; do not rely on fakes alone for detached/background launches, blocking/wait/join/detach, prompt/runtime coordination, frontmatter or env-var runtime branches, session/steer/resume, and mux/pane lifecycle.
 
 - Model refs are per-user. For any live Pi run, ask the user which model to use (`PI_SUBAGENT_LIVE_MODEL=provider/model[:thinking]` for the Herdr smokes). Never hardcode provider/model refs in this file, tests, or scripts.
-- Prefer `thinking high` for non-trivial orchestration changes. Test with at least two models from different families the user has available.
+- Test with at least two models from different families the user has available, at `thinking high` for orchestration changes.
+- To compare checkouts (upstream cf6dbf4, an older commit), start the parent with `pi --no-extensions -e <checkout>/src/index.ts`; otherwise it loads the installed package.
 - This repo commits no smoke agents (`.pi/` is gitignored). Per repro, create a temporary agent file under `.pi/agents/` or under a temp root pointed at by `PI_CODING_AGENT_DIR`. Give it `extensions: <worktree>/src/index.ts`; without it the child also loads the installed pi-subagents package.
 - A live repro in tmux: `tmux new-session` on a running server does not pass the caller's environment (pass `-e NAME=value`), and a server started under `env -i` lacks `/opt/homebrew/bin` on the pane PATH, so Pi runs pane children headless.
 - Prefer `pi -p` for deterministic repros. For async-parent lifecycle/sidebar repros, use interactive TUI Pi and submit the prompt **after startup**: print/RPC/JSON and CLI startup prompts force synchronous child launches and mask the yielded interval.
 - Use a temporary `--session-dir`; inspect parent and child session JSONL when behavior is subtle. For env-var or frontmatter branches, test both enabled and disabled states.
 - Classify each parent/child outcome: `duplicate` (parent and child did the same work), `auxiliary` (child work did not advance the parent's goal), `clean_yield` (child did the delegated work and the parent surfaced it).
-- For guard or coordination changes, verify whether direct parent tools were blocked when expected, allowed when opt-out was enabled, and whether the behavior held for the full parent response rather than one internal continuation step.
 - Cleanup: delete the temporary agent files (or set `enabled: false`) and temp session dirs, and clear test-only environment variables.
