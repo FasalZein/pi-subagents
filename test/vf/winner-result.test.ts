@@ -88,10 +88,7 @@ describe("verified fan-out winner result", () => {
 		assert.match(result.resultText, /verifier: winner staged/);
 		assert.doesNotMatch(result.resultText, /END-OF-REPORT/);
 		assert.ok(result.reportFile, "a report file is named");
-		assert.ok(
-			result.resultText.includes(result.reportFile) || result.resultText.includes("report: "),
-			"the text names the report",
-		);
+		assert.match(result.resultText, /^run: \S+ · \S+\.md$/m, "the text names the report");
 		const report = readFileSync(result.reportFile, "utf8");
 		assert.ok(report.startsWith(winnerReport), "the report keeps the whole winner report");
 		assert.match(report, /git reset --hard 0123456789abcdef/);
@@ -248,7 +245,7 @@ describe("verified fan-out winner on adoption", () => {
 			assert.equal(message.details.verifiedRunId, finished.runId);
 			assert.equal(message.details.runId, finished.runId);
 			const reportFile = message.details.reportFile as string;
-			assert.match(message.content, /^run: \S+ · \S+report-\d+\.md$/m, "the text names the report");
+			assert.match(message.content, /^run: \S+ · \S+\.md$/m, "the text names the report");
 			assert.ok(readFileSync(reportFile, "utf8").startsWith(longReport), "the report keeps the whole winner report");
 		}
 		// Back to test support's temporary root: deleting it would send later suites to ~/.pi/history.
