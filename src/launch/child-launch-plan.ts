@@ -195,7 +195,7 @@ function resolveAgentDefaultRef(
  * the inherited ref when the agent has no default. A model-wide grant would
  * accept the default model at every level.
  */
-export function resolveImplicitModelGrant(
+function resolveImplicitModelGrant(
 	config: AgentModelConfig,
 	modelRegistry: ModelRegistryLike | undefined,
 	inheritedModelRef: string | undefined,
