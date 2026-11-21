@@ -15,7 +15,7 @@ const SubagentWaitParams = Type.Object(
 	{
 		runIds: Type.Optional(
 			Type.Array(Type.String(), {
-				description: "Run ids or names to wait for; default: every run of this session that is running or queued.",
+				description: "Run ids or names; default: every running or queued run of this session.",
 			}),
 		),
 		mode: Type.Optional(
@@ -29,7 +29,7 @@ const SubagentWaitParams = Type.Object(
 		recent: Type.Optional(
 			Type.Boolean({
 				description:
-					"true: return at once one line per ended run of this session (last 20, newest first), ignoring runIds, mode and timeout; look up an older run by its run id.",
+					"true: at once, one line per ended run of this session (last 20, newest first); other arguments are ignored.",
 			}),
 		),
 	},

@@ -63,6 +63,16 @@ const RULES_LINE =
 export const INDEX_MORE_TOOLS = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"] as const;
 type IndexMoreTool = (typeof INDEX_MORE_TOOLS)[number];
 
+// The call form of each tool, argument names from its parameter schema, so a
+// parent calls it without a describeTool or searchTools lookup (T87). Only the
+// arguments a parent usually passes; `?` marks an optional one.
+const INDEX_CALL_FORMS: Record<IndexMoreTool, string> = {
+	subagent_wait: "subagent_wait({runIds?})",
+	subagent_resume: "subagent_resume({runId, task?})",
+	subagent_kill: "subagent_kill({runId})",
+	subagent_agents: "subagent_agents({query?, name?}) (search; name: full detail)",
+};
+
 /** The management tools this session may call, so the index names only usable tools (D06). */
 type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool> };
 
@@ -146,9 +156,7 @@ function renderNamesLine(names: readonly string[], hidden: number): string {
 }
 
 function renderMoreToolsLine(tools: IndexToolAccess): string[] {
-	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) =>
-		name === "subagent_agents" ? `${name} (search, full detail)` : name,
-	);
+	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) => INDEX_CALL_FORMS[name]);
 	return names.length > 0 ? [`More tools: ${names.join(", ")}.`] : [];
 }
 
