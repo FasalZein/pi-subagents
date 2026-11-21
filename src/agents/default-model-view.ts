@@ -12,7 +12,7 @@ export interface ParentModel {
 }
 
 /** What the detail says about the default: its line, and the default ref when a call can name it. */
-export interface DefaultModelView {
+interface DefaultModelView {
 	line: string;
 	/** The ref that runs like a launch without a model; it counts as accepted (D22). */
 	usableRef?: string;
