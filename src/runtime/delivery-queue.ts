@@ -6,6 +6,7 @@ import { groupRunEnds, isFinishedStatus, type RunEndMessage, runEndIds } from ".
 type Sink = Pick<ExtensionAPI, "sendMessage">;
 /** What the queue reads of the parent session: the entries Pi committed, in append order. */
 type CommittedEntries = Pick<ExtensionContext["sessionManager"], "getEntries">;
+type Notices = Pick<ExtensionContext["ui"], "notify">;
 
 /** A message that Pi commits without an extension message_end: a settle entry or a no-turn message. */
 interface InFlight {
@@ -42,6 +43,10 @@ class DeliveryQueue {
 	private settling = false;
 	private pi?: Sink;
 	private session?: CommittedEntries;
+	/** The parent's TUI, only when the session has one: a busy parent shows a notice there. */
+	private ui?: Notices;
+	/** Names of the run ends announced while busy and not handed over yet: Pi shows only the last notice. */
+	private announced = new Map<string, string>();
 
 	register(pi: ExtensionAPI): void {
 		this.registered = true;
@@ -51,6 +56,7 @@ class DeliveryQueue {
 		});
 		pi.on("agent_start", (_event, ctx) => {
 			this.session = ctx.sessionManager;
+			this.ui = ctx.hasUI ? ctx.ui : undefined;
 			this.confirm();
 			this.busy = true;
 			this.settling = false;
@@ -104,6 +110,8 @@ class DeliveryQueue {
 			this.busy = false;
 			this.settling = false;
 			this.session = undefined;
+			this.ui = undefined;
+			this.announced.clear();
 		});
 	}
 
@@ -171,6 +179,11 @@ class DeliveryQueue {
 		}
 		this.pending.set(message.details.id, message);
 		if (!this.busy) this.send(message, true);
+		else if (this.ui) {
+			const { name } = message.details as { name?: unknown };
+			this.announced.set(message.details.id, typeof name === "string" ? name : message.details.id);
+			this.ui.notify(readyNotice([...this.announced.values()]), "info");
+		}
 	}
 
 	private send(message: RunEndMessage, triggerTurn: boolean): void {
@@ -215,6 +228,7 @@ class DeliveryQueue {
 	private takeFree(): RunEndMessage[] {
 		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
 		for (const message of free) this.pending.delete(message.details.id);
+		this.announced.clear();
 		return free;
 	}
 
@@ -222,6 +236,7 @@ class DeliveryQueue {
 	private sendPending(): void {
 		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
 		if (free.length === 0) return;
+		this.announced.clear();
 		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
 	}
 
@@ -234,12 +249,14 @@ class DeliveryQueue {
 			this.pending.delete(id);
 			this.held.delete(id);
 			this.inFlight.delete(id);
+			this.announced.delete(id);
 		}
 		if (ids.length > 0) outstandingWork.committed(...ids);
 	}
 
 	/** A wait reply carried this run end to its caller: no boundary hands it over again. */
 	take(id: string): void {
+		this.announced.delete(id);
 		this.pending.delete(id);
 		this.held.delete(id);
 	}
@@ -252,12 +269,22 @@ class DeliveryQueue {
 		this.pending.clear();
 		this.held.clear();
 		this.inFlight.clear();
+		this.announced.clear();
 		this.registered = false;
 		this.busy = false;
 		this.settling = false;
 		this.pi = undefined;
 		this.session = undefined;
+		this.ui = undefined;
 	}
+}
+
+/**
+ * Owner decision 2026-11-21: a busy parent tells the person which results are ready. Pi hands them
+ * to the model at a later boundary; this notice is not model-visible and makes no timing claim.
+ */
+function readyNotice(names: readonly string[]): string {
+	return names.length === 1 ? `The result of ${names[0]} is ready.` : `The results of ${names.join(", ")} are ready.`;
 }
 
 const deliveryQueue = new DeliveryQueue();

@@ -80,9 +80,18 @@ function classifyExitPayload(
 }
 
 export function createExitSignalWriter(deps: ExitSignalWriterDeps) {
+	/**
+	 * The type of the verdict this process wrote, per session file. The parent can consume the exit
+	 * record before this child's session_shutdown runs (it wakes on the file), so the file alone does
+	 * not prove that no verdict exists: the same first-wins rule applies to the remembered verdict.
+	 */
+	const written = new Map<string, unknown>();
 	return function writeExitSignal(payload: object, opts?: { supersede?: boolean; autonomous?: boolean }) {
 		const sessionFile = process.env.PI_SUBAGENT_SESSION;
 		if (!sessionFile) return "no-session" as const;
+		if (written.has(sessionFile) && !(opts?.supersede && written.get(sessionFile) === "error")) {
+			return "owned" as const;
+		}
 		const { isNormalCompletion, contextPressure, failedWhileSpent } = classifyExitPayload(deps, payload, opts);
 		const output = deps.getFinalOutput();
 		const accepted = writeSubagentExitSidecar(
@@ -100,6 +109,7 @@ export function createExitSignalWriter(deps: ExitSignalWriterDeps) {
 		// means a ping or an earlier completion already owns this child, and
 		// caller_ping in particular promises the parent can resume it.
 		if (!accepted) return "owned" as const;
+		written.set(sessionFile, (payload as { type?: unknown }).type);
 		if (!isNormalCompletion) return "accepted" as const;
 		try {
 			deps.pi.appendEntry(SUBAGENT_COMPLETION_ENTRY, {
