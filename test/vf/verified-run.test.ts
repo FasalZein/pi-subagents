@@ -339,7 +339,7 @@ describe("verified fan-out driver (one logical child)", () => {
 		const { ctx } = setupProject("description: vf test agent\nllm-as-a-verifier: true\nllm-as-a-verifier-candidates: 3\n");
 		const repo = (ctx as { cwd: string }).cwd;
 		process.env.PI_ARTIFACT_PROJECT_ROOT = createTestDir();
-		const otherChild = {};
+		const otherChild = { id: "other-child" };
 		const otherSlot = tryAcquireSlots(1, 16);
 		assert.ok(otherSlot);
 		claimSpawnWidthSlot(otherChild, otherSlot);

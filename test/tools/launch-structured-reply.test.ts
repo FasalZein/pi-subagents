@@ -680,6 +680,83 @@ describe("g3 P1: a launch refused before any child starts", () => {
 	});
 });
 
+describe("T89b: a parent that follows a spawn-width refusal literally", () => {
+	/** The next step a refusal names: how many children to launch now and the wait call's arguments. */
+	function nextStep(refusal: string): { launchNow: number; wait?: { runIds?: string[]; mode: string } } {
+		const fit = /The first (\d+) child(?:ren)? \(\d+ slots?\) fits? now/.exec(refusal);
+		const call = /subagent_wait\(([^()]*)\)/.exec(refusal);
+		// Evaluated as the literal the parent copies; a placeholder in it is a SyntaxError.
+		const wait = call ? (new Function(`return (${call[1]});`)() as { runIds?: string[]; mode: string }) : undefined;
+		return { launchNow: fit ? Number(fit[1]) : 0, ...(wait ? { wait } : {}) };
+	}
+
+	it("gets every child of a refused batch admitted by launching what fits, waiting and retrying", async () => {
+		const saved = process.env.PI_SUBAGENT_SPAWN_WIDTH;
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "2";
+		resetSubagentStateForTest();
+		const attempt = (batch: unknown) =>
+			[
+				`try { await tools.subagent(${JSON.stringify({ children: batch })}); return "JSON " + JSON.stringify({ admitted: true }); }`,
+				'catch (e) { return "JSON " + JSON.stringify({ refusal: e.message }); }',
+			].join("\n");
+		let pending = [child("child-b"), child("child-c"), child("child-d")];
+		const plan: Record<string, ReturnType<typeof fauxToolCall>[]> = {
+			go: [
+				fauxToolCall(
+					"codemode",
+					{ code: `await tools.subagent(${JSON.stringify({ children: [child("child-a")] })});\n${attempt(pending)}` },
+					{ id: "script-0" },
+				),
+			],
+		};
+		const harness = await startParent(plan, { codemode: true });
+		const lastValue = () => {
+			const reply = harness.toolResults("codemode").at(-1);
+			const match = /JSON (.*)$/s.exec(reply?.text ?? "");
+			assert.ok(match, `the script returned JSON, got: ${reply?.text}`);
+			return JSON.parse(match[1] as string) as { admitted?: true; refusal?: string };
+		};
+		try {
+			await harness.session.prompt("go");
+			await harness.session.waitForIdle();
+			let value = lastValue();
+			const refusals: string[] = [];
+			for (let round = 1; value.refusal !== undefined; round++) {
+				assert.ok(round <= 3, `admitted within 3 rounds; refusals: ${refusals.join(" | ")}`);
+				refusals.push(value.refusal);
+				const step = nextStep(value.refusal);
+				assert.ok(step.wait?.runIds, `the refusal names a wait on known runs: ${value.refusal}`);
+				const now = pending.slice(0, step.launchNow);
+				pending = pending.slice(step.launchNow);
+				const lines = [
+					now.length > 0 ? `await tools.subagent(${JSON.stringify({ children: now })});` : "",
+					`await tools.subagent_wait(${JSON.stringify(step.wait)});`,
+					attempt(pending),
+				];
+				plan[`round-${round}`] = [fauxToolCall("codemode", { code: lines.join("\n") }, { id: `script-${round}` })];
+				const prompt = harness.session.prompt(`round-${round}`);
+				for (const entry of now) await until(() => harness.launched(entry.name), entry.name);
+				// One waited run ends, as a child does on its own; its slot frees.
+				const [firstId] = step.wait.runIds;
+				const name = [...harness.runs.values()].find((running) => running.id === firstId)?.name;
+				assert.ok(name, `the waited run ${firstId} is a launched child`);
+				harness.finishWithCall(name, `${name} DONE`);
+				await prompt;
+				await harness.session.waitForIdle();
+				value = lastValue();
+			}
+			assert.equal(value.admitted, true);
+			for (const name of ["child-a", "child-b", "child-c", "child-d"]) assert.ok(harness.launched(name), name);
+			assert.ok(refusals.length >= 1, "the first batch was refused");
+		} finally {
+			await harness.dispose();
+			if (saved === undefined) delete process.env.PI_SUBAGENT_SPAWN_WIDTH;
+			else process.env.PI_SUBAGENT_SPAWN_WIDTH = saved;
+			resetSubagentStateForTest();
+		}
+	});
+});
+
 describe("g2 P1: a launch wait for a ping that a concurrent subagent_wait took", () => {
 	it("reports the ping from its published record, not as not found", async () => {
 		let pingTaken: JoinOutcome | undefined;
