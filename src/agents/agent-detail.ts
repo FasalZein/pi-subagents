@@ -1,4 +1,3 @@
-import { type ModelRegistryLike, resolveAvailableModelRef, resolveLaunchModel } from "../launch/child-launch-plan.ts";
 import { resolveSubagentTimeoutState } from "../launch/policy.ts";
 import { formatTimeoutSeconds } from "../runtime/timeout-budget.ts";
 import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
@@ -8,16 +7,9 @@ import {
 	parseContextWarnThreshold,
 } from "../tools/context-reminders.ts";
 import { type AgentListEntry, describeVerifiedFanOut } from "./agent-list.ts";
+import { describeDefaultModel, type ParentModel } from "./default-model-view.ts";
 import type { IndexLaunchPolicy } from "./index-section.ts";
-import { formatRefsByProvider, parseAllowedModels, splitModelRef } from "./model-refs.ts";
-
-/** The parent's model at the time of the call, which an agent without a default inherits (D22). */
-export interface ParentModel {
-	registry?: ModelRegistryLike;
-	/** provider/id of the session model, without a level. */
-	ref?: string;
-	thinking?: string;
-}
+import { formatRefsByProvider, parseAllowedModels } from "./model-refs.ts";
 
 /** What the detail of one agent depends on besides its definition: the caller and its session. */
 export interface AgentDetailContext {
@@ -28,52 +20,19 @@ export interface AgentDetailContext {
 	visibleNames: ReadonlySet<string>;
 }
 
-/**
- * The ref a launch without a model runs on: the launch resolver's ref
- * (resolveLaunchModel), without a level that Pi drops because the model does
- * not support it. That level is never explicit here, so Pi lowers it; a
- * launch that names it is refused. A model the registry cannot resolve keeps
- * its level, as the launch passes it.
- */
-function resolveDefaultRef(entry: AgentListEntry, parent: ParentModel): string | undefined {
-	const launched = resolveLaunchModel({
-		params: { agent: entry.name },
-		agentDefs: { model: entry.model, thinking: entry.thinking, allowedModels: entry.allowedModels },
-		modelRegistry: parent.registry,
-		parentModelRef: parent.ref,
-		parentThinking: parent.thinking,
-	}).effectiveModelRef;
-	if (!launched) return undefined;
-	const { model, thinking } = splitModelRef(launched);
-	if (!thinking) return launched;
-	try {
-		const runs = resolveAvailableModelRef(model, thinking, false, parent.registry, parent.ref);
-		return runs.thinking ? launched : model;
-	} catch {
-		return launched;
-	}
-}
-
 function renderModels(entry: AgentListEntry, parent: ParentModel): string[] {
-	let defaultRef: string | undefined;
-	let defaultLine: string;
-	try {
-		defaultRef = resolveDefaultRef(entry, parent);
-		defaultLine = `default model: ${defaultRef ?? "the parent's model"}`;
-	} catch (error) {
-		// The same error fails a launch without a model.
-		defaultLine = `default model: none, a launch without a model fails: ${(error as Error).message}`;
-	}
+	const view = describeDefaultModel(entry, parent);
 	const allowed = parseAllowedModels(entry.allowedModels);
-	// The default counts as accepted (D22).
-	const accepted = allowed.length > 0 ? [...new Set([...(defaultRef ? [defaultRef] : []), ...allowed])] : undefined;
+	const accepted = [...new Set([...(view.usableRef ? [view.usableRef] : []), ...allowed])];
 	const models =
 		entry.allowModelOverride === false
 			? "models: the default only (overrides are ignored)"
-			: accepted
-				? `models: ${formatRefsByProvider(accepted)}`
-				: "models: any model ref";
-	return [defaultLine, models];
+			: allowed.length === 0
+				? "models: any model ref"
+				: view.grantError !== undefined
+					? `models: configured ${formatRefsByProvider(allowed)}, none usable while the default fails`
+					: `models: ${formatRefsByProvider(accepted)}`;
+	return [view.line, models];
 }
 
 const SESSION_MODES = {
