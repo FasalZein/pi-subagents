@@ -38,6 +38,7 @@ import "./runtime/settle-esc-e2e.test.ts";
 import "./runtime/delivery-queue-holds.test.ts";
 import "./tools/provider-error-recovery.test.ts";
 import "./tools/subagents-view.test.ts";
+import "./tools/overlay-now.test.ts";
 import "./tools/agents-tab-toggle.test.ts";
 import "./tools/agents-tool.test.ts";
 import "./tools/launch-shape.test.ts";

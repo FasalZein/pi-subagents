@@ -62,6 +62,7 @@ export function buildCompletedSubagentResult(
 		autoExit: running.autoExit,
 		reportContextUsage: running.reportContextUsage,
 		deliveredTo: null,
+		modelRef: running.modelRef,
 	};
 }
 
