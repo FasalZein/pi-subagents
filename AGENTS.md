@@ -1,15 +1,16 @@
 # AGENTS.md
 
-Read `README.md` before doing anything. It documents the model, frontmatter, placement policies, and env vars this package exposes.
+Read `README.md` first: it documents the model, frontmatter, placement policies, and env vars.
 
 ## Package facts
 
-- This is a Pi package extension. Extension entrypoint is `src/index.ts`.
+- Pi package extension; entrypoint `src/index.ts`.
 - `bun.lock` is the only tracked lockfile; `package-lock.json` is gitignored.
 - Do not use `git stash` in a linked worktree: the stash list is shared with the main checkout, so a pop can apply another session's entry.
 - A new linked worktree can start without `node_modules`; `bunx tsc --noEmit` then fails with TS2688 and tests with `ERR_MODULE_NOT_FOUND`. Run `bun install --frozen-lockfile` there first.
 - The owner's Pi loads the main checkout of this repo as its pi-subagents package (switch of 2026-11-19; undo: `~/.pi/artifacts/pi-subagents/switch/fork-switch.sh restore`). A merge into `feat/context-rework` changes what every new Pi session on this Mac loads.
 - When editing README.md: `test/tools/workflow-recipe.test.ts` parses it (the only suite that does), so run that test.
+- `.gitignore` ignores `docs/`, but `docs/specs/context-rework.md` is tracked: commit it by path; `git add -A` with `docs` aborts.
 - When working under `scripts/orchestration-benchmark/`: the baseline commit cf6dbf4 has no copy of it; `--keep-sessions` keeps sessions and run folders but no load-probe files; the launcher refuses an OAuth login that expires within 30 minutes, and one `pi -p` request with that provider refreshes it.
 - When a test spawns `node --test`, pass it a clean `env`: an inherited test-runner context can make the child exit 0 on failing tests (see `visibleTestPasses` in `scripts/orchestration-benchmark/scenarios/review-fix/oracle.mjs`).
 
@@ -40,7 +41,7 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 - Ordinary code changes: `bunx tsc --noEmit` and `npm test` (`bun test` also works).
 - Structure/cleanup changes, also: `bunx @biomejs/biome check .`, `bunx knip`, and before handoff `node scripts/check-file-sizes.mjs`. These one-off checks run via `bunx` so no extra deps are declared.
 - `bunx biome` resolves an unrelated npm package named `biome` and exits 0 without checking anything; always use the scoped `@biomejs/biome`. The repo has no `biome.json`, so default Biome reformats untouched lines; check touched files with `bunx @biomejs/biome check --line-width 120 --indent-style tab <files>`.
-- Affected tests: leave `test/test.ts` out of an `rg -l` importer list; it imports every suite, so it runs the full suite.
+- Affected tests: leave `test/test.ts` out of an `rg -l` importer list; it imports every suite, so it runs the full suite. Add the shared helpers that assert the text you change, such as `test/mux/pane-result-check.ts` (every backend's result check).
 
 ## Live behavior validation
 
