@@ -560,19 +560,19 @@ A refusal while matching a fragment names at most 8 matching candidates, grouped
 
 Only the spawn width limits launches. It counts the runs that run at the same time, not the runs that a session started before. A launch that the spawn width refuses starts nothing and returns an error result. In a codemode script, the refusal rejects the `tools.subagent` call.
 
-The refusal names the next call. When every slot is busy, a launch or a resume gets the run ids that hold the slots and the wait call that returns when one of them ends:
+The refusal names the next steps, and each step works when the parent follows it as written. When every slot is busy, a launch or a resume gets the run ids that hold the slots and the wait call that returns when one of them ends:
 
 ```text
-Spawn width limit reached (2/2 slots busy, held by auth-scout-1, diff-reviewer-2). Next call: subagent_wait({ runIds: ["auth-scout-1", "diff-reviewer-2"], mode: "any" }), then launch again; or use subagent_kill on a running run to free a slot. Interactive children with auto-exit: false keep their slot until the pane closes.
+Spawn width limit reached (2/2 slots busy, held by auth-scout-1, diff-reviewer-2). Nothing started. Next call: subagent_wait({ runIds: ["auth-scout-1","diff-reviewer-2"], mode: "any" }); it returns when one of these runs ends and frees its slots. When the wait returns, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
 ```
 
-A batch wider than the spawn width also says how many children fit now. Launch those, then wait, then launch the rest:
+A refused launch also names the first children that fit in the free slots now. It counts each child by its slots: a verified fan-out child takes one slot per candidate. One wait does not promise room for the rest. After each wait, retry with the children that have not started, and repeat while the launch is refused:
 
 ```text
-Error: batch of 4 subagents exceeds the spawn width limit of 3. 1 fit now: launch 1 of them, then call subagent_wait({ runIds: ["auth-scout-1", "diff-reviewer-2", <the runIds that launch returns>], mode: "any" }) and launch the rest when it returns. Interactive children with auto-exit: false keep their slot until the pane closes.
+Error: batch of 4 subagents exceeds the spawn width limit of 3. Nothing started. The first 1 child (1 slot) fits now: call subagent with only that child. Then call subagent_wait({ runIds: ["auth-scout-1","diff-reviewer-2"], mode: "any" }); it returns when one of these runs ends and frees its slots. When the wait returns, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
 ```
 
-A slot that a launch holds while it is still starting has no run id yet. When no holder has a run id, the wait call has no `runIds` and waits for any running run of the session.
+A refused resume says to call `subagent_resume` again, not to launch. A child that needs more slots than the whole limit gets no wait call, because no wait admits it. A launch that is still starting holds its slots without a run id, so `subagent_wait` cannot wait for it. The refusal then says so and tells the parent to retry after that launch replies. A session that cannot call `subagent_wait` gets each run end as a message, and retries after it.
 
 ### The result of a run
 

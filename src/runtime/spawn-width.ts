@@ -103,43 +103,87 @@ export function releaseSpawnWidthSlotOnCompletion<T>(owner: SlotOwner, promise: 
 	return promise.finally(() => releaseSpawnWidthSlot(owner));
 }
 
-/** Run ids of the runs that hold slots now, in claim order. A launch that is still starting holds slots under no run id. */
+/** Run ids of the runs that hold slots now, in claim order. Each one is registered, so subagent_wait can wait for it. */
 function getSlotHolderRunIds(): string[] {
 	return [...slotOwners.keys()].map((owner) => owner.id);
 }
 
+/** Slots held by a launch that is still starting: reserved, but not yet claimed by a run with an id. */
+function getStartingSlotCount(): number {
+	let claimed = 0;
+	for (const lease of slotOwners.values()) claimed += lease.held;
+	return getLiveSlotCount() - claimed;
+}
+
+/** How many leading children fit in `free` slots, and the slots they take. */
+function fittingPrefix(slotCosts: readonly number[], free: number): { count: number; slots: number } {
+	let slots = 0;
+	let count = 0;
+	for (const cost of slotCosts) {
+		if (slots + cost > free) break;
+		slots += cost;
+		count++;
+	}
+	return { count, slots };
+}
+
+const plural = (count: number, noun: string, many = `${noun}s`) => `${count} ${count === 1 ? noun : many}`;
+
 const AUTO_EXIT_PANE_NOTE = "Interactive children with auto-exit: false keep their slot until the pane closes.";
 
-/** T89b: the one call that returns when a slot frees; without known holders it waits on every running run. */
-function waitAnyCall(runIds: readonly string[]): string {
-	if (runIds.length === 0) return `${SUBAGENT_WAIT_TOOL_NAME}({ mode: "any" })`;
-	return `${SUBAGENT_WAIT_TOOL_NAME}({ runIds: [${runIds.join(", ")}], mode: "any" })`;
-}
+/** The refused tool: a launch retries with the children not started yet, a resume retries the same resume. */
+export type WidthRefusedCall = "subagent" | "subagent_resume";
 
-function quotedHolderIds(): string[] {
-	return getSlotHolderRunIds().map((id) => JSON.stringify(id));
-}
-
-function busySlots(limit: number): string {
-	const ids = getSlotHolderRunIds();
-	const holders = ids.length > 0 ? `, held by ${ids.join(", ")}` : "";
-	return `${getLiveSlotCount()}/${limit} slots busy${holders}`;
-}
-
-/** D9/T89b: a launch or resume that finds every slot busy is refused with the wait call that frees one. */
-export function renderSpawnWidthBusyRefusal(limit: number): string {
-	return `Spawn width limit reached (${busySlots(limit)}). Next call: ${waitAnyCall(quotedHolderIds())}, then launch again; or use subagent_kill on a running run to free a slot. ${AUTO_EXIT_PANE_NOTE}`;
-}
-
-/** D9/T89b: a batch wider than the limit is refused with how many children fit now and the wait call for the rest. */
-export function renderBatchWidthRefusal(count: number, limit: number): string {
-	const head = `Error: batch of ${count} subagents exceeds the spawn width limit of ${limit}.`;
-	const free = Math.max(0, limit - getLiveSlotCount());
-	if (free === 0) {
-		return `${head} None fit now (${busySlots(limit)}). Next call: ${waitAnyCall(quotedHolderIds())}, then launch the children that fit. ${AUTO_EXIT_PANE_NOTE}`;
+/**
+ * D9/T89b: the refusal of a launch or resume that the spawn width does not admit. Every step it
+ * names works when a parent follows it literally: the fit-now count uses the same slot costs as
+ * admission, the wait call names only runs that subagent_wait can wait for (never a launch that is
+ * still starting), and one wait is never promised to admit the rest.
+ */
+export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: readonly number[], limit: number): string {
+	const live = getLiveSlotCount();
+	const holders = getSlotHolderRunIds();
+	const starting = getStartingSlotCount();
+	const head =
+		call === "subagent" && slotCosts.length > limit
+			? `Error: batch of ${slotCosts.length} subagents exceeds the spawn width limit of ${limit}.`
+			: `Spawn width limit reached (${live}/${limit} slots busy${holders.length > 0 ? `, held by ${holders.join(", ")}` : ""}).`;
+	const firstCost = slotCosts[0] ?? 0;
+	if (firstCost > limit) {
+		const subject = slotCosts.length === 1 ? `This ${call === "subagent" ? "child" : "resume"}` : "The first child";
+		return `${head} ${subject} needs ${plural(firstCost, "slot")}, more than the whole limit of ${limit}, so no wait admits it. Nothing started.`;
 	}
-	const wait = waitAnyCall([...quotedHolderIds(), "<the runIds that launch returns>"]);
-	return `${head} ${free} fit now: launch ${free} of them, then call ${wait} and launch the rest when it returns. ${AUTO_EXIT_PANE_NOTE}`;
+	const parts = [head, "Nothing started."];
+	const fit = fittingPrefix(slotCosts, Math.max(0, limit - live));
+	if (fit.count > 0) {
+		parts.push(
+			`The first ${plural(fit.count, "child", "children")} (${plural(fit.slots, "slot")}) ${fit.count === 1 ? "fits" : "fit"} now: call subagent with only ${fit.count === 1 ? "that child" : "those children"}.`,
+		);
+	}
+	const then = fit.count > 0 ? "Then call" : "Next call:";
+	if (holders.length > 0) {
+		parts.push(
+			`${then} ${SUBAGENT_WAIT_TOOL_NAME}({ runIds: ${JSON.stringify(holders)}, mode: "any" }); it returns when one of these runs ends and frees its slots.`,
+		);
+	} else if (fit.count > 0) {
+		parts.push(`Then call ${SUBAGENT_WAIT_TOOL_NAME} with mode "any" and the runIds of that launch reply.`);
+	}
+	if (starting > 0) {
+		const retry = holders.length > 0 || fit.count > 0 ? "Or retry" : "Retry";
+		parts.push(
+			`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet, so ${SUBAGENT_WAIT_TOOL_NAME} cannot wait for it. ${retry} the refused call after that launch replies.`,
+		);
+	}
+	if (holders.length > 0 || fit.count > 0) {
+		const retry =
+			call === "subagent"
+				? "call subagent again with the children that have not started, at most as many as fit then"
+				: "call subagent_resume again";
+		parts.push(`When the wait returns, ${retry}; repeat while it is refused.`);
+	}
+	if (holders.length > 0) parts.push("Or free a slot with subagent_kill on one of these runs.");
+	parts.push(AUTO_EXIT_PANE_NOTE);
+	return parts.join(" ");
 }
 
 export function resetSpawnWidthForTest(): void {

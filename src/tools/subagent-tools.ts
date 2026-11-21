@@ -19,8 +19,7 @@ import {
 	claimSpawnWidthSlot,
 	getSpawnWidthLimit,
 	releaseSpawnWidthSlotOnCompletion,
-	renderBatchWidthRefusal,
-	renderSpawnWidthBusyRefusal,
+	renderSpawnWidthRefusal,
 	type SpawnSlotLease,
 	tryAcquireSlots,
 } from "../runtime/spawn-width.ts";
@@ -115,6 +114,11 @@ function getSpawnWidthError(text: string): ToolResult {
 		details: { error: "spawn_width" },
 		isError: true,
 	});
+}
+
+/** Spawn slots one child takes: 1, or one per candidate of a verified fan-out (SPEC). */
+function slotCostOf(agentDefs: AgentDefaults | null): number {
+	return agentDefs?.llmAsVerifier === true ? resolveVerifierCandidateCount(agentDefs.llmAsVerifierCandidates) : 1;
 }
 
 export function getSubagentNameError(name: string | undefined): string | null {
@@ -360,8 +364,10 @@ export function registerSubagentCoreTools(
 					stripInternalLaunchOverrides(child as SubagentParamsInput),
 				);
 				const widthLimit = getSpawnWidthLimit();
-				if (children.length > widthLimit)
-					return getSpawnWidthError(renderBatchWidthRefusal(children.length, widthLimit));
+				if (children.length > widthLimit) {
+					const costs = children.map((entry) => slotCostOf(runtime.loadAgentDefaults(entry.agent, ctx.cwd)));
+					return getSpawnWidthError(renderSpawnWidthRefusal("subagent", costs, widthLimit));
+				}
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
 				const launchable = () => runtime.listLaunchableAgents(ctx.cwd);
 				const prepared = children.map((child) => {
@@ -378,15 +384,11 @@ export function registerSubagentCoreTools(
 				// Slot cost per child: 1 normally, N candidates for a verified
 				// fan-out (SPEC: N candidates consume N spawn slots, reserved
 				// atomically before any worktree creation or verifier spend).
-				const slotCosts = prepared.map((entry) =>
-					entry.agentDefs?.llmAsVerifier === true
-						? resolveVerifierCandidateCount(entry.agentDefs.llmAsVerifierCandidates)
-						: 1,
-				);
+				const slotCosts = prepared.map((entry) => slotCostOf(entry.agentDefs));
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
 				if (!unlaunchedSlots) {
-					return getSpawnWidthError(renderSpawnWidthBusyRefusal(widthLimit));
+					return getSpawnWidthError(renderSpawnWidthRefusal("subagent", slotCosts, widthLimit));
 				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];

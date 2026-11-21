@@ -50,7 +50,7 @@ import {
 	getSpawnWidthLimit,
 	releaseSpawnWidthSlot,
 	releaseSpawnWidthSlotOnCompletion,
-	renderSpawnWidthBusyRefusal,
+	renderSpawnWidthRefusal,
 	tryAcquireSlots,
 } from "./spawn-width.ts";
 
@@ -236,7 +236,7 @@ export async function resumeSubagentSession(
 	const slot = tryAcquireSlots(1, widthLimit);
 	if (!slot) {
 		releaseSession();
-		throw new Error(renderSpawnWidthBusyRefusal(widthLimit));
+		throw new Error(renderSpawnWidthRefusal("subagent_resume", [1], widthLimit));
 	}
 
 	let claimedRunning: RunningSubagent | undefined;
