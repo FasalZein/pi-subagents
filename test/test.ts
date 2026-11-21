@@ -26,6 +26,7 @@ import "./tools/subagent-done-autoexit-notify.test.ts";
 import "./tools/subagent-context-reminders.test.ts";
 import "./tools/timeout-reminders.test.ts";
 import "./tools/exit-signal.test.ts";
+import "./tools/exit-verdict-after-consume.test.ts";
 import "./session/completion-reason.test.ts";
 import "./tools/subagent-done-recovery.test.ts";
 import "./tools/subagent-done-takeover.test.ts";

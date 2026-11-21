@@ -42,11 +42,23 @@ describe("busy parent notice for a queued run end", () => {
 		deliverRunEnd(p.pi, "r1", end("scout-1"));
 		assert.equal(p.notices.length, 1);
 		assert.match(p.notices[0], /scout-1/);
-		assert.match(p.notices[0], /after the current tool call/);
+		assert.equal(p.notices[0], "The result of scout-1 is ready.");
 		assert.equal(p.sent.length, 0, "the result still waits for the boundary");
 		p.fire("turn_end", { message: { stopReason: "toolUse" } });
 		assert.equal(p.sent.length, 1);
 		assert.equal(p.notices.length, 1, "the boundary shows no second notice");
+	});
+
+	it("two run ends queued in one busy frame: the last notice names both, since Pi shows only the last", () => {
+		const p = parent(true);
+		p.fire("agent_start");
+		deliverRunEnd(p.pi, "r1", end("scout-1"));
+		deliverRunEnd(p.pi, "r2", end("scout-2"));
+		assert.equal(p.notices.at(-1), "The results of scout-1, scout-2 are ready.");
+		p.fire("turn_end", { message: { stopReason: "toolUse" } });
+		p.fire("message_end", { message: { role: "custom", ...p.sent[0] } });
+		deliverRunEnd(p.pi, "r3", end("scout-3"));
+		assert.equal(p.notices.at(-1), "The result of scout-3 is ready.", "handed-over results leave the notice");
 	});
 
 	it("an idle parent gets the result at once and no notice", () => {
