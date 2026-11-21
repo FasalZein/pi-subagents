@@ -4,16 +4,6 @@ import type { ErrorExitPayload } from "./provider-error-recovery.ts";
 
 type ShutdownContext = { shutdown: () => void };
 
-export function requestShutdown(ctx: ShutdownContext) {
-	setTimeout(() => {
-		try {
-			ctx.shutdown();
-		} catch {
-			// Context may already be stale after session shutdown/reload.
-		}
-	}, 0);
-}
-
 /**
  * True for raw pane input that a person typed: Escape or a printable key.
  * Terminal reports (mouse, focus, size and color replies) start with an
@@ -64,17 +54,13 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 	}
 
 	/**
-	 * Ends the run as failed after one tick, unless a person took over the pane
-	 * in between: an input can land between the error and the deferred close.
+	 * Closes the pane after one tick, unless a person took it over in between:
+	 * a key can land between the child's end and the deferred close (F2, D11).
 	 */
-	function shutdownAfterError(ctx: ShutdownContext, message: string, beforeShutdown?: () => void) {
-		if (tookOver) {
-			showEndedRunInPane(ctx, message);
-			return;
-		}
+	function shutdownOnNextTick(ctx: ShutdownContext, onTakenOver?: () => void, beforeShutdown?: () => void) {
 		setTimeout(() => {
 			if (tookOver) {
-				showEndedRunInPane(ctx, message);
+				onTakenOver?.();
 				return;
 			}
 			beforeShutdown?.();
@@ -87,16 +73,27 @@ export function createPaneTakeover(deps: PaneTakeoverDeps) {
 		}, 0);
 	}
 
+	/** Ends the run as failed; a taken-over pane shows the error and stays open. */
+	function shutdownAfterError(ctx: ShutdownContext, message: string, beforeShutdown?: () => void) {
+		if (tookOver) {
+			showEndedRunInPane(ctx, message);
+			return;
+		}
+		shutdownOnNextTick(ctx, () => showEndedRunInPane(ctx, message), beforeShutdown);
+	}
+
 	return {
 		get tookOver() {
 			return tookOver;
 		},
-		/** The child's own shutdown (completion, ping, untyped exit): marks the end as the child's (T70). */
+		/**
+		 * The child's own shutdown (completion, ping, untyped exit): marks the end as the child's (T70).
+		 * Its exit record is already written, so a takeover before the tick only keeps the pane open.
+		 */
 		requestShutdown(ctx: ShutdownContext) {
-			childRequestedShutdown = true;
-			requestShutdown(ctx);
+			shutdownOnNextTick(ctx);
 		},
-		/** T70: true once this child's own code asked Pi to shut down. */
+		/** T70: true once this child's own deferred close asked Pi to shut down. */
 		get childRequestedShutdown() {
 			return childRequestedShutdown;
 		},
