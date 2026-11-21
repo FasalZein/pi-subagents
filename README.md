@@ -75,7 +75,7 @@ In the Herdr app and in Rex, the parent publishes a status record with the count
 
 ### Removed: orchestrator mode and ambient awareness
 
-The parent no longer gets the hidden roster message that older versions called ambient awareness. The [agent index](#agent-index) replaces it: one system-prompt section with one line per agent, and the `subagent_agents` tool for the rest.
+The parent no longer gets the hidden roster message that older versions called ambient awareness. The [agent index](#agent-index) replaces it: one system-prompt section with one entry per agent (a line and its model lines), and the `subagent_agents` tool for the rest.
 
 Earlier versions had an orchestrator mode for the parent session. It removed every parent tool except `subagent`, `subagent_resume`, `subagent_kill`, and `set_tab_title`, and it replaced Pi's system prompt with a delegation-only prompt.
 

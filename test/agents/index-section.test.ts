@@ -60,8 +60,6 @@ async function loadUpstreamModelLines(): Promise<{ defaultModel: ModelLineRender
 		join(dir, "model-lines.ts"),
 		[
 			'import { buildModelRef, parseAllowedModels } from "./model-refs.ts";',
-			// The extracted functions name this type; type stripping erases it.
-			"type AgentListEntry = any;",
 			extract("renderDefaultModelLine"),
 			extract("renderModelsLine"),
 		].join("\n"),
@@ -139,7 +137,8 @@ describe("agent index section", () => {
 	it("follows each agent line with the cf6dbf4 model lines of that agent, byte for byte (D19)", async () => {
 		const upstream = await loadUpstreamModelLines();
 		// Made-up refs. A suffix that is no Pi thinking level (`m:free`) is left
-		// out: the fork keeps it in the model id on purpose (model-refs.ts splitModelRef).
+		// out: the fork keeps it in the model id on purpose and shows the ref the
+		// child runs on (D22; parent decision 2026-11-21 on review 88994379).
 		const cases = [
 			entry("bare"),
 			entry("default-only", { model: "prov/model-a", thinking: "high" }),
