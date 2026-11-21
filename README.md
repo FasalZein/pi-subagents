@@ -75,7 +75,7 @@ In the Herdr app and in Rex, the parent publishes a status record with the count
 
 ### Removed: orchestrator mode and ambient awareness
 
-The parent no longer gets the hidden roster message that older versions called ambient awareness. The [agent index](#agent-index) replaces it: one system-prompt section with one line per agent, and the `subagent_agents` tool for the rest.
+The parent no longer gets the hidden roster message that older versions called ambient awareness. The [agent index](#agent-index) replaces it: one system-prompt section with one entry per agent (a line and its model lines), and the `subagent_agents` tool for the rest.
 
 Earlier versions had an orchestrator mode for the parent session. It removed every parent tool except `subagent`, `subagent_resume`, `subagent_kill`, and `set_tab_title`, and it replaced Pi's system prompt with a delegation-only prompt.
 
@@ -137,7 +137,7 @@ For a fuller example of the intended style, see the [scout agent gist by edxeth]
 | `no-session` | `false` | Run the child in Pi's in-memory mode (`--no-session`), except under a strict time-limit wrap-up. When the parent watches the run to its end, the report (from the child's output or the final text in its exit record) is kept in the result files. The run cannot be resumed |
 | `trust-project` | `false` | Whether interactive child launches pass Pi's `--approve` flag and trust project-local files/settings. Background children always generate `--no-approve` for safety; use `flags` only as an explicit advanced override. |
 | `auto-exit` | `false` | Close the child after a normal completion. Background launches always use `true`; `false` is ignored there. |
-| `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 1,600 characters with one line per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
+| `pinned` | `false` | `true` lists the agent first in the agent index. The index is a system-prompt section of at most 4,400 characters with one entry per launchable agent; agents that do not fit are counted, and `subagent_agents` finds them. |
 | `system-prompt` | task body | `append` adds the agent body to the child's own Pi system prompt (Pi's default unless the child has an applicable `SYSTEM.md`); `replace` replaces that base prompt with the agent body. The parent agent's system prompt is never inherited. |
 | `session-mode` | `lineage-only` | `standalone`, `lineage-only`, or `fork` |
 | `flags` | unset | Extra CLI flags passed to the child pi process (e.g. `--verbose` or `--some-custom-flag`). Appended after all generated args — last-wins semantics against conflicting generated args, including `--approve` / `--no-approve`. Use only as an advanced escape hatch for extension-registered flags or pi built-in flags not covered by other frontmatter fields. |
@@ -477,17 +477,20 @@ Before anything is paid for, Pi sends one small request to the backend you chose
 
 ## Agent index
 
-At the start of each prompt, Pi writes one named system-prompt section, `index`, into the parent prompt. Pi stores the section with the session, patches it only when it changes, and keeps it through compaction, resume, and reload. The section has at most 1,600 characters: three fixed lines, then one line per agent that the session may launch.
+At the start of each prompt, Pi writes one named system-prompt section, `index`, into the parent prompt. Pi stores the section with the session, patches it only when it changes, and keeps it through compaction, resume, and reload. The section has at most 4,400 characters: three fixed lines, then one entry per agent that the session may launch. An entry is the agent line and the model lines of the v2.9.2 roster.
 
 ```text
 Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
 Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
 More tools: subagent_wait, subagent_resume, subagent_kill, subagent_agents (search, full detail).
 - reviewer: Review a diff for bugs and missing tests. [pane] [manual]
+  default_model: prov/model-a:high
+  models: prov/model-a:high | prov/model-b | prov/model-c:low
 - scout: Inspect the codebase and report the relevant files.
+  models: any model ref
 ```
 
-Each agent line holds the name and the first 100 characters of the `description`. Agents with `pinned: true` come first, by name, and then the other agents, by name. When the next line does not fit in 1,600 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The index names only the tools that Pi lets the session call (an excluded, inactive or hidden tool is left out; a deferred one counts). Without `subagent_wait` the first line drops its clause. Without `subagent_agents` the agents that get no line, including agents without a description, are named on a last line, `More agents: a, b, c.`; agent lines give way to it until every name fits, and names that still do not fit are counted (`+<n> not shown`). When another extension replaces the whole system prompt, before or after this one, the index goes into each request as a leading message instead; the replaced prompt and the session file stay unchanged. In a child, a whole prompt composed earlier gets the section appended, as before.
+Each agent line holds the name and the first 100 characters of the `description`. The model lines follow it, as in the v2.9.2 roster: `default_model: <ref>` when the agent has a `model`, and `models: <default> | <allowed-models…>`, or `models: any model ref` without `allowed-models`. An agent with `allow-model-override: false` has no `models:` line. Agents with `pinned: true` come first, by name, and then the other agents, by name. An agent line and its model lines are kept or left out together. When the next entry does not fit in 4,400 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The index names only the tools that Pi lets the session call (an excluded, inactive or hidden tool is left out; a deferred one counts). Without `subagent_wait` the first line drops its clause. Without `subagent_agents` the agents that get no line, including agents without a description, are named on a last line, `More agents: a, b, c.`; agent lines give way to it until every name fits, and names that still do not fit are counted (`+<n> not shown`). When another extension replaces the whole system prompt, before or after this one, the index goes into each request as a leading message instead; the replaced prompt and the session file stay unchanged. In a child, a whole prompt composed earlier gets the section appended, as before.
 
 A flag shows only where an agent differs from the common case:
 

@@ -3,7 +3,7 @@ import {
 	buildSystemPrompt,
 	normalizeBuildSystemPromptOptions,
 } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js";
-import { AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
+import { AGENT_INDEX_MAX_CHARS, AGENT_INDEX_SECTION_NAME } from "../../src/agents/index-section.ts";
 import { shouldUseBackgroundLaunch } from "../../src/launch/policy.ts";
 import { forgetMuxDetectionForTest } from "../../src/mux/core.ts";
 import { tmuxBackend } from "../../src/mux/tmux.ts";
@@ -192,7 +192,7 @@ describe("agent index at prompt start", () => {
 		assert.ok(typeof sections[0] === "string");
 		assert.match(
 			sections[0] as string,
-			/\n- reviewer: Review changes for regressions\n- scout: Map the code before a change$/,
+			/\n- reviewer: Review changes for regressions\n {2}models: any model ref\n- scout: Map the code before a change\n {2}models: any model ref$/,
 		);
 		for (const section of sections) assert.equal(section, sections[0]);
 	});
@@ -245,7 +245,7 @@ describe("agent index at prompt start", () => {
 			assert.match(
 				run.prompt,
 				new RegExp(
-					`<${AGENT_INDEX_SECTION_NAME}>\\nHelpers: launch with subagent[\\s\\S]*\\n- scout: Map the code before a change\\n</${AGENT_INDEX_SECTION_NAME}>`,
+					`<${AGENT_INDEX_SECTION_NAME}>\\nHelpers: launch with subagent[\\s\\S]*\\n- scout: Map the code before a change\\n  models: any model ref\\n</${AGENT_INDEX_SECTION_NAME}>`,
 				),
 			);
 			assert.doesNotMatch(run.prompt, /reviewer/);
@@ -259,7 +259,7 @@ describe("agent index at prompt start", () => {
 		const start = fixture.handlers.get("before_agent_start") ?? [];
 		const run = await promptStart(start, fixture.ctx);
 		assert.ok(run.rendered);
-		assert.ok(run.rendered.length <= 1_600, `${run.rendered.length} characters`);
+		assert.ok(run.rendered.length <= AGENT_INDEX_MAX_CHARS, `${run.rendered.length} characters`);
 		for (const name of [
 			"architect",
 			"cleaner",
@@ -283,7 +283,7 @@ describe("agent index at prompt start", () => {
 				);
 			const r = await promptStart(many.handlers.get("before_agent_start") ?? [], many.ctx);
 			assert.ok(r.rendered);
-			assert.ok(r.rendered.length <= 1_600, `${r.rendered.length} characters`);
+			assert.ok(r.rendered.length <= AGENT_INDEX_MAX_CHARS, `${r.rendered.length} characters`);
 			assert.match(r.rendered, /\n\+\d+ more: subagent_agents with a query\n<\/\w+>$/);
 		}
 	});
@@ -389,7 +389,7 @@ describe("agent index at prompt start", () => {
 			assert.equal(first.role, "custom");
 			assert.match(
 				first.content,
-				/^<index>\nHelpers: launch with subagent[\s\S]*\n- scout: Map the code before a change\n<\/index>$/,
+				/^<index>\nHelpers: launch with subagent[\s\S]*\n- scout: Map the code before a change\n {2}models: any model ref\n<\/index>$/,
 			);
 			assert.deepEqual(request[1], history[0]);
 		});
@@ -438,7 +438,7 @@ describe("agent index at prompt start", () => {
 		process.env.PI_SUBAGENT_SPAWNABLE = "true";
 		process.env.PI_DENY_TOOLS = "subagent_agents";
 		const { agentsDir, handlers, ctx } = setup({ all: [{ name: "subagent" }], active: ["subagent"] });
-		for (let i = 0; i < 40; i++)
+		for (let i = 0; i < 80; i++)
 			writeAgent(
 				agentsDir,
 				`agent-${String(i).padStart(3, "0")}`,
@@ -446,11 +446,11 @@ describe("agent index at prompt start", () => {
 			);
 		writeAgent(agentsDir, "hidden", "description: Not for this caller\nmode: background\nvisible-to: root");
 		const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
-		assert.ok(section.length + 15 <= 1_600, `${section.length}`);
+		assert.ok(section.length + 15 <= AGENT_INDEX_MAX_CHARS, `${section.length}`);
 		assert.ok(!/subagent_agents|subagent_wait|More tools|agent files|\.pi\/agents/.test(section), section);
 		const lines = section.split("\n");
-		assert.ok(!lines.some((line) => line.startsWith("- agent-039: ")), "agent-039 has no line");
-		assert.match(lines.at(-1) ?? "", /^More agents: .*\bagent-039\b.*\.$/);
+		assert.ok(!lines.some((line) => line.startsWith("- agent-079: ")), "agent-079 has no line");
+		assert.match(lines.at(-1) ?? "", /^More agents: .*\bagent-079\b.*\.$/);
 		assert.doesNotMatch(section, /\bhidden\b/);
 	});
 

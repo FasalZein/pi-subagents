@@ -1,5 +1,6 @@
 import { type ParsedSpawnEnv, resolveSpawnPolicy } from "../spawn/policy.ts";
 import type { AgentListEntry } from "./agent-list.ts";
+import { buildModelRef, parseAllowedModels } from "./model-refs.ts";
 
 /**
  * Name of the system-prompt section that holds the agent index (D19). The tags
@@ -7,8 +8,14 @@ import type { AgentListEntry } from "./agent-list.ts";
  */
 export const AGENT_INDEX_SECTION_NAME = "index";
 
-/** Upper bound of the section as Pi renders it into the request, tags included (D19). */
-export const AGENT_INDEX_MAX_CHARS = 1_600;
+/**
+ * Upper bound of the section as Pi renders it into the request, tags included (D19).
+ * Derivation (owner 2026-11-21): the owner's 10 agents with their model lines
+ * render at most 3,867 characters (UI session before the first launch, the
+ * longest fixed lines); 533 characters of headroom hold about one more agent
+ * with its model lines (the largest of the 10 takes about 400).
+ */
+export const AGENT_INDEX_MAX_CHARS = 4_400;
 
 /** The section as Pi renders it into the request. */
 export function renderAgentIndexRequestText(section: string): string {
@@ -100,9 +107,33 @@ export function selectIndexTargets(entries: readonly AgentListEntry[], spawnEnv:
 	);
 }
 
+// The model lines of the v2.9.2 roster, verbatim (cf6dbf4 src/agents/agent-list.ts
+// renderDefaultModelLine, renderModelsLine), so a parent can pick an allowed
+// model and launch in one call (D19, owner 2026-11-21).
+function renderDefaultModelLine(entry: AgentListEntry): string | undefined {
+	const ref = buildModelRef(entry.model, entry.thinking);
+	return ref ? `  default_model: ${ref}` : undefined;
+}
+
+function renderModelsLine(entry: AgentListEntry): string | undefined {
+	if (entry.allowModelOverride === false) return undefined;
+	const allowed = parseAllowedModels(entry.allowedModels);
+	if (allowed.length === 0) return "  models: any model ref";
+	const defaultModel = buildModelRef(entry.model, entry.thinking);
+	const choices = [...new Set([defaultModel, ...allowed].filter((ref): ref is string => !!ref))];
+	return `  models: ${choices.join(" | ")}`;
+}
+
+/** One agent's line and its model lines: they are kept or dropped as one unit. */
 function renderAgentLine(entry: AgentListEntry, policy: IndexLaunchPolicy): string {
 	const description = (entry.description ?? "").replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_CHARS).trimEnd();
-	return [`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" ");
+	return [
+		[`- ${entry.name}: ${description}`, ...getFlags(entry, policy)].join(" "),
+		renderDefaultModelLine(entry),
+		renderModelsLine(entry),
+	]
+		.filter((line): line is string => line !== undefined)
+		.join("\n");
 }
 
 function renderCountLine(rest: number): string {

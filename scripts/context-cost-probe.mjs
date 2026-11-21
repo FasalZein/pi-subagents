@@ -58,7 +58,7 @@ import { namesDeniedByParentEnv } from "../src/launch/child-env.ts";
 
 export const LOADOUTS = ["on", "only", "none"];
 export const INLINE_BUDGET = 3000;
-export const CAPS = { total: 6000, section: 1600, agentsNoArg: 200 };
+export const CAPS = { total: 8805, section: 4400, agentsNoArg: 200 };
 const EXTENSION_URL = new URL("../src/subagents.ts", import.meta.url);
 const EXTENSION_TOOL = /^(subagent|caller_ping)/;
 
