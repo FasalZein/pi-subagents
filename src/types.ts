@@ -9,7 +9,7 @@ export type ResultParent = Pick<ResultTarget, "parentCwd" | "warnings">;
 
 export type DeliveryState = "detached" | "awaited";
 
-/** D5: starting, running, soft limit reached, wrapping up, stopping, ended. */
+/** D5: running, soft limit reached, wrapping up, stopping, ended. */
 export type RunPhase = "running" | "soft-limit" | "wrapping-up" | "stopping" | "ended";
 export type ParentClosePolicy = "terminate" | "continue";
 type CompletedDelivery = "steer" | "wait";
