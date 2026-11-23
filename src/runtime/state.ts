@@ -75,6 +75,21 @@ export function cacheCompletedSubagentResult(
 	return cached;
 }
 
+/**
+ * A recovery publish replaces the run's last revision (M10-A): a completion already cached for the
+ * run takes the new result, so a wait never pairs the old text with the new record. Delivery
+ * ownership stays; a run with no cached completion gets none.
+ */
+export function replaceCachedCompletion(running: RunningSubagent, result: SubagentResult): void {
+	const previous = completedSubagentResults.get(running.id);
+	if (!previous) return;
+	completedSubagentResults.set(running.id, {
+		...buildCompletedSubagentResult(running, result),
+		deliveryState: previous.deliveryState,
+		deliveredTo: previous.deliveredTo,
+	});
+}
+
 export function clearSubagentShutdownTimer(running: RunningSubagent): void {
 	if (!running.shutdownTimer) return;
 	clearTimeout(running.shutdownTimer);

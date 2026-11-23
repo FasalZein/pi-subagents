@@ -283,11 +283,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		return messages ? { messages: messages as typeof event.messages } : undefined;
 	});
 
-	pi.on("input", () => {
-		resetSubagentBatchStopRequest();
-		return { action: "continue" as const };
-	});
-
 	pi.on("message_end", (event, ctx) => {
 		// Mixed-batch barrier: when an assistant message contains BOTH an async
 		// subagent launch (subagent or subagent_resume) AND a non-subagent tool,

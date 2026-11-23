@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { AssembledResult } from "../../runtime/result-assembler.ts";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, RECORD_FILE, readResultRecord } from "../../runtime/result-files.ts";
-import type { ResultRecord } from "../../runtime/result-record.ts";
+import type { ResultRecord, RunId } from "../../runtime/result-record.ts";
 
 /**
  * D13 and D18: the published results of one verified run, one immutable folder per verification
@@ -13,11 +13,12 @@ import type { ResultRecord } from "../../runtime/result-record.ts";
  * newest published generation.
  */
 
+const RESULTS_FOLDER = "result";
 const REPORT_FILE = "report.md";
 const GENERATION_FOLDER = /^g([1-9][0-9]*)$/;
 
 function resultsRoot(runDir: string): string {
-	return join(runDir, "result");
+	return join(runDir, RESULTS_FOLDER);
 }
 
 function generationFolder(runDir: string, generation: number): string {
@@ -50,6 +51,19 @@ export function latestVerifiedRecord(runDir: string): ResultRecord | undefined {
 		if (record) return record;
 	}
 	return undefined;
+}
+
+/**
+ * The published generation record whose saved report is `reportFile`, the file that the run's end
+ * named. It is that generation's record, never a later one found by run id; undefined when the path
+ * is no generation report of `runId`.
+ */
+export function generationRecordOfReport(reportFile: string, runId: RunId): ResultRecord | undefined {
+	const folder = dirname(reportFile);
+	if (basename(reportFile) !== REPORT_FILE || !GENERATION_FOLDER.test(basename(folder))) return undefined;
+	if (basename(dirname(folder)) !== RESULTS_FOLDER) return undefined;
+	const record = readRecordQuietly(folder);
+	return record?.runId === runId && record.report.saved && record.report.path === reportFile ? record : undefined;
 }
 
 function writeFlushed(path: string, text: string): void {

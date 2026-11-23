@@ -240,7 +240,7 @@ export function registerSubagentResumeTool(
 					content: [{ type: "text" as const, text: renderLaunchReply([running], [delivery], []) }],
 					structuredContent: asStructuredContent({
 						status: "launched",
-						children: [launchedChildData(running, running.agent ?? "", reported.length > 0)],
+						children: [launchedChildData(running, running.agent ?? "", reported.length > 0, result.details)],
 					}),
 				};
 			}

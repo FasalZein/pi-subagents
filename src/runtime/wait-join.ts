@@ -1,7 +1,8 @@
 import type { RunningSubagent, SubagentResult } from "../types.ts";
 import { queuedRunEnd, queuedRunEndIds, settleWaitReply } from "./delivery-queue.ts";
+import { type PublishedRecordSources, readPublishedRecord } from "./published-record.ts";
 import type { ResultStore } from "./result-files.ts";
-import { parseRunId, type ResultRecord } from "./result-record.ts";
+import type { ResultRecord } from "./result-record.ts";
 import { lookUpRecord, noRecordText, renderLookup, withRecoveredReport } from "./run-lookup.ts";
 import { completedSubagentResults, runningSubagents } from "./state.ts";
 import { dropRunEndHold, holdRunEnd } from "./wait-holds.ts";
@@ -61,33 +62,24 @@ interface SessionResults {
 /** Seconds to milliseconds for the time limit. */
 const MS_PER_SECOND = 1000;
 
-/** Where an ended run's record is read: the run's own store first, then this parent session's. */
-interface RecordSources {
-	runStore?: ResultStore;
-	sessionStore?: ResultStore;
-	/** The published run id the run's end names, when the caller has it. */
+/** Where an ended run's record is read, and the published run id the run's end names, when the caller has it. */
+interface RecordSources extends PublishedRecordSources {
 	runId?: string;
 }
 
-function readRecord(runId: string | undefined, sources: RecordSources): ResultRecord | null {
-	if (!runId) return null;
-	let id: ReturnType<typeof parseRunId>;
-	try {
-		id = parseRunId(runId);
-	} catch {
-		return null;
-	}
-	return sources.runStore?.read(id) ?? sources.sessionStore?.read(id) ?? null;
-}
+const detailString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
 
 /** `name` is the launch name when the caller has the running run. */
 function snapshotEnd(id: string, sources: RecordSources, name?: string): JoinedResult {
 	// The text is the rendering the message path would carry (D14); the record is the published one.
 	const queued = queuedRunEnd(id);
 	const cached = completedSubagentResults.get(id);
-	const queuedRunId = typeof queued?.details.runId === "string" ? queued.details.runId : undefined;
-	const queuedName = typeof queued?.details.name === "string" ? queued.details.name : undefined;
-	const record = readRecord(sources.runId ?? cached?.resultRunId ?? queuedRunId, sources);
+	const queuedRunId = detailString(queued?.details.runId);
+	const queuedName = detailString(queued?.details.name);
+	const record = readPublishedRecord(sources.runId ?? cached?.resultRunId ?? queuedRunId, {
+		...sources,
+		reportFile: sources.reportFile ?? cached?.reportFile ?? detailString(queued?.details.reportFile),
+	});
 	// Parent-owned names first (a queued ping's sidecar name can be missing or differ); the id is the last resort.
 	const ended = { runId: id, name: name ?? cached?.name ?? record?.name ?? queuedName ?? id, record };
 	if (queued) return { ...ended, text: queued.content };
@@ -180,7 +172,12 @@ export async function joinRuns(
 		const ended = (result?: SubagentResult) => {
 			// The router ran first (it was wired at launch), so the end is held in the queue now.
 			if (!holds.has(running.id)) return;
-			const sources = { runStore: running.resultTarget?.store, sessionStore, runId: result?.resultRunId };
+			const sources = {
+				runStore: running.resultTarget?.store,
+				sessionStore,
+				runId: result?.resultRunId,
+				reportFile: result?.reportFile,
+			};
 			results.set(running.id, snapshotEnd(running.id, sources, running.name));
 			wake();
 		};
