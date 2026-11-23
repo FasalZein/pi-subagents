@@ -14,6 +14,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { Value } from "typebox/value";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
@@ -364,7 +365,9 @@ export class ResultStore {
 		} catch {
 			// No results folder: only the in-memory records.
 		}
-		const ids = new Set<string>([...folders, ...this.runs.keys()]);
+		// Entries add only their unsaved records: a saved run is listed through its folder, as before.
+		const unsavedIds = [...this.runs].filter(([, entry]) => entry.published?.unsaved).map(([id]) => id);
+		const ids = new Set<string>([...folders, ...unsavedIds]);
 		return [...ids].flatMap((name) => {
 			let id: RunId;
 			try {
@@ -382,7 +385,7 @@ export class ResultStore {
 	 * one (before T25, or by verified fan-out).
 	 */
 	storedRendering(record: ResultRecord): string | undefined {
-		if (!record.report.saved) return this.runs.get(record.runId)?.published?.unsaved?.rendering;
+		if (!record.report.saved) return this.unsavedOf(record)?.rendering;
 		// Read from the run's own folder by file name only: the record's path is not trusted.
 		return this.readContained(record.runId, basename(renderingPathFor(record.report.path)));
 	}
@@ -392,7 +395,13 @@ export class ResultStore {
 	 * explicit lookup by run id returns it; ordinary deliveries stay capped.
 	 */
 	unsavedReport(record: ResultRecord): string | undefined {
-		return record.report.saved ? undefined : this.runs.get(record.runId)?.published?.unsaved?.report;
+		return record.report.saved ? undefined : this.unsavedOf(record)?.report;
+	}
+
+	/** The kept payload of this exact unsaved revision; an older revision's payload is gone, not the newer one. */
+	private unsavedOf(record: ResultRecord): UnsavedPublish | undefined {
+		const unsaved = this.runs.get(record.runId)?.published?.unsaved;
+		return unsaved && isDeepStrictEqual(unsaved.record, record) ? unsaved : undefined;
 	}
 
 	/**

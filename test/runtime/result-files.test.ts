@@ -247,6 +247,31 @@ describe("result files (D13)", () => {
 		}
 	});
 
+	it("lists no saved run it cannot enumerate, and gives an older unsaved revision no payload of a newer one", () => {
+		// M10-A review P2: list adds only unsaved entries; payload getters check the revision.
+		const dir = resultsDir();
+		const store = new ResultStore(dir, () => {});
+		const saved = store.reserve();
+		store.publish(saved, runResult(saved.runId, "saved run"));
+		chmodSync(dir, 0o100);
+		try {
+			assert.deepStrictEqual(store.list(), [], "a saved run is listed through its folder only");
+		} finally {
+			chmodSync(dir, 0o700);
+		}
+
+		const unsaved = store.reserve();
+		chmodSync(folderOf(unsaved), 0o500);
+		const render = (record: ResultRecord) => renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
+		const older = store.publish(unsaved, runResult(unsaved.runId, "older revision", 66_000), render);
+		const newer = store.publish(unsaved, runResult(unsaved.runId, "newer revision", 67_000), render);
+		chmodSync(folderOf(unsaved), 0o700);
+		assert.equal(store.storedRendering(older), undefined);
+		assert.equal(store.unsavedReport(older), undefined);
+		assert.ok(store.storedRendering(newer)?.includes("newer revision"));
+		assert.equal(store.unsavedReport(newer), "newer revision");
+	});
+
 	it("gives colliding draws different run ids in memory, and no run replaces the record of another", () => {
 		const dir = resultsDir();
 		chmodSync(join(dir, ".."), 0o500);
