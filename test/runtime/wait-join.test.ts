@@ -365,6 +365,9 @@ describe("T24: the tool gives scripts structured records", () => {
 		assert.equal(record.outcome, "done");
 		assert.equal(record.typed, true);
 		assert.deepEqual(record.data, { answer: 42 });
+		// Owner decision 2026-11-23: a script reads the record, not the rendering; a direct call keeps the text.
+		assert.deepEqual(Object.keys(structured.results[0] ?? {}).sort(), ["name", "record", "runId"]);
+		assert.match(result.content[0].text, /ONE-REPORT/, "the direct reply keeps its text");
 		resetSubagentStateForTest();
 	});
 

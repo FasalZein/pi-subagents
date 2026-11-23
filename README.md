@@ -576,7 +576,7 @@ A refused resume says to call `subagent_resume` again, not to launch. A child th
 
 ### The result of a run
 
-Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself. When the report file cannot be written, the rendering says `report not saved` and stays capped like every other copy. The session keeps the full report in memory: `subagent_wait` with the run id of an already delivered run (a lookup) returns the rendering followed by the line `Full report (not saved to a file):` and the full report. Only that lookup is longer than 1,900 characters; deliveries, waits and the recent list stay capped. The full report is gone when the session closes or the process exits.
+Every run that ends while its parent process watches it ends in one result record. The parent gets a short rendering of it. The full report stays in a file and never enters the parent by itself. When the report file cannot be written, the rendering says `report not saved` and stays capped like every other copy. The session keeps the full report in memory: `subagent_wait` with the run id of an already delivered run (a lookup) returns the rendering followed by the line `Full report (not saved to a file):` and the full report. Only that lookup is longer than 1,900 characters; deliveries, waits and the recent list stay capped. A lookup inside a codemode script returns the record only, without the full report. Call `subagent_wait` directly to read the full report. The full report is gone when the session closes or the process exits.
 
 The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. `endedBy` says who ended the run: `child` (its completion call, `caller_ping`, its own exit, or a crash), `operator` (a person closed the pane, also after a takeover, or stopped the run from the `/subagents` overlay), `parent` (`subagent_kill` or another stop of the parent), or `time_limit` (a hard kill or a report-only wrap-up). The header of the rendering names the ender only when it is not `child`, for example `· ended by operator`. A run is typed only when the child made a valid completion call: a `caller_ping`, or a typed `subagent_done` in a session from before auto-exit children lost that tool (see [`subagent_done`](#subagent_done)). An untyped summary is the start of the report, cut at a line end. A typed run's artifacts are the paths the child listed in its call. An untyped run's artifacts are the paths of the child's successful `write` and `edit` calls of this run, direct or from a script, as absolute paths against the child's working directory, without duplicates, in the order of the first write.
 
@@ -594,7 +594,7 @@ Each run has its own folder: `results/<run id>/` under the artifact folder of th
 
 Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand, unless the child has `no-session: true`: then the child keeps no transcript, and nothing is left to resume.
 
-Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. `subagent_wait` with `recent` does not list it, and after a restart a lookup by its run id can answer `No result record`. In a codemode script, an ended verified child can carry `record: null`. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
+Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. `subagent_wait` with `recent` does not list it, and after a restart a lookup by its run id can answer `No result record`. In a codemode script, a launch or a wait gives an ended verified child the record of the generation that it delivered. The child carries `record: null` when that record is not available, for example when its report could not be written. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
 
 ### Delivery: at least once
 
@@ -671,7 +671,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` is an ended run and has the run's `runId`, its launch `name` and its `record`, but no rendered text. `record: null` means that no record is available to this wait. The script then has no outcome, no reason and no report path, and the entry does not prove that the run published nothing. An entry shows that the parent stopped watching the run, not always that the child process stopped. After a time-limit kill that the system could not confirm, the record can say `timed_out` and resumable, and only the direct reply text warns. Check and close the pane before you start replacement work. With `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -707,8 +707,8 @@ text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
 
 const lookUp = (id) => `subagent_wait({ runIds: ["${id}"] })`;
 
-function entry(id, record, fallback) {
-	if (!record) return { id, outcome: "unknown", check: `no result record: ${fallback.slice(0, SUMMARY_CHARS)}` };
+function entry(id, record) {
+	if (!record) return { id, outcome: "unknown", check: "no result record" };
 	const run = {
 		id,
 		name: record.name,
@@ -726,13 +726,13 @@ function entry(id, record, fallback) {
 	return run;
 }
 
-const runs = launch.children.filter((child) => child.state === "ended").map((child) => entry(child.runId, child.record, ""));
+const runs = launch.children.filter((child) => child.state === "ended").map((child) => entry(child.runId, child.record));
 const started = launch.children.filter((child) => child.state === "started").map((child) => child.runId);
 let pending = [];
 let missing = [];
 if (started.length > 0) {
 	const wait = await tools.subagent_wait({ runIds: started, timeout: WAIT_SECONDS });
-	runs.push(...wait.results.map((result) => entry(result.runId, result.record, result.text)));
+	runs.push(...wait.results.map((result) => entry(result.runId, result.record)));
 	pending = wait.pending;
 	missing = wait.missing.map((item) => ({ id: item.runId, error: item.error.slice(0, SUMMARY_CHARS) }));
 }

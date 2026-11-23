@@ -489,7 +489,7 @@ export function registerSubagentCoreTools(
 					status: "launched",
 					// A wait error is no evidence that the child ended; only a delivered report is.
 					children: launched.map((running, index) =>
-						launchedChildData(running, prepared[index].child.agent, reported.has(running.id)),
+						launchedChildData(running, prepared[index].child.agent, reported.has(running.id), results[index].details),
 					),
 				};
 				const structuredContent = asStructuredContent(structured);

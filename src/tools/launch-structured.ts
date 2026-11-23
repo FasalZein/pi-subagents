@@ -1,5 +1,6 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import { readPublishedRecord } from "../runtime/published-record.ts";
 import { ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
 import type { RunningSubagent } from "../types.ts";
 
@@ -22,7 +23,7 @@ const LaunchedChildSchema = Type.Union([
 	Type.Object({
 		...launchedChildFields,
 		state: Type.Literal("ended"),
-		/** The run's published record (D13); null when the run published none (a verified fan-out). */
+		/** The run's published record (D13); null when no record is available to this reply. */
 		record: Type.Union([ResultRecordSchema, Type.Null()]),
 	}),
 ]);
@@ -70,11 +71,24 @@ type ChildSource = Pick<
 
 /**
  * One child's data. It is ended when its run published a record or this reply delivered its
- * report; otherwise it is started and reports later.
+ * report; otherwise it is started and reports later. `deliveredDetails` are the details of the
+ * delivered result: a verified run's record is found by the run id and report file they name.
  */
-export function launchedChildData(running: ChildSource, agent: string, delivered: boolean): LaunchedChild {
+export function launchedChildData(
+	running: ChildSource,
+	agent: string,
+	delivered: boolean,
+	deliveredDetails?: unknown,
+): LaunchedChild {
 	const target = running.resultTarget;
-	const record = target?.store.read(target.reservation.runId);
+	const named = (deliveredDetails ?? {}) as { runId?: unknown; reportFile?: unknown };
+	const record =
+		target?.store.read(target.reservation.runId) ??
+		(delivered && typeof named.runId === "string"
+			? readPublishedRecord(named.runId, {
+					reportFile: typeof named.reportFile === "string" ? named.reportFile : undefined,
+				})
+			: null);
 	const base = {
 		runId: running.id,
 		name: running.name,
