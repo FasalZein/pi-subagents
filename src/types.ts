@@ -170,7 +170,6 @@ export interface RunningSubagent {
 	/** Set when closing a pane child's surface failed, so the kill may not have taken. */
 	timeoutKillFailed?: boolean;
 	completionPromise?: Promise<SubagentResult>;
-	spawnWidthSlotAcquired?: boolean;
 	surface?: string;
 	childProcess?: ChildProcess;
 	stderrTail?: string;

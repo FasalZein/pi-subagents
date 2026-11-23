@@ -112,20 +112,31 @@ export function asSubagentToolResult(result: unknown): SubagentToolResult {
 }
 
 export let moduleAbortController = initializeModuleReloadState();
-export let stopAfterCurrentSubagentBatch = false;
-let currentSubagentBatchHasBlocking = false;
+/**
+ * The launch state of the current tool batch (one model turn). "blocking" absorbs a later stop request:
+ * every launch of the batch waits and no reply ends the turn. `stopRequested` keeps that a stop was asked,
+ * because the session_shutdown skip and its trace read it (subagents.ts).
+ */
+type SubagentBatchState = { kind: "open" } | { kind: "blocking"; stopRequested: boolean } | { kind: "stopAfter" };
+
+let subagentBatch: SubagentBatchState = { kind: "open" };
 
 export function resetSubagentBatchStopRequest(): void {
-	stopAfterCurrentSubagentBatch = false;
-	currentSubagentBatchHasBlocking = false;
+	subagentBatch = { kind: "open" };
 }
 
 export function markSubagentBatchBlocking(): void {
-	currentSubagentBatchHasBlocking = true;
+	if (subagentBatch.kind === "blocking") return;
+	subagentBatch = { kind: "blocking", stopRequested: subagentBatch.kind === "stopAfter" };
 }
 
 export function isSubagentBatchBlocking(): boolean {
-	return currentSubagentBatchHasBlocking;
+	return subagentBatch.kind === "blocking";
+}
+
+/** True when a stop was asked in this batch, also when the batch is blocking. */
+export function isSubagentBatchStopRequested(): boolean {
+	return subagentBatch.kind === "stopAfter" || (subagentBatch.kind === "blocking" && subagentBatch.stopRequested);
 }
 
 function isCoordinatorOnlyTurnDisabled(): boolean {
@@ -134,7 +145,8 @@ function isCoordinatorOnlyTurnDisabled(): boolean {
 
 export function requestSubagentBatchStop(): void {
 	if (isCoordinatorOnlyTurnDisabled()) return;
-	stopAfterCurrentSubagentBatch = true;
+	// A stop request never downgrades a blocking batch.
+	subagentBatch = subagentBatch.kind === "blocking" ? { kind: "blocking", stopRequested: true } : { kind: "stopAfter" };
 }
 
 /** The one launch-reply line that says how the reports of detached children return (D23). */
@@ -146,7 +158,7 @@ export function getLaunchReturnLine(): string {
 }
 
 export function getSubagentBatchStopMetadata(): { terminate?: true } {
-	return stopAfterCurrentSubagentBatch && !currentSubagentBatchHasBlocking ? { terminate: true } : {};
+	return subagentBatch.kind === "stopAfter" ? { terminate: true } : {};
 }
 
 export function getWatcherSignal(_running: RunningSubagent, watcherAbort: AbortController): AbortSignal {
