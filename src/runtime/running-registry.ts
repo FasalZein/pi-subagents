@@ -16,6 +16,7 @@ import {
 	clearSubagentShutdownTimer,
 	completedSubagentResults,
 	getSubagentBatchStopMetadata,
+	replaceCachedCompletion,
 	isSubagentBatchBlocking,
 	requestSubagentBatchStop,
 	runningSubagents,
@@ -325,6 +326,8 @@ export function wireSubagentSteerBack(
 				},
 				{ kind: "failed", error },
 			);
+			// The route may have cached the earlier revision before it threw.
+			replaceCachedCompletion(running, failed);
 			// The record is in the run's files either way; a closed parent gets no message unless a wait holds the end.
 			const heldByWait = isRunEndHeld(running.id);
 			if (!parentOpen && !heldByWait) return;
