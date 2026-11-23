@@ -30,11 +30,9 @@ import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 // the waits and the delivery queue are production code, so the next model request shows what the
 // parent received.
 
-/** The D15 cap on every copy of a result that enters the parent. */
-const COPY_CAP = 1_900;
 const REPORT_HEAD = "CHILD-ONE-REPORT-HEAD";
 const REPORT_TAIL = "CHILD-ONE-REPORT-TAIL";
-/** A 20,000-character report whose tail must never enter the parent. */
+/** A 20,000-character report that enters the parent whole (owner decision 2026-11-23). */
 const LONG_REPORT = `${REPORT_HEAD} ${"x".repeat(20_000 - REPORT_HEAD.length - REPORT_TAIL.length - 2)} ${REPORT_TAIL}`;
 
 interface Children {
@@ -211,17 +209,16 @@ function childOneCopies(request: string): string[] {
 	return request.split(REPORT_HEAD).slice(1);
 }
 
-function assertCapped(request: string): void {
-	assert.ok(!request.includes(REPORT_TAIL), "the 20,000-character report never enters the parent");
+function assertWhole(request: string): void {
 	for (const copy of childOneCopies(request)) {
-		// Each copy ends before the next JSON string ends; its text is the capped rendering.
+		// Each copy ends before the next JSON string ends; its text is the rendering.
 		const text = copy.split('"}')[0] ?? "";
-		assert.ok(text.length <= COPY_CAP, `copy of child 1 is ${text.length} chars`);
+		assert.ok(text.includes(REPORT_TAIL), "the 20,000-character report enters the parent whole");
 	}
 }
 
 describe("T23: a launch that waits takes its results through the queue (real Pi session)", () => {
-	it("replay 1: child 1 ends while child 2 launches; the next request holds child 1 exactly once, capped", async () => {
+	it("replay 1: child 1 ends while child 2 launches; the next request holds child 1 exactly once, whole", async () => {
 		const parent = await startParent((requests) => [launchBoth, recording(requests, "Read both.")]);
 		try {
 			const run = parent.session.prompt("delegate");
@@ -237,7 +234,7 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 			const request = parent.requests[0]!;
 			assert.equal(childOneCopies(request).length, 1, "child 1 enters the next request exactly once");
 			assert.match(request, /CHILD-TWO-REPORT/);
-			assertCapped(request);
+			assertWhole(request);
 			assert.equal(pendingRunEndCount(), 0);
 		} finally {
 			await parent.dispose();
@@ -272,7 +269,7 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 			if (parent.requests.length === 0) await parent.session.prompt("continue");
 			const request = parent.requests[0]!;
 			assert.ok(childOneCopies(request).length >= 1, "the first request after the batch holds child 1");
-			assertCapped(request);
+			assertWhole(request);
 		} finally {
 			await parent.dispose();
 		}

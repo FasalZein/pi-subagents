@@ -2,13 +2,16 @@ import { homedir } from "node:os";
 import { cutText, NO_REPORT_LINE } from "./result-assembler.ts";
 import type { ResultStore } from "./result-files.ts";
 import { parseRunId, type ResultRecord, type RunId } from "./result-record.ts";
-import { OUTCOME_WORDS, RESULT_TEXT_MAX_CHARS, renderResult } from "./result-render.ts";
+import { OUTCOME_WORDS, renderResult } from "./result-render.ts";
 
 /** D16: the recent list names at most this many ended runs; an older run is found by its run id. */
 const RECENT_RUNS_LIMIT = 20;
 
 /** A name keeps this many characters in a recent line, so 20 lines stay within the cap. */
 const RECENT_NAME_MAX_CHARS = 40;
+
+/** D16: the recent list holds no summary, so it keeps the cap that result copies had before 2026-11-23. */
+const RECENT_LIST_MAX_CHARS = 1900;
 
 /** One line of the recent list (D16): no summary, no report, never a full result. */
 export interface RecentRun {
@@ -36,7 +39,7 @@ export function lookUpRecord(store: ResultStore | undefined, query: string): Res
 /**
  * D14 and D16: a lookup returns the delivered rendering that the store kept with the record. A record
  * published without one (before T25, or by verified fan-out) is rendered again with the one renderer,
- * so it is still capped, but without the display facts of its delivery (warnings, context policy).
+ * but without the display facts of its delivery (warnings, context policy).
  */
 export function renderLookup(store: ResultStore, record: ResultRecord, cwd: string): string {
 	return (
@@ -51,7 +54,7 @@ const UNSAVED_REPORT_HEADING = "Full report (not saved to a file):";
 /**
  * D12 (cf6dbf4 delivered the full answer): a lookup by run id of a run whose report file failed adds
  * the full report that this session keeps in memory. Only this explicit recovery carries it; every
- * delivery and wait copy stays capped (D14, D15).
+ * delivery and wait copy carries the summary alone (D14, D15).
  */
 export function withRecoveredReport(text: string, store: ResultStore | undefined, record: ResultRecord | null): string {
 	const report = record && store?.unsavedReport(record);
@@ -87,10 +90,10 @@ function recentLine(run: RecentRun): string {
 	return `${run.runId} · ${name} · ${OUTCOME_WORDS[run.outcome]} · ${ended}`;
 }
 
-/** The recent list as text, within RESULT_TEXT_MAX_CHARS like every result copy. */
+/** The recent list as text, within RECENT_LIST_MAX_CHARS. */
 export function renderRecentRuns(runs: readonly RecentRun[]): string {
 	if (runs.length === 0) return "No ended subagent run in this session.";
 	const text = runs.map(recentLine).join("\n");
 	// Only run ids longer than drawn ones can reach the cap; the cut keeps the newest lines whole.
-	return cutText(text, RESULT_TEXT_MAX_CHARS);
+	return cutText(text, RECENT_LIST_MAX_CHARS);
 }

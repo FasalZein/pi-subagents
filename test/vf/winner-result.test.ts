@@ -19,11 +19,10 @@ import { buildSupervisedRun, setupVerifiedRunFixture } from "../support/verified
 
 /**
  * D18 with D14: a verified fan-out winner goes through the one assembler and renderer. The text
- * stays within 1,900 characters, verifier footer included, and names the report file that keeps
- * the whole winner report and its provenance.
+ * holds the whole winner report and the verifier footer, and names the report file that also keeps
+ * the provenance.
  */
 
-const TEXT_LIMIT = 1900;
 const RUN_ID = "vf-20261119-001655-abcd";
 
 let dirs: string[] = [];
@@ -74,7 +73,7 @@ function runDir(): string {
 }
 
 describe("verified fan-out winner result", () => {
-	it("caps a 20,000-character winner report and names the report file that keeps it whole", () => {
+	it("delivers a 20,000-character winner report whole and names the report file", () => {
 		const winnerReport = `${"Winner line with findings.\n".repeat(770)}END-OF-REPORT`;
 		assert.ok(winnerReport.length >= 20_000);
 		const dir = runDir();
@@ -84,9 +83,8 @@ describe("verified fan-out winner result", () => {
 			{ name: "vf-run", task: "t" },
 			Date.now() - 5_000,
 		);
-		assert.ok(result.resultText.length <= TEXT_LIMIT, `text has ${result.resultText.length} characters`);
+		assert.ok(result.resultText.includes(winnerReport), "the text holds the whole winner report");
 		assert.match(result.resultText, /verifier: winner staged/);
-		assert.doesNotMatch(result.resultText, /END-OF-REPORT/);
 		assert.ok(result.reportFile, "a report file is named");
 		assert.match(result.resultText, /^run: \S+ · \S+\.md$/m, "the text names the report");
 		const report = readFileSync(result.reportFile, "utf8");
@@ -97,14 +95,13 @@ describe("verified fan-out winner result", () => {
 		assert.doesNotMatch(result.resultText, /Resume: pi --session/);
 	});
 
-	it("keeps the not-applied fact in the capped text", () => {
+	it("keeps the not-applied fact in the text", () => {
 		const result = verifiedRunToSubagentResult(
 			manifest("x".repeat(20_000), false),
 			runDir(),
 			{ name: "vf-run", task: "t" },
 			Date.now(),
 		);
-		assert.ok(result.resultText.length <= TEXT_LIMIT);
 		assert.match(result.resultText, /verifier: winner not applied/);
 	});
 
@@ -173,7 +170,6 @@ describe("verified fan-out winner result", () => {
 		const waited = await waitForSubagentForTest({ id: running.id });
 		const text = (waited.content[0] as { text: string }).text;
 		const details = waited.details as Record<string, unknown>;
-		assert.ok(text.length <= TEXT_LIMIT);
 		assert.match(text, /verifier: winner staged/);
 		assert.equal(details.runId, RUN_ID);
 		assert.equal(details.reportFile, result.reportFile);
@@ -238,9 +234,8 @@ describe("verified fan-out winner on adoption", () => {
 		// D13: the end and elapsed time are the run's, not the adoption's.
 		assert.ok(Math.abs((winners[0].details.elapsed as number) - 60) < 2, `elapsed ${winners[0].details.elapsed}`);
 		for (const message of winners) {
-			assert.ok(message.content.length <= TEXT_LIMIT, `text has ${message.content.length} characters`);
 			assert.match(message.content, /verifier: winner (staged|not applied)/);
-			assert.doesNotMatch(message.content, /END-OF-ADOPTED/);
+			assert.match(message.content, /END-OF-ADOPTED/, "the text holds the whole adopted report");
 			assert.equal(typeof message.details.deliveryId, "string");
 			assert.equal(message.details.verifiedRunId, finished.runId);
 			assert.equal(message.details.runId, finished.runId);

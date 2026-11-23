@@ -141,7 +141,7 @@ describe("end outcome order and crash records (T09 fix round 1)", () => {
 		assert.equal(outcome.kind, "cancelled");
 	});
 
-	it("publishes a capped failed record for a watched crash right after a long tool result", async () => {
+	it("publishes a failed record with the whole trailing tool output for a watched crash (v2.9.2)", async () => {
 		const longOutput = `TOOL-START${"x".repeat(30_000)}TOOL-END`;
 		const { running, store, reservation } = setup([
 			toolCall("bash", { command: "cat big" }, "bash-1"),
@@ -155,8 +155,8 @@ describe("end outcome order and crash records (T09 fix round 1)", () => {
 		const record = store.read(reservation.runId);
 		assert.equal(record?.outcome, "failed");
 		assert.ok(result.resultText, "the crash carries the published rendering");
-		assert.ok(!result.resultText.includes("TOOL-END"), "the rendering does not carry the uncapped tool output");
-		assert.ok(!result.summary.includes("TOOL-END"), "the summary does not carry the uncapped tool output");
+		assert.ok(result.resultText.includes(longOutput), "the rendering carries the whole tool output");
+		assert.equal(record?.summary, longOutput, "the summary is the whole tool output");
 	});
 
 	it("publishes a failed record for a nonzero manual pane close without an answer", async () => {

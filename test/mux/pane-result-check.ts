@@ -4,18 +4,10 @@ import { join, resolve } from "node:path";
 import type { MuxBackendAdapter } from "../../src/mux/backend.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
-import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { getSubagentExitSidecarPath, writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { assert, createSessionFile } from "../support/index.ts";
-import {
-	assistantText,
-	END_MARKER,
-	LONG_ANSWER,
-	messageText,
-	START_MARKER,
-	waitText,
-} from "../support/result-delivery.ts";
+import { assistantText, LONG_ANSWER, messageText, waitText } from "../support/result-delivery.ts";
 
 /** Makes the fake drop the surface during its next liveness query, after it writes one file (the child's exit). */
 export type VanishDuringLivenessQuery = (surface: string, file: { path: string; content: string }) => void;
@@ -69,14 +61,12 @@ function startPaneRun(
 }
 
 /**
- * Both carriers show one capped text that names the report; the report locator, resolved from the
+ * Both carriers show one text with the whole answer that names the report; the report locator, resolved from the
  * parent's cwd as the parent's read tool resolves it, holds the whole answer.
  */
-async function assertCappedWithReport(result: SubagentResult, running: RunningSubagent, root: string): Promise<string> {
+async function assertWholeWithReport(result: SubagentResult, running: RunningSubagent, root: string): Promise<string> {
 	const message = messageText(result, running);
-	assert.ok(message.length <= RESULT_TEXT_MAX_CHARS, `text is ${message.length} characters: ${message.slice(0, 300)}`);
-	assert.ok(message.includes(START_MARKER), message);
-	assert.ok(!message.includes(END_MARKER));
+	assert.ok(message.includes(`\n${LONG_ANSWER}\n`), `the text holds the whole answer: ${message.slice(0, 300)}`);
 	assert.ok(message.includes(`run: ${running.id}`), message);
 	const locator = message.match(/^run: \S+ · (.+)$/m)?.[1];
 	assert.ok(locator, "the text names its report file");
@@ -90,7 +80,7 @@ async function assertCappedWithReport(result: SubagentResult, running: RunningSu
 /**
  * T08a (D13, D14): a pane child on this backend's fake ends with a 20,000-character last message.
  * The real watcher polls the fake surface, reads the exit record, publishes the result and closes
- * the surface. The message path and the waiting launch must show one capped text that names the
+ * the surface. The message path and the waiting launch must show one text with the whole answer that names the
  * report file, and the report file must hold the whole answer.
  */
 export async function checkPaneResultThroughAssembler(adapter: MuxBackendAdapter, root: string): Promise<void> {
@@ -102,13 +92,13 @@ export async function checkPaneResultThroughAssembler(adapter: MuxBackendAdapter
 	const result = await watching;
 
 	assert.deepEqual(run.closed, [surface], "the watcher closes the pane once");
-	await assertCappedWithReport(result, run.running, root);
+	await assertWholeWithReport(result, run.running, root);
 }
 
 /**
  * T08a review P1: an operator closes a manual pane (auto-exit: false) after its real final answer;
  * the shell's exit trap records a nonzero status and the child wrote no error. The close is a
- * successful end: both carriers show the capped text naming the report, and the stored record keeps
+ * successful end: both carriers show the whole answer and name the report, and the stored record keeps
  * the actual exit code.
  */
 export async function checkManualPaneCloseWithNonzeroStatus(adapter: MuxBackendAdapter, root: string): Promise<void> {
@@ -121,7 +111,7 @@ export async function checkManualPaneCloseWithNonzeroStatus(adapter: MuxBackendA
 	writeFileSync(doneSentinelFile, "__SUBAGENT_DONE_1__\n");
 	const result = await watching;
 
-	await assertCappedWithReport(result, run.running, root);
+	await assertWholeWithReport(result, run.running, root);
 	assert.equal(result.exitCode, 1, "the result keeps the shell's exit code");
 	const target = run.running.resultTarget;
 	assert.ok(target);
@@ -133,7 +123,7 @@ export async function checkManualPaneCloseWithNonzeroStatus(adapter: MuxBackendA
 /**
  * T08a review P1: a direct-program pane child writes its done record and exits while the watcher's
  * liveness query is in flight, so the query reports the pane gone. The done record decides the
- * outcome: both carriers show the capped text naming the report, not a watcher error.
+ * outcome: both carriers show the whole answer and name the report, not a watcher error.
  */
 export async function checkProgramPaneExitDuringLivenessQuery(
 	adapter: MuxBackendAdapter,
@@ -151,5 +141,5 @@ export async function checkProgramPaneExitDuringLivenessQuery(
 	const result = await run.watch();
 
 	assert.equal(result.error, undefined, result.summary);
-	await assertCappedWithReport(result, run.running, root);
+	await assertWholeWithReport(result, run.running, root);
 }

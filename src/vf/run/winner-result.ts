@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { assembleResult, cutText, endedByOf, type RunEnd, writtenFiles } from "../../runtime/result-assembler.ts";
+import { assembleResult, endedByOf, type RunEnd, writtenFiles } from "../../runtime/result-assembler.ts";
 import { publishResult, type Reservation, readResultRecord } from "../../runtime/result-files.ts";
-import { parseRunId, type ResultRecord, SUMMARY_MAX_CHARS } from "../../runtime/result-record.ts";
+import { parseRunId, type ResultRecord } from "../../runtime/result-record.ts";
 import { renderResult, type VerifierFooter } from "../../runtime/result-render.ts";
 import { getEntries, type SessionEntry } from "../../session/session.ts";
 import type { SubagentParamsInput, SubagentResult } from "../../types.ts";
@@ -195,12 +195,7 @@ export function verifiedRunNotice(
 		}).record,
 		report: { saved: false, error: "the run continues; its report is published with the run when it ends" },
 	};
-	const rendered = renderVerified(
-		{ ...record, summary: cutText(notice, SUMMARY_MAX_CHARS) },
-		manifest,
-		target,
-		undefined,
-	);
+	const rendered = renderVerified({ ...record, summary: notice }, manifest, target, undefined);
 	return {
 		name: params.name,
 		task: params.task,

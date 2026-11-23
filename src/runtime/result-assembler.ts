@@ -15,7 +15,6 @@ import {
 	type ResultTyping,
 	type ResumeFacts,
 	type RunId,
-	SUMMARY_MAX_CHARS,
 	type TimeLimitFacts,
 } from "./result-record.ts";
 import { type ProcessOutput, selectUntypedReport, type UntypedReport } from "./untyped-report.ts";
@@ -289,15 +288,6 @@ export function cutText(text: string, max: number): string {
 	return `${text.slice(0, end).trimEnd()}${CUT_MARK}`;
 }
 
-/** D14: the start of the report cut at a line end within the limit; one long line is cut inside. */
-function cutAtLineEnd(text: string, max: number): string {
-	if (text.length <= max) return text;
-	const room = max - CUT_MARK.length;
-	const lineEnd = text.lastIndexOf("\n", room);
-	if (lineEnd <= 0) return cutText(text, max);
-	return `${text.slice(0, lineEnd).trimEnd()}${CUT_MARK}`;
-}
-
 /** The text of the message of the last candidate block: its candidate blocks joined as session.ts does. */
 function lastMessageText(candidates: readonly AssistantText[]): string | undefined {
 	const last = candidates.at(-1);
@@ -439,24 +429,23 @@ function typedBody(
 	if (!args) return undefined;
 	if (call.tool === "ping") return pingBody(args.message);
 	const outcome = parseCallOutcome(args.outcome);
-	const fullSummary = nonBlankString(args.summary);
-	if (!outcome || !fullSummary) return undefined;
-	const longSummary = fullSummary.length > SUMMARY_MAX_CHARS;
-	const report = text ? (longSummary ? `${fullSummary}\n\n${text}` : text) : withNoReportLine(fullSummary);
+	const summary = nonBlankString(args.summary);
+	if (!outcome || !summary) return undefined;
+	const report = text || withNoReportLine(summary);
 	const typing: ResultTyping = dataError !== undefined ? { typed: true, dataError } : { typed: true, data: args.data };
 	return {
 		typing,
 		summarySource: "subagent",
 		outcome,
-		summary: cutText(fullSummary, SUMMARY_MAX_CHARS),
+		summary,
 		report,
 		artifacts: parseArtifacts(args.artifacts),
 	};
 }
 
 /**
- * D12: a caller_ping with a message is typed and blocked; its full message is the report and only the
- * summary is cut. The exit record is the source on a ping end: the ping tool requests shutdown before
+ * D12: a caller_ping with a message is typed and blocked; its full message is both the summary and the
+ * report. The exit record is the source on a ping end: the ping tool requests shutdown before
  * Pi can record its successful result, so the transcript may hold the request alone.
  */
 function pingBody(value: unknown): Body | undefined {
@@ -466,7 +455,7 @@ function pingBody(value: unknown): Body | undefined {
 		typing: { typed: true },
 		summarySource: "subagent",
 		outcome: "blocked",
-		summary: cutText(message, SUMMARY_MAX_CHARS),
+		summary: message,
 		report: message,
 		artifacts: [],
 	};
@@ -502,18 +491,22 @@ function untypedBody(facts: RunFacts, selected: UntypedReport): Body {
 	const artifacts = writtenFiles(facts.entries, facts.launchEntryCount);
 	const typing: ResultTyping = { typed: false };
 	if (text) {
-		const summary = cutAtLineEnd(text, SUMMARY_MAX_CHARS);
-		return { typing, summarySource: "subagent", outcome, summary, report: text, artifacts };
+		return { typing, summarySource: "subagent", outcome, summary: text, report: text, artifacts };
 	}
 	const described = describeEnd(end, facts.sessionFile);
 	if (!diagnostic) {
-		const summary = cutText(described, SUMMARY_MAX_CHARS);
-		return { typing, summarySource: "runtime", outcome, summary, report: withNoReportLine(summary), artifacts };
+		return {
+			typing,
+			summarySource: "runtime",
+			outcome,
+			summary: described,
+			report: withNoReportLine(described),
+			artifacts,
+		};
 	}
-	// cf6dbf4 put a failed child's stderr into its runtime-owned summary; the report keeps all of it.
+	// cf6dbf4 put a failed child's stderr into its runtime-owned summary.
 	const report = `${described}\n\n${diagnostic}`;
-	const summary = cutAtLineEnd(report, SUMMARY_MAX_CHARS);
-	return { typing, summarySource: "runtime", outcome, summary, report, artifacts };
+	return { typing, summarySource: "runtime", outcome, summary: report, report, artifacts };
 }
 
 /**

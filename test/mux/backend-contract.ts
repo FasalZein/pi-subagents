@@ -156,7 +156,7 @@ export function runMuxBackendContract(fixture: MuxBackendContractFixture): void 
 			assert.equal(adapter.isAvailable(), false);
 		});
 
-		it("delivers a pane child's 20,000-character answer capped, with a report file, the same on both paths", async () => {
+		it("delivers a pane child's 20,000-character answer whole, with a report file, the same on both paths", async () => {
 			await checkPaneResultThroughAssembler(adapter, root);
 		});
 

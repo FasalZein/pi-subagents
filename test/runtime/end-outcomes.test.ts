@@ -259,7 +259,7 @@ describe("end outcomes (T09)", () => {
 		const record = store.read(reservation.runId);
 		assert.equal(record?.outcome, "blocked", "a ping outranks the time-limit kill");
 		assert.equal(record?.typed, true);
-		assert.ok(record!.summary.length < message.length, "only the summary is cut");
+		assert.equal(record!.summary, message, "the summary is the whole message");
 		assert.ok(record!.report.saved);
 		assert.equal(readFileSync(record!.report.path, "utf8"), message);
 		assert.match(published!.text, /^worker · scout · blocked · .* · typed/);

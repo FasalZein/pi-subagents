@@ -23,10 +23,8 @@ import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 // abort signal of the tool call reaches every wait. The parent is a mock Pi whose boundary events
 // drive the production delivery queue.
 
-/** The D15 cap on every copy of a result that enters the parent. */
-const COPY_CAP = 1_900;
 const REPORT_TAIL = "REPORT-TAIL-MARKER";
-/** A 20,000-character report whose tail must never enter the parent. */
+/** A 20,000-character report that enters the parent whole (owner decision 2026-11-23). */
 const LONG_REPORT = `REPORT-HEAD ${"x".repeat(20_000 - 12 - REPORT_TAIL.length - 1)} ${REPORT_TAIL}`;
 
 type Sent = { customType: string; content: string; details: { id: string }; triggerTurn?: boolean };
@@ -205,13 +203,11 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const children = (result.details as { children: Array<{ id: string; report?: string }> }).children;
 		const one = children.find((child) => child.id === "id-child-one");
 		assert.match(one?.report ?? "", /REPORT-HEAD/, "the tool result holds child 1's result");
-		assert.ok((one?.report ?? "").length <= COPY_CAP, `tool-result copy is ${one?.report?.length} chars`);
+		assert.ok((one?.report ?? "").includes(REPORT_TAIL), "the tool result holds child 1's whole report");
 		const copies = parent.sent.filter((entry) => entry.details.id === "id-child-one");
 		assert.deepEqual(copies, [], "the queued result was taken by the wait, so no message carries it");
-		for (const entry of parent.sent) assert.ok(entry.content.length <= COPY_CAP);
-		for (const copy of [text, ...parent.sent.map((entry) => entry.content)]) {
-			assert.ok(!copy.includes(REPORT_TAIL), "the 20,000-character report never enters the parent");
-		}
+		assert.equal(text.split(REPORT_TAIL).length - 1, 1, "the tool result text holds child 1's report once");
+		for (const entry of parent.sent) assert.ok(!entry.content.includes(REPORT_TAIL), "no message repeats it");
 		assert.equal(pendingRunEndCount(), 0);
 	});
 
@@ -281,7 +277,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(seen[0], undefined);
 	});
 
-	it("a tool result and a committed message both carry child 1: capped copies, released once by id; a running sibling stays counted", async () => {
+	it("a tool result and a committed message both carry child 1: whole copies, released once by id; a running sibling stays counted", async () => {
 		const parent = mockParent();
 		const counts: number[] = [];
 		const unsubscribe = outstandingWork.subscribe(() => counts.push(outstandingWork.count));
@@ -306,8 +302,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 
 			for (const copy of [waitCopy, message.content]) {
 				assert.match(copy, /REPORT-HEAD/);
-				assert.ok(copy.length <= COPY_CAP, `copy is ${copy.length} chars`);
-				assert.ok(!copy.includes(REPORT_TAIL));
+				assert.ok(copy.includes(REPORT_TAIL), "the copy holds the whole report");
 			}
 			const releases = counts.filter((count, index) => count === 1 && (counts[index - 1] ?? 2) > 1);
 			assert.equal(releases.length, 1, `counts ${JSON.stringify(counts)}`);
@@ -336,7 +331,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const copies = parent.sent.filter((entry) => entry.details.id === "id-child-one");
 		assert.equal(copies.length, 1, "the result the aborted wait took goes out as a message");
 		assert.match(copies[0].content, /REPORT-HEAD/);
-		assert.ok(copies[0].content.length <= COPY_CAP);
+		assert.ok(copies[0].content.includes(REPORT_TAIL));
 		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
 		const two = runningSubagents.get("id-child-two");
 		assert.equal(two?.phase.kind, "stopping", "a stop was sent to child 2");

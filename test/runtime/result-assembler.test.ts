@@ -1,5 +1,4 @@
 import { assembleResult, NO_REPORT_LINE } from "../../src/runtime/result-assembler.ts";
-import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
 import { SUBAGENT_ACCEPTED_CALL_ENTRY } from "../../src/tools/completion-call.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
@@ -69,8 +68,8 @@ describe("result assembler: outcomes", () => {
 		assert.equal(record.summary, "partial notes");
 	});
 
-	it("a caller_ping is a typed blocked result whose full message is the report", () => {
-		const message = "x".repeat(SUMMARY_MAX_CHARS + 300);
+	it("a caller_ping is a typed blocked result whose full message is the summary and the report", () => {
+		const message = "x".repeat(1_800);
 		const { record, report } = assembleResult(
 			facts([
 				sessionHeader(),
@@ -82,8 +81,7 @@ describe("result assembler: outcomes", () => {
 		assert.equal(record.outcome, "blocked");
 		assert.equal(record.typed, true);
 		assert.equal(report, message);
-		assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-		assert.ok(record.summary.endsWith(CUT_MARK));
+		assert.equal(record.summary, message);
 	});
 
 	it("elapsed time comes from the start and end times", () => {
@@ -112,20 +110,16 @@ describe("result assembler: typed and untyped", () => {
 		});
 	}
 
-	it("without a call the summary is the report start cut at a line end within the limit", () => {
+	it("without a call the summary is the whole report", () => {
 		const text = syntheticReport(4_964);
 		const { record, report } = assembleResult(facts([sessionHeader(), assistant(text)]));
 		assert.equal(record.typed, false);
 		assert.equal(report, text);
-		assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-		assert.ok(record.summary.endsWith(CUT_MARK));
-		const kept = record.summary.slice(0, -CUT_MARK.length);
-		assert.ok(text.startsWith(kept));
-		assert.equal(text[kept.length], "\n", "the cut falls on a line end");
+		assert.equal(record.summary, text);
 	});
 
 	it("a refused completion call does not count; the accepted second one does", () => {
-		const long = "s".repeat(SUMMARY_MAX_CHARS + 100);
+		const long = "s".repeat(1_600);
 		const { record, report } = assembleResult(
 			facts([
 				sessionHeader(),
@@ -138,9 +132,8 @@ describe("result assembler: typed and untyped", () => {
 		);
 		assert.equal(record.typed, true);
 		assert.equal(record.outcome, "partial");
-		assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-		assert.ok(record.summary.endsWith(CUT_MARK));
-		assert.equal(report, `${long}\n\nReport body.`);
+		assert.equal(record.summary, long);
+		assert.equal(report, "Report body.");
 	});
 
 	it("a call with a data error is typed with the error and no data", () => {
@@ -372,7 +365,7 @@ describe("result assembler: completion facts (D12, D14)", () => {
 		assert.equal(record.typed, true);
 		assert.equal(record.outcome, "blocked");
 		assert.equal(report, longQuestion, "the full ping message is the report (D12)");
-		assert.equal(record.summary, longQuestion.slice(0, SUMMARY_MAX_CHARS - CUT_MARK.length) + CUT_MARK);
+		assert.equal(record.summary, longQuestion);
 	});
 
 	it("a nested done call whose arguments Pi omitted is typed from its accepted payload", () => {
@@ -388,7 +381,8 @@ describe("result assembler: completion facts (D12, D14)", () => {
 		);
 		assert.equal(record.typed, true);
 		assert.equal(record.outcome, "partial");
-		assert.equal(report, `${summary}\n\nNested report.`);
+		assert.equal(record.summary, summary);
+		assert.equal(report, "Nested report.");
 	});
 
 	it("an accepted payload of another call does not type a call whose arguments Pi omitted", () => {
@@ -503,7 +497,7 @@ describe("result assembler: report text is kept whole", () => {
 	it("indentation and trailing space of report, summary and ping text stay", () => {
 		const text = "    const x = 1;\n    return x;\n";
 		assert.equal(assembleResult(facts([sessionHeader(), assistant(text)])).report, text);
-		const long = ` ${"s".repeat(SUMMARY_MAX_CHARS + 10)}`;
+		const long = ` ${"s".repeat(1_510)}`;
 		const typed = assembleResult(
 			facts([
 				sessionHeader(),
@@ -512,7 +506,8 @@ describe("result assembler: report text is kept whole", () => {
 				toolResult(DONE, "c1", "ok"),
 			]),
 		);
-		assert.equal(typed.report, `${long}\n\nbody`);
+		assert.equal(typed.record.summary, long);
+		assert.equal(typed.report, "body");
 		const ping = "  indented question\n";
 		const pinged = assembleResult(
 			facts([

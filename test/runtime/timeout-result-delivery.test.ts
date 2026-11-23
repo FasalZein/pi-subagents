@@ -1,5 +1,4 @@
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
-import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { afterEach, assert, describe, it, resetSubagentStateForTest, setRunningSubagentForTest } from "../support/index.ts";
 
@@ -60,7 +59,6 @@ describe("timeout result delivery", () => {
 		assert.match(content.split("\n")[0], / · timed out · /);
 		assert.match(content, /time limit: 900s for the whole run/);
 		assert.doesNotMatch(content, /Background agent exited with code 143/);
-		assert.ok(content.length <= RESULT_TEXT_MAX_CHARS);
 	});
 
 	it("hands the parent the partial work a warned child managed to deliver", () => {
@@ -102,7 +100,6 @@ describe("timeout result delivery", () => {
 		);
 
 		assert.match(content, /warning: the system could not confirm that this sub-agent stopped/);
-		assert.ok(content.length <= RESULT_TEXT_MAX_CHARS);
 	});
 
 	it("renders an ordinary completion as done", () => {
