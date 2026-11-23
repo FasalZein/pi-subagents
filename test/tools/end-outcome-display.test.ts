@@ -333,7 +333,10 @@ describe("end outcome displays (T09 fix round 1)", () => {
 	// T77 (D21): cf6dbf4 showed a finished wrap-up as completed; the report outcome shows, the limit stays named.
 	it("shows a finished report-only wrap-up with its report outcome and its notice", async () => {
 		const running = setup(DONE_CALL, {
-			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
+			phase: {
+				kind: "wrapping-up",
+				wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 },
+			},
 		});
 		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: timeoutWrapUpOf(running) });
 		for (const shown of [renderedMessage(running, result).text, await renderedWaitingLaunch(running, result)]) {

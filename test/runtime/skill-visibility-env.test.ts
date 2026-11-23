@@ -170,7 +170,10 @@ describe("skill visibility env on resume and timeout wrap-up", () => {
 				sessionFile,
 				timeoutBudget: { timeoutSeconds: 10 },
 				timeoutWarnThreshold: 80,
-				phase: { kind: "soft-limit", wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 } },
+				phase: {
+					kind: "soft-limit",
+					wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 },
+				},
 				modelRef: "test/model:off",
 				launchMetadata: metadata,
 			};

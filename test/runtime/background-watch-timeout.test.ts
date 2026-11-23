@@ -193,7 +193,12 @@ async function runExitSidecarRace(timerOrder: "group" | "poll"): Promise<Awaited
 			return true as const;
 		},
 	};
-	const running = makeRunning(sessionFile, child, {}, { phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } } });
+	const running = makeRunning(
+		sessionFile,
+		child,
+		{},
+		{ phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } } },
+	);
 	const resultPromise = watchBackgroundSubagent(
 		running,
 		{

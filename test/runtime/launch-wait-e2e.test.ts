@@ -257,7 +257,11 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 			await parent.session.abort();
 			await run;
 			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child it waited for.
-			assert.equal(stopRequesterOf(runningSubagents.get("id-child-two") ?? assert.fail("child 2 is missing")), "operator", "child 2 was stopped");
+			assert.equal(
+				stopRequesterOf(runningSubagents.get("id-child-two") ?? assert.fail("child 2 is missing")),
+				"operator",
+				"child 2 was stopped",
+			);
 			// The queue hands child 1 over as its own message, so it does not depend on the aborted
 			// reply: a codemode bridge discards that reply after an abort.
 			const messages = parent.session.messages.filter(

@@ -186,7 +186,10 @@ describe("end outcome order and crash records (T09 fix round 1)", () => {
 		// Finished report-only continuation, on-timeout: block-resume.
 		const wrap = setup(DONE_CALL, {
 			timeoutBlocksResume: true,
-			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
+			phase: {
+				kind: "wrapping-up",
+				wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 },
+			},
 		});
 		const wrapChild = new EventEmitter() as ChildProcess;
 		wrap.running.childProcess = wrapChild;

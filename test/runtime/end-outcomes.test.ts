@@ -236,7 +236,10 @@ describe("end outcomes (T09)", () => {
 
 	it("keeps the notice of a report-only wrap-up", () => {
 		const { running } = setup(DONE_CALL, {
-			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
+			phase: {
+				kind: "wrapping-up",
+				wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 },
+			},
 		});
 		const published = publishRunResult(running, watchedEnd());
 		// T77 (D21): cf6dbf4 filed a finished wrap-up as completed; a report-only wrap-up stays untyped.

@@ -404,9 +404,10 @@ async function watchInteractiveGeneration(
 		// out from under it. Reporting "cancelled" or a raw surface error here
 		// would hide the only fact the parent needs.
 		const timeoutFields = recordTimeoutOutcome(running);
-		if (timeoutFields.timedOut) {
+		// recordTimeoutOutcome reports timedOut only for a stopping run with an expiry.
+		const expiry = timeoutExpiryOf(running);
+		if (timeoutFields.timedOut && expiry) {
 			const { summary, summarySource } = getSummary(running, { reason: "error", exitCode: 1 });
-			const expiry = timeoutExpiryOf(running)!;
 			return {
 				kind: "result",
 				result: withRuntimeEnd(running, {

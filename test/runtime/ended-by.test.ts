@@ -198,7 +198,10 @@ describe("run records say who ended the run (T70)", () => {
 		assert.equal(kill?.record.endedBy, "time_limit");
 		assert.match(textOf(kill).split("\n")[0], / · ended by time limit$/);
 		const wrapped = setup([user("task"), assistant("Wrap-up report.")], {
-			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
+			phase: {
+				kind: "wrapping-up",
+				wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 },
+			},
 		});
 		assert.equal(publishRunResult(wrapped.running, watchedEnd())?.record.endedBy, "time_limit");
 	});

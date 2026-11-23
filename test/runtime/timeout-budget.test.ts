@@ -70,7 +70,10 @@ describe("timeout budget math", () => {
 			timeoutBudget: { idleTimeoutSeconds: 10 },
 			timeoutWarnThreshold: 80,
 			lastProgressAt: 1_000_000,
-			phase: { kind: "soft-limit", wrapUp: { wrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 }, deadlineAt: 1_010_000 } },
+			phase: {
+				kind: "soft-limit",
+				wrapUp: { wrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 }, deadlineAt: 1_010_000 },
+			},
 		});
 		observeSubagentProgress(running, 100, 1_000_000);
 		observeSubagentProgress(running, 200, 1_009_000);
@@ -90,7 +93,10 @@ describe("timeout budget math", () => {
 			seconds: 10,
 			threshold: 80,
 		});
-		running.phase = { kind: "soft-limit", wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 } };
+		running.phase = {
+			kind: "soft-limit",
+			wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 },
+		};
 		assert.equal(checkSubagentTimeoutWrapUp(running, running.startTime + 9_000), null);
 	});
 

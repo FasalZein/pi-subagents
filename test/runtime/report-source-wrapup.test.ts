@@ -165,7 +165,10 @@ describe("D12 report storage failure", () => {
 
 describe("D21 completed wrap-up", () => {
 	const wrapUp = {
-		phase: { kind: "wrapping-up" as const, wrapUp: { wrapUp: { kind: "timeout" as const, seconds: 100, threshold: 80 }, deadlineAt: 0 } },
+		phase: {
+			kind: "wrapping-up" as const,
+			wrapUp: { wrapUp: { kind: "timeout" as const, seconds: 100, threshold: 80 }, deadlineAt: 0 },
+		},
 	};
 
 	it("shows the report outcome and names the time limit", () => {

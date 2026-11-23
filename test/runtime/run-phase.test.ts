@@ -18,13 +18,7 @@ import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/ru
 import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
-import type {
-	RunningSubagent,
-	RunPhase,
-	RunPhaseState,
-	TimeoutExpiry,
-	WrapUpDeadline,
-} from "../../src/types.ts";
+import type { RunningSubagent, RunPhase, RunPhaseState, TimeoutExpiry, WrapUpDeadline } from "../../src/types.ts";
 import {
 	afterEach,
 	assert,
