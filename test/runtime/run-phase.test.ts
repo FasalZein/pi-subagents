@@ -7,6 +7,7 @@ import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, RunPhase } from "../../src/types.ts";
@@ -257,6 +258,66 @@ describe("run phase", () => {
 			await sleep(10);
 			assert.equal(running.phase, "ended");
 			assert.equal(sent.length, closeParent ? 0 : 1, closeParent ? "closed parent" : "open parent");
+		}
+	});
+
+	it("leaves an ended run as it is: a stop or a parent close sends no signal and closes no surface", async () => {
+		// Ticket B: ended is final for every stop writer, not only for the callers that check first.
+		const fakeChild = (signals: unknown[]) =>
+			({ pid: 999_999_992, kill: (signal: unknown) => signals.push(signal) }) as unknown as ChildProcess;
+		const groupSignals: Array<[number, string | number | undefined]> = [];
+		const originalKill = process.kill;
+		process.kill = ((pid: number, signal?: string | number) => {
+			groupSignals.push([pid, signal]);
+			return true;
+		}) as typeof process.kill;
+		try {
+			const childSignals: unknown[] = [];
+			const abort = new AbortController();
+			const stopped = makeRunning(makeSession(), {
+				phase: "ended",
+				abortController: abort,
+				childProcess: fakeChild(childSignals),
+			});
+			let surfaceCloses = 0;
+			await stopRunningSubagent(stopped, async () => {
+				surfaceCloses++;
+			});
+			assert.equal(stopped.phase, "ended");
+			assert.equal(surfaceCloses, 0, "no surface close");
+			assert.equal(abort.signal.aborted, false, "no watcher abort");
+			assert.deepEqual(childSignals, []);
+
+			for (const mode of ["background", "interactive"] as const) {
+				const closedSignals: unknown[] = [];
+				const closed = makeRunning(makeSession(), {
+					id: `ended-${mode}`,
+					mode,
+					phase: "ended",
+					childProcess: fakeChild(closedSignals),
+				});
+				let closes = 0;
+				await shutdownSubagentsForParentExit(
+					{
+						runningSubagents: new Map([[closed.id, closed]]),
+						completedSubagentResults: new Map(),
+						parentCloseEscalationMs: 10,
+						updateWidget() {},
+						async closeRunningSurface() {
+							closes++;
+						},
+						cleanupNoSessionSessionFile() {},
+					},
+					{ escalationMs: 10 },
+				);
+				assert.equal(closed.phase, "ended", mode);
+				assert.equal(closes, 0, `${mode}: no surface close`);
+				assert.equal(closed.shutdownTimer, undefined, `${mode}: no SIGKILL escalation`);
+				assert.deepEqual(closedSignals, [], mode);
+			}
+			assert.deepEqual(groupSignals, [], "no SIGTERM to any process group");
+		} finally {
+			process.kill = originalKill;
 		}
 	});
 

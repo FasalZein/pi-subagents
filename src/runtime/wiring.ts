@@ -121,31 +121,32 @@ export async function stopRunningSubagent(
 	running: RunningSubagent,
 	options: { operator?: boolean } = {},
 ): Promise<void> {
+	const stopBy = options.operator ? "operator" : "parent";
 	// T83 (D5, D7): an ended run has no child or surface left to stop; a later stop request
 	// (an overlay item opened before the end) must not reopen the phase or signal a dead group.
-	if (running.phase === "ended") return;
-	// A verified fan-out has no child process in this parent: its candidates
-	// belong to a detached supervisor. Kill = cancel the run (supervisor kills
-	// the candidate groups and terminalizes the manifest).
-	const stopBy = options.operator ? "operator" : "parent";
-	if (running.verifiedRunDir) {
-		if (running.verifiedRunCancelDenied && !options.operator) {
-			throw new Error(
-				`Subagent "${running.name}" is a verified fan-out this session observes but is not an authorized ` +
-					`recipient of (${running.verifiedRunId}). Cancel it from the /subagents overlay as the operator, ` +
-					`or resume the run's originating session.`,
-			);
+	// The stop transition is that one guard: the steps below run only for a run that has not ended.
+	const stopped = await stopRunningSubagentWithDeps(running, closeRunningSurface, () => {
+		// A verified fan-out has no child process in this parent: its candidates
+		// belong to a detached supervisor. Kill = cancel the run (supervisor kills
+		// the candidate groups and terminalizes the manifest).
+		if (running.verifiedRunDir) {
+			if (running.verifiedRunCancelDenied && !options.operator) {
+				throw new Error(
+					`Subagent "${running.name}" is a verified fan-out this session observes but is not an authorized ` +
+						`recipient of (${running.verifiedRunId}). Cancel it from the /subagents overlay as the operator, ` +
+						`or resume the run's originating session.`,
+				);
+			}
+			try {
+				requestVerifiedRunCancel(running.verifiedRunDir, stopBy);
+			} catch {
+				// surfaced by the cancelled manifest state instead
+			}
 		}
-		try {
-			requestVerifiedRunCancel(running.verifiedRunDir, stopBy);
-		} catch {
-			// surfaced by the cancelled manifest state instead
-		}
-	}
-	// T70: the first stop request names who ended the run.
-	running.stopRequestedBy ??= stopBy;
-	await stopRunningSubagentWithDeps(running, closeRunningSurface);
-	updateWidget();
+		// T70: the first stop request names who ended the run.
+		running.stopRequestedBy ??= stopBy;
+	});
+	if (stopped) updateWidget();
 }
 
 export async function getLaunchedSubagentResult(running: RunningSubagent, signal?: AbortSignal) {

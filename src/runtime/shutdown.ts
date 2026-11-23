@@ -4,6 +4,7 @@ import { markSessionFileForDeletionOnExit } from "../session/delete-on-exit.ts";
 import { getInteractiveProcessFile, isProcessGone } from "../session/interactive-process.ts";
 import type { CompletedSubagentResult, ParentClosePolicy, ParentShutdownAction, RunningSubagent } from "../types.ts";
 import { closeParentDelivery } from "./delivery-queue.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import { clearSubagentShutdownTimer } from "./state.ts";
 import { dropRunEndClaim } from "./wait-holds.ts";
 
@@ -30,7 +31,7 @@ export function terminateBackgroundChildProcess(running: RunningSubagent, signal
 }
 
 function abortBackgroundSubagent(running: RunningSubagent, escalationMs: number): void {
-	running.phase = "stopping";
+	if (!applyRunPhaseEvent(running, "stop")) return;
 	if (running.abortController) {
 		running.abortController.abort();
 		return;
@@ -106,7 +107,7 @@ async function awaitNoSessionCleanup(
 }
 
 async function terminateInteractiveSubagent(running: RunningSubagent, runtime: ShutdownRuntime): Promise<void> {
-	running.phase = "stopping";
+	if (!applyRunPhaseEvent(running, "stop")) return;
 	running.abortController?.abort();
 	try {
 		await runtime.closeRunningSurface(running);
