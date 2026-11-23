@@ -6,6 +6,9 @@ import {
 	getEffectiveSpawnWidthLimit,
 	getLiveSlotCount,
 	initializeSpawnWidthForSession,
+	releaseSpawnWidthSlot,
+	renderSpawnWidthRefusal,
+	resetSpawnWidthForTest,
 	tryAcquireSlots,
 } from "../../src/runtime/spawn-width.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
@@ -28,7 +31,7 @@ function makeRunning(id: string): RunningSubagent {
 		title: "Task",
 		agent: "worker",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -159,6 +162,35 @@ describe("spawn width semaphore", () => {
 		assert.equal(getLiveSlotCount(), 2, "the other holder keeps its slots");
 		second.release();
 		assert.equal(getLiveSlotCount(), 0);
+	});
+
+	it("answers who holds a slot from the owner map across claim, release and reset (ticket G)", () => {
+		const holdersText = () => renderSpawnWidthRefusal("subagent", [1], 1);
+		const first = makeRunning("owner-a");
+		const firstLease = tryAcquireSlots(1, null);
+		assert.ok(firstLease);
+		claimSpawnWidthSlot(first, firstLease);
+		assert.equal(getLiveSlotCount(), 1);
+		assert.match(holdersText(), /held by owner-a\)/);
+
+		releaseSpawnWidthSlot(first);
+		assert.equal(getLiveSlotCount(), 0);
+		assert.doesNotMatch(holdersText(), /held by/);
+		const other = tryAcquireSlots(1, null);
+		assert.ok(other);
+		releaseSpawnWidthSlot(first);
+		assert.equal(getLiveSlotCount(), 1, "a second release of the same owner frees nothing");
+		other.release();
+
+		claimSpawnWidthSlot(first, tryAcquireSlots(1, null) ?? assert.fail("slot"));
+		resetSpawnWidthForTest();
+		assert.equal(getLiveSlotCount(), 0);
+		assert.doesNotMatch(holdersText(), /held by/);
+		const second = makeRunning("owner-b");
+		claimSpawnWidthSlot(second, tryAcquireSlots(1, null) ?? assert.fail("slot"));
+		releaseSpawnWidthSlot(first);
+		assert.equal(getLiveSlotCount(), 1, "the reset dropped the old owner, so its release frees nothing");
+		assert.match(holdersText(), /held by owner-b\)/);
 	});
 
 	it("applies the width backstop to configured and unlimited sessions", () => {

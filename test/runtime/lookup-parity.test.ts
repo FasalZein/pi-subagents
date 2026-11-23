@@ -50,7 +50,7 @@ async function deliverAndLookUp(spec: Case) {
 		task: "t",
 		agent: "worker-a",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

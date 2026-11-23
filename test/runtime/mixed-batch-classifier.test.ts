@@ -282,7 +282,7 @@ describe("classifyAssistantMessageForMixedBatch", () => {
 		// Mixed-batch barrier flips the await decision, NOT the agent identity
 		// or persisted launch metadata. enforceAgentFrontmatter resolves
 		// async/blocking from frontmatter only; the barrier is a separate flag
-		// (currentSubagentBatchHasBlocking) checked by shouldAwaitSubagentLaunch
+		// (the blocking batch state) checked by shouldAwaitSubagentLaunch
 		// at result-shape time. So launch metadata still records async: true,
 		// and a later subagent_resume reads async: true from that metadata and
 		// resumes async (subject to its own batch composition at resume time).

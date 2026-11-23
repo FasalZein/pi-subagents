@@ -162,7 +162,7 @@ function foldMessage(
 
 function isRunning(id: string): boolean {
 	const running = runningSubagents.get(id);
-	return running !== undefined && running.phase !== "ended";
+	return running !== undefined && running.phase.kind !== "ended";
 }
 
 export function registerContextFold(pi: ExtensionAPI): void {

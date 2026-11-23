@@ -163,7 +163,7 @@ describe("verified fan-out winner result", () => {
 			name: "vf-run",
 			task: "t",
 			mode: "background" as const,
-			phase: "running" as const,
+			phase: { kind: "running" } as const,
 			parentClosePolicy: "continue" as const,
 			startTime: Date.now(),
 			sessionFile: "",

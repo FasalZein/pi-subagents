@@ -8,12 +8,19 @@ type Sink = Pick<ExtensionAPI, "sendMessage">;
 type CommittedEntries = Pick<ExtensionContext["sessionManager"], "getEntries">;
 type Notices = Pick<ExtensionContext["ui"], "notify">;
 
-/** A message that Pi commits without an extension message_end: a settle entry or a no-turn message. */
-interface InFlight {
-	message: RunEndMessage;
-	/** The session's entry count when it was proposed or sent; its commit is an entry after this. */
-	mark: number;
-}
+/**
+ * One run end in the queue, in exactly one state (M4):
+ * - queued: waits for a boundary to hand it over; it may already sit in Pi's steer queue.
+ * - held: a running wait owns it; the sink is the one an aborted wait gives it back through.
+ * - inFlight: a settle entry or a no-turn message carries it, which Pi commits without an extension
+ *   message_end; `mark` is the session's entry count when it was proposed or sent, and its commit is
+ *   an entry after this.
+ */
+type RunEndEntry =
+	| { state: "queued"; message: RunEndMessage }
+	| { state: "held"; message: RunEndMessage; sink: Sink }
+	| { state: "inFlight"; message: RunEndMessage; mark: number };
+type WaitingEntry = Exclude<RunEndEntry, { state: "inFlight" }>;
 
 /**
  * D15: the one owner of run-end delivery to the parent. A result stays in this queue until the
@@ -32,10 +39,12 @@ interface InFlight {
  * prompt in any other case.
  */
 class DeliveryQueue {
-	private pending = new Map<string, RunEndMessage>();
-	/** Run ends that a running wait holds, with the sink to use when an aborted wait gives them back. */
-	private held = new Map<string, Sink>();
-	private inFlight = new Map<string, InFlight>();
+	/**
+	 * Every run end not committed yet, by run id. Map order is hand-over order: an entry that enters
+	 * the waiting states (queued, held) from absent or in flight moves to the end, as does an entry
+	 * that goes in flight.
+	 */
+	private entries = new Map<string, RunEndEntry>();
 	/** Only a registered session has boundary events; an unregistered host gets the message at once. */
 	private registered = false;
 	private busy = false;
@@ -94,8 +103,9 @@ class DeliveryQueue {
 		pi.on("agent_settled", (event) => {
 			this.confirm();
 			// A proposed entry that a later handler replaced, or that Pi failed to append, is queued again.
-			for (const [id, entry] of this.inFlight) this.pending.set(id, entry.message);
-			this.inFlight.clear();
+			for (const [id, entry] of [...this.entries]) {
+				if (entry.state === "inFlight") this.wait(id, { state: "queued", message: entry.message });
+			}
 			this.busy = false;
 			const escDuringSettle = event.aborted && this.settling;
 			this.settling = false;
@@ -104,9 +114,7 @@ class DeliveryQueue {
 		});
 		pi.on("session_shutdown", () => {
 			// A closed or replaced session gets no more deliveries (D15); results stay in their files.
-			this.pending.clear();
-			this.held.clear();
-			this.inFlight.clear();
+			this.entries.clear();
 			this.busy = false;
 			this.settling = false;
 			this.session = undefined;
@@ -120,8 +128,22 @@ class DeliveryQueue {
 	 * takes it, or an aborted wait gives it back; no boundary hands it over before that (R4).
 	 */
 	hold(pi: Sink, message: RunEndMessage): void {
-		this.pending.set(message.details.id, message);
-		this.held.set(message.details.id, pi);
+		this.wait(message.details.id, { state: "held", message, sink: pi });
+	}
+
+	/**
+	 * Put a run end in a waiting state. A waiting entry keeps its place; one that was absent or in
+	 * flight moves to the end of the hand-over order.
+	 */
+	private wait(id: string, entry: WaitingEntry): void {
+		if (this.entries.get(id)?.state === "inFlight") this.entries.delete(id);
+		this.entries.set(id, entry);
+	}
+
+	/** The entry of a waiting run end (queued or held); an in-flight one is not waiting. */
+	private waiting(id: string): WaitingEntry | undefined {
+		const entry = this.entries.get(id);
+		return entry?.state === "inFlight" ? undefined : entry;
 	}
 
 	/**
@@ -134,13 +156,11 @@ class DeliveryQueue {
 		let sink: Sink | undefined;
 		const messages: RunEndMessage[] = [];
 		for (const id of ids) {
-			const holder = this.held.get(id);
-			this.held.delete(id);
-			const message = this.pending.get(id);
-			if (!message) continue;
-			this.pending.delete(id);
-			sink ??= holder;
-			messages.push(message);
+			const entry = this.waiting(id);
+			if (!entry) continue;
+			this.entries.delete(id);
+			if (entry.state === "held") sink ??= entry.sink;
+			messages.push(entry.message);
 		}
 		this.sendNoTurn(this.registered ? this.pi : sink, messages);
 	}
@@ -148,23 +168,25 @@ class DeliveryQueue {
 	/** A wait that returned without these run ends (not aborted) leaves them to the boundaries. */
 	unhold(ids: readonly string[]): void {
 		for (const id of ids) {
-			const pi = this.held.get(id);
-			this.held.delete(id);
-			const message = this.pending.get(id);
-			if (!pi || !message) continue;
+			const entry = this.entries.get(id);
+			if (entry?.state !== "held") continue;
+			const { message, sink } = entry;
 			if (!this.registered) {
-				this.pending.delete(id);
-				pi.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
-			} else if (!this.busy) this.send(message, true);
+				this.entries.delete(id);
+				sink.sendMessage(message, { triggerTurn: true, deliverAs: "steer" });
+				continue;
+			}
+			this.entries.set(id, { state: "queued", message });
+			if (!this.busy) this.send(message, true);
 		}
 	}
 
 	queuedIds(): string[] {
-		return [...this.pending.keys()];
+		return [...this.entries].filter(([, entry]) => entry.state !== "inFlight").map(([id]) => id);
 	}
 
 	queued(id: string): RunEndMessage | undefined {
-		return this.pending.get(id);
+		return this.waiting(id)?.message;
 	}
 
 	deliver(pi: Sink, message: RunEndMessage, triggerTurn: boolean): void {
@@ -177,7 +199,10 @@ class DeliveryQueue {
 			this.sendNoTurn(pi, [message]);
 			return;
 		}
-		this.pending.set(message.details.id, message);
+		const id = message.details.id;
+		const current = this.entries.get(id);
+		// A second end for an id that a wait holds stays the wait's.
+		this.wait(id, current?.state === "held" ? { ...current, message } : { state: "queued", message });
 		if (!this.busy) this.send(message, true);
 		else if (this.ui) {
 			const { name } = message.details as { name?: unknown };
@@ -206,19 +231,36 @@ class DeliveryQueue {
 			return;
 		}
 		const mark = this.session.getEntries().length;
-		for (const message of messages) this.inFlight.set(message.details.id, { message, mark });
+		for (const message of messages) {
+			const id = message.details.id;
+			// A run end that goes in flight moves to the end; one already in flight keeps its place.
+			if (this.entries.get(id)?.state !== "inFlight") this.entries.delete(id);
+			this.entries.set(id, { state: "inFlight", message, mark });
+		}
+	}
+
+	private inFlightMarks(): Map<string, number> {
+		const marks = new Map<string, number>();
+		for (const [id, entry] of this.entries) if (entry.state === "inFlight") marks.set(id, entry.mark);
+		return marks;
+	}
+
+	/** The queued results that no wait holds, in hand-over order. */
+	private free(): RunEndMessage[] {
+		return [...this.entries.values()].flatMap((entry) => (entry.state === "queued" ? [entry.message] : []));
 	}
 
 	/** Commit every in-flight run end that a session entry after its mark carries. */
 	private confirm(): void {
-		if (!this.session || this.inFlight.size === 0) return;
-		const first = Math.min(...[...this.inFlight.values()].map((entry) => entry.mark));
+		const marks = this.inFlightMarks();
+		if (!this.session || marks.size === 0) return;
+		const first = Math.min(...marks.values());
 		const committed = new Set<string>();
 		this.session.getEntries().forEach((entry, index) => {
 			if (index < first || entry.type !== "custom_message") return;
 			for (const id of runEndIds({ role: "custom", ...entry })) {
-				const flight = this.inFlight.get(id);
-				if (flight && index >= flight.mark) committed.add(id);
+				const mark = marks.get(id);
+				if (mark !== undefined && index >= mark) committed.add(id);
 			}
 		});
 		this.commitIds([...committed]);
@@ -226,15 +268,15 @@ class DeliveryQueue {
 
 	/** The queued results that no wait holds, taken out of the queue. */
 	private takeFree(): RunEndMessage[] {
-		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
-		for (const message of free) this.pending.delete(message.details.id);
+		const free = this.free();
+		for (const message of free) this.entries.delete(message.details.id);
 		this.announced.clear();
 		return free;
 	}
 
 	/** One boundary hands every queued result that no wait holds over as one message. */
 	private sendPending(): void {
-		const free = [...this.pending.values()].filter((message) => !this.held.has(message.details.id));
+		const free = this.free();
 		if (free.length === 0) return;
 		this.announced.clear();
 		this.pi?.sendMessage<object>(groupRunEnds(free), { triggerTurn: true, deliverAs: "steer" });
@@ -246,9 +288,7 @@ class DeliveryQueue {
 	 */
 	private commitIds(ids: readonly string[]): void {
 		for (const id of ids) {
-			this.pending.delete(id);
-			this.held.delete(id);
-			this.inFlight.delete(id);
+			this.entries.delete(id);
 			this.announced.delete(id);
 		}
 		if (ids.length > 0) outstandingWork.committed(...ids);
@@ -257,18 +297,15 @@ class DeliveryQueue {
 	/** A wait reply carried this run end to its caller: no boundary hands it over again. */
 	take(id: string): void {
 		this.announced.delete(id);
-		this.pending.delete(id);
-		this.held.delete(id);
+		if (this.waiting(id)) this.entries.delete(id);
 	}
 
 	get size(): number {
-		return this.pending.size + this.inFlight.size;
+		return this.entries.size;
 	}
 
 	reset(): void {
-		this.pending.clear();
-		this.held.clear();
-		this.inFlight.clear();
+		this.entries.clear();
 		this.announced.clear();
 		this.registered = false;
 		this.busy = false;

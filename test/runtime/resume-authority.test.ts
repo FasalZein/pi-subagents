@@ -167,7 +167,10 @@ describe("resume authority (b2 g2)", () => {
 				resumeRuntime(),
 			);
 			assert.deepEqual(await f.flags(1), ["absent"], "the resumed process must not receive the marker");
-			running.timeoutWrapUp = { kind: "timeout", seconds: 600, threshold: 80 };
+			running.phase = {
+				kind: "soft-limit",
+				wrapUp: { wrapUp: { kind: "timeout", seconds: 600, threshold: 80 }, deadlineAt: 0 },
+			};
 			await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
 			if (running.childProcess && running.childProcess.exitCode === null) await once(running.childProcess, "exit");
 			assert.deepEqual(await f.flags(2), ["absent", "absent"], "the replacement must not receive the marker either");

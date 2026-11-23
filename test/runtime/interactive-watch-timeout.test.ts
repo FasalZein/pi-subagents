@@ -48,7 +48,7 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent> = 
 		name: "pane-child",
 		task: "Sweep the repo",
 		mode: "interactive",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -86,7 +86,7 @@ describe("interactive watcher timeout outcome", () => {
 		const sessionFile = makeSession();
 		const running = makeRunning(sessionFile, {
 			timeoutBudget: { timeoutSeconds: 1 },
-			timeoutExpiry: { kind: "timeout", seconds: 1 },
+			phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } },
 		});
 		let closed = 0;
 
@@ -117,7 +117,7 @@ describe("interactive watcher timeout outcome", () => {
 		const sessionFile = makeSession();
 		const running = makeRunning(sessionFile, {
 			timeoutBudget: { idleTimeoutSeconds: 5 },
-			timeoutExpiry: { kind: "idle-timeout", seconds: 5 },
+			phase: { kind: "stopping", timeoutExpiry: { kind: "idle-timeout", seconds: 5 } },
 			timeoutBlocksResume: true,
 		});
 
@@ -143,7 +143,7 @@ describe("interactive watcher timeout outcome", () => {
 		writeSubagentExitSidecar(sessionFile, { type: "done" });
 		const running = makeRunning(sessionFile, {
 			timeoutBudget: { timeoutSeconds: 1 },
-			timeoutExpiry: { kind: "timeout", seconds: 1 },
+			phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } },
 		});
 
 		const result = await watchSubagent(
@@ -166,7 +166,7 @@ describe("interactive watcher timeout outcome", () => {
 		writeSubagentExitSidecar(sessionFile, { type: "ping", name: "pane-child", message: "stuck" });
 		const running = makeRunning(sessionFile, {
 			timeoutBudget: { timeoutSeconds: 1 },
-			timeoutExpiry: { kind: "timeout", seconds: 1 },
+			phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } },
 		});
 
 		const result = await watchSubagent(

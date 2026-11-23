@@ -103,7 +103,7 @@ async function startParent(
 				task: params.task,
 				agent: "worker-a",
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
 				blocking: false,
 				async: true,

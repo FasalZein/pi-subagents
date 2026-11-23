@@ -4,7 +4,9 @@ import type {
 	SubagentResultMessageDetails,
 	SubagentTimeoutBudget,
 	SubagentTimeoutKind,
+	WrapUpDeadline,
 } from "../types.ts";
+import { timeoutExpiryOf, timeoutWrapUpDeadlineAtOf, timeoutWrapUpOf } from "./run-phase.ts";
 
 /** Grace between the SIGTERM that starts a timeout kill and the SIGKILL. */
 export const TIMEOUT_KILL_ESCALATION_MS = 5000;
@@ -98,16 +100,18 @@ export function observeSubagentProgress(
  * null once a kill is underway so a slow-dying child is never re-reported.
  */
 export function checkSubagentTimeout(running: RunningSubagent, now: number): ExpiredTimeoutBudget | null {
-	if (!running.timeoutBudget || running.timeoutExpiry) return null;
+	if (!running.timeoutBudget || timeoutExpiryOf(running)) return null;
 	if (
 		running.timeoutBudget.timeoutSeconds &&
 		now - running.startTime >= running.timeoutBudget.timeoutSeconds * 1000
 	) {
 		return { kind: "timeout", seconds: running.timeoutBudget.timeoutSeconds };
 	}
-	if (running.timeoutWrapUp?.kind === "idle-timeout" && running.timeoutWrapUpDeadlineAt !== undefined) {
-		if (now >= running.timeoutWrapUpDeadlineAt) {
-			return { kind: "idle-timeout", seconds: running.timeoutWrapUp.seconds };
+	const wrapUp = timeoutWrapUpOf(running);
+	const wrapUpDeadlineAt = timeoutWrapUpDeadlineAtOf(running);
+	if (wrapUp?.kind === "idle-timeout" && wrapUpDeadlineAt !== undefined) {
+		if (now >= wrapUpDeadlineAt) {
+			return { kind: "idle-timeout", seconds: wrapUp.seconds };
 		}
 		return null;
 	}
@@ -124,7 +128,7 @@ export function checkSubagentTimeout(running: RunningSubagent, now: number): Exp
  * one allowed wrap-up phase.
  */
 export function checkSubagentTimeoutWrapUp(running: RunningSubagent, now: number): DueTimeoutWrapUp | null {
-	if (!running.timeoutBudget || !running.timeoutWarnThreshold || running.timeoutWrapUp) return null;
+	if (!running.timeoutBudget || !running.timeoutWarnThreshold || timeoutWrapUpOf(running)) return null;
 	return findDueTimeoutWrapUp(
 		running.timeoutBudget,
 		running.timeoutWarnThreshold,
@@ -132,6 +136,12 @@ export function checkSubagentTimeoutWrapUp(running: RunningSubagent, now: number
 		running.lastProgressAt ?? running.startTime,
 		now,
 	);
+}
+
+/** The wrap-up a due soft deadline starts, with the fixed hard deadline of its budget. */
+export function wrapUpDeadlineFor(running: RunningSubagent, due: DueTimeoutWrapUp): WrapUpDeadline {
+	const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
+	return { wrapUp: due, deadlineAt: baseline + due.seconds * 1000 };
 }
 
 /** Absolute time of the first hard limit that can stop this logical run. */
@@ -142,9 +152,10 @@ export function getSubagentHardDeadlineAt(running: RunningSubagent): number | un
 		deadlines.push(running.startTime + running.timeoutBudget.timeoutSeconds * 1000);
 	}
 	if (running.timeoutBudget.idleTimeoutSeconds) {
+		const wrapUpDeadlineAt = timeoutWrapUpDeadlineAtOf(running);
 		deadlines.push(
-			running.timeoutWrapUp?.kind === "idle-timeout" && running.timeoutWrapUpDeadlineAt !== undefined
-				? running.timeoutWrapUpDeadlineAt
+			timeoutWrapUpOf(running)?.kind === "idle-timeout" && wrapUpDeadlineAt !== undefined
+				? wrapUpDeadlineAt
 				: (running.lastProgressAt ?? running.startTime) + running.timeoutBudget.idleTimeoutSeconds * 1000,
 		);
 	}
@@ -153,11 +164,11 @@ export function getSubagentHardDeadlineAt(running: RunningSubagent): number | un
 
 /** Absolute time of the next soft or hard deadline the parent should inspect. */
 export function getSubagentNextDeadlineAt(running: RunningSubagent): number | undefined {
-	if (!running.timeoutBudget || running.timeoutExpiry) return undefined;
+	if (!running.timeoutBudget || timeoutExpiryOf(running)) return undefined;
 	const deadlines: number[] = [];
 	const hardDeadline = getSubagentHardDeadlineAt(running);
 	if (hardDeadline !== undefined) deadlines.push(hardDeadline);
-	if (running.timeoutWarnThreshold && !running.timeoutWrapUp) {
+	if (running.timeoutWarnThreshold && !timeoutWrapUpOf(running)) {
 		if (running.timeoutBudget.timeoutSeconds) {
 			deadlines.push(
 				running.startTime +

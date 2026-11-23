@@ -5,6 +5,7 @@ import type { PollResult } from "../mux/poll.ts";
 import { getEntries } from "../session/session.ts";
 import { findNudgeEntryIndex } from "../tools/completion-nudge.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource, SubagentTimeoutKind } from "../types.ts";
+import { stopRequesterOf, timeoutExpiryOf, timeoutWrapUpOf } from "./run-phase.ts";
 import { assembleResult, endedByOf, type RunEnd, type RunFacts, type WrapUpFact } from "./result-assembler.ts";
 import type { Reservation, ResultStore } from "./result-files.ts";
 import type { EndedBy, ResultRecord } from "./result-record.ts";
@@ -101,11 +102,11 @@ export const CANCELLED_SUMMARY = "Subagent cancelled.";
 /**
  * D7: the watcher's abort signal fired because the parent asked the run to stop. The first cause
  * wins: a time limit that already expired keeps timed out, never cancelled (a pane kill that cannot
- * be confirmed aborts the same signal), and a deadline that passes after the stop never sets
- * timeoutExpiry (isDeadlineEnforceable), so the stop stays cancelled.
+ * be confirmed aborts the same signal), and a deadline that passes after the stop never applies
+ * the timeLimit event (isDeadlineEnforceable), so the stop stays cancelled.
  */
 export function isStopRequested(running: RunningSubagent, signal: AbortSignal): boolean {
-	return signal.aborted && !running.timeoutExpiry;
+	return signal.aborted && !timeoutExpiryOf(running);
 }
 
 /** D7: a deadline counts only while no stop came first; a later deadline does not change why the run ended. */
@@ -120,19 +121,13 @@ export function isAcceptedCompletion(end: { reason: string; acceptedCall?: unkno
 
 /**
  * D7: a completion accepted while the soft interruption is under way, so before the hard deadline,
- * is the run's end. Pure: the caller applies keepCompletionOverWrapUp when this holds.
+ * is the run's end. Pure: the caller applies the keepCompletion event of run-phase.ts when this holds.
  */
 export function keepsCompletionOverWrapUp(
 	running: RunningSubagent,
 	...ends: Array<{ reason: string; acceptedCall?: unknown } | null | undefined>
 ): boolean {
-	return running.phase === "soft-limit" && ends.some(isAcceptedCompletion);
-}
-
-/** D7: the report-only wrap-up never runs after a kept completion, so the run carries no wrap-up marker. */
-export function keepCompletionOverWrapUp(running: RunningSubagent): void {
-	running.timeoutWrapUp = undefined;
-	running.timeoutWrapUpDeadlineAt = undefined;
+	return running.phase.kind === "soft-limit" && ends.some(isAcceptedCompletion);
 }
 
 /** D7: the reason a stopped run's record names. */
@@ -141,10 +136,10 @@ export const STOPPED_REASON = "stopped by the parent";
 export const OPERATOR_STOPPED_REASON = "stopped by the operator";
 
 /** D7 and T70: the cancelled end of a stopped run, with the reason of whoever asked for the stop. */
-export function stoppedEnd(running: Pick<RunningSubagent, "stopRequestedBy">): RunEnd {
+export function stoppedEnd(running: Pick<RunningSubagent, "phase">): RunEnd {
 	return {
 		kind: "cancelled",
-		reason: running.stopRequestedBy === "operator" ? OPERATOR_STOPPED_REASON : STOPPED_REASON,
+		reason: stopRequesterOf(running) === "operator" ? OPERATOR_STOPPED_REASON : STOPPED_REASON,
 	};
 }
 
@@ -171,8 +166,8 @@ function classifyWatchedEnd(running: RunningSubagent, end: WatchedEnd): RunEnd {
  * child error. A stop, a hard-deadline kill and a ping keep their own verdicts and get none.
  */
 function wrapUpOf(running: RunningSubagent, end: WatchedEnd): WrapUpFact | undefined {
-	const wrapUp = running.timeoutWrapUp;
-	if (!wrapUp || running.phase !== "wrapping-up" || end.stopped || end.ping || end.timedOut) return undefined;
+	const wrapUp = timeoutWrapUpOf(running);
+	if (!wrapUp || running.phase.kind !== "wrapping-up" || end.stopped || end.ping || end.timedOut) return undefined;
 	return { budget: wrapUp.kind, seconds: wrapUp.seconds };
 }
 
@@ -268,7 +263,7 @@ function publishEnd(running: RunningSubagent, end: RunEnd, options: PublishOptio
 			endedBy:
 				options.endedBy ??
 				endedByOf(runEnd, {
-					stoppedBy: running.stopRequestedBy,
+					stoppedBy: stopRequesterOf(running),
 					closedByPerson: options.closedByPerson,
 					wrapUp: options.wrapUp !== undefined,
 				}),

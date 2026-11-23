@@ -17,8 +17,17 @@ import { groupRunEnds, type RunEndMessage, runEndIds } from "../../src/runtime/r
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 
 function child(id: string): RunningSubagent {
-	return { id, name: id, task: "test", mode: "background", phase: "running",
-		parentClosePolicy: "terminate", async: true, sessionFile: "child.jsonl", startTime: Date.now() };
+	return {
+		id,
+		name: id,
+		task: "test",
+		mode: "background",
+		phase: { kind: "running" },
+		parentClosePolicy: "terminate",
+		async: true,
+		sessionFile: "child.jsonl",
+		startTime: Date.now(),
+	};
 }
 
 test("old Herdr: async launch publishes before yielding and keeps last result outstanding until the parent settles idle after reading it (D11, cf6dbf4)", async () => {

@@ -13,6 +13,7 @@ import type { OverlayItem } from "../../src/tools/overlay/render-types.ts";
 import { SubagentsOverlay } from "../../src/tools/subagents-view.ts";
 import type { CompletedSubagentResult, RunningSubagent } from "../../src/types.ts";
 import { afterEach, assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
+import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 
 // T83: each /subagents overlay row acts on and shows its own run as it is now.
 
@@ -57,7 +58,7 @@ function runningChild(sessionFile: string, extra: Partial<RunningSubagent> = {})
 		name: "worker-1",
 		task: "t",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		startTime: Date.now(),
 		sessionFile,
@@ -160,8 +161,8 @@ describe("overlay acts on and shows the run as it is now (T83)", () => {
 
 		assert.deepEqual(stop.seen.signals, []);
 		assert.equal(stop.seen.surfaceCloses, 0);
-		assert.equal(running.phase, "ended");
-		assert.equal(running.stopRequestedBy, undefined);
+		assert.equal(running.phase.kind, "ended");
+		assert.equal(stopRequesterOf(running), undefined);
 		assert.deepEqual(notes, ["worker-1 already ended"]);
 	});
 
@@ -186,7 +187,7 @@ describe("overlay acts on and shows the run as it is now (T83)", () => {
 			stop.restore();
 		}
 		assert.deepEqual(stop.seen.signals, []);
-		assert.equal(running.phase, "ended");
+		assert.equal(running.phase.kind, "ended");
 		assert.equal(result.details.status, "ended");
 		assert.equal(result.content[0].text, `Subagent "worker-1" (run-1) already ended.`);
 	});

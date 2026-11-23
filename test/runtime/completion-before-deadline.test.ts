@@ -21,6 +21,7 @@ import {
 	sleep,
 } from "../support/index.ts";
 import { assistant, toolCall, toolResult } from "../support/result-fixtures.ts";
+import { timeoutExpiryOf } from "../../src/runtime/run-phase.ts";
 
 /**
  * D7 chart rule, replayed at the soft interruption: the watcher has already asked the child to stop
@@ -44,7 +45,7 @@ function setup(overrides: Partial<RunningSubagent>) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -141,7 +142,7 @@ describe("a completion accepted during the soft interruption (D7)", () => {
 					},
 					terminateBackgroundChildProcess(_running, signal) {
 						if (signal !== "SIGTERM" || restarts > 0) return;
-						if (running.timeoutExpiry) return;
+						if (timeoutExpiryOf(running)) return;
 						acceptCompletion(sessionFile);
 						// The leader exits; a descendant keeps the group alive past the hard deadline.
 						child.emit("exit", 0);

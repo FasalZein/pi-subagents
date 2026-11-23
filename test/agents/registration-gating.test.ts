@@ -296,7 +296,7 @@ describe("extension registration gating", () => {
 			task: "Wait",
 			agent: "worker",
 			mode: "background",
-			phase: "running",
+			phase: { kind: "running" },
 			parentClosePolicy: "terminate",
 			async: true,
 			startTime: Date.now(),
@@ -305,7 +305,7 @@ describe("extension registration gating", () => {
 		runningSubagents.set(running.id, running);
 		const result = await kill.execute("call-kill", { runId: running.id });
 		assert.equal(result.content[0]?.text, `Stopping subagent "stop-me" (stop-me-1).`);
-		assert.equal(running.phase, "stopping");
+		assert.equal(running.phase.kind, "stopping");
 	});
 
 	it("lets a caller that may resume but not launch resume a saved session (D07)", async () => {

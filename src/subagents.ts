@@ -76,10 +76,10 @@ export {
 import { traceSubagentLaunch } from "./launch/trace.ts";
 import { classifyAssistantMessageForMixedBatch, getLaunchCallChildren } from "./runtime/batch-classifier.ts";
 import {
+	isSubagentBatchStopRequested,
 	markSubagentBatchBlocking,
 	requestSubagentBatchStop,
 	resetSubagentBatchStopRequest,
-	stopAfterCurrentSubagentBatch,
 } from "./runtime/state.ts";
 import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
@@ -338,11 +338,11 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// children that the stop was created to leave running.
 	pi.on("session_shutdown", async (event, ctx) => {
 		traceSubagentLaunch("session.shutdown", {
-			coordinatorOnlyTurnStop: stopAfterCurrentSubagentBatch,
+			coordinatorOnlyTurnStop: isSubagentBatchStopRequested(),
 			eventKeys: Object.keys((event ?? {}) as unknown as Record<string, unknown>),
 			running: runningSubagents.size,
 		});
-		if (stopAfterCurrentSubagentBatch && !event.reason) {
+		if (isSubagentBatchStopRequested() && !event.reason) {
 			resetSubagentBatchStopRequest();
 			return;
 		}

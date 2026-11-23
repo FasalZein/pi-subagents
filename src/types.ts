@@ -10,7 +10,46 @@ export type ResultParent = Pick<ResultTarget, "parentCwd" | "warnings">;
 export type DeliveryState = "detached" | "awaited";
 
 /** D5: running, soft limit reached, wrapping up, stopping, ended. */
-export type RunPhase = "running" | "soft-limit" | "wrapping-up" | "stopping" | "ended";
+export type RunPhase = RunPhaseState["kind"];
+/** The soft deadline that interrupted work and started a report-only continuation. */
+export interface TimeoutWrapUp {
+	kind: SubagentTimeoutKind;
+	seconds: number;
+	threshold: number;
+}
+/** The soft deadline of a run and the fixed hard deadline of the budget that triggered it. */
+export interface WrapUpDeadline {
+	readonly wrapUp: TimeoutWrapUp;
+	readonly deadlineAt: number;
+}
+/** The budget a time-limit stop kills the child on. */
+export interface TimeoutExpiry {
+	kind: SubagentTimeoutKind;
+	seconds: number;
+}
+/** T70: who asked a run to stop: the overlay operator or the parent (subagent_kill, shutdown). */
+export type StopRequester = "operator" | "parent";
+/**
+ * D5 (statecharts ticket D): the phase of a run with the data that only makes sense in it. Only
+ * src/runtime/run-phase.ts writes it. Ended keeps nothing: a watched end builds its record before the end
+ * event, and the one record built after it (a watcher error, running-registry.ts wireSubagentSteerBack) is a
+ * failed end, which reads no stop requester, expiry or wrap-up from the phase (result-assembler.ts endedByOf).
+ */
+export type RunPhaseState =
+	| { readonly kind: "running" }
+	/** wrapUp is null once a completion accepted before the hard deadline is kept over the wrap-up. */
+	| { readonly kind: "soft-limit"; readonly wrapUp: WrapUpDeadline | null }
+	| { readonly kind: "wrapping-up"; readonly wrapUp: WrapUpDeadline }
+	| {
+			readonly kind: "stopping";
+			/** The wrap-up of the phase the stop left, kept for the hard deadline and the result fields. */
+			readonly wrapUp?: WrapUpDeadline;
+			/** Set by a time-limit stop. */
+			readonly timeoutExpiry?: TimeoutExpiry;
+			/** Set by the first stop request that named its requester (a shutdown names none). */
+			readonly stopRequestedBy?: StopRequester;
+	  }
+	| { readonly kind: "ended" };
 export type ParentClosePolicy = "terminate" | "continue";
 type CompletedDelivery = "steer" | "wait";
 export type SubagentCompletionStatus = "completed" | "failed" | "cancelled";
@@ -102,7 +141,7 @@ export interface SubagentResult {
 	/** True when the runtime could not confirm the child was terminated. */
 	timeoutKillFailed?: boolean;
 	/** The soft deadline that interrupted work and started a report-only continuation. */
-	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
+	timeoutWrapUp?: TimeoutWrapUp;
 	error?: string;
 	errorMessage?: string;
 	ping?: SubagentPing;
@@ -141,8 +180,8 @@ export interface RunningSubagent {
 	title?: string;
 	agent?: string;
 	mode: "interactive" | "background";
-	/** D5: the one phase of this run; the outcome comes at "ended". */
-	phase: RunPhase;
+	/** D5: the one phase of this run and its data; the outcome comes at "ended". */
+	phase: RunPhaseState;
 	parentClosePolicy: ParentClosePolicy;
 	blocking?: boolean;
 	async?: boolean;
@@ -155,22 +194,15 @@ export interface RunningSubagent {
 	timeoutBlocksResume?: boolean;
 	/** Percentage of a configured budget reserved for the report-only continuation. */
 	timeoutWarnThreshold?: number;
-	/** Set once the watcher has interrupted this run for its report-only continuation. */
-	timeoutWrapUp?: { kind: SubagentTimeoutKind; seconds: number; threshold: number };
 	/** Session entries before the current child process: a time-limit wrap-up restart sets it (D12 nudge boundary). */
 	processEntryCount?: number;
-	/** Fixed hard deadline for the budget that triggered the wrap-up. */
-	timeoutWrapUpDeadlineAt?: number;
 	/** Last time the child's session file grew, for the idle budget. */
 	lastProgressAt?: number;
-	/** Set once the watcher has decided to kill this child on a budget. */
-	timeoutExpiry?: { kind: SubagentTimeoutKind; seconds: number };
 	/** Pending SIGKILL escalation for a timeout kill. */
 	timeoutKillTimer?: ReturnType<typeof setTimeout>;
 	/** Set when closing a pane child's surface failed, so the kill may not have taken. */
 	timeoutKillFailed?: boolean;
 	completionPromise?: Promise<SubagentResult>;
-	spawnWidthSlotAcquired?: boolean;
 	surface?: string;
 	childProcess?: ChildProcess;
 	stderrTail?: string;
@@ -199,8 +231,6 @@ export interface RunningSubagent {
 	lastSessionSize?: number;
 	pendingToolCount?: number;
 	abortController?: AbortController;
-	/** T70: who asked this run to stop: the overlay operator or the parent (subagent_kill, shutdown). */
-	stopRequestedBy?: "operator" | "parent";
 	shutdownTimer?: ReturnType<typeof setTimeout>;
 	doneSentinelFile?: string;
 	/** The pane launcher's process id, read before the watcher removes its marker; it exits after Pi. */

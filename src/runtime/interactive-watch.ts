@@ -11,12 +11,11 @@ import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
-import { applyRunPhaseEvent } from "./run-phase.ts";
+import { applyRunPhaseEvent, timeoutExpiryOf, timeoutWrapUpField } from "./run-phase.ts";
 import {
 	CANCELLED_SUMMARY,
 	isDeadlineEnforceable,
 	isStopRequested,
-	keepCompletionOverWrapUp,
 	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
@@ -31,6 +30,7 @@ import {
 	hasChildProgress,
 	observeSubagentProgress,
 	TIMEOUT_KILL_ESCALATION_MS,
+	wrapUpDeadlineFor,
 } from "./timeout-budget.ts";
 import { startTimeoutWrapUpWithinDeadline } from "./timeout-restart.ts";
 
@@ -106,7 +106,7 @@ function buildInteractiveRestartTimeoutResult(
 					timedOut: expiry.kind,
 					timedOutAfter: expiry.seconds,
 				}),
-		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+		...timeoutWrapUpField(running),
 	}, timedOut);
 }
 
@@ -134,7 +134,7 @@ function recordTimeoutOutcome(
 	running: RunningSubagent,
 	pollResult?: PollResult,
 ): Pick<SubagentResult, "timedOut" | "timedOutAfter" | "timeoutBlocksResume" | "timeoutKillFailed"> {
-	const expiry = running.timeoutExpiry;
+	const expiry = timeoutExpiryOf(running);
 	if (!expiry) return {};
 	if (pollResult?.reason === "ping") return {};
 	if (!running.noSession) {
@@ -180,7 +180,7 @@ export async function watchSubagent(
 				if (restart.kind === "timedOut") {
 					return buildInteractiveRestartTimeoutResult(running, restart.expiry);
 				}
-				applyRunPhaseEvent(running, "wrapUp");
+				applyRunPhaseEvent(running, { type: "wrapUp" });
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -192,7 +192,7 @@ export async function watchSubagent(
 					exitCode: 1,
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
-					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+					...timeoutWrapUpField(running),
 				}, { kind: "failed", error: message }, "time_limit");
 			}
 		}
@@ -247,9 +247,7 @@ async function watchInteractiveGeneration(
 			// A child that already published its own outcome finished on its own
 			// terms; the deadline it crossed while exiting is not a runaway.
 			if (hasSubagentExitSidecar(running.sessionFile)) return;
-			const killed = applyRunPhaseEvent(running, "timeLimit", () => {
-				running.timeoutExpiry = expired;
-			});
+			const killed = applyRunPhaseEvent(running, { type: "timeLimit", expiry: expired });
 			if (!killed) return;
 			void closeTimedOutSurface(running, runtime, true);
 			armDeadlineTimer();
@@ -257,11 +255,11 @@ async function watchInteractiveGeneration(
 		}
 		const wrapUp = checkSubagentTimeoutWrapUp(running, now);
 		// Only a running generation is interrupted for its wrap-up (the softLimit event leaves only from running).
-		if (wrapUp && !hasSubagentExitSidecar(running.sessionFile) && applyRunPhaseEvent(running, "softLimit")) {
-			running.timeoutWrapUp = wrapUp;
-			const baseline =
-				wrapUp.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
-			running.timeoutWrapUpDeadlineAt = baseline + wrapUp.seconds * 1000;
+		if (
+			wrapUp &&
+			!hasSubagentExitSidecar(running.sessionFile) &&
+			applyRunPhaseEvent(running, { type: "softLimit", wrapUp: wrapUpDeadlineFor(running, wrapUp) })
+		) {
 			void closeTimedOutSurface(running, runtime, false);
 		}
 		armDeadlineTimer();
@@ -320,7 +318,12 @@ async function watchInteractiveGeneration(
 		const exitSignal = end === lateExitSignal ? undefined : lateExitSignal;
 		// The child has exited: no later deadline tick may change how this end is decided.
 		if (deadlineTimer) clearTimeout(deadlineTimer);
-		if (running.phase === "soft-limit" && !signal.aborted && end.reason !== "ping" && exitSignal?.reason !== "ping") {
+		if (
+			running.phase.kind === "soft-limit" &&
+			!signal.aborted &&
+			end.reason !== "ping" &&
+			exitSignal?.reason !== "ping"
+		) {
 			if (!keepsCompletionOverWrapUp(running, end, exitSignal)) {
 				cleanupDoneSentinel(running);
 				try {
@@ -328,7 +331,7 @@ async function watchInteractiveGeneration(
 				} catch {}
 				return { kind: "restart" };
 			}
-			keepCompletionOverWrapUp(running);
+			applyRunPhaseEvent(running, { type: "keepCompletion" });
 		}
 		const elapsed = Math.floor((Date.now() - startTime) / 1000);
 		const errorMessage = end.reason === "error" ? end.errorMessage : undefined;
@@ -378,7 +381,7 @@ async function watchInteractiveGeneration(
 				outputTokens: end.outputTokens ?? exitSignal?.outputTokens,
 				...finalContextUsage,
 				...timeoutFields,
-				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+				...timeoutWrapUpField(running),
 				ping,
 				errorMessage,
 				...(stopped ? { error: "cancelled" } : {}),
@@ -398,7 +401,7 @@ async function watchInteractiveGeneration(
 		try {
 			await runtime.closeRunningSurface(running);
 		} catch {}
-		if (running.phase === "soft-limit" && !signal.aborted) {
+		if (running.phase.kind === "soft-limit" && !signal.aborted) {
 			return { kind: "restart" };
 		}
 
@@ -406,9 +409,10 @@ async function watchInteractiveGeneration(
 		// out from under it. Reporting "cancelled" or a raw surface error here
 		// would hide the only fact the parent needs.
 		const timeoutFields = recordTimeoutOutcome(running);
-		if (timeoutFields.timedOut) {
+		// recordTimeoutOutcome reports timedOut only for a stopping run with an expiry.
+		const expiry = timeoutExpiryOf(running);
+		if (timeoutFields.timedOut && expiry) {
 			const { summary, summarySource } = getSummary(running, { reason: "error", exitCode: 1 });
-			const expiry = running.timeoutExpiry!;
 			return {
 				kind: "result",
 				result: withRuntimeEnd(running, {
@@ -421,7 +425,7 @@ async function watchInteractiveGeneration(
 					elapsed: Math.floor((Date.now() - startTime) / 1000),
 					outputTokens: 0,
 					...timeoutFields,
-					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+					...timeoutWrapUpField(running),
 				}, { kind: "timed_out", budget: expiry.kind, seconds: expiry.seconds, wrapUp: false }),
 			};
 		}
@@ -441,7 +445,7 @@ async function watchInteractiveGeneration(
 				elapsed: Math.floor((Date.now() - startTime) / 1000),
 				outputTokens: 0,
 				error: errorMessage,
-				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+				...timeoutWrapUpField(running),
 			}, { kind: "failed", error: errorMessage }),
 		};
 	} finally {
@@ -460,7 +464,7 @@ function buildInteractiveCancellationResult(running: RunningSubagent): SubagentR
 		elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 		outputTokens: 0,
 		error: "cancelled",
-		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+		...timeoutWrapUpField(running),
 	}, stoppedEnd(running));
 }
 
