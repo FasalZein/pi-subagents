@@ -1,10 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
+import { ResultStore } from "../../src/runtime/result-files.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
 import {
 	applyRunPhaseEvent,
@@ -14,6 +16,7 @@ import {
 	timeoutWrapUpDeadlineAtOf,
 	timeoutWrapUpOf,
 } from "../../src/runtime/run-phase.ts";
+import { TIME_LIMIT_RESUME_REASON } from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
@@ -382,62 +385,96 @@ describe("run phase", () => {
 	});
 
 	// Ticket C review: both orderings of a parent stop and the hard deadline during a pending wrap-up restart.
-	// Expected values from timeout-restart.ts (D7: the first cause decides the end) and the review's trace.
+	// Expected values: D7 (the first cause decides the end), EndedBy in result-record.ts (a hard kill ends by
+	// time_limit; a stop of the parent by parent), D21 (a stop gets no time-limit fact) and the on-timeout
+	// policy (TIME_LIMIT_RESUME_REASON: only a hard kill of an agent that refuses it blocks the resume).
 	for (const order of ["deadline then stop", "stop seen first"] as const) {
-		it(`ends a pending wrap-up restart by its first cause: ${order}`, async () => {
-			const sessionFile = makeSession();
-			const child = new EventEmitter() as ChildProcess;
-			const abort = new AbortController();
-			const running = makeRunning(sessionFile, {
-				// Soft limit at 0.5 s, hard deadline at 1 s.
-				timeoutBudget: { timeoutSeconds: 1 },
-				timeoutWarnThreshold: 50,
-				abortController: abort,
-				childProcess: child,
-			});
-			let restartStarted = false;
-			let failStartup: (error: Error) => void = () => {};
-			// A restart that awaits startup and does not observe its abort signal (a pane program start).
-			const startup = new Promise<void>((_resolve, reject) => {
-				failStartup = reject;
-			});
-			const watch = watchBackgroundSubagent(
-				running,
-				backgroundRuntime(child, [], async () => {
-					restartStarted = true;
-					await startup;
-				}),
-				abort.signal,
-			);
-			while (!restartStarted) await sleep(20);
-			if (order === "deadline then stop") await sleep(Math.max(0, running.startTime + 1200 - Date.now()));
-			await stopRunningSubagent(running, async () => {}, undefined, "parent");
-			failStartup(new Error("startup interrupted"));
-			const result = await settleWithin(watch, 4000, order);
-
-			const wrapUp = { wrapUp: { kind: "timeout", seconds: 1, threshold: 50 }, deadlineAt: running.startTime + 1000 };
-			if (order === "deadline then stop") {
-				assert.deepEqual(running.phase, {
-					kind: "stopping",
-					wrapUp,
-					stopRequestedBy: "parent",
-					timeoutExpiry: { kind: "timeout", seconds: 1 },
+		for (const blocksResume of [false, true]) {
+			it(`ends a pending wrap-up restart by its first cause: ${order}, blocks resume ${blocksResume}`, async () => {
+				const root = createTestDir();
+				dirs.push(root);
+				const sessionFile = createSessionFile(root, [{ type: "session", id: "sess", version: 3 }]);
+				const store = new ResultStore(join(root, "results"), () => {});
+				const reservation = store.reserve();
+				const child = new EventEmitter() as ChildProcess;
+				const abort = new AbortController();
+				const running = makeRunning(sessionFile, {
+					id: reservation.runId,
+					// Soft limit at 0.5 s, hard deadline at 2 s: the restart starts well before the hard deadline.
+					timeoutBudget: { timeoutSeconds: 2 },
+					timeoutWarnThreshold: 25,
+					timeoutBlocksResume: blocksResume,
+					abortController: abort,
+					childProcess: child,
+					resultTarget: { store, reservation, parentCwd: root, warnings: [] },
 				});
-				assert.equal(result.timedOut, "timeout", "the saved deadline wins over the later stop");
-				assert.equal(result.error, undefined);
-			} else {
-				assert.deepEqual(running.phase, { kind: "stopping", wrapUp, stopRequestedBy: "parent" });
-				assert.equal(result.timedOut, undefined);
-				assert.equal(result.error, "cancelled", "the stop the restart saw first wins");
-			}
-			assert.deepEqual(result.timeoutWrapUp, wrapUp.wrapUp);
-			routeSubagentOutcome({ pi: { sendMessage() {} }, running, result, updateWidget() {} });
-			assert.deepEqual(running.phase, { kind: "ended" });
-			assert.equal(
-				buildCompletedSubagentResult(running, result).status,
-				order === "deadline then stop" ? "failed" : "cancelled",
-			);
-		});
+				let restartEntered: () => void = () => {};
+				const entered = new Promise<void>((resolve) => {
+					restartEntered = resolve;
+				});
+				let failStartup: (error: Error) => void = () => {};
+				// A restart that awaits startup and does not observe its abort signal (a pane program start).
+				const startup = new Promise<void>((_resolve, reject) => {
+					failStartup = reject;
+				});
+				const watch = watchBackgroundSubagent(
+					running,
+					backgroundRuntime(child, [], async () => {
+						restartEntered();
+						await startup;
+					}),
+					abort.signal,
+				);
+				const endedEarly = watch.then((result) => {
+					throw new Error(`the watcher ended before the restart: ${JSON.stringify(result.resultOutcome)}`);
+				});
+				await settleWithin(Promise.race([entered, endedEarly]), 1500, "restart entry");
+				if (order === "deadline then stop") await sleep(Math.max(0, running.startTime + 2200 - Date.now()));
+				await stopRunningSubagent(running, async () => {}, undefined, "parent");
+				failStartup(new Error("startup interrupted"));
+				const result = await settleWithin(watch, 4000, order);
+
+				const wrapUp = { wrapUp: { kind: "timeout", seconds: 2, threshold: 25 }, deadlineAt: running.startTime + 2000 };
+				const record = store.read(reservation.runId);
+				const stored = {
+					outcome: record?.outcome,
+					endedBy: record?.endedBy,
+					timeLimit: record?.timeLimit,
+					resume: record?.resume,
+				};
+				if (order === "deadline then stop") {
+					assert.deepEqual(running.phase, {
+						kind: "stopping",
+						wrapUp,
+						stopRequestedBy: "parent",
+						timeoutExpiry: { kind: "timeout", seconds: 2 },
+					});
+					assert.deepEqual(stored, {
+						outcome: "timed_out",
+						endedBy: "time_limit",
+						timeLimit: { kind: "timeout", seconds: 2, wrapUp: false },
+						resume: blocksResume ? { resumable: false, reason: TIME_LIMIT_RESUME_REASON } : { resumable: true },
+					});
+					assert.equal(result.timedOut, "timeout", "the saved deadline wins over the later stop");
+				} else {
+					assert.deepEqual(running.phase, { kind: "stopping", wrapUp, stopRequestedBy: "parent" });
+					assert.deepEqual(stored, {
+						outcome: "cancelled",
+						endedBy: "parent",
+						timeLimit: undefined,
+						resume: { resumable: true },
+					});
+					assert.equal(result.error, "cancelled", "the stop the restart saw first wins");
+				}
+				assert.equal(result.resultOutcome, stored.outcome, "the carrier shows the stored outcome");
+				routeSubagentOutcome({ pi: { sendMessage() {} }, running, result, updateWidget() {} });
+				assert.deepEqual(running.phase, { kind: "ended" });
+				assert.equal(
+					buildCompletedSubagentResult(running, result).status,
+					order === "deadline then stop" ? "failed" : "cancelled",
+				);
+			});
+		}
 	}
 
 	it("keeps a completion accepted during the soft limit: the wrap-up never runs and its marker is gone", async () => {

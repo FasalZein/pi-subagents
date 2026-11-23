@@ -31,7 +31,9 @@ export interface TimeoutExpiry {
 export type StopRequester = "operator" | "parent";
 /**
  * D5 (statecharts ticket D): the phase of a run with the data that only makes sense in it. Only
- * src/runtime/run-phase.ts writes it. The result record is built before "ended", so ended keeps nothing.
+ * src/runtime/run-phase.ts writes it. Ended keeps nothing: a watched end builds its record before the end
+ * event, and the one record built after it (a watcher error, running-registry.ts wireSubagentSteerBack) is a
+ * failed end, which reads no stop requester, expiry or wrap-up from the phase (result-assembler.ts endedByOf).
  */
 export type RunPhaseState =
 	| { readonly kind: "running" }

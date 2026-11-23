@@ -318,7 +318,12 @@ async function watchInteractiveGeneration(
 		const exitSignal = end === lateExitSignal ? undefined : lateExitSignal;
 		// The child has exited: no later deadline tick may change how this end is decided.
 		if (deadlineTimer) clearTimeout(deadlineTimer);
-		if (running.phase.kind === "soft-limit" && !signal.aborted && end.reason !== "ping" && exitSignal?.reason !== "ping") {
+		if (
+			running.phase.kind === "soft-limit" &&
+			!signal.aborted &&
+			end.reason !== "ping" &&
+			exitSignal?.reason !== "ping"
+		) {
 			if (!keepsCompletionOverWrapUp(running, end, exitSignal)) {
 				cleanupDoneSentinel(running);
 				try {

@@ -472,9 +472,7 @@ function watchBackgroundGeneration(
 			const exitSignal = consumeSubagentExitSignal(running.sessionFile, "child-exited");
 			consumedExit = exitSignal;
 			const runtimeOwnsExit =
-				Boolean(timeoutExpiryOf(running)) ||
-				running.phase.kind === "soft-limit" ||
-				signal.aborted;
+				Boolean(timeoutExpiryOf(running)) || running.phase.kind === "soft-limit" || signal.aborted;
 			if (runtimeOwnsExit && processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 				if (!groupExitPoll) {
 					groupExitPoll = setInterval(() => {
