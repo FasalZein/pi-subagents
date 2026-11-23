@@ -30,7 +30,8 @@ export function getSpawnWidthLimit(): number {
 	return getEffectiveSpawnWidthLimit(configuredWidth ?? null);
 }
 
-type SlotOwner = { id: string; spawnWidthSlotAcquired?: boolean };
+/** A run that can hold a lease. Whether it holds one is membership in `slotOwners`, never a field on the run. */
+type SlotOwner = { id: string };
 
 const liveLeases = new Set<SpawnSlotLease>();
 const slotOwners = new Map<SlotOwner, SpawnSlotLease>();
@@ -87,7 +88,6 @@ export function getLiveSlotCount(): number {
 
 /** Hands `lease` to `owner`; the owner's release gives back that lease only. */
 export function claimSpawnWidthSlot(owner: SlotOwner, lease: SpawnSlotLease): void {
-	owner.spawnWidthSlotAcquired = true;
 	slotOwners.set(owner, lease);
 }
 
@@ -95,7 +95,6 @@ export function releaseSpawnWidthSlot(owner: SlotOwner): void {
 	const lease = slotOwners.get(owner);
 	if (!lease) return;
 	slotOwners.delete(owner);
-	owner.spawnWidthSlotAcquired = false;
 	lease.release();
 }
 
@@ -187,7 +186,6 @@ export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: reado
 }
 
 export function resetSpawnWidthForTest(): void {
-	for (const owner of slotOwners.keys()) owner.spawnWidthSlotAcquired = false;
 	slotOwners.clear();
 	for (const lease of [...liveLeases]) lease.release();
 	configuredWidth = undefined;
