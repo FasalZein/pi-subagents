@@ -140,28 +140,37 @@ describe("delivery entry states (ticket F)", () => {
 		assert.deepEqual(p.sentIds(), [], "a committed settle entry is not sent again");
 	});
 
-	it("in flight -> queued: agent_settled re-queues a settle entry Pi did not append and sends it", () => {
-		const p = parent();
-		p.fire("agent_start");
-		deliverRunEnd(p.pi, "a", end("a"));
-		p.fire("agent_before_settle", { entries: [] });
-		assert.deepEqual(queuedRunEndIds(), []);
-		p.fire("agent_settled");
-		assert.deepEqual(queuedRunEndIds(), ["a"]);
-		assert.equal(pendingRunEndCount(), 1);
-		assert.deepEqual(p.sentIds(), [["a"]]);
-		assert.equal(p.sent[0].triggerTurn, true);
-	});
-
-	it("a re-queued end follows the ends queued while it was in flight", () => {
+	it("in flight -> queued: a rejected settle proposal is re-queued after the ends queued meanwhile, and sent", () => {
 		const p = parent();
 		p.fire("agent_start");
 		deliverRunEnd(p.pi, "first", end("first"));
-		p.fire("agent_before_settle", { entries: [] });
+		const [settle] = p.fire("agent_before_settle", { entries: [] }) as SettleResult[];
+		assert.deepEqual(runEndIds({ role: "custom", ...settle.entries[0] }), ["first"]);
+		assert.deepEqual(queuedRunEndIds(), []);
 		deliverRunEnd(p.pi, "second", end("second"));
+		// A later handler replaced the proposed entry: Pi never appends it.
 		p.fire("agent_settled");
 		assert.deepEqual(queuedRunEndIds(), ["second", "first"]);
+		assert.equal(pendingRunEndCount(), 2);
 		assert.deepEqual(p.sentIds(), [["second", "first"]]);
+		assert.equal(p.sent[0].triggerTurn, true);
+	});
+
+	it("absent -> in flight -> committed: a registered parent sends a no-turn end (print-mode adoption) and tracks it", () => {
+		const p = parent();
+		p.fire("agent_start");
+		deliverRunEnd(p.pi, "v", end("v"), { triggerTurn: false });
+		assert.deepEqual(p.sentIds(), [["v"]]);
+		assert.equal(p.sent[0].triggerTurn, false);
+		assert.deepEqual(queuedRunEndIds(), [], "an in-flight end is not queued");
+		assert.equal(pendingRunEndCount(), 1, "the end stays tracked until Pi appends it");
+		p.fire("turn_end", turnEnd);
+		assert.equal(pendingRunEndCount(), 1, "no commit without a session entry");
+		assert.deepEqual(p.sentIds(), [["v"]], "a boundary does not send an in-flight end");
+		p.commit(p.sent[0].message);
+		p.fire("turn_end", turnEnd);
+		assert.equal(pendingRunEndCount(), 0);
+		assert.deepEqual(p.sentIds(), [["v"]]);
 	});
 
 	it("queued and held -> given back: an aborted wait gives back both ends as one no-turn message", () => {
@@ -193,10 +202,11 @@ describe("delivery entry states (ticket F)", () => {
 	it("parent close: session_shutdown drops every entry in every state", () => {
 		const p = parent();
 		p.fire("agent_start");
-		deliverRunEnd(p.pi, "q", end("q"));
 		deliverRunEnd(p.pi, "h", end("h"), { heldByWait: true });
 		deliverRunEnd(p.pi, "f", end("f"));
 		p.fire("agent_before_settle", { entries: [] });
+		deliverRunEnd(p.pi, "q", end("q"));
+		assert.deepEqual(queuedRunEndIds(), ["h", "q"], "held and queued wait; f is in flight");
 		assert.equal(pendingRunEndCount(), 3);
 		p.fire("session_shutdown");
 		assert.equal(pendingRunEndCount(), 0);
