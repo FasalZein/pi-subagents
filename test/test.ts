@@ -109,6 +109,7 @@ import "./runtime/completion-before-deadline.test.ts";
 import "./runtime/timeout-budget.test.ts";
 import "./runtime/timeout-wrap-up.test.ts";
 import "./runtime/timeout-result-delivery.test.ts";
+import "./runtime/batch-state.test.ts";
 import "./runtime/state.test.ts";
 import "./runtime/elapsed-format.test.ts";
 import "./runtime/fork-session-manager.test.ts";
