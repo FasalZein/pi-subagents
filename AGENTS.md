@@ -4,7 +4,6 @@ Read `README.md` first: it documents the model, frontmatter, placement policies,
 
 ## Package facts
 
-- Pi package extension; entrypoint `src/index.ts`.
 - `bun.lock` is the only tracked lockfile; `package-lock.json` is gitignored.
 - Do not use `git stash` in a linked worktree: the stash list is shared with the main checkout, so a pop can apply another session's entry.
 - A new linked worktree can start without `node_modules`; `bunx tsc --noEmit` then fails with TS2688 and tests with `ERR_MODULE_NOT_FOUND`. Run `bun install --frozen-lockfile` there first.
@@ -29,6 +28,7 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 - `test/support/env.ts` restores PATH and the mux variables after each test: set fake-mux variables in `beforeEach`, not `before`.
 - Pi spreads the UI context into a new object: a test UI `Proxy` must hold each method the extension calls (such as `notify`) as an own key.
 - Temp-path assertions compare `realpathSync` paths: on macOS `tmpdir()` is `/var/...` while git and `pwd` report `/private/var/...`.
+- When a test records provider requests: assert on `message.content` only. Pi's faux provider receives tool-result `details`; real providers do not.
 - Do not use `// @ts-nocheck`. If a test probes a dynamic result shape, use a local cast at that assertion.
 
 ## Naming and size rules
@@ -41,9 +41,9 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 ## Validation gates
 
 - Ordinary code changes: `bunx tsc --noEmit` and `npm test` (`bun test` also works).
-- Structure/cleanup changes, also: `bunx @biomejs/biome check .`, `bunx knip`, and before handoff `node scripts/check-file-sizes.mjs`. These one-off checks run via `bunx` so no extra deps are declared.
+- Structure/cleanup changes, also: `bunx @biomejs/biome check .`, `bunx knip`, and before handoff `node scripts/check-file-sizes.mjs`.
 - `bunx biome` resolves an unrelated npm package named `biome` and exits 0 without checking anything; always use the scoped `@biomejs/biome`. The repo has no `biome.json`, so default Biome reformats untouched lines; check touched files with `bunx @biomejs/biome check --line-width 120 --indent-style tab <files>`.
-- Affected tests: leave `test/test.ts` out of an `rg -l` importer list; it imports every suite, so it runs the full suite. Add the shared helpers that assert the text you change, such as `test/mux/pane-result-check.ts` (every backend's result check).
+- Affected tests: leave `test/test.ts` out of an `rg -l` importer list; it imports every suite, so it runs the full suite. `test/support/index.ts` re-exports `test/support/project.ts`, which imports `src/subagents.ts`, so an importer list of `src/subagents.ts` is nearly the full suite. Add the shared helpers that assert the text you change, such as `test/mux/pane-result-check.ts` (every backend's result check).
 
 ## Live behavior validation
 
@@ -51,7 +51,7 @@ Unit tests use fake mux backends. For changes to subagent runtime behavior, also
 
 - Model refs are per-user. For any live Pi run, ask the user which model to use (`PI_SUBAGENT_LIVE_MODEL=provider/model[:thinking]` for the Herdr smokes). Never hardcode provider/model refs in this file, tests, or scripts.
 - Test with at least two models from different families the user has available, at `thinking high` for orchestration changes.
-- To compare checkouts (upstream cf6dbf4, an older commit), start the parent with `pi --no-extensions -e <checkout>/src/index.ts`; otherwise it loads the installed package.
+- To compare checkouts (upstream cf6dbf4, an older commit), start the parent with `pi --no-extensions -e <checkout>/src/index.ts`; otherwise it loads the installed package. Add `-e builtin:codemode --tools +codemode` when the parent must use codemode; `--no-extensions` also drops it.
 - This repo commits no smoke agents (`.pi/` is gitignored). Per repro, create a temporary agent file under `.pi/agents/` or under a temp root pointed at by `PI_CODING_AGENT_DIR`. Give it `extensions: <worktree>/src/index.ts`; without it the child also loads the installed pi-subagents package.
 - A live repro in tmux: `tmux new-session` on a running server does not pass the caller's environment (pass `-e NAME=value`), and a server started under `env -i` lacks `/opt/homebrew/bin` on the pane PATH, so Pi runs pane children headless.
 - Prefer `pi -p` for deterministic repros. For async-parent lifecycle/sidebar repros, use interactive TUI Pi and submit the prompt **after startup**: print/RPC/JSON and CLI startup prompts force synchronous child launches and mask the yielded interval.
