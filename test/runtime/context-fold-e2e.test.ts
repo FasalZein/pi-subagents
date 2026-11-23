@@ -4,6 +4,7 @@ import { type AssistantMessage, fauxAssistantMessage, fauxProvider, fauxToolCall
 import {
 	type AgentSession,
 	createAgentSession,
+	createCodemodeExtension,
 	DefaultResourceLoader,
 	type ExtensionFactory,
 	ModelRuntime,
@@ -59,7 +60,7 @@ interface Parent {
 
 async function startParent(
 	plan: Record<string, ToolCall[]>,
-	options: { api?: string; resumeFile?: string; root?: string } = {},
+	options: { api?: string; resumeFile?: string; root?: string; codemode?: boolean } = {},
 ): Promise<Parent> {
 	const root = options.root ?? createTestDir();
 	const agentDir = join(root, "agent");
@@ -138,7 +139,7 @@ async function startParent(
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root,
 		agentDir,
-		extensionFactories: [extension],
+		extensionFactories: options.codemode ? [extension, createCodemodeExtension({ mode: "on" })] : [extension],
 		noExtensions: true,
 		noSkills: true,
 		noPromptTemplates: true,
@@ -151,7 +152,7 @@ async function startParent(
 		modelRuntime,
 		model: faux.getModel(),
 		resourceLoader,
-		settingsManager: SettingsManager.inMemory({}),
+		settingsManager: SettingsManager.inMemory(options.codemode ? { defaultTools: ["+codemode"] } : {}),
 		sessionManager: options.resumeFile
 			? SessionManager.open(options.resumeFile)
 			: SessionManager.create(root, join(root, "sessions")),
@@ -291,6 +292,26 @@ describe("context fold in a real Pi session", () => {
 			assert.equal(reloaded.foldEntries(), 1, "a settle with no newly used run appends no entry");
 		} finally {
 			await reloaded.dispose();
+		}
+	});
+
+	it("folds a real launch-only codemode script as a whole after the settle", async () => {
+		const code = `const r = await tools.subagent({ name: "child-one", task: "${BRIEF}", title: "One", agent: "worker-a" });\nreturn r.children[0].runId;`;
+		const parent = await startParent(
+			{ ...PLAN, delegate: [fauxToolCall("codemode", { code }, { id: "script-1" })] },
+			{ codemode: true },
+		);
+		try {
+			await useOneRun(parent);
+			await until(() => parent.foldEntries() === 1, "the fold entry");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			const after = parent.requests.at(-1) ?? "";
+			assert.doesNotMatch(after, new RegExp(BRIEF), "the script's brief is gone");
+			assert.doesNotMatch(after, new RegExp(REPORT));
+			assert.match(after, new RegExp(`Folded launch script of runs ${parent.runId()}\\.`));
+		} finally {
+			await parent.dispose();
 		}
 	});
 

@@ -607,15 +607,20 @@ Pi hands each result over once by itself and does not check whether the model re
 When the parent settles idle (Pi's `agent_settled`), every run that the model already used folds. A run is used when it ended, a message or reply with its finished result was committed, and a later provider request completed without error or abort. The session file keeps every message in full. Only the provider requests change, from the next request on:
 
 - The task text of each folded child in a direct `subagent` call becomes a stub. The call keeps its name, agent, title and call id.
-- In a codemode script, the folded run's task text becomes a stub only where it stands verbatim as one string literal. The rest of the script stays.
+- A codemode script folds only as a whole, and only when it launches and nothing else: Pi's complete record of its nested calls holds only `subagent` and `subagent_wait` calls that succeeded, and every run that it started is folded. Its whole code then becomes stub lines that name those runs. Every other script stays unchanged. The settle that folds a script records it in its fold entry, so the decision stays fixed for that script.
 - A `subagent_result` message becomes a stub when all its runs are folded.
 - Wait replies, launch replies and other tool results do not change.
 
 A stub names the run id, the name, the outcome, the report path and the lookup, for example `[Folded subagent run 1a2b3c4d (auth-scout): done, report <path>/report-1.md. Full result: subagent_wait({ runIds: ["1a2b3c4d"] })]`. To get the result again, call `subagent_wait({ runIds })` or read the report path. The original brief is only in the session file.
 
-A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, a script whose task text is not in the code verbatim, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker). Each settle writes one `subagent_context_fold` entry, so the fold set survives `/reload` and resume.
+A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker). Each settle writes one `subagent_context_fold` entry, so the fold set survives `/reload` and resume. For each launch inside a codemode script, Pi also writes a `subagent_context_fold_launch` entry with the run ids only, never the task text.
 
-Folding runs only for the Anthropic messages API (`anthropic-messages`) and the OpenAI Responses API (`openai-responses`). Other APIs, such as Bedrock Converse and Google, can bind earlier messages to a signature, so their requests stay full. The fold is a `context` hook of the agent loop: compaction, `/tree` branch summaries and cache-warmer replays read the session or an earlier request and are not folded.
+Folding runs only for the Anthropic messages API (`anthropic-messages`) and the OpenAI Responses API (`openai-responses`). Other APIs, such as Bedrock Converse and Google, can bind earlier messages to a signature, so their requests stay full. When the session switches to an API that does not fold, its requests carry every folded item in full again. A switch back applies the same fold entries again. The fold is a `context` hook of the agent loop: compaction, `/tree` branch summaries and cache-warmer replays read the session or an earlier request and are not folded.
+
+Two known limits:
+
+- A completed request counts as proof that the model saw a result. If another extension's `context` hook removed the result from that request, the run can still fold.
+- After a parent `/fork`, the new session has its own session id. The stub's `subagent_wait` can then answer `No result record`, but the report path in the stub still works.
 
 ### Wait, look up, and list runs with `subagent_wait`
 

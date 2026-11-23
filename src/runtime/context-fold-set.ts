@@ -8,7 +8,7 @@ import { isFinishedStatus, runEnds } from "./run-end-message.ts";
  * proven safe to fold, it stays full.
  */
 export const CONTEXT_FOLD_ENTRY = "subagent_context_fold";
-/** The runs and exact task texts of one subagent call that a codemode script made. */
+/** The run ids one nested subagent call of a codemode script started (no task text). */
 export const CONTEXT_FOLD_LAUNCH_ENTRY = "subagent_context_fold_launch";
 
 /** The facts a stub names; fixed at the settle that folds the run, so every later stub is the same text. */
@@ -23,12 +23,6 @@ export interface FoldedRun {
 	 * is not used yet and stays full until a later settle folds it.
 	 */
 	foldedAt: number;
-}
-
-/** One run a nested subagent call started, with the exact task text of its child. */
-export interface LaunchedRun {
-	id: string;
-	task: string;
 }
 
 type Rec = Record<string, unknown>;
@@ -142,29 +136,6 @@ function scanFoldEntries(entries: readonly unknown[]): Map<string, { run: Folded
 /** The fold set: every run that a fold entry on this branch names. */
 export function readFoldedRuns(entries: readonly unknown[]): Map<string, FoldedRun> {
 	return new Map([...scanFoldEntries(entries)].map(([id, { run }]) => [id, run]));
-}
-
-/**
- * The runs of each nested subagent call, by nested call id. A call id that two entries name
- * (a provider that reuses ids) is left out, so no script folds on a guess.
- */
-export function readLaunches(entries: readonly unknown[]): Map<string, LaunchedRun[]> {
-	const launches = new Map<string, LaunchedRun[]>();
-	const seen = new Set<string>();
-	for (const entry of entries) {
-		if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== CONTEXT_FOLD_LAUNCH_ENTRY) continue;
-		const data = isRecord(entry.data) ? entry.data : {};
-		const callId = str(data.callId);
-		if (!callId || !Array.isArray(data.runs)) continue;
-		if (seen.has(callId)) launches.delete(callId);
-		else
-			launches.set(
-				callId,
-				data.runs.filter((run): run is LaunchedRun => isRecord(run) && !!str(run.id) && !!str(run.task)),
-			);
-		seen.add(callId);
-	}
-	return launches;
 }
 
 /** A provider request that completed: an errored or aborted one is no proof that the model read anything. */
