@@ -150,9 +150,9 @@ async function promptStart(handlers: Handler[], ctx: { cwd: string }) {
 async function requestMessages(handlers: Map<string, Handler[]>, systemPrompt: string, messages: unknown[]) {
 	let current = messages;
 	for (const handler of handlers.get("context") ?? []) {
-		const result = (await handler({ type: "context", messages: current }, { getSystemPrompt: () => systemPrompt })) as
-			| { messages?: unknown[] }
-			| undefined;
+		// Pi's context ctx always has a session manager; the settle fold reads its branch.
+		const ctx = { getSystemPrompt: () => systemPrompt, sessionManager: { getBranch: () => [] } };
+		const result = (await handler({ type: "context", messages: current }, ctx)) as { messages?: unknown[] } | undefined;
 		current = result?.messages ?? current;
 	}
 	return current;
