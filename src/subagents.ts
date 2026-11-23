@@ -1,4 +1,5 @@
 import { registerOutstandingWorkReporting } from "./runtime/work-reporting.ts";
+import { registerContextFold } from "./runtime/context-fold.ts";
 import { pendingRunEndCount, registerDeliveryQueue } from "./runtime/delivery-queue.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
@@ -179,6 +180,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	publishRunningSubagentCount(() => runningSubagents.size + pendingRunEndCount());
 	const workReporting = registerOutstandingWorkReporting(pi);
 	registerDeliveryQueue(pi);
+	registerContextFold(pi);
 
 	function attachWidgetContext(ctx: ExtensionContext) {
 		widgetManager.attachContext(ctx);
