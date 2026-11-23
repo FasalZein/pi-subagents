@@ -18,7 +18,7 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		name: "Result child",
 		task: "Report result",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

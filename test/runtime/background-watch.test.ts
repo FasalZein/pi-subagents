@@ -13,7 +13,7 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess): RunningSu
 		name: "Background context",
 		task: "Report context",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

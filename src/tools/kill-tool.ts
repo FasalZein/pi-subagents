@@ -41,7 +41,7 @@ export function registerSubagentKillTool(
 					details: { error: match.error ?? "not found" },
 				});
 			// T83: an adopted watcher ends the run before it leaves the map; the stop would be a no-op.
-			if (match.running.phase === "ended")
+			if (match.running.phase.kind === "ended")
 				return asSubagentToolResult({
 					content: [
 						{

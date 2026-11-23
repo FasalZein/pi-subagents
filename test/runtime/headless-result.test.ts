@@ -37,7 +37,7 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess, options: T
 		task: "Answer at length",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

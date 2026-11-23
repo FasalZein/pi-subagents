@@ -1,6 +1,12 @@
 import { deliverRunEnd } from "./delivery-queue.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
+import type {
+	CompletedSubagentResult,
+	RunningSubagent,
+	StartedSubagentToolDetails,
+	StopRequester,
+	SubagentResult,
+} from "../types.ts";
 import { deliverCompletedSubagentResult, endRun, routeSubagentOutcome } from "./result-router.ts";
 import { renderLookup } from "./run-lookup.ts";
 import { applyRunPhaseEvent } from "./run-phase.ts";
@@ -113,13 +119,15 @@ export function findTrackedSubagent(query: string): {
 /**
  * Stops a run that has not ended and returns true; an ended run stays as it is and returns false.
  * `beforeStop` runs only for a run that has not ended, before the phase changes; when it throws, nothing stops.
+ * T70: `by` names who asked; the first stop request that names one names who ended the run.
  */
 export async function stopRunningSubagent(
 	running: RunningSubagent,
 	closeSurface: (running: RunningSubagent) => Promise<void>,
 	beforeStop?: () => void,
+	by?: StopRequester,
 ): Promise<boolean> {
-	if (!applyRunPhaseEvent(running, "stop", beforeStop)) return false;
+	if (!applyRunPhaseEvent(running, { type: "stop", by }, beforeStop)) return false;
 	clearSubagentShutdownTimer(running);
 	running.abortController?.abort();
 

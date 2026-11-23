@@ -187,7 +187,7 @@ async function startBackgroundSubagent(
 		title: getSubagentDisplayTitle(params),
 		agent: params.agent,
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: resolveSubagentParentClosePolicy(prepared.agentDefs),
 		blocking: params.blocking ?? false,
 		async: params.async ?? !(params.blocking ?? false),

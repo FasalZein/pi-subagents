@@ -16,7 +16,7 @@ function makeRunning(overrides: Partial<RunningSubagent> = {}): RunningSubagent 
 		name: "budget-child",
 		task: "work",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		startTime: 1_000_000,
 		sessionFile: "/tmp/does-not-exist.jsonl",
@@ -70,8 +70,10 @@ describe("timeout budget math", () => {
 			timeoutBudget: { idleTimeoutSeconds: 10 },
 			timeoutWarnThreshold: 80,
 			lastProgressAt: 1_000_000,
-			timeoutWrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 },
-			timeoutWrapUpDeadlineAt: 1_010_000,
+			phase: {
+				kind: "soft-limit",
+				wrapUp: { wrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 }, deadlineAt: 1_010_000 },
+			},
 		});
 		observeSubagentProgress(running, 100, 1_000_000);
 		observeSubagentProgress(running, 200, 1_009_000);
@@ -91,7 +93,10 @@ describe("timeout budget math", () => {
 			seconds: 10,
 			threshold: 80,
 		});
-		running.timeoutWrapUp = { kind: "timeout", seconds: 10, threshold: 80 };
+		running.phase = {
+			kind: "soft-limit",
+			wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 },
+		};
 		assert.equal(checkSubagentTimeoutWrapUp(running, running.startTime + 9_000), null);
 	});
 
@@ -144,7 +149,7 @@ describe("timeout budget math", () => {
 	it("stops reporting an expiry once a kill is already underway", () => {
 		const running = makeRunning({ timeoutBudget: { timeoutSeconds: 5 } });
 		assert.deepEqual(checkSubagentTimeout(running, running.startTime + 5_000), { kind: "timeout", seconds: 5 });
-		running.timeoutExpiry = { kind: "timeout", seconds: 5 };
+		running.phase = { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 5 } };
 		assert.equal(checkSubagentTimeout(running, running.startTime + 9_000), null);
 	});
 

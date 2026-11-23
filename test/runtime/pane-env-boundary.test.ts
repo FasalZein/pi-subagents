@@ -450,7 +450,6 @@ for (const backend of BACKENDS)
 					task: "Do the long task",
 					agent: "scout",
 					mode: "interactive",
-					phase: "running",
 					parentClosePolicy: "terminate",
 					async: true,
 					autoExit: false,
@@ -459,7 +458,10 @@ for (const backend of BACKENDS)
 					sessionFile,
 					timeoutBudget: { timeoutSeconds: 10 },
 					timeoutWarnThreshold: 80,
-					timeoutWrapUp: { kind: "timeout", seconds: 10, threshold: 80 },
+					phase: {
+						kind: "soft-limit",
+						wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 },
+					},
 					modelRef: "test/model:off",
 					launchMetadata: {
 						version: 1,

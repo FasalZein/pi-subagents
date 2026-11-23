@@ -67,7 +67,7 @@ function fakeLaunchTool(agents: Record<string, Partial<AgentDefaults>>, { hasUI 
 			title: params.title,
 			agent: params.agent,
 			mode,
-			phase: "running",
+			phase: { kind: "running" },
 			parentClosePolicy: "terminate",
 			blocking: params.blocking,
 			async: params.async,

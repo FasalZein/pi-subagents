@@ -50,7 +50,7 @@ function makeNoSessionRun(
 		task: "Answer at length",
 		agent: "scout",
 		mode,
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy,
 		async: true,
 		noSession: true,

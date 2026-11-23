@@ -63,7 +63,7 @@ describe("a verified fan-out record names its ender and its winner's files (T70 
 				task: "t",
 				agent: "worker",
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
 				async: true,
 				startTime: Date.now(),

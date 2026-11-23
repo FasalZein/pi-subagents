@@ -40,7 +40,7 @@ type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
  * gets no more deliveries).
  */
 export function endRun(running: RunningSubagent): boolean {
-	applyRunPhaseEvent(running, "end");
+	applyRunPhaseEvent(running, { type: "end" });
 	return !isParentDeliveryClosed(running);
 }
 
