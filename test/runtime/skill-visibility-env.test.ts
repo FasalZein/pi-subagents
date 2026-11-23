@@ -162,7 +162,6 @@ describe("skill visibility env on resume and timeout wrap-up", () => {
 				task: "Do the long task",
 				agent: "scout",
 				mode: "background",
-				phase: "running",
 				parentClosePolicy: "terminate",
 				async: true,
 				autoExit: false,
@@ -171,7 +170,7 @@ describe("skill visibility env on resume and timeout wrap-up", () => {
 				sessionFile,
 				timeoutBudget: { timeoutSeconds: 10 },
 				timeoutWarnThreshold: 80,
-				timeoutWrapUp: { kind: "timeout", seconds: 10, threshold: 80 },
+				phase: { kind: "soft-limit", wrapUp: { wrapUp: { kind: "timeout", seconds: 10, threshold: 80 }, deadlineAt: 0 } },
 				modelRef: "test/model:off",
 				launchMetadata: metadata,
 			};

@@ -28,6 +28,7 @@ import {
 } from "../tools/timeout-reminders.ts";
 import { SPAWNING_TOOL_NAMES } from "../tools/tool-names.ts";
 import type { RunningSubagent } from "../types.ts";
+import { timeoutWrapUpOf } from "./run-phase.ts";
 import { addResultWarning } from "./run-result.ts";
 
 interface TimeoutWrapUpRuntime {
@@ -63,7 +64,7 @@ function rememberTail(current: string | undefined, chunk: Buffer | string): stri
 }
 
 function getWrapUpPrompt(running: RunningSubagent): string {
-	const wrapUp = running.timeoutWrapUp;
+	const wrapUp = timeoutWrapUpOf(running);
 	if (!wrapUp) throw new Error("Cannot restart timeout wrap-up before a soft deadline is recorded.");
 	const baseline = wrapUp.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 	const spentSeconds = Math.max(0, Math.round((Date.now() - baseline) / 1000));

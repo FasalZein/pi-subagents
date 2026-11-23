@@ -143,9 +143,7 @@ export async function stopRunningSubagent(
 				// surfaced by the cancelled manifest state instead
 			}
 		}
-		// T70: the first stop request names who ended the run.
-		running.stopRequestedBy ??= stopBy;
-	});
+	}, stopBy);
 	if (stopped) updateWidget();
 }
 

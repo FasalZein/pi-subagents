@@ -18,6 +18,7 @@ import {
 	rmSync,
 	sleep,
 } from "../support/index.ts";
+import { timeoutExpiryOf } from "../../src/runtime/run-phase.ts";
 
 const dirs: string[] = [];
 const spawnedGroups: number[] = [];
@@ -128,7 +129,7 @@ function makeRunning(
 		name: "timeout-child",
 		task: "Loop forever",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -192,7 +193,7 @@ async function runExitSidecarRace(timerOrder: "group" | "poll"): Promise<Awaited
 			return true as const;
 		},
 	};
-	const running = makeRunning(sessionFile, child, {}, { timeoutExpiry: { kind: "timeout", seconds: 1 } });
+	const running = makeRunning(sessionFile, child, {}, { phase: { kind: "stopping", timeoutExpiry: { kind: "timeout", seconds: 1 } } });
 	const resultPromise = watchBackgroundSubagent(
 		running,
 		{
@@ -757,7 +758,7 @@ describe("background watcher timeout budgets", () => {
 		assert.deepEqual(signalsWhileWorking, []);
 		assert.equal(result.timedOut, undefined);
 		// An opt-in feature must leave an agent that never opted in untouched.
-		assert.equal(running.timeoutExpiry, undefined);
+		assert.equal(timeoutExpiryOf(running), undefined);
 		assert.equal(running.timeoutKillTimer, undefined);
 		assert.equal(readSubagentTimeoutSidecar(sessionFile), null);
 	});

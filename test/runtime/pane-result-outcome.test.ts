@@ -50,7 +50,7 @@ describe("pane result outcome", () => {
 			task: "Answer",
 			agent: "scout",
 			mode: "interactive",
-			phase: "running",
+			phase: { kind: "running" },
 			parentClosePolicy: "terminate",
 			async: true,
 			startTime: Date.now(),

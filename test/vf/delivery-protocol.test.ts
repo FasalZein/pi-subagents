@@ -119,7 +119,7 @@ describe("verified fan-out reattach", () => {
 		// The parent session closes while the detached supervisor keeps running (D15).
 		closeParentDelivery(watched);
 		await watched.completionPromise;
-		assert.equal(watched.phase, "ended");
+		assert.equal(watched.phase.kind, "ended");
 		assert.equal(closed.messages.length, 0, "a closed parent gets no delivery");
 		const next = captureSink();
 		const again = await adoptVerifiedRuns(next.sink as never, repo, { sessionId: "session-origin" });

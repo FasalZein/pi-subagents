@@ -43,7 +43,7 @@ function makeRunning(params: SubagentParamsInput): RunningSubagent {
 		title: params.title,
 		agent: params.agent,
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

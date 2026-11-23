@@ -138,7 +138,7 @@ describe("herdr-core close, lost replies and parent close (T46, D27)", () => {
 			name: id,
 			task: "Run until the parent closes",
 			mode: "interactive" as const,
-			phase: "running" as const,
+			phase: { kind: "running" } as const,
 			parentClosePolicy,
 			startTime: Date.now(),
 			sessionFile: join(root, `${id}.jsonl`),

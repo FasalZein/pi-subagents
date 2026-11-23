@@ -200,7 +200,7 @@ async function startParent(options: { deepCwd?: boolean } = {}): Promise<Parent>
 				task: params.task,
 				agent: params.agent,
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
 				blocking: false,
 				async: true,

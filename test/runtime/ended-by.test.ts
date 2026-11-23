@@ -49,7 +49,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -198,8 +198,7 @@ describe("run records say who ended the run (T70)", () => {
 		assert.equal(kill?.record.endedBy, "time_limit");
 		assert.match(textOf(kill).split("\n")[0], / · ended by time limit$/);
 		const wrapped = setup([user("task"), assistant("Wrap-up report.")], {
-			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			phase: "wrapping-up",
+			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
 		});
 		assert.equal(publishRunResult(wrapped.running, watchedEnd())?.record.endedBy, "time_limit");
 	});

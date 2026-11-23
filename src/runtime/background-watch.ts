@@ -7,13 +7,12 @@ import { findLastSubagentOutputWithSource, getEntries, getEntryCount, getNewEntr
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
-import { applyRunPhaseEvent } from "./run-phase.ts";
+import { applyRunPhaseEvent, timeoutExpiryOf, timeoutWrapUpField } from "./run-phase.ts";
 import {
 	CANCELLED_SUMMARY,
 	isAcceptedCompletion,
 	isDeadlineEnforceable,
 	isStopRequested,
-	keepCompletionOverWrapUp,
 	keepsCompletionOverWrapUp,
 	publishedResultFields,
 	publishRunResult,
@@ -28,6 +27,7 @@ import {
 	getSubagentNextDeadlineAt,
 	hasChildProgress,
 	observeSubagentProgress,
+	wrapUpDeadlineFor,
 } from "./timeout-budget.ts";
 import { startTimeoutWrapUpWithinDeadline } from "./timeout-restart.ts";
 
@@ -131,7 +131,7 @@ function buildBackgroundRestartTimeoutResult(
 		timedOutAfter: expiry.seconds,
 		...(running.timeoutBlocksResume === true ? { timeoutBlocksResume: true } : {}),
 		...(running.timeoutKillFailed === true ? { timeoutKillFailed: true } : {}),
-		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+		...timeoutWrapUpField(running),
 	}, timedOut);
 }
 
@@ -177,7 +177,7 @@ async function watchBackgroundSubagentUntilFinal(
 				if (restart.kind === "timedOut") {
 					return buildBackgroundRestartTimeoutResult(running, restart.expiry);
 				}
-				applyRunPhaseEvent(running, "wrapUp");
+				applyRunPhaseEvent(running, { type: "wrapUp" });
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -189,7 +189,7 @@ async function watchBackgroundSubagentUntilFinal(
 					exitCode: 1,
 					elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 					error: message,
-					...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+					...timeoutWrapUpField(running),
 				}, { kind: "failed", error: message }, "time_limit");
 			}
 		}
@@ -263,9 +263,7 @@ function watchBackgroundGeneration(
 			// on the way out of our own SIGTERM, so anything published after this
 			// point is a consequence of the kill, not a verdict that outranks it.
 			if (hasSubagentExitSidecar(running.sessionFile) || isAcceptedCompletion(consumedExit)) return false;
-			const killed = applyRunPhaseEvent(running, "timeLimit", () => {
-				running.timeoutExpiry = expired;
-			});
+			const killed = applyRunPhaseEvent(running, { type: "timeLimit", expiry: expired });
 			if (!killed) return false;
 			if (!running.timeoutKillTimer) beginKill();
 			return true;
@@ -276,10 +274,7 @@ function watchBackgroundGeneration(
 			const due = checkSubagentTimeoutWrapUp(running, now);
 			if (!due || hasSubagentExitSidecar(running.sessionFile)) return false;
 			// Only a running generation is interrupted for its wrap-up; a stopping or wrapping-up one is not.
-			if (!applyRunPhaseEvent(running, "softLimit")) return false;
-			running.timeoutWrapUp = due;
-			const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
-			running.timeoutWrapUpDeadlineAt = baseline + due.seconds * 1000;
+			if (!applyRunPhaseEvent(running, { type: "softLimit", wrapUp: wrapUpDeadlineFor(running, due) })) return false;
 			beginKill();
 			return true;
 		};
@@ -335,7 +330,7 @@ function watchBackgroundGeneration(
 				return;
 			}
 			// The runtime already ends this generation; one more SIGTERM could force the child's exit.
-			if (running.phase === "soft-limit" || running.phase === "stopping") return;
+			if (running.phase.kind === "soft-limit" || running.phase.kind === "stopping") return;
 			if (!sessionReadable) return;
 			try {
 				if (!shouldReapStableTerminalSummary(running)) return;
@@ -371,12 +366,12 @@ function watchBackgroundGeneration(
 			code: number | null,
 			exitSignal: ReturnType<typeof consumeSubagentExitSignal>,
 		) => {
-			if (running.phase === "soft-limit" && !signal.aborted && exitSignal?.reason !== "ping") {
+			if (running.phase.kind === "soft-limit" && !signal.aborted && exitSignal?.reason !== "ping") {
 				if (!keepsCompletionOverWrapUp(running, exitSignal)) {
 					finish({ kind: "restart" });
 					return;
 				}
-				keepCompletionOverWrapUp(running);
+				applyRunPhaseEvent(running, { type: "keepCompletion" });
 			}
 			const elapsed = Math.floor((Date.now() - running.startTime) / 1000);
 			// D7: a stop decides the outcome, whatever the dying child wrote (a done record, a ping or
@@ -385,7 +380,7 @@ function watchBackgroundGeneration(
 			const ping = stopped ? undefined : exitSignal?.ping;
 			// A ping is child-initiated and asks the parent for help, so it still
 			// outranks the kill. A `done` at this point does not: see above.
-			const timedOut = running.timeoutExpiry && exitSignal?.reason !== "ping" ? running.timeoutExpiry : undefined;
+			const timedOut = timeoutExpiryOf(running) && exitSignal?.reason !== "ping" ? timeoutExpiryOf(running) : undefined;
 			// A child shut down by the runtime often exits cleanly. Reporting that
 			// as exit 0 would file a killed runaway as a success.
 			const exitCode = timedOut ? (code || 1) : (exitSignal?.exitCode ?? code ?? 1);
@@ -465,7 +460,7 @@ function watchBackgroundGeneration(
 							...(running.timeoutBlocksResume === true ? { timeoutBlocksResume: true } : {}),
 						}
 					: {}),
-				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+				...timeoutWrapUpField(running),
 				ping,
 				errorMessage,
 				...(stopped ? { error: "cancelled" } : {}),
@@ -477,8 +472,8 @@ function watchBackgroundGeneration(
 			const exitSignal = consumeSubagentExitSignal(running.sessionFile, "child-exited");
 			consumedExit = exitSignal;
 			const runtimeOwnsExit =
-				Boolean(running.timeoutExpiry) ||
-				running.phase === "soft-limit" ||
+				Boolean(timeoutExpiryOf(running)) ||
+				running.phase.kind === "soft-limit" ||
 				signal.aborted;
 			if (runtimeOwnsExit && processGroupPid && isProcessGroupAlive(processGroupPid, processProbe)) {
 				if (!groupExitPoll) {
@@ -495,7 +490,7 @@ function watchBackgroundGeneration(
 			finalizeExit(code, exitSignal);
 		};
 		const onError = (error: Error) => {
-			if (running.phase === "soft-limit" && !signal.aborted) {
+			if (running.phase.kind === "soft-limit" && !signal.aborted) {
 				finish({ kind: "restart" });
 				return;
 			}
@@ -510,7 +505,7 @@ function watchBackgroundGeneration(
 				exitCode: 1,
 				elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 				error: error.message,
-				...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+				...timeoutWrapUpField(running),
 				}, { kind: "failed", error: error.message }),
 			});
 		};
@@ -532,6 +527,6 @@ function buildBackgroundCancellationResult(running: RunningSubagent): SubagentRe
 		exitCode: 1,
 		elapsed: Math.floor((Date.now() - running.startTime) / 1000),
 		error: "cancelled",
-		...(running.timeoutWrapUp ? { timeoutWrapUp: running.timeoutWrapUp } : {}),
+		...timeoutWrapUpField(running),
 	}, stoppedEnd(running));
 }

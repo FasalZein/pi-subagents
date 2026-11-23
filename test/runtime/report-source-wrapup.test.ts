@@ -47,7 +47,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}, resu
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -165,8 +165,7 @@ describe("D12 report storage failure", () => {
 
 describe("D21 completed wrap-up", () => {
 	const wrapUp = {
-		timeoutWrapUp: { kind: "timeout" as const, seconds: 100, threshold: 80 },
-		phase: "wrapping-up" as const,
+		phase: { kind: "wrapping-up" as const, wrapUp: { wrapUp: { kind: "timeout" as const, seconds: 100, threshold: 80 }, deadlineAt: 0 } },
 	};
 
 	it("shows the report outcome and names the time limit", () => {

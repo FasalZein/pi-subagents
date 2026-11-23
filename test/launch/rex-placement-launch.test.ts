@@ -157,7 +157,7 @@ describe("Rex placement at launch (T71, D28)", () => {
 	/** Resumes an interactive child whose launch stored the given env and policy; returns the create verbs. */
 	/** Restarts the run for a timeout wrap-up, as wiring.ts does at the warning threshold. */
 	async function wrapUp(running: RunningSubagent): Promise<void> {
-		running.timeoutWrapUp = { kind: "timeout", seconds: 60, threshold: 80 };
+		running.phase = { kind: "soft-limit", wrapUp: { wrapUp: { kind: "timeout", seconds: 60, threshold: 80 }, deadlineAt: 0 } };
 		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
 	}
 

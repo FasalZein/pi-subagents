@@ -35,7 +35,7 @@ async function tracePaneEnd(pollResult: Record<string, unknown>): Promise<string
 		task: "Work",
 		agent: "scout",
 		mode: "interactive",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

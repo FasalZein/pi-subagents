@@ -94,7 +94,7 @@ async function paneRun(
 		task: "Fix the build",
 		agent: "worker",
 		mode: "interactive",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		autoExit,

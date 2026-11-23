@@ -17,6 +17,7 @@ import {
 	sleep,
 	waitForSubagentForTest,
 } from "../support/index.ts";
+import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 
 // T23 (D7, D15): a launch that waits takes its results through the delivery queue, and the
 // abort signal of the tool call reaches every wait. The parent is a mock Pi whose boundary events
@@ -62,7 +63,7 @@ function blockingRunning(name: string): RunningSubagent {
 		title: `T ${name}`,
 		agent: "worker-a",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		blocking: true,
 		async: false,
@@ -227,7 +228,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const waited = await waitForSubagentForTest({ id: running.id }, abort.signal);
 		assert.equal((waited.details as { error?: string }).error, "interrupted");
 		// T26 (D16): the aborted wait stops nothing; the run keeps running.
-		assert.equal(runningSubagents.get(running.id)?.phase, "running", "no stop was sent");
+		assert.equal(runningSubagents.get(running.id)?.phase.kind, "running", "no stop was sent");
 		const end = endOf(running.name, "LATE REPORT");
 		resolveCompletion(end);
 		routeDetachedSubagentCompletionForTest(parent.pi, running as any, end);
@@ -247,8 +248,8 @@ describe("T23: launches that wait use the delivery owner", () => {
 		abort.abort();
 		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
 		assert.equal((result.details as { error?: string }).error, "interrupted");
-		assert.equal(running.stopRequestedBy, "operator");
-		assert.equal(running.phase, "stopping");
+		assert.equal(stopRequesterOf(running), "operator");
+		assert.equal(running.phase.kind, "stopping");
 	});
 
 	// D04a: expected value from cf6dbf4 src/tools/subagent-tools.ts getToolWaitSignal: an explicitly
@@ -338,8 +339,9 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.ok(copies[0].content.length <= COPY_CAP);
 		assert.equal(copies[0].triggerTurn, false, "the person stopped the turn: the given-back result starts none");
 		const two = runningSubagents.get("id-child-two");
-		assert.equal(two?.phase, "stopping", "a stop was sent to child 2");
-		assert.equal(two?.stopRequestedBy, "operator");
+		assert.equal(two?.phase.kind, "stopping", "a stop was sent to child 2");
+		assert.ok(two);
+		assert.equal(stopRequesterOf(two), "operator");
 		assert.equal(runningSubagents.get("id-child-one"), undefined, "child 1 had ended and is not stopped");
 	});
 
@@ -363,7 +365,8 @@ describe("T23: launches that wait use the delivery owner", () => {
 		assert.equal(one?.status, "completed");
 		assert.match(result.content[0].text, /ONE-ENDED-REPORT/);
 		const two = runningSubagents.get("id-child-two");
-		assert.equal(two?.stopRequestedBy, "operator", "child 2 still ran and was stopped");
+		assert.ok(two);
+		assert.equal(stopRequesterOf(two), "operator", "child 2 still ran and was stopped");
 	});
 
 	it("D04a: a resume or single launch wait that starts after Esc returns the report of a child that already ended", async () => {
@@ -379,7 +382,7 @@ describe("T23: launches that wait use the delivery owner", () => {
 		const result = await getLaunchedSubagentResultForTest(running, abort.signal);
 		assert.equal((result.details as { error?: string }).error, undefined);
 		assert.match(result.content[0].text, /ENDED-REPORT/);
-		assert.equal(running.stopRequestedBy, undefined, "an ended child is not stopped");
+		assert.equal(stopRequesterOf(running), undefined, "an ended child is not stopped");
 	});
 
 	it("an early caller_ping is taken by the launch wait like any queued result", async () => {

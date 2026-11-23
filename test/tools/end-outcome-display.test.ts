@@ -30,6 +30,7 @@ import {
 	rmSync,
 } from "../support/index.ts";
 import { assistant, toolCall, toolResult } from "../support/result-fixtures.ts";
+import { timeoutWrapUpOf } from "../../src/runtime/run-phase.ts";
 
 /**
  * D14 through the registered TUI renderers: the detached message (message renderer) and the waiting
@@ -56,7 +57,7 @@ function setup(entries: object[], overrides: Partial<RunningSubagent> = {}) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -332,10 +333,9 @@ describe("end outcome displays (T09 fix round 1)", () => {
 	// T77 (D21): cf6dbf4 showed a finished wrap-up as completed; the report outcome shows, the limit stays named.
 	it("shows a finished report-only wrap-up with its report outcome and its notice", async () => {
 		const running = setup(DONE_CALL, {
-			timeoutWrapUp: { kind: "timeout", seconds: 100, threshold: 80 },
-			phase: "wrapping-up",
+			phase: { kind: "wrapping-up", wrapUp: { wrapUp: { kind: "timeout", seconds: 100, threshold: 80 }, deadlineAt: 0 } },
 		});
-		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: running.timeoutWrapUp });
+		const result = watcherResult(running, watchedEnd(), { timeoutWrapUp: timeoutWrapUpOf(running) });
 		for (const shown of [renderedMessage(running, result).text, await renderedWaitingLaunch(running, result)]) {
 			assert.match(shown, /worker \(scout\) — done/);
 			assert.doesNotMatch(shown, /timed out/);
