@@ -594,7 +594,7 @@ describe("T28: a batch whose later child fails to launch", () => {
 			const value = scriptValue(harness) as {
 				launch: { status: string; failed: unknown; children: ScriptChild[] };
 				ended: string[];
-				waited: { status: string; results: { runId: string; text: string }[]; pending: string[] };
+				waited: { status: string; results: Record<string, unknown>[]; pending: string[] };
 			};
 			const one = runOf(harness, "child-one").id;
 			const two = runOf(harness, "child-two").id;
@@ -616,12 +616,18 @@ describe("T28: a batch whose later child fails to launch", () => {
 			assert.deepEqual(harness.stopped, [two], "the started child was stopped by its run id");
 			assert.equal(value.waited.status, "complete");
 			assert.deepEqual(value.waited.pending, []);
-			// The wait tool reads records from the session's results folder, not this harness's store,
-			// so the check reads each returned rendering.
-			const waitedText = new Map(value.waited.results.map((result) => [result.runId, result.text]));
-			assert.deepEqual([...waitedText.keys()].sort(), [one, two].sort());
-			assert.match(waitedText.get(one) ?? "", /ONE-DONE-EARLY/);
-			assert.match(waitedText.get(two) ?? "", /STOPPED child-two/);
+			// The wait tool reads records from the session's results folder, not this harness's store, so
+			// both records are null. A script has no rendering to fall back on: an entry in results shows
+			// that the run ended (owner decision 2026-11-23: scripts read records only).
+			const byRunId = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+				String(a.runId).localeCompare(String(b.runId));
+			assert.deepEqual(
+				[...value.waited.results].sort(byRunId),
+				[
+					{ runId: one, name: "child-one", record: null },
+					{ runId: two, name: "child-two", record: null },
+				].sort(byRunId),
+			);
 			assert.equal(harness.launched(FAILING_CHILD), false, "the failed child never ran");
 		} finally {
 			await harness.dispose();

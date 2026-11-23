@@ -669,7 +669,7 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` has the run's `runId`, its launch `name`, its rendered `text` and its `record`; with `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` is an ended run and has the run's `runId`, its launch `name` and its `record`, but no rendered text. A run that published no record has `record: null`. With `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
 
 ### Recipe: run a batch in one script
 
@@ -705,8 +705,8 @@ text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
 
 const lookUp = (id) => `subagent_wait({ runIds: ["${id}"] })`;
 
-function entry(id, record, fallback) {
-	if (!record) return { id, outcome: "unknown", check: `no result record: ${fallback.slice(0, SUMMARY_CHARS)}` };
+function entry(id, record) {
+	if (!record) return { id, outcome: "unknown", check: "no result record" };
 	const run = {
 		id,
 		name: record.name,
@@ -724,13 +724,13 @@ function entry(id, record, fallback) {
 	return run;
 }
 
-const runs = launch.children.filter((child) => child.state === "ended").map((child) => entry(child.runId, child.record, ""));
+const runs = launch.children.filter((child) => child.state === "ended").map((child) => entry(child.runId, child.record));
 const started = launch.children.filter((child) => child.state === "started").map((child) => child.runId);
 let pending = [];
 let missing = [];
 if (started.length > 0) {
 	const wait = await tools.subagent_wait({ runIds: started, timeout: WAIT_SECONDS });
-	runs.push(...wait.results.map((result) => entry(result.runId, result.record, result.text)));
+	runs.push(...wait.results.map((result) => entry(result.runId, result.record)));
 	pending = wait.pending;
 	missing = wait.missing.map((item) => ({ id: item.runId, error: item.error.slice(0, SUMMARY_CHARS) }));
 }

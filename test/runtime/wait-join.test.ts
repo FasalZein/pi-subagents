@@ -356,6 +356,30 @@ describe("T24: the tool gives scripts structured records", () => {
 		resetSubagentStateForTest();
 	});
 
+	it("a script entry has no rendered text; the direct reply keeps the text", async () => {
+		resetSubagentStateForTest();
+		// biome-ignore lint/suspicious/noExplicitAny: the captured definition is probed dynamically.
+		let tool: any;
+		registerSubagentWaitTool({ registerTool: (definition: unknown) => (tool = definition) } as never, () => true, {
+			mayLaunch: () => true,
+		});
+		const sent: Sent[] = [];
+		const finish = startRun("one", sent, createTestDir());
+		const call = tool.execute("c1", { runIds: ["id-one"] }, undefined, undefined, parentToolCtx(createTestDir(), {}));
+		await tick();
+		finish("ONE-REPORT");
+		const result = await call;
+		const structured = result.structuredContent as SubagentWaitStructured;
+		assert.deepEqual(
+			structured.results.map((entry) => Object.keys(entry).sort()),
+			[["name", "record", "runId"]],
+			"a script reads the record, not the rendering",
+		);
+		assert.equal(result.details, result.structuredContent);
+		assert.match(result.content[0].text, /ONE-REPORT/, "the direct reply keeps its text");
+		resetSubagentStateForTest();
+	});
+
 	it("refuses a caller that may not launch, at call time", async () => {
 		// biome-ignore lint/suspicious/noExplicitAny: the captured definition is probed dynamically.
 		let tool: any;
