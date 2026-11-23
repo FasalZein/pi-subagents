@@ -602,6 +602,21 @@ When a watched run ends, Pi writes its result files and then hands the result ov
 
 Pi hands each result over once by itself and does not check whether the model read it. A copy can come from a lookup, from an interrupted wait that gives its results back as a message, or from a verified winner that Pi adopts again because no receipt confirmed the first delivery. Every copy has the same size limit. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
 
+### Settle fold: used runs become stubs in later requests
+
+When the parent settles idle (Pi's `agent_settled`), every run that the model already used folds. A run is used when it ended, a message or reply with its finished result was committed, and a later provider request completed without error or abort. The session file keeps every message in full. Only the provider requests change, from the next request on:
+
+- The task text of each folded child in a direct `subagent` call becomes a stub. The call keeps its name, agent, title and call id.
+- In a codemode script, the folded run's task text becomes a stub only where it stands verbatim as one string literal. The rest of the script stays.
+- A `subagent_result` message becomes a stub when all its runs are folded.
+- Wait replies, launch replies and other tool results do not change.
+
+A stub names the run id, the name, the outcome, the report path and the lookup, for example `[Folded subagent run 1a2b3c4d (auth-scout): done, report <path>/report-1.md. Full result: subagent_wait({ runIds: ["1a2b3c4d"] })]`. To get the result again, call `subagent_wait({ runIds })` or read the report path. The original brief is only in the session file.
+
+A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, a script whose task text is not in the code verbatim, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker). Each settle writes one `subagent_context_fold` entry, so the fold set survives `/reload` and resume.
+
+Folding runs only for the Anthropic messages API (`anthropic-messages`) and the OpenAI Responses API (`openai-responses`). Other APIs, such as Bedrock Converse and Google, can bind earlier messages to a signature, so their requests stay full. The fold is a `context` hook of the agent loop: compaction, `/tree` branch summaries and cache-warmer replays read the session or an earlier request and are not folded.
+
 ### Wait, look up, and list runs with `subagent_wait`
 
 | Parameter | Default | Meaning |

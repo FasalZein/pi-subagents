@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -9,14 +10,11 @@ import {
 	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import {
-	CONTEXT_FOLD_ENTRY,
-	foldMessages,
-	readFoldedRuns,
-	registerContextFold,
-} from "../../src/runtime/context-fold.ts";
+import { getSessionResultsDir } from "../../src/artifact-storage.ts";
+import { registerContextFold } from "../../src/runtime/context-fold.ts";
 import { registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
+import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
@@ -30,16 +28,18 @@ import {
 	resetSubagentStateForTest,
 	setRunningSubagentForTest,
 } from "../support/index.ts";
+import { sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
 // The settle fold at the extension boundary: a real Pi parent session with a faux provider launches
-// one async child through the real launch tool; the child is a fake, delivery and the fold are
-// production code. Each provider request is recorded as the model got it.
+// one async child through the real launch tool; the child is a fake that publishes its record and
+// report as its watcher does. Delivery and the fold are production code. Each provider request is
+// recorded as the model got it (message content and tool-call arguments; details stay local).
 
 type ToolCall = ReturnType<typeof fauxToolCall>;
 
 const BRIEF = "BRIEF-TEXT-OF-CHILD-ONE";
 const REPORT = "CHILD-ONE-FULL-REPORT";
-const RUN = "id-child-one";
+const FOLD_ENTRY = "subagent_context_fold";
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -50,17 +50,22 @@ function textOf(content: unknown): string {
 interface Parent {
 	session: AgentSession;
 	requests: string[];
-	finish(summary: string): void;
+	/** Ends the child as its watcher does after subagent_done: a published record and report file. */
+	finish(report: string): void;
+	runId(): string;
+	foldEntries(): number;
 	dispose(): Promise<void>;
 }
 
-async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
-	const root = createTestDir();
+async function startParent(
+	plan: Record<string, ToolCall[]>,
+	options: { api?: string; resumeFile?: string; root?: string } = {},
+): Promise<Parent> {
+	const root = options.root ?? createTestDir();
 	const agentDir = join(root, "agent");
-	const faux = fauxProvider();
+	const faux = fauxProvider({ api: options.api ?? "anthropic-messages" });
 	const requests: string[] = [];
 	const step = (context: { messages: { role: string; content: unknown }[] }): AssistantMessage => {
-		// The model-visible part: providers send content and tool-call arguments, not details.
 		requests.push(JSON.stringify(context.messages.map((message) => message.content)));
 		const last = context.messages.at(-1);
 		const calls = last?.role === "user" ? plan[textOf(last.content)] : undefined;
@@ -75,15 +80,24 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 		refreshOnCreate: false,
 	});
 	modelRuntime.registerNativeProvider(faux.provider);
-	const store = new ResultStore(join(root, "results"), () => {});
+	// The session's own results folder, written through a store that subagent_wait does not use:
+	// a lookup must read the files, as a fresh process does.
+	let store: ResultStore | undefined;
+	const sessionStore = () => {
+		store ??= new ResultStore(getSessionResultsDir(root, session.sessionManager.getSessionId()), () => {});
+		return store;
+	};
 	let finish: ((result: SubagentResult) => void) | undefined;
+	let child: RunningSubagent | undefined;
 	const runtime: SubagentToolRuntime = {
 		loadAgentDefaults: () => ({ spawning: true, async: true, mode: "background" }) as never,
 		resolveEffectiveSessionMode: () => "lineage-only",
 		resolveTaskSessionMode: () => "lineage-only",
 		launchBackgroundSubagent: async (params) => {
+			// As in production, the run id is the reserved result id (D16).
+			const reservation = sessionStore().reserve();
 			const running = {
-				id: `id-${params.name}`,
+				id: reservation.runId,
 				name: params.name,
 				task: params.task,
 				agent: "worker-a",
@@ -94,9 +108,10 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 				async: true,
 				startTime: Date.now(),
 				sessionFile: join(root, `${params.name}.jsonl`),
-				resultTarget: { store, reservation: store.reserve(), parentCwd: root, warnings: [] },
+				resultTarget: { store: sessionStore(), reservation, parentCwd: root, warnings: [] },
 			} as RunningSubagent;
 			setRunningSubagentForTest(running as never);
+			child = running;
 			return running;
 		},
 		launchSubagent: async () => {
@@ -137,7 +152,9 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 		model: faux.getModel(),
 		resourceLoader,
 		settingsManager: SettingsManager.inMemory({}),
-		sessionManager: SessionManager.create(root, join(root, "sessions")),
+		sessionManager: options.resumeFile
+			? SessionManager.open(options.resumeFile)
+			: SessionManager.create(root, join(root, "sessions")),
 	});
 	// An interactive parent: a headless one awaits every launch. Pi spreads the UI context, so a
 	// method the parent calls (notify) must be an own key.
@@ -146,16 +163,41 @@ async function startParent(plan: Record<string, ToolCall[]>): Promise<Parent> {
 	return {
 		session,
 		requests,
-		finish: (summary) =>
+		finish: (report) => {
+			if (!child) assert.fail("no child");
+			const args = { outcome: "done", summary: report };
+			const entries = [
+				sessionHeader(),
+				user("task"),
+				toolCall("subagent_done", args, "done-1"),
+				toolResult("subagent_done", "done-1", "Result recorded."),
+			];
+			writeFileSync(child.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+			const end: WatchedEnd = {
+				exitCode: 0,
+				operatorClosed: false,
+				closedByPerson: false,
+				stopped: false,
+				exitSignal: { reason: "done", exitCode: 0, acceptedCall: { toolCallId: "done-1", args } },
+				contextUsage: {},
+			};
+			const published = publishRunResult(child, end);
+			if (!published) assert.fail("the run published no record");
 			finish?.({
 				name: "child-one",
 				task: "t",
-				summary,
-				summarySource: "subagent",
-				sessionFile: "/tmp/c.jsonl",
+				summary: published.summary,
+				summarySource: published.summarySource,
+				sessionFile: child.sessionFile,
 				exitCode: 0,
 				elapsed: 1,
-			}),
+				...publishedResultFields(published),
+			});
+		},
+		runId: () => child?.id ?? assert.fail("no child"),
+		foldEntries: () =>
+			session.sessionManager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === FOLD_ENTRY)
+				.length,
 		async dispose() {
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 			session.dispose();
@@ -173,54 +215,72 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 }
 
 const PLAN = {
+	// The live finding (cpa/gpt-6.2-sol): a model that fills every optional field sends the top-level
+	// form with an empty children list; the launch normalizer treats it as the single form.
 	delegate: [
 		fauxToolCall(
 			"subagent",
-			{ children: [{ name: "child-one", task: BRIEF, title: "One", agent: "worker-a" }] },
+			{ name: "child-one", task: BRIEF, title: "One", agent: "worker-a", children: [] },
 			{ id: "launch-1" },
 		),
 	],
-	lookup: [fauxToolCall("subagent_wait", { runIds: [RUN] }, { id: "wait-1" })],
 };
+const lookupPlan = (runId: string) => ({
+	...PLAN,
+	lookup: [fauxToolCall("subagent_wait", { runIds: [runId] }, { id: "wait-1" })],
+});
 
-const foldEntries = (parent: Parent) =>
-	parent.session.sessionManager
-		.getEntries()
-		.filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_FOLD_ENTRY);
+/** Launch, let the idle parent take the result in a new turn, and settle. */
+async function useOneRun(parent: Parent): Promise<void> {
+	await parent.session.prompt("delegate");
+	await parent.session.waitForIdle();
+	assert.equal(parent.foldEntries(), 0, "a running run does not fold");
+	const before = parent.requests.length;
+	parent.finish(REPORT);
+	await until(() => parent.requests.length > before, "the result turn");
+	await parent.session.waitForIdle();
+	const resultRequest = parent.requests.at(-1) ?? "";
+	assert.match(resultRequest, new RegExp(BRIEF), "before the settle the request holds the brief");
+	assert.match(resultRequest, new RegExp(REPORT), "before the settle the request holds the result");
+}
 
 describe("context fold in a real Pi session", () => {
-	it("sends the full brief and result before the settle, stubs after it; subagent_wait still returns the result", async () => {
+	it("folds brief and result after the settle; a reloaded session keeps the stubs and the lookup reads the file", async () => {
 		const parent = await startParent(PLAN);
+		let file = "";
+		let root = "";
+		let runId = "";
 		try {
-			await parent.session.prompt("delegate");
-			await parent.session.waitForIdle();
-			assert.equal(foldEntries(parent).length, 0, "a running run does not fold");
-			const before = parent.requests.length;
-			parent.finish(REPORT);
-			// The idle parent gets the result at once with a new turn.
-			await until(() => parent.requests.length > before, "the result turn");
-			await parent.session.waitForIdle();
-			const resultRequest = parent.requests.at(-1)!;
-			assert.match(resultRequest, new RegExp(BRIEF), "before the settle the request holds the brief");
-			assert.match(resultRequest, new RegExp(REPORT), "before the settle the request holds the result");
-			await until(() => foldEntries(parent).length === 1, "the fold entry of the settle");
-
+			await useOneRun(parent);
+			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
 			await parent.session.prompt("next");
 			await parent.session.waitForIdle();
-			const after = parent.requests.at(-1)!;
+			const after = parent.requests.at(-1) ?? "";
 			assert.doesNotMatch(after, new RegExp(BRIEF), "after the settle the brief is a stub");
 			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the result is a stub");
-			assert.match(after, /Folded subagent run id-child-one \(child-one\)/);
-			assert.match(after, /subagent_wait\(\{ runIds: \[\\"id-child-one\\"\] \}\)/);
-			// The session file keeps the full text.
-			const file = parent.session.sessionManager.getSessionFile()!;
+			runId = parent.runId();
+			assert.match(after, new RegExp(`Folded subagent run ${runId} \\(child-one\\): done, report /[^ ]+\\.md\\.`));
+			assert.match(after, new RegExp(`subagent_wait\\(\\{ runIds: \\[\\\\"${runId}\\\\"\\] \\}\\)`));
+			file = parent.session.sessionManager.getSessionFile() ?? assert.fail("no session file");
+			root = parent.session.sessionManager.getCwd();
 			const stored = JSON.stringify(SessionManager.open(file).getEntries());
-			assert.match(stored, new RegExp(BRIEF));
-			assert.match(stored, new RegExp(REPORT));
-
-			await parent.session.prompt("lookup");
-			await parent.session.waitForIdle();
-			const reply = parent.session.messages.find(
+			assert.match(stored, new RegExp(BRIEF), "the session file keeps the brief");
+			assert.match(stored, new RegExp(REPORT), "the session file keeps the result");
+		} finally {
+			await parent.dispose();
+		}
+		// A freshly bound session on the same file: no runtime state, a new result store.
+		const reloaded = await startParent(lookupPlan(runId), { resumeFile: file, root });
+		try {
+			await reloaded.session.prompt("again");
+			await reloaded.session.waitForIdle();
+			const request = reloaded.requests.at(-1) ?? "";
+			assert.doesNotMatch(request, new RegExp(BRIEF));
+			assert.doesNotMatch(request, new RegExp(REPORT));
+			assert.match(request, new RegExp(`Folded subagent run ${runId}`));
+			await reloaded.session.prompt("lookup");
+			await reloaded.session.waitForIdle();
+			const reply = reloaded.session.messages.find(
 				(message) => message.role === "toolResult" && message.toolName === "subagent_wait",
 			);
 			assert.match(
@@ -228,30 +288,21 @@ describe("context fold in a real Pi session", () => {
 				new RegExp(REPORT),
 				"the lookup returns the stored result",
 			);
-			assert.equal(foldEntries(parent).length, 1, "a settle with no newly used run appends no entry");
+			assert.equal(reloaded.foldEntries(), 1, "a settle with no newly used run appends no entry");
 		} finally {
-			await parent.dispose();
+			await reloaded.dispose();
 		}
 	});
 
-	it("keeps the fold set and the same provider messages in a reloaded session", async () => {
-		const parent = await startParent(PLAN);
+	it("does not fold for a provider API that binds earlier messages (Bedrock Converse)", async () => {
+		const parent = await startParent(PLAN, { api: "bedrock-converse-stream" });
 		try {
-			await parent.session.prompt("delegate");
+			await useOneRun(parent);
+			await parent.session.prompt("next");
 			await parent.session.waitForIdle();
-			const before = parent.requests.length;
-			parent.finish(REPORT);
-			await until(() => parent.requests.length > before, "the result turn");
-			await parent.session.waitForIdle();
-			await until(() => foldEntries(parent).length === 1, "the fold entry");
-			const live = parent.session.sessionManager;
-			const reloaded = SessionManager.open(live.getSessionFile()!);
-			const liveSet = readFoldedRuns(live.getBranch());
-			assert.deepEqual([...readFoldedRuns(reloaded.getBranch()).entries()], [...liveSet.entries()]);
-			assert.deepEqual([...liveSet.keys()], [RUN]);
-			const messages = parent.session.messages;
-			assert.notEqual(foldMessages(messages, liveSet), messages, "the folded run changes the messages");
-			assert.deepEqual(foldMessages(messages, readFoldedRuns(reloaded.getBranch())), foldMessages(messages, liveSet));
+			const after = parent.requests.at(-1) ?? "";
+			assert.match(after, new RegExp(BRIEF));
+			assert.match(after, new RegExp(REPORT));
 		} finally {
 			await parent.dispose();
 		}
@@ -262,16 +313,11 @@ describe("context fold in a real Pi session", () => {
 		process.env.PI_SUBAGENT_SESSION = "/tmp/child-session.jsonl";
 		const parent = await startParent(PLAN);
 		try {
-			await parent.session.prompt("delegate");
-			await parent.session.waitForIdle();
-			const before = parent.requests.length;
-			parent.finish(REPORT);
-			await until(() => parent.requests.length > before, "the result turn");
-			await parent.session.waitForIdle();
+			await useOneRun(parent);
 			await parent.session.prompt("next");
 			await parent.session.waitForIdle();
-			assert.equal(foldEntries(parent).length, 0);
-			assert.match(parent.requests.at(-1)!, new RegExp(BRIEF));
+			assert.equal(parent.foldEntries(), 0);
+			assert.match(parent.requests.at(-1) ?? "", new RegExp(BRIEF));
 		} finally {
 			if (saved === undefined) delete process.env.PI_SUBAGENT_SESSION;
 			else process.env.PI_SUBAGENT_SESSION = saved;

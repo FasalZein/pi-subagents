@@ -1,11 +1,5 @@
-import {
-	CONTEXT_FOLD_ENTRY,
-	type FoldedRun,
-	foldMessages,
-	readFoldedRuns,
-	runStub,
-	settleFold,
-} from "../../src/runtime/context-fold.ts";
+import { foldMessages, runStub } from "../../src/runtime/context-fold.ts";
+import { CONTEXT_FOLD_ENTRY, type FoldedRun, readFoldedRuns, settleFold } from "../../src/runtime/context-fold-set.ts";
 import { assert, describe, it } from "../support/index.ts";
 
 // The settle fold rules of statecharts/context-fold/target/Target.tla at the smallest boundary:
@@ -39,6 +33,8 @@ function foldEntry(runs: FoldedRun[]) {
 	return { type: "custom", id: entryId(), customType: CONTEXT_FOLD_ENTRY, data: { runs } };
 }
 const notRunning = () => false;
+/** Every report path of these fixtures counts as saved; context-fold-safety.test.ts checks real files. */
+const exists = () => true;
 /** The settle time a test passes; result messages of the fixtures are older (timestamp 1). */
 const AT = 100;
 
@@ -51,12 +47,12 @@ describe("context fold: the fold set a settle decides", () => {
 			// Committed by the settle step after the last request: not seen yet.
 			resultEntry(B, "two"),
 		];
-		assert.deepEqual(settleFold(entries, notRunning, AT), [
+		assert.deepEqual(settleFold(entries, notRunning, AT, exists), [
 			{ id: A, name: "one", outcome: "done", report: "/r/one.md", foldedAt: AT },
 		]);
 		// A run that runs again (resumed) does not fold, even when an older result was seen.
 		assert.deepEqual(
-			settleFold(entries, (id) => id === A, AT),
+			settleFold(entries, (id) => id === A, AT, exists),
 			[],
 		);
 	});
@@ -77,7 +73,7 @@ describe("context fold: the fold set a settle decides", () => {
 			},
 			assistantEntry(),
 		];
-		assert.deepEqual(settleFold(entries, notRunning, AT), []);
+		assert.deepEqual(settleFold(entries, notRunning, AT, exists), []);
 	});
 
 	it("counts a wait reply and a launch reply that carried the finished result", () => {
@@ -91,7 +87,14 @@ describe("context fold: the fold set a settle decides", () => {
 				content: [{ type: "text", text: "REPORT" }],
 				details: {
 					status: "complete",
-					results: [{ runId: A, name: "one", text: "R", record: { outcome: "partial" } }],
+					results: [
+						{
+							runId: A,
+							name: "one",
+							text: "R",
+							record: { outcome: "partial", report: { saved: true, path: "/r/one.md" } },
+						},
+					],
 				},
 			},
 		};
@@ -106,40 +109,40 @@ describe("context fold: the fold set a settle decides", () => {
 				details: {
 					status: "batch",
 					children: [
-						{ id: B, name: "two", status: "completed", outcome: "done" },
+						{ id: B, name: "two", status: "completed", outcome: "done", reportFile: "/r/two.md" },
 						{ id: C, name: "three", status: "started" },
 					],
 				},
 			},
 		};
-		const runs = settleFold([userEntry("x"), waitReply, launchReply, assistantEntry()], notRunning, AT);
+		const runs = settleFold([userEntry("x"), waitReply, launchReply, assistantEntry()], notRunning, AT, exists);
 		assert.deepEqual(runs, [
-			{ id: A, name: "one", outcome: "partial", foldedAt: AT },
-			{ id: B, name: "two", outcome: "done", foldedAt: AT },
+			{ id: A, name: "one", outcome: "partial", report: "/r/one.md", foldedAt: AT },
+			{ id: B, name: "two", outcome: "done", report: "/r/two.md", foldedAt: AT },
 		]);
 	});
 
 	it("is monotone across two settles: a folded run stays folded, the second settle adds only new runs", () => {
 		const first = [userEntry("a"), resultEntry(A, "one"), assistantEntry(), resultEntry(B, "two")];
-		const decided = settleFold(first, notRunning, AT);
+		const decided = settleFold(first, notRunning, AT, exists);
 		assert.deepEqual(
 			decided.map((run) => run.id),
 			[A],
 		);
 		const second = [...first, foldEntry(decided), userEntry("b"), assistantEntry()];
-		const added = settleFold(second, notRunning, AT);
+		const added = settleFold(second, notRunning, AT, exists);
 		assert.deepEqual(
 			added.map((run) => run.id),
 			[B],
 		);
 		const third = [...second, foldEntry(added), userEntry("c"), assistantEntry()];
-		assert.deepEqual(settleFold(third, notRunning, AT), []);
+		assert.deepEqual(settleFold(third, notRunning, AT, exists), []);
 		assert.deepEqual([...readFoldedRuns(third).keys()], [A, B]);
 	});
 
 	it("a later wait reply for a folded run triggers no new fold; a resumed run's new result folds at a later settle", () => {
 		const first = [userEntry("a"), resultEntry(A, "one"), assistantEntry()];
-		const folded = [...first, foldEntry(settleFold(first, notRunning, AT))];
+		const folded = [...first, foldEntry(settleFold(first, notRunning, AT, exists))];
 		const lookup = {
 			type: "message",
 			id: entryId(),
@@ -152,22 +155,22 @@ describe("context fold: the fold set a settle decides", () => {
 			},
 		};
 		const looked = [...folded, userEntry("b"), lookup, assistantEntry()];
-		assert.deepEqual(settleFold(looked, notRunning, 200), []);
+		assert.deepEqual(settleFold(looked, notRunning, 200, exists), []);
 		const resumedEnd = {
 			...resultEntry(A, "one", "SECOND-REPORT"),
-			details: { id: A, name: "one", outcome: "partial" },
+			details: { id: A, name: "one", outcome: "partial", reportFile: "/r/one-2.md" },
 		};
 		const ended = [...looked, userEntry("c"), resumedEnd];
-		assert.deepEqual(settleFold(ended, notRunning, 300), [], "the new result was not seen yet");
+		assert.deepEqual(settleFold(ended, notRunning, 300, exists), [], "the new result was not seen yet");
 		const seen = [...ended, assistantEntry()];
-		assert.deepEqual(settleFold(seen, notRunning, 300), [
-			{ id: A, name: "one", outcome: "partial", report: "/r/one.md", foldedAt: 300 },
+		assert.deepEqual(settleFold(seen, notRunning, 300, exists), [
+			{ id: A, name: "one", outcome: "partial", report: "/r/one-2.md", foldedAt: 300 },
 		]);
 	});
 });
 
 const RUN_A: FoldedRun = { id: A, name: "one", outcome: "done", report: "/r/one.md", foldedAt: AT };
-const RUN_B: FoldedRun = { id: B, name: "two", outcome: "partial", foldedAt: AT };
+const RUN_B: FoldedRun = { id: B, name: "two", outcome: "partial", report: "/r/two.md", foldedAt: AT };
 const folded = (...runs: FoldedRun[]) => new Map(runs.map((run) => [run.id, run]));
 
 function launchCall(callId: string, args: Record<string, unknown>) {
@@ -191,13 +194,12 @@ function resultMessage(details: Record<string, unknown>, content: string) {
 }
 
 describe("context fold: the provider messages", () => {
-	it("stub text names run id, name, outcome, report path and the lookup call, in about 200 characters", () => {
+	it("stub text names run id, name, outcome, report path and the lookup call", () => {
 		const stub = runStub(RUN_A);
 		assert.equal(
 			stub,
 			'[Folded subagent run aaaa0001 (one): done, report /r/one.md. Full result: subagent_wait({ runIds: ["aaaa0001"] })]',
 		);
-		assert.ok(stub.length <= 200);
 	});
 
 	it("returns the same list when nothing is folded or no message belongs to a folded run", () => {
@@ -280,44 +282,5 @@ describe("context fold: the provider messages", () => {
 		assert.equal(foldMessages(resumed, folded(RUN_A)), resumed, "a result sent after the fold stays full");
 		const all = foldMessages([grouped], folded(RUN_A, RUN_B));
 		assert.equal((all[0] as typeof grouped).content, `${runStub(RUN_A)}\n${runStub(RUN_B)}`);
-	});
-
-	it("folds a codemode launch script only when every run its result names is folded", () => {
-		const script = {
-			role: "assistant",
-			content: [
-				{
-					type: "toolCall",
-					id: "c1",
-					name: "codemode",
-					arguments: { code: "await tools.subagent({ task: 'BRIEF' })" },
-				},
-			],
-		};
-		const result = {
-			role: "toolResult",
-			toolCallId: "c1",
-			toolName: "codemode",
-			content: [
-				{
-					type: "text",
-					text: `{"status":"launched","children":[{"runId":"${A}","sessionFile":"/s/2026_8579cd68-9e5178db.jsonl"},{"runId":"${B}"}]}`,
-				},
-			],
-			nestedCalls: { calls: [{ id: "c1/1", name: "subagent", status: "ok" }], complete: true },
-		};
-		const messages = [script, result];
-		assert.equal(foldMessages(messages, folded(RUN_A)), messages, "one run not folded: the script stays full");
-		const out = foldMessages(messages, folded(RUN_A, RUN_B));
-		const code = (out[0] as { content: { arguments: { code: string } }[] }).content[0].arguments.code;
-		assert.doesNotMatch(code, /BRIEF/);
-		assert.match(code, new RegExp(`Folded launch script of runs ${A}, ${B}`));
-		assert.equal(out[1], result);
-		// A script that launched nothing is never folded.
-		const plain = [
-			script,
-			{ ...result, nestedCalls: { calls: [{ id: "c1/1", name: "read", status: "ok" }], complete: true } },
-		];
-		assert.equal(foldMessages(plain, folded(RUN_A, RUN_B)), plain);
 	});
 });
