@@ -36,6 +36,7 @@ import "./runtime/auto-exit-end-e2e.test.ts";
 import "./runtime/delivery-e2e.test.ts";
 import "./runtime/grouped-delivery-e2e.test.ts";
 import "./runtime/settle-esc-e2e.test.ts";
+import "./runtime/delivery-entry-states.test.ts";
 import "./runtime/delivery-queue-holds.test.ts";
 import "./runtime/busy-result-notice.test.ts";
 import "./tools/provider-error-recovery.test.ts";
