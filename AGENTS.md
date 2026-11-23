@@ -30,11 +30,11 @@ Organize by ownership. Do not recreate a catch-all `src/subagents/` or generic `
 - Temp-path assertions compare `realpathSync` paths: on macOS `tmpdir()` is `/var/...` while git and `pwd` report `/private/var/...`.
 - When a test records provider requests: assert on `message.content` only. Pi's faux provider receives tool-result `details`; real providers do not.
 - Do not use `// @ts-nocheck`. If a test probes a dynamic result shape, use a local cast at that assertion.
+- A fixture cast `as RunningSubagent` or `as any` hides a type-shape change from `bunx tsc --noEmit`: after changing a shared type, run every suite that builds it, not only the typecheck.
 
 ## Naming and size rules
 
-- Name files after the behavior or domain they own, not their history. Bad shapes: `shared.ts`, `helpers2.ts`, `parts/`, `new-runtime.ts`, `part-*`, `chunk-*`.
-- Avoid generic `shared/`, `utils/`, `helpers/`, or `common/` directories unless there are multiple clear consumers and no better domain name.
+- Name files after the behavior or domain they own, not their history. Bad shapes: `shared.ts`, `helpers2.ts`, `parts/`, `new-runtime.ts`, `part-*`, `chunk-*`, and generic `shared/`, `utils/`, `helpers/` or `common/` directories without several clear consumers.
 - Barrels are allowed only as public/domain entrypoints. Do not hide unused re-export files behind them.
 - `node scripts/check-file-sizes.mjs` enforces `src/**` <= 600 LOC and `test/**` <= 1000 LOC. When a source file nears its limit, split by ownership before adding logic. Keep test files cohesive (target ~600 LOC); do not split them into artificial buckets.
 
@@ -54,6 +54,8 @@ Unit tests use fake mux backends. For changes to subagent runtime behavior, also
 - To compare checkouts (upstream cf6dbf4, an older commit), start the parent with `pi --no-extensions -e <checkout>/src/index.ts`; otherwise it loads the installed package. Add `-e builtin:codemode --tools +codemode` when the parent must use codemode; `--no-extensions` also drops it.
 - This repo commits no smoke agents (`.pi/` is gitignored). Per repro, create a temporary agent file under `.pi/agents/` or under a temp root pointed at by `PI_CODING_AGENT_DIR`. Give it `extensions: <worktree>/src/index.ts`; without it the child also loads the installed pi-subagents package.
 - A live repro in tmux: `tmux new-session` on a running server does not pass the caller's environment (pass `-e NAME=value`), and a server started under `env -i` lacks `/opt/homebrew/bin` on the pane PATH, so Pi runs pane children headless.
+- Start a live-repro parent or tmux server under `env -i` with PATH, HOME and SHELL: one started from a pi-subagents child shell inherits `PI_SUBAGENT_*` and `PI_DENY_TOOLS` and has no `subagent` tool.
+- The settle fold (`src/runtime/context-fold.ts`) stubs launch briefs and result messages, not tool results: a `pi -p` parent's waited results stay whole, so check stubs with an interactive parent.
 - Prefer `pi -p` for deterministic repros. For async-parent lifecycle/sidebar repros, use interactive TUI Pi and submit the prompt **after startup**: print/RPC/JSON and CLI startup prompts force synchronous child launches and mask the yielded interval.
 - Use a temporary `--session-dir`; inspect parent and child session JSONL when behavior is subtle. For env-var or frontmatter branches, test both enabled and disabled states.
 - Classify each parent/child outcome: `duplicate` (parent and child did the same work), `auxiliary` (child work did not advance the parent's goal), `clean_yield` (child did the delegated work and the parent surfaced it).
