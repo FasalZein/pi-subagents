@@ -333,6 +333,70 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		assert.equal(result.details.status, "completed", result.content[0].text);
 	});
 
+	// F-M12-1 (owner rule 2026-11-23T20:09Z, diverges from cf6dbf4): a steer or follow-up typed while the
+	// tools of a mixed batch run keeps the batch blocking. Pi emits "input" after the tool_call hooks.
+	async function loadBatchAgents(agents: Record<string, boolean>) {
+		const cwd = createTestDir();
+		const agentsDir = join(cwd, "agent-root", "agents");
+		mkdirSync(agentsDir, { recursive: true });
+		for (const [name, async] of Object.entries(agents)) {
+			writeFileSync(
+				join(agentsDir, `${name}.md`),
+				`---\nname: ${name}\ndescription: ${name} agent\nmode: background\nauto-exit: true\nasync: ${async}\n---\n\nBody.`,
+			);
+		}
+		process.env.PI_CODING_AGENT_DIR = join(cwd, "agent-root");
+		// Each child runs a little while, so a detached child would still be running when its call returns.
+		useFakePi("sleep 0.3");
+		const extension = await loadExtension(cwd);
+		await extension.startSession("startup");
+		return extension;
+	}
+
+	it("keeps an async child awaited beside a direct tool when the person types during the launch", async () => {
+		const extension = await loadBatchAgents({ slow: true });
+		const launch = {
+			type: "toolCall",
+			id: "call-launch",
+			name: "subagent",
+			arguments: { children: [child("slow", "slow-one")] },
+		};
+		const read = { type: "toolCall", id: "call-read", name: "read", arguments: { path: "README.md" } };
+		await extension.emit("message_end", { message: { role: "assistant", content: [launch, read] } });
+		await extension.emit("tool_call", { toolName: launch.name, toolCallId: launch.id, input: launch.arguments });
+		await extension.emit("input", { source: "interactive", text: "Also check the tests." });
+		const tool = extension.tools.get("subagent");
+		assert.ok(tool);
+		const result = await tool.execute(launch.id, launch.arguments, undefined, undefined, extension.ctx);
+		assert.equal(result.details.status, "completed", result.content[0].text);
+		assert.equal(result.terminate, undefined);
+	});
+
+	it("keeps sibling async children awaited and every reply without terminate when the person types", async () => {
+		const extension = await loadBatchAgents({ blocker: false, slow: true });
+		const calls = [[child("blocker", "blocker-one"), child("slow", "slow-one")], [child("slow", "slow-two")]].map(
+			(children, index) => ({ type: "toolCall", id: `call-${index}`, name: "subagent", arguments: { children } }),
+		);
+		await extension.emit("message_end", { message: { role: "assistant", content: calls } });
+		for (const call of calls) {
+			await extension.emit("tool_call", { toolName: call.name, toolCallId: call.id, input: call.arguments });
+		}
+		const tool = extension.tools.get("subagent");
+		assert.ok(tool);
+		// Both calls start; the person types while the children run (B4 of the m12 model: the reply with
+		// two children holds their reports, and the single async child must not detach and ask for a stop).
+		const pending = calls.map((call) => tool.execute(call.id, call.arguments, undefined, undefined, extension.ctx));
+		await extension.emit("input", { source: "interactive", text: "Also check the tests." });
+		const results = await Promise.all(pending);
+		assert.deepEqual(
+			results.map((result) => [result.details.status, result.terminate]),
+			[
+				["batch", undefined],
+				["completed", undefined],
+			],
+		);
+	});
+
 	// D06: the refusal is the v2.9.2 error, read from cf6dbf4 (differential), and suggests no other agent.
 	it("refuses an unknown agent name with the cf6dbf4 error: the name and the search locations", async () => {
 		const launch = realLaunchTool({ reviewer: "", scout: "", worker: "" });

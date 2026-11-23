@@ -639,6 +639,8 @@ A wait on a run whose result was already delivered is a lookup: it returns the s
 
 When one tool-call batch contains at least one sync/blocking subagent, the whole batch becomes a barrier. Pi still launches every child with its own frontmatter, so an `async: true` child keeps async launch metadata for resume, but the parent waits until every child in that batch completes and receives all results as tool results.
 
+A steer or follow-up that you type while the batch launches does not release the barrier. The parent still waits for every child of the batch, also when the batch waits because a launch shares it with another tool such as `bash`. The extension clears the batch state only on the Pi events `turn_start`, `agent_end` and `session_start`. Upstream v2.9.2 also cleared it on typed input, so the async children detached there.
+
 ```
 subagent(sync), subagent(async), subagent(async) → all launch
 → parent waits until all three finish
