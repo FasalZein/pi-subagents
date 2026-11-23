@@ -14,6 +14,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { Value } from "typebox/value";
 import type { AssembledResult } from "./result-assembler.ts";
 import { parseRunId, type ReportStorage, type ResultRecord, type RunId } from "./result-record.ts";
@@ -211,18 +212,33 @@ export function readResultRecord(folder: string): ResultRecord | undefined {
 }
 
 /**
+ * One failed publish: its record, its full report (D12) and its rendering (D16), kept together so a
+ * rendering never belongs to another revision.
+ */
+type UnsavedPublish = { record: ResultRecord; report: string; rendering?: string };
+
+/**
+ * Where this process's last publish of a run went. The last failed publish stays after a later
+ * publish to files, for a lookup of the unsaved record that the parent got earlier.
+ */
+type LastPublish = { last: "files"; unsaved?: UnsavedPublish } | { last: "memory"; unsaved: UnsavedPublish };
+
+/** What this process knows of one run id it handed out or published. */
+type RunEntry = {
+	reservation: Reservation;
+	/** The session file the launch named (D16), also when the folder failed. */
+	sessionFile?: string;
+	published?: LastPublish;
+};
+
+/**
  * The results of one parent session (D13): run folders under `resultsDir`, and in memory the
  * records whose files failed. The first storage failure sends one notice to the person, outside
  * any tool result.
  */
 export class ResultStore {
-	private readonly memory = new Map<RunId, ResultRecord>();
-	/** The renderings of the in-memory records (D16). */
-	private readonly memoryRenderings = new Map<RunId, string>();
-	/** D12: the full reports whose files failed, for an explicit lookup by run id only. */
-	private readonly memoryReports = new Map<RunId, string>();
-	/** Session files of the runs this process launched (D16), also when the folder failed. */
-	private readonly launches = new Map<RunId, string>();
+	/** One entry per run id this process reserved or published; discard removes it. */
+	private readonly runs = new Map<RunId, RunEntry>();
 	/** Every id this store handed out: without a folder on disk, only this set keeps ids exclusive. */
 	private readonly reserved = new Set<RunId>();
 	private noticeSent = false;
@@ -244,16 +260,20 @@ export class ResultStore {
 		};
 		const reservation = reserveRunId(this.resultsDir, freshDraw);
 		this.reserved.add(reservation.runId);
+		this.runs.set(reservation.runId, { reservation });
 		if (reservation.folder === undefined) this.storageFailed(reservation.error);
 		return reservation;
 	}
 
 	publish(reservation: Reservation, result: AssembledResult, render?: RenderPublished): ResultRecord {
 		const record = publishResult(reservation, result, this.io, render);
-		if (!record.report.saved) {
-			this.memory.set(record.runId, record);
-			this.memoryReports.set(record.runId, result.report);
-			if (render) this.memoryRenderings.set(record.runId, render(record));
+		const entry = this.entryOf(reservation);
+		if (record.report.saved) {
+			entry.published = { last: "files", unsaved: entry.published?.unsaved };
+		} else {
+			// The rendering is made before the entry changes, so a throwing renderer leaves no half entry.
+			const unsaved = { record, report: result.report, rendering: render?.(record) };
+			entry.published = { last: "memory", unsaved };
 			if (reservation.folder !== undefined) this.storageFailed(record.report.error);
 		}
 		return record;
@@ -261,8 +281,27 @@ export class ResultStore {
 
 	/** D6 rollback: gives back the run folder and forgets the launch note of this process (D16). */
 	discard(reservation: Reservation): void {
-		this.launches.delete(reservation.runId);
+		this.runs.delete(reservation.runId);
 		discardReservation(reservation);
+	}
+
+	/** The entry of a reservation; one from another store gets its own entry here. */
+	private entryOf(reservation: Reservation): RunEntry {
+		let entry = this.runs.get(reservation.runId);
+		if (!entry) {
+			entry = { reservation };
+			this.runs.set(reservation.runId, entry);
+		}
+		return entry;
+	}
+
+	/**
+	 * A run this process reserved without a folder has no run folder: a folder of its id belongs to
+	 * another process's run and is never read for it.
+	 */
+	private ownsNoFolder(runId: RunId): boolean {
+		const entry = this.runs.get(runId);
+		return entry !== undefined && entry.reservation.folder === undefined;
 	}
 
 	/**
@@ -274,7 +313,7 @@ export class ResultStore {
 		if (launchedFile === undefined) return;
 		// Absolute against this process's directory, where the launch found it; a restart may run elsewhere.
 		const sessionFile = resolve(launchedFile);
-		this.launches.set(reservation.runId, sessionFile);
+		this.entryOf(reservation).sessionFile = sessionFile;
 		if (reservation.folder === undefined) return;
 		try {
 			writeNewFile(join(reservation.folder, LAUNCH_FILE), JSON.stringify({ sessionFile }));
@@ -285,8 +324,8 @@ export class ResultStore {
 
 	/** The session file a launch of this run named, from this process or the run folder (D16). */
 	launchSessionFile(runId: RunId): string | undefined {
-		let sessionFile: unknown = this.launches.get(runId);
-		if (sessionFile === undefined) {
+		let sessionFile: unknown = this.runs.get(runId)?.sessionFile;
+		if (sessionFile === undefined && !this.ownsNoFolder(runId)) {
 			const parsed = this.readJson(runId, LAUNCH_FILE);
 			sessionFile = (parsed as { sessionFile?: unknown } | undefined)?.sessionFile;
 		}
@@ -326,7 +365,9 @@ export class ResultStore {
 		} catch {
 			// No results folder: only the in-memory records.
 		}
-		const ids = new Set<string>([...folders, ...this.memory.keys()]);
+		// Entries add only their unsaved records: a saved run is listed through its folder, as before.
+		const unsavedIds = [...this.runs].filter(([, entry]) => entry.published?.unsaved).map(([id]) => id);
+		const ids = new Set<string>([...folders, ...unsavedIds]);
 		return [...ids].flatMap((name) => {
 			let id: RunId;
 			try {
@@ -344,7 +385,7 @@ export class ResultStore {
 	 * one (before T25, or by verified fan-out).
 	 */
 	storedRendering(record: ResultRecord): string | undefined {
-		if (!record.report.saved) return this.memoryRenderings.get(record.runId);
+		if (!record.report.saved) return this.unsavedOf(record)?.rendering;
 		// Read from the run's own folder by file name only: the record's path is not trusted.
 		return this.readContained(record.runId, basename(renderingPathFor(record.report.path)));
 	}
@@ -354,20 +395,37 @@ export class ResultStore {
 	 * explicit lookup by run id returns it; ordinary deliveries stay capped.
 	 */
 	unsavedReport(record: ResultRecord): string | undefined {
-		return record.report.saved ? undefined : this.memoryReports.get(record.runId);
+		return record.report.saved ? undefined : this.unsavedOf(record)?.report;
 	}
 
-	/** The newest record of a run: its committed file, else the in-memory record. */
+	/** The kept payload of this exact unsaved revision; an older revision's payload is gone, not the newer one. */
+	private unsavedOf(record: ResultRecord): UnsavedPublish | undefined {
+		const unsaved = this.runs.get(record.runId)?.published?.unsaved;
+		return unsaved && isDeepStrictEqual(unsaved.record, record) ? unsaved : undefined;
+	}
+
+	/**
+	 * The record of a run. A run this process published: the revision it delivered last, by publish
+	 * order, not by end time (two publishes can share a millisecond, and the clock can step back).
+	 * Any other run (another process, or before a restart): its committed file.
+	 */
 	read(runId: RunId): ResultRecord | undefined {
+		const published = this.runs.get(runId)?.published;
+		if (published?.last === "memory") return published.unsaved.record;
+		if (this.ownsNoFolder(runId)) return undefined;
+		// A record file that is gone or invalid falls back to the last unsaved record, as before.
+		return this.fileRecord(runId) ?? published?.unsaved?.record;
+	}
+
+	/** The committed record file of a run, or undefined. */
+	private fileRecord(runId: RunId): ResultRecord | undefined {
 		const parsed = this.readJson(runId, RECORD_FILE);
 		// Identity and shape at the boundary: a record of another run, or one without a valid end
 		// time, is not this run's record and must not break the recent list.
-		const inMemory = this.memory.get(runId);
 		if (!(Value.Check(ResultRecordSchema, parsed) && parsed.runId === runId && Number.isFinite(parsed.endedAt))) {
-			return inMemory;
+			return undefined;
 		}
-		const stored = parsed as ResultRecord;
-		return inMemory && inMemory.endedAt > stored.endedAt ? inMemory : stored;
+		return parsed as ResultRecord;
 	}
 
 	private storageFailed(error: string): void {

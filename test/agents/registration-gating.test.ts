@@ -188,7 +188,7 @@ describe("extension registration gating", () => {
 				// D06: the index fallback when another extension's whole prompt replaces the sections.
 				// D11: the old-Herdr settle rule reads the model context, as cf6dbf4 did.
 				"context",
-				"input",
+				// F-M12-1: no "input" hook; typed input leaves a running batch as it is.
 				"message_end",
 				"session_shutdown",
 				"session_start",

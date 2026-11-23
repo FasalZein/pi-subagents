@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmdirSync,
 	rmSync,
 	statSync,
@@ -217,6 +218,58 @@ describe("result files (D13)", () => {
 		const text = renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
 		assert.match(text, /report not saved: /);
 		assert.ok(text.includes("summary after a lost folder"));
+	});
+
+	it("reads the revision it delivered last when a failed publish shares the end time or the clock steps back", () => {
+		// M10-A: read follows publish order in the publishing process, not the end time (3.1 of the model).
+		for (const secondEndedAt of [66_000, 65_000]) {
+			let renames = 0;
+			const io = {
+				rename(from: string, to: string) {
+					renames++;
+					if (renames > 1) throw new Error("EIO: rename failed");
+					renameSync(from, to);
+				},
+			};
+			const store = new ResultStore(resultsDir(), () => {}, io);
+			const reservation = store.reserve();
+			const render = (record: ResultRecord) => renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
+			const first = store.publish(reservation, runResult(reservation.runId, "first revision", 66_000), render);
+			const second = store.publish(reservation, runResult(reservation.runId, "second revision", secondEndedAt), render);
+			assert.ok(first.report.saved, "the first revision is in the files");
+			assert.equal(second.report.saved, false, "the second revision is in memory only");
+
+			const read = store.read(reservation.runId);
+			assert.deepStrictEqual(read, second, `the last delivered revision (second endedAt ${secondEndedAt})`);
+			const rendering = store.storedRendering(read);
+			assert.ok(rendering?.includes("second revision"), "the rendering of the second revision");
+			assert.ok(!rendering?.includes("first revision"));
+		}
+	});
+
+	it("lists no saved run it cannot enumerate, and gives an older unsaved revision no payload of a newer one", () => {
+		// M10-A review P2: list adds only unsaved entries; payload getters check the revision.
+		const dir = resultsDir();
+		const store = new ResultStore(dir, () => {});
+		const saved = store.reserve();
+		store.publish(saved, runResult(saved.runId, "saved run"));
+		chmodSync(dir, 0o100);
+		try {
+			assert.deepStrictEqual(store.list(), [], "a saved run is listed through its folder only");
+		} finally {
+			chmodSync(dir, 0o700);
+		}
+
+		const unsaved = store.reserve();
+		chmodSync(folderOf(unsaved), 0o500);
+		const render = (record: ResultRecord) => renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
+		const older = store.publish(unsaved, runResult(unsaved.runId, "older revision", 66_000), render);
+		const newer = store.publish(unsaved, runResult(unsaved.runId, "newer revision", 67_000), render);
+		chmodSync(folderOf(unsaved), 0o700);
+		assert.equal(store.storedRendering(older), undefined);
+		assert.equal(store.unsavedReport(older), undefined);
+		assert.ok(store.storedRendering(newer)?.includes("newer revision"));
+		assert.equal(store.unsavedReport(newer), "newer revision");
 	});
 
 	it("gives colliding draws different run ids in memory, and no run replaces the record of another", () => {

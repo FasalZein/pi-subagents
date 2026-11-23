@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { RECORD_FILE, ResultStore } from "../../src/runtime/result-files.ts";
@@ -82,6 +82,34 @@ describe("T25 fix round 1: records at the file-read boundary", () => {
 			recentRuns(results).map((run) => run.runId),
 			[good.runId],
 		);
+	});
+
+	it("a run reserved without a folder never reads another process's record or launch file of its id", () => {
+		// M10-A: the folder of that id belongs to a run of another process (3.2 of the model).
+		const { dir, store: results } = store();
+		const runId = parseRunId("abcd0001");
+		chmodSync(join(dir, ".."), 0o500);
+		const own = results.reserve(() => runId);
+		chmodSync(join(dir, ".."), 0o700);
+		assert.equal(own.folder, undefined, "the own run has no folder");
+		results.noteLaunch(own, undefined);
+
+		// Another process on the same session folder draws the same id and publishes it.
+		const other = new ResultStore(dir, () => {});
+		const theirs = other.reserve(() => runId);
+		assert.ok(theirs.folder, "the other process gets the folder");
+		const sessionFile = join(createTestDir(), "other-child.jsonl");
+		writeFileSync(sessionFile, "{}\n");
+		other.noteLaunch(theirs, sessionFile);
+		other.publish(theirs, assembleResult(facts([sessionHeader(), assistant("other run")], { runId, endedAt: 5_000 })));
+
+		assert.equal(results.read(runId), undefined, "the other process's record is not this run's record");
+		assert.equal(results.launchSessionFile(runId), undefined, "the other process's session file is not named");
+		const mine = results.publish(
+			own,
+			assembleResult(facts([sessionHeader(), assistant("own run")], { runId, endedAt: 1_000 })),
+		);
+		assert.deepStrictEqual(results.read(runId), mine, "the own in-memory record, also with an earlier end time");
 	});
 
 	it("a name with line breaks stays on its one recent line", () => {

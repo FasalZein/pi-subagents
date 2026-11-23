@@ -1,9 +1,12 @@
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { pendingRunEndCount } from "../../src/runtime/delivery-queue.ts";
+import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
+import type { ResultRecord } from "../../src/runtime/result-record.ts";
 import { ResultRecordSchema } from "../../src/runtime/result-record-schema.ts";
+import { renderResult } from "../../src/runtime/result-render.ts";
 import { runEndIds } from "../../src/runtime/run-end-message.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
@@ -23,7 +26,16 @@ import {
 	resetSubagentStateForTest,
 	setRunningSubagentForTest,
 } from "../support/index.ts";
-import { parentToolCtx, sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
+import {
+	assistant,
+	facts,
+	parentToolCtx,
+	sessionHeader,
+	testResultsDir,
+	toolCall,
+	toolResult,
+	user,
+} from "../support/result-fixtures.ts";
 
 // T24 below the tool: joinRuns with production routing and the delivery queue. The queue is not
 // registered to a session here, so a message it sends goes to the sink at once.
@@ -427,5 +439,72 @@ describe("T67: wait entries join to the launch children by runId", () => {
 			["id-two", "two"],
 		]);
 		resetSubagentStateForTest();
+	});
+});
+
+describe("M10-A review: a wait after watcher recovery returns the last delivered revision", () => {
+	it("text and record of the wait match the recovery's delivery, also when both revisions share a millisecond", async () => {
+		resetSubagentStateForTest();
+		const realNow = Date.now;
+		Date.now = () => 66_000;
+		try {
+			// The first publish commits to files; the recovery's publish fails at the rename.
+			let renames = 0;
+			const io = {
+				rename(from: string, to: string) {
+					if (++renames === 2) throw new Error("EIO: second publish");
+					renameSync(from, to);
+				},
+			};
+			const store = new ResultStore(testResultsDir(), () => {}, io);
+			const reservation = store.reserve();
+			const id = reservation.runId;
+			const render = (record: ResultRecord) => renderResult(record, { cwd: "/", homeDir: "/nonexistent-home" });
+			const first = store.publish(reservation, assembleResult(facts([assistant("ORIGINAL")], { runId: id })), render);
+			const running = {
+				id,
+				name: "scout",
+				agent: "worker",
+				task: "t",
+				mode: "background",
+				noSession: true,
+				blocking: false,
+				async: true,
+				startTime: 1000,
+				phase: { kind: "running" },
+				resultTarget: { store, reservation, parentCwd: "/", warnings: [] },
+			} as unknown as RunningSubagent;
+			// The first delivery throws after the router cached the completion: the recovery path runs.
+			const delivered: { content: string; details: Record<string, unknown> }[] = [];
+			const pi = {
+				sendMessage(message: { content: string; details: Record<string, unknown> }) {
+					if (delivered.push(message) === 1) throw new Error("first delivery failed");
+				},
+			};
+			const watch = Promise.resolve<SubagentResult>({
+				name: "scout",
+				task: "t",
+				elapsed: 65,
+				summary: first.summary,
+				summarySource: "subagent",
+				exitCode: 0,
+				resultOutcome: first.outcome,
+				resultRunId: id,
+				resultText: store.storedRendering(first),
+			});
+			wireSubagentSteerBack(pi as never, running, watch, () => {});
+			await tick();
+			const last = delivered.at(-1);
+			assert.equal(delivered.length, 2, "the recovery delivered a second revision");
+			assert.equal(last?.details.outcome, "failed");
+
+			const reply = await joinRuns({ ids: [id] }, undefined, { store, cwd: "/" });
+			const row = reply.results[0];
+			assert.equal(row?.text, last?.content, "the wait text is the last delivered text");
+			assert.equal(row?.record?.outcome, last?.details.outcome, "the wait record is the last delivered revision");
+			assert.equal(row?.record?.report.saved, false);
+		} finally {
+			Date.now = realNow;
+		}
 	});
 });
