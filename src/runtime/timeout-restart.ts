@@ -1,4 +1,5 @@
 import type { RunningSubagent } from "../types.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import { checkSubagentTimeout, getSubagentHardDeadlineAt, type ExpiredTimeoutBudget } from "./timeout-budget.ts";
 
 type TimeoutRestartOutcome =
@@ -62,8 +63,9 @@ export async function startTimeoutWrapUpWithinDeadline(
 		if (deadlineReached || expiry) {
 			const resolvedExpiry = expiry ?? checkSubagentTimeout(running, hardDeadlineAt ?? Date.now());
 			if (!resolvedExpiry) return null;
-			running.timeoutExpiry = resolvedExpiry;
-			running.phase = "stopping";
+			applyRunPhaseEvent(running, "timeLimit", () => {
+				running.timeoutExpiry = resolvedExpiry;
+			});
 			await stopStarted();
 			return { kind: "timedOut", expiry: resolvedExpiry };
 		}

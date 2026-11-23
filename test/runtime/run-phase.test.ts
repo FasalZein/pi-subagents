@@ -6,6 +6,7 @@ import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
+import { applyRunPhaseEvent, type RunPhaseEvent } from "../../src/runtime/run-phase.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
@@ -104,6 +105,73 @@ function backgroundRuntime(
 		},
 	};
 }
+
+describe("run phase transitions", () => {
+	// Ticket C: the allowed-from sets come from the callers before the change (see src/runtime/run-phase.ts).
+	const cases: Array<{ event: RunPhaseEvent; to: RunPhase; from: RunPhase[]; refused: RunPhase }> = [
+		{ event: "softLimit", to: "soft-limit", from: ["running"], refused: "wrapping-up" },
+		{ event: "wrapUp", to: "wrapping-up", from: ["soft-limit", "stopping"], refused: "running" },
+		{
+			event: "timeLimit",
+			to: "stopping",
+			from: ["running", "soft-limit", "wrapping-up", "stopping"],
+			refused: "ended",
+		},
+		{ event: "stop", to: "stopping", from: ["running", "soft-limit", "wrapping-up", "stopping"], refused: "ended" },
+		{ event: "end", to: "ended", from: ["running", "soft-limit", "wrapping-up", "stopping"], refused: "ended" },
+	];
+	const allPhases: RunPhase[] = ["running", "soft-limit", "wrapping-up", "stopping", "ended"];
+
+	for (const { event, to, from, refused } of cases) {
+		it(`${event} moves each allowed phase to ${to}`, () => {
+			for (const phase of from) {
+				const running: { phase: RunPhase } = { phase };
+				let before: RunPhase | undefined;
+				assert.equal(
+					applyRunPhaseEvent(running, event, () => {
+						before = running.phase;
+					}),
+					true,
+					phase,
+				);
+				assert.equal(before, phase, `${phase}: beforeApply runs before the change`);
+				assert.equal(running.phase, to, phase);
+			}
+		});
+
+		it(`${event} from ${refused} changes nothing and reports it`, () => {
+			assert.equal(from.includes(refused), false);
+			const running: { phase: RunPhase } = { phase: refused };
+			let ran = false;
+			assert.equal(
+				applyRunPhaseEvent(running, event, () => {
+					ran = true;
+				}),
+				false,
+			);
+			assert.equal(running.phase, refused);
+			assert.equal(ran, false, "beforeApply does not run");
+		});
+
+		it(`${event} refuses every phase outside its allowed set`, () => {
+			for (const phase of allPhases.filter((candidate) => !from.includes(candidate))) {
+				const running: { phase: RunPhase } = { phase };
+				assert.equal(applyRunPhaseEvent(running, event), false, phase);
+				assert.equal(running.phase, phase, phase);
+			}
+		});
+	}
+
+	it("keeps the phase when beforeApply throws", () => {
+		const running: { phase: RunPhase } = { phase: "running" };
+		assert.throws(() =>
+			applyRunPhaseEvent(running, "timeLimit", () => {
+				throw new Error("no expiry");
+			}),
+		);
+		assert.equal(running.phase, "running");
+	});
+});
 
 describe("run phase", () => {
 	beforeEach(() => {

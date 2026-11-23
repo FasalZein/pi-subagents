@@ -11,6 +11,7 @@ import { findLastSubagentOutputWithSource, getEntryCount, getNewEntries } from "
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import {
 	CANCELLED_SUMMARY,
 	isDeadlineEnforceable,
@@ -179,7 +180,7 @@ export async function watchSubagent(
 				if (restart.kind === "timedOut") {
 					return buildInteractiveRestartTimeoutResult(running, restart.expiry);
 				}
-				running.phase = "wrapping-up";
+				applyRunPhaseEvent(running, "wrapUp");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -246,16 +247,18 @@ async function watchInteractiveGeneration(
 			// A child that already published its own outcome finished on its own
 			// terms; the deadline it crossed while exiting is not a runaway.
 			if (hasSubagentExitSidecar(running.sessionFile)) return;
-			running.timeoutExpiry = expired;
-			running.phase = "stopping";
+			const killed = applyRunPhaseEvent(running, "timeLimit", () => {
+				running.timeoutExpiry = expired;
+			});
+			if (!killed) return;
 			void closeTimedOutSurface(running, runtime, true);
 			armDeadlineTimer();
 			return;
 		}
 		const wrapUp = checkSubagentTimeoutWrapUp(running, now);
-		if (wrapUp && running.phase === "running" && !hasSubagentExitSidecar(running.sessionFile)) {
+		// Only a running generation is interrupted for its wrap-up (the softLimit event leaves only from running).
+		if (wrapUp && !hasSubagentExitSidecar(running.sessionFile) && applyRunPhaseEvent(running, "softLimit")) {
 			running.timeoutWrapUp = wrapUp;
-			running.phase = "soft-limit";
 			const baseline =
 				wrapUp.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + wrapUp.seconds * 1000;
