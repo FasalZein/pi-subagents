@@ -1,0 +1,194 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { parseJsonContainer } from "../tools/json-string-args.ts";
+import { type FoldedScript, readFoldedScripts, scriptKey, settleScripts } from "./context-fold-scripts.ts";
+import {
+	CONTEXT_FOLD_ENTRY,
+	CONTEXT_FOLD_LAUNCH_ENTRY,
+	type FoldedRun,
+	isChildTranscript,
+	isRecord,
+	messageRunIds,
+	readFoldedRuns,
+	settleFold,
+	str,
+} from "./context-fold-set.ts";
+import { runningSubagents } from "./state.ts";
+
+/**
+ * The settle fold (owner rule 2026-11-22T08:40Z; model statecharts/context-fold/target/Target.tla).
+ * When the parent settles idle, every run the model already used folds: from then on each provider
+ * request carries a short stub instead of that run's launch brief and its result message. The
+ * session file keeps the full text, and subagent_wait({ runIds }) returns the stored result (D16).
+ *
+ * The fold set is the union of the durable fold entries on the session branch (context-fold-set.ts).
+ * Only agent_settled appends one, so a fold never happens mid-turn, the set is the same on every
+ * request of a turn and after /reload or resume, and a folded run never comes back in full while
+ * the provider API stays the same: the prompt cache breaks at most once per settle.
+ *
+ * Limit: this is the agent loop's context hook. Compaction, /tree branch summaries and cache-warmer
+ * replays read the session or an earlier request directly and are not folded.
+ */
+
+/**
+ * Provider APIs proven (live check 2026-11-23, anthropic and cpa/gpt-6.2-sol) to accept changed
+ * arguments of earlier tool calls. Others can bind earlier messages to a signature (Bedrock
+ * Converse rejects a changed signed history; Google asks for signed parts unchanged): no fold.
+ * Revisit after a live check of another API.
+ */
+const FOLDING_APIS: ReadonlySet<string> = new Set(["anthropic-messages", "openai-responses"]);
+
+function foldsForApi(api: string | undefined): boolean {
+	return api !== undefined && FOLDING_APIS.has(api);
+}
+
+type Rec = Record<string, unknown>;
+
+/** The stub of one folded run, for its brief and its result alike. */
+export function runStub(run: FoldedRun): string {
+	return `[Folded subagent run ${run.id} (${run.name}): ${run.outcome}, report ${run.report}. Full result: subagent_wait({ runIds: ["${run.id}"] })]`;
+}
+
+/** The run id of each child of a direct launch, by position; undefined where none is known. */
+function launchChildIds(details: unknown): Array<string | undefined> {
+	if (!isRecord(details)) return [];
+	if (Array.isArray(details.children)) {
+		return details.children.map((child) => (isRecord(child) ? (str(child.id) ?? str(child.runId)) : undefined));
+	}
+	return [str(details.id)];
+}
+
+/** A direct launch call: the children list when nonempty, else the top-level form (the launch normalizer). */
+function foldLaunchArgs(args: Rec, ids: Array<string | undefined>, folded: ReadonlyMap<string, FoldedRun>): Rec {
+	const stubFor = (index: number) => {
+		const id = ids[index];
+		const run = id ? folded.get(id) : undefined;
+		return run ? runStub(run) : undefined;
+	};
+	const children = parseJsonContainer(args.children);
+	if (!Array.isArray(children) || children.length === 0) {
+		const stub = ids.length === 1 ? stubFor(0) : undefined;
+		return stub && typeof args.task === "string" ? { ...args, task: stub } : args;
+	}
+	if (ids.length !== children.length) return args;
+	let changed = false;
+	const next = children.map((child, index) => {
+		const stub = stubFor(index);
+		if (!stub || !isRecord(child) || typeof child.task !== "string") return child;
+		changed = true;
+		return { ...child, task: stub };
+	});
+	if (!changed) return args;
+	return { ...args, children: typeof args.children === "string" ? JSON.stringify(next) : next };
+}
+
+/** A frozen launch-only script: its whole code becomes one stub naming its runs (context-fold-scripts.ts). */
+function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>): string | undefined {
+	const runs = script.runIds.map((id) => folded.get(id));
+	if (runs.some((run) => run === undefined)) return undefined;
+	const lines = (runs as FoldedRun[]).map((run) => `// ${runStub(run)}`);
+	return [`// Folded launch script of runs ${script.runIds.join(", ")}.`, ...lines].join("\n");
+}
+
+/**
+ * The provider messages with the folded runs' briefs and result messages as stubs. Only the task
+ * text of a launch call, the code of a frozen launch-only script and the content of a result
+ * message change; tool-call ids, results, thinking blocks and every other message stay the
+ * same objects. Each call pairs with the tool results of its own turn. Without a change the same
+ * list returns.
+ */
+export function foldMessages<T>(
+	messages: T[],
+	folded: ReadonlyMap<string, FoldedRun>,
+	scripts: ReadonlyMap<string, FoldedScript> = new Map(),
+): T[] {
+	if (folded.size === 0) return messages;
+	let changed = false;
+	const next = messages.map((message, index) => {
+		const out = foldMessage(message as unknown, () => turnResults(messages, index), folded, scripts);
+		if (out !== message) changed = true;
+		return out as T;
+	});
+	return changed ? next : messages;
+}
+
+/** The tool results after the assistant message at `index`, up to the next assistant message. */
+function turnResults(messages: readonly unknown[], index: number): Map<string, Rec> {
+	const results = new Map<string, Rec>();
+	for (let i = index + 1; i < messages.length; i++) {
+		const message = messages[i];
+		if (!isRecord(message) || message.role === "assistant") break;
+		if (message.role === "toolResult" && typeof message.toolCallId === "string")
+			results.set(message.toolCallId, message);
+	}
+	return results;
+}
+
+function foldMessage(
+	message: unknown,
+	results: () => Map<string, Rec>,
+	folded: ReadonlyMap<string, FoldedRun>,
+	scripts: ReadonlyMap<string, FoldedScript>,
+): unknown {
+	if (!isRecord(message)) return message;
+	if (message.role === "custom") {
+		const ids = messageRunIds(message.customType, message.content, message.details);
+		const sent = typeof message.timestamp === "number" ? message.timestamp : 0;
+		if (!ids || !ids.every((id) => sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
+		return { ...message, content: ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n") };
+	}
+	if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+	let changed = false;
+	let turn: Map<string, Rec> | undefined;
+	const content = message.content.map((block) => {
+		if (!isRecord(block) || block.type !== "toolCall" || !isRecord(block.arguments)) return block;
+		if (block.name !== "subagent" && block.name !== "codemode") return block;
+		let args = block.arguments;
+		if (block.name === "subagent") {
+			turn ??= results();
+			const result = typeof block.id === "string" ? turn.get(block.id) : undefined;
+			args = foldLaunchArgs(block.arguments, launchChildIds(result?.details), folded);
+		} else {
+			const key = typeof block.id === "string" ? scriptKey(block.id, message.timestamp) : undefined;
+			const script = key ? scripts.get(key) : undefined;
+			const stub = script && typeof block.arguments.code === "string" ? scriptStub(script, folded) : undefined;
+			if (stub) args = { ...block.arguments, code: stub };
+		}
+		if (args === block.arguments) return block;
+		changed = true;
+		return { ...block, arguments: args };
+	});
+	return changed ? { ...message, content } : message;
+}
+
+function isRunning(id: string): boolean {
+	const running = runningSubagents.get(id);
+	return running !== undefined && running.phase !== "ended";
+}
+
+export function registerContextFold(pi: ExtensionAPI): void {
+	// A script's launch call: Pi records the nested call (id, status) on the script's result but not
+	// the runs it started; this entry keeps only the run ids, never the task text.
+	pi.on("tool_result", (event, ctx) => {
+		if (event.toolName !== "subagent" || !event.parentToolCallId || event.isError) return;
+		if (isChildTranscript(ctx.sessionManager.getBranch())) return;
+		const runIds = launchChildIds((event as { details?: unknown }).details);
+		if (runIds.length === 0 || runIds.some((id) => id === undefined)) return;
+		pi.appendEntry(CONTEXT_FOLD_LAUNCH_ENTRY, { callId: event.parentToolCallId, nestedId: event.toolCallId, runIds });
+	});
+	pi.on("agent_settled", (_event, ctx) => {
+		const branch = ctx.sessionManager.getBranch();
+		const runs = settleFold(branch, isRunning);
+		if (isChildTranscript(branch)) return;
+		const folded = new Set([...readFoldedRuns(branch).keys(), ...runs.map((run) => run.id)]);
+		const scripts = settleScripts(branch, (id) => folded.has(id));
+		if (runs.length > 0 || scripts.length > 0) pi.appendEntry(CONTEXT_FOLD_ENTRY, { runs, scripts });
+	});
+	pi.on("context", (event, ctx) => {
+		if (!foldsForApi(ctx.model?.api)) return undefined;
+		const branch = ctx.sessionManager.getBranch();
+		if (isChildTranscript(branch)) return undefined;
+		const messages = foldMessages(event.messages, readFoldedRuns(branch), readFoldedScripts(branch));
+		// An unchanged list goes back as no result, so Pi keeps it as it is (extensions.md, context).
+		return messages === event.messages ? undefined : { messages };
+	});
+}

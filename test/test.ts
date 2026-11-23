@@ -184,3 +184,6 @@ import "./runtime/work-reporting-startup.test.ts";
 import "./mux/herdr-work.test.ts";
 import "./mux/osc-work-record.test.ts";
 import "./runtime/report-source-wrapup.test.ts";
+import "./runtime/context-fold.test.ts";
+import "./runtime/context-fold-e2e.test.ts";
+import "./runtime/context-fold-safety.test.ts";
