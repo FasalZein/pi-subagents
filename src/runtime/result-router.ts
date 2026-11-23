@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, SubagentPingMessageDetails, SubagentResult } from "../types.ts";
 import { deliverRunEnd, isParentDeliveryClosed } from "./delivery-queue.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import { releaseSpawnWidthSlot } from "./spawn-width.ts";
 import { isRunEndHeld, runDeliveryState } from "./wait-holds.ts";
 import {
@@ -39,7 +40,7 @@ type RoutedSubagentOutcome = RoutedCompletionOutcome | RoutedPingOutcome;
  * gets no more deliveries).
  */
 export function endRun(running: RunningSubagent): boolean {
-	running.phase = "ended";
+	applyRunPhaseEvent(running, "end");
 	return !isParentDeliveryClosed(running);
 }
 

@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { CompletedSubagentResult, RunningSubagent, StartedSubagentToolDetails, SubagentResult } from "../types.ts";
 import { deliverCompletedSubagentResult, endRun, routeSubagentOutcome } from "./result-router.ts";
 import { renderLookup } from "./run-lookup.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import { withRuntimeEnd } from "./run-result.ts";
 import { resultTextOf } from "./unpublished-result.ts";
 import {
@@ -109,12 +110,17 @@ export function findTrackedSubagent(query: string): {
 	return { error: `No subagent matches "${query}".` };
 }
 
+/**
+ * Stops a run that has not ended and returns true; an ended run stays as it is and returns false.
+ * `beforeStop` runs only for a run that has not ended, before the phase changes; when it throws, nothing stops.
+ */
 export async function stopRunningSubagent(
 	running: RunningSubagent,
 	closeSurface: (running: RunningSubagent) => Promise<void>,
-): Promise<void> {
+	beforeStop?: () => void,
+): Promise<boolean> {
+	if (!applyRunPhaseEvent(running, "stop", beforeStop)) return false;
 	clearSubagentShutdownTimer(running);
-	running.phase = "stopping";
 	running.abortController?.abort();
 
 	// Always kill the child process/surface regardless of abortController.
@@ -131,6 +137,7 @@ export async function stopRunningSubagent(
 		await closeSurface(running);
 	} catch {}
 	releaseSpawnWidthSlot(running);
+	return true;
 }
 
 export function getStartedSubagentDetails(
