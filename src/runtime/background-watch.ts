@@ -7,6 +7,7 @@ import { findLastSubagentOutputWithSource, getEntries, getEntryCount, getNewEntr
 import { writeSubagentTimeoutSidecar } from "../session/timeout-sidecar.ts";
 import type { RunningSubagent, SessionEntryLike, SubagentResult, SubagentSummarySource } from "../types.ts";
 import { resolveFinalContextUsage } from "./final-context-usage.ts";
+import { applyRunPhaseEvent } from "./run-phase.ts";
 import {
 	CANCELLED_SUMMARY,
 	isAcceptedCompletion,
@@ -176,7 +177,7 @@ async function watchBackgroundSubagentUntilFinal(
 				if (restart.kind === "timedOut") {
 					return buildBackgroundRestartTimeoutResult(running, restart.expiry);
 				}
-				running.phase = "wrapping-up";
+				applyRunPhaseEvent(running, "wrapUp");
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return withRuntimeEnd(running, {
@@ -262,8 +263,10 @@ function watchBackgroundGeneration(
 			// on the way out of our own SIGTERM, so anything published after this
 			// point is a consequence of the kill, not a verdict that outranks it.
 			if (hasSubagentExitSidecar(running.sessionFile) || isAcceptedCompletion(consumedExit)) return false;
-			running.timeoutExpiry = expired;
-			running.phase = "stopping";
+			const killed = applyRunPhaseEvent(running, "timeLimit", () => {
+				running.timeoutExpiry = expired;
+			});
+			if (!killed) return false;
 			if (!running.timeoutKillTimer) beginKill();
 			return true;
 		};
@@ -271,11 +274,10 @@ function watchBackgroundGeneration(
 		const enforceTimeoutWrapUp = (now: number): boolean => {
 			if (!isDeadlineEnforceable(signal)) return false;
 			const due = checkSubagentTimeoutWrapUp(running, now);
+			if (!due || hasSubagentExitSidecar(running.sessionFile)) return false;
 			// Only a running generation is interrupted for its wrap-up; a stopping or wrapping-up one is not.
-			if (!due || running.phase !== "running") return false;
-			if (hasSubagentExitSidecar(running.sessionFile)) return false;
+			if (!applyRunPhaseEvent(running, "softLimit")) return false;
 			running.timeoutWrapUp = due;
-			running.phase = "soft-limit";
 			const baseline = due.kind === "timeout" ? running.startTime : (running.lastProgressAt ?? running.startTime);
 			running.timeoutWrapUpDeadlineAt = baseline + due.seconds * 1000;
 			beginKill();
