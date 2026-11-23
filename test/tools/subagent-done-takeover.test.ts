@@ -34,7 +34,7 @@ function endThreeTimesAtToolCall(child: ReturnType<typeof loadChild>) {
 	}
 }
 
-function exhaustProviderRecovery(child: ReturnType<typeof loadChild>) {
+function endThreeTimesOnRetryableError(child: ReturnType<typeof loadChild>) {
 	for (let i = 0; i < 3; i++) {
 		child.emit("agent_end", retryableErrorEnd);
 		mock.timers.tick(10_000);
@@ -47,7 +47,7 @@ describe("subagent-done.ts operator takeover (D11)", () => {
 	const errorCases = [
 		{ name: "a run that ends with a 401 error (replay 6a)", run: endWithAuthError, exitType: "error" },
 		{ name: "three runs that end at a tool call (replay 6b)", run: endThreeTimesAtToolCall, exitType: "error" },
-		{ name: "provider-recovery exhaustion", run: exhaustProviderRecovery, exitType: "error" },
+		{ name: "three retryable provider errors", run: endThreeTimesOnRetryableError, exitType: "error" },
 	];
 
 	for (const testCase of errorCases) {
@@ -192,6 +192,30 @@ describe("subagent-done.ts takeover without a submitted input (finding 1)", () =
 		}
 	});
 
+	// M8-B6 (owner 2026-11-23T20:09Z): the person owns the pane, so no "continue" nudge. Red on 4adc766.
+	for (const takeOver of [
+		{ name: "a pane key", run: (child: ReturnType<typeof loadChild>) => child.press("h") },
+		{ name: "a submitted prompt", run: (child: ReturnType<typeof loadChild>) => child.takeOver() },
+	]) {
+		it(`after ${takeOver.name}, a provider error sends no nudge, shows the error and reports it on close`, () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const child = loadChild({ autoExit: true, pane: true });
+			try {
+				child.emit("agent_start", {});
+				takeOver.run(child);
+				child.emit("agent_end", retryableErrorEnd);
+				mock.timers.tick(40_000);
+				assert.deepEqual(child.nudges, []);
+				assert.ok(child.notices.includes("503 service unavailable"), "the pane shows the error");
+				assert.equal(child.shutdowns, 0);
+				assert.equal(child.readExit(), null);
+				assert.equal(quitPane(child)?.errorMessage, "503 service unavailable");
+			} finally {
+				cleanup(child.dir);
+			}
+		});
+	}
+
 	it("typing before Enter takes over the pane", () => {
 		mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 		const child = loadChild({ autoExit: true, pane: true });
@@ -228,11 +252,8 @@ describe("subagent-done.ts takeover without a submitted input (finding 1)", () =
 describe("subagent-done.ts kept error after a takeover (finding 2)", () => {
 	const cases = [
 		{ name: "three tool-call endings", run: endThreeTimesAtToolCall, error: /3 consecutive tool-use boundary endings/ },
-		{
-			name: "provider-recovery exhaustion",
-			run: exhaustProviderRecovery,
-			error: /recovery exhausted after 3 .*503 service unavailable/,
-		},
+		// M8-B6: after a takeover no recovery window runs, so the close reports the provider error itself.
+		{ name: "three retryable provider errors", run: endThreeTimesOnRetryableError, error: /^503 service unavailable$/ },
 		{ name: "a 401 error", run: endWithAuthError, error: /401 Unauthorized/ },
 	];
 	for (const testCase of cases) {

@@ -452,7 +452,9 @@ export default function (pi: ExtensionAPI) {
 					deferToPiNativeRecovery(errorInfo, ctx);
 					return;
 				}
-				if (errorInfo.recoveryKind === "none") {
+				// After a takeover the person owns the pane: no "continue" nudge (M8-B6,
+				// owner 2026-11-23T20:09Z). The pane shows the error instead.
+				if (errorInfo.recoveryKind === "none" || takeover.tookOver) {
 					providerErrorRecovery.cancelPendingRecovery();
 					cancelPendingPiRecovery();
 					// Defer stamping the failure while Pi's in-flight retry may still
@@ -465,16 +467,17 @@ export default function (pi: ExtensionAPI) {
 				providerErrorRecovery.handleProviderError(errorInfo, ctx);
 				return;
 			}
-			// A successful answer supersedes any earlier error, also when the
-			// child stays open for queued messages or live children.
+			// A successful answer supersedes any earlier error, its recovery window and
+			// the failure count, also when the child stays open for queued messages or
+			// live children (M8, owner 2026-11-23T20:09Z).
 			pendingProviderError = null;
 			takeover.clearUnrecoveredError();
+			providerErrorRecovery.cancelPendingRecovery(true);
+			cancelPendingPiRecovery();
 			if (ctx.hasPendingMessages?.()) return;
 			// Keep the coordinator alive until every live child has reported back.
 			if (getPublishedRunningSubagentCount() > 0) return;
 			consecutiveToolBoundaryEnds = 0;
-			providerErrorRecovery.cancelPendingRecovery(true);
-			cancelPendingPiRecovery();
 			if (takeover.tookOver) return;
 			writeExitSignal({ type: "done", outputTokens }, { supersede: true });
 			takeover.requestShutdown(ctx);
