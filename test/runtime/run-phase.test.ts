@@ -1,17 +1,27 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { closeParentDelivery } from "../../src/runtime/delivery-queue.ts";
 import { watchSubagent } from "../../src/runtime/interactive-watch.ts";
+import { ResultStore } from "../../src/runtime/result-files.ts";
 import { routeSubagentOutcome } from "../../src/runtime/result-router.ts";
-import { applyRunPhaseEvent, type RunPhaseEvent } from "../../src/runtime/run-phase.ts";
+import {
+	applyRunPhaseEvent,
+	type RunPhaseEvent,
+	stopRequesterOf,
+	timeoutExpiryOf,
+	timeoutWrapUpDeadlineAtOf,
+	timeoutWrapUpOf,
+} from "../../src/runtime/run-phase.ts";
+import { TIME_LIMIT_RESUME_REASON } from "../../src/runtime/run-result.ts";
 import { stopRunningSubagent, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { shutdownSubagentsForParentExit } from "../../src/runtime/shutdown.ts";
 import { buildCompletedSubagentResult, resetRuntimeStateForTest } from "../../src/runtime/state.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
-import type { RunningSubagent, RunPhase } from "../../src/types.ts";
+import type { RunningSubagent, RunPhase, RunPhaseState, TimeoutExpiry, WrapUpDeadline } from "../../src/types.ts";
 import {
 	afterEach,
 	assert,
@@ -52,7 +62,7 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent>): 
 		name: "phase-child",
 		task: "Finish the sweep",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),
@@ -61,16 +71,16 @@ function makeRunning(sessionFile: string, overrides: Partial<RunningSubagent>): 
 	};
 }
 
-/** Records every phase the run is set to, in order, without changing what the code reads. */
+/** Records every phase kind the run is set to, in order, without changing what the code reads. */
 function tracePhases(running: RunningSubagent): { phases: RunPhase[] } {
 	let current = running.phase;
-	const phases: RunPhase[] = [current];
+	const phases: RunPhase[] = [current.kind];
 	Object.defineProperty(running, "phase", {
 		configurable: true,
 		enumerable: true,
 		get: () => current,
-		set(next: RunPhase) {
-			if (next !== current) phases.push(next);
+		set(next: RunPhaseState) {
+			if (next.kind !== current.kind) phases.push(next.kind);
 			current = next;
 		},
 	});
@@ -107,69 +117,127 @@ function backgroundRuntime(
 }
 
 describe("run phase transitions", () => {
-	// Ticket C: the allowed-from sets come from the callers before the change (see src/runtime/run-phase.ts).
-	const cases: Array<{ event: RunPhaseEvent; to: RunPhase; from: RunPhase[]; refused: RunPhase }> = [
-		{ event: "softLimit", to: "soft-limit", from: ["running"], refused: "wrapping-up" },
-		{ event: "wrapUp", to: "wrapping-up", from: ["soft-limit", "stopping"], refused: "running" },
+	// Expected values: the from-sets of ticket C (src/runtime/run-phase.ts) and the phase data of report.md M1 (ticket D).
+	const wrap: WrapUpDeadline = { wrapUp: { kind: "idle-timeout", seconds: 10, threshold: 80 }, deadlineAt: 1_010_000 };
+	const later: WrapUpDeadline = { wrapUp: { kind: "timeout", seconds: 20, threshold: 50 }, deadlineAt: 2_000_000 };
+	const expiry: TimeoutExpiry = { kind: "timeout", seconds: 5 };
+	const sample: Record<RunPhase, RunPhaseState> = {
+		running: { kind: "running" },
+		"soft-limit": { kind: "soft-limit", wrapUp: wrap },
+		"wrapping-up": { kind: "wrapping-up", wrapUp: wrap },
+		stopping: { kind: "stopping", wrapUp: wrap, stopRequestedBy: "operator" },
+		ended: { kind: "ended" },
+	};
+	const allPhases = Object.keys(sample) as RunPhase[];
+	const cases: Array<{ event: RunPhaseEvent; to: Partial<Record<RunPhase, RunPhaseState>> }> = [
+		{ event: { type: "softLimit", wrapUp: later }, to: { running: { kind: "soft-limit", wrapUp: later } } },
+		{ event: { type: "keepCompletion" }, to: { "soft-limit": { kind: "soft-limit", wrapUp: null } } },
 		{
-			event: "timeLimit",
-			to: "stopping",
-			from: ["running", "soft-limit", "wrapping-up", "stopping"],
-			refused: "ended",
+			event: { type: "wrapUp" },
+			to: { "soft-limit": { kind: "wrapping-up", wrapUp: wrap }, stopping: { kind: "wrapping-up", wrapUp: wrap } },
 		},
-		{ event: "stop", to: "stopping", from: ["running", "soft-limit", "wrapping-up", "stopping"], refused: "ended" },
-		{ event: "end", to: "ended", from: ["running", "soft-limit", "wrapping-up", "stopping"], refused: "ended" },
+		{
+			event: { type: "timeLimit", expiry },
+			to: {
+				running: { kind: "stopping", wrapUp: undefined, timeoutExpiry: expiry },
+				"soft-limit": { kind: "stopping", wrapUp: wrap, timeoutExpiry: expiry },
+				"wrapping-up": { kind: "stopping", wrapUp: wrap, timeoutExpiry: expiry },
+				// The restart's saved deadline after a parent stop: the stop cause stays, the expiry joins it.
+				stopping: { kind: "stopping", wrapUp: wrap, timeoutExpiry: expiry, stopRequestedBy: "operator" },
+			},
+		},
+		{
+			event: { type: "stop", by: "parent" },
+			to: {
+				running: { kind: "stopping", wrapUp: undefined, stopRequestedBy: "parent" },
+				"soft-limit": { kind: "stopping", wrapUp: wrap, stopRequestedBy: "parent" },
+				"wrapping-up": { kind: "stopping", wrapUp: wrap, stopRequestedBy: "parent" },
+				// T70: the first stop request that names its requester names who ended the run.
+				stopping: { kind: "stopping", wrapUp: wrap, stopRequestedBy: "operator" },
+			},
+		},
+		{
+			event: { type: "end" },
+			to: {
+				running: { kind: "ended" },
+				"soft-limit": { kind: "ended" },
+				"wrapping-up": { kind: "ended" },
+				stopping: { kind: "ended" },
+			},
+		},
 	];
-	const allPhases: RunPhase[] = ["running", "soft-limit", "wrapping-up", "stopping", "ended"];
 
-	for (const { event, to, from, refused } of cases) {
-		it(`${event} moves each allowed phase to ${to}`, () => {
-			for (const phase of from) {
-				const running: { phase: RunPhase } = { phase };
-				let before: RunPhase | undefined;
-				assert.equal(
-					applyRunPhaseEvent(running, event, () => {
-						before = running.phase;
-					}),
-					true,
-					phase,
-				);
-				assert.equal(before, phase, `${phase}: beforeApply runs before the change`);
-				assert.equal(running.phase, to, phase);
+	for (const { event, to } of cases) {
+		it(`${event.type} moves each allowed phase to its state with the event's data`, () => {
+			for (const [from, expected] of Object.entries(to)) {
+				const running: Pick<RunningSubagent, "phase"> = { phase: sample[from as RunPhase] };
+				let before: RunPhaseState | undefined;
+				const applied = applyRunPhaseEvent(running, event, () => {
+					before = running.phase;
+				});
+				assert.equal(applied, true, from);
+				assert.deepEqual(before, sample[from as RunPhase], `${from}: beforeApply runs before the change`);
+				assert.deepEqual(running.phase, expected, from);
 			}
 		});
 
-		it(`${event} from ${refused} changes nothing and reports it`, () => {
-			assert.equal(from.includes(refused), false);
-			const running: { phase: RunPhase } = { phase: refused };
-			let ran = false;
-			assert.equal(
-				applyRunPhaseEvent(running, event, () => {
+		it(`${event.type} refuses every phase outside its allowed set, without running beforeApply`, () => {
+			for (const phase of allPhases.filter((candidate) => !(candidate in to))) {
+				const running: Pick<RunningSubagent, "phase"> = { phase: sample[phase] };
+				let ran = false;
+				const applied = applyRunPhaseEvent(running, event, () => {
 					ran = true;
-				}),
-				false,
-			);
-			assert.equal(running.phase, refused);
-			assert.equal(ran, false, "beforeApply does not run");
-		});
-
-		it(`${event} refuses every phase outside its allowed set`, () => {
-			for (const phase of allPhases.filter((candidate) => !from.includes(candidate))) {
-				const running: { phase: RunPhase } = { phase };
-				assert.equal(applyRunPhaseEvent(running, event), false, phase);
-				assert.equal(running.phase, phase, phase);
+				});
+				assert.equal(applied, false, phase);
+				assert.equal(running.phase, sample[phase], phase);
+				assert.equal(ran, false, `${phase}: beforeApply does not run`);
 			}
 		});
 	}
 
+	it("refuses a wrap-up from a phase that carries no soft deadline", () => {
+		for (const phase of [
+			{ kind: "soft-limit", wrapUp: null },
+			{ kind: "stopping", stopRequestedBy: "parent" },
+		] satisfies RunPhaseState[]) {
+			const running: Pick<RunningSubagent, "phase"> = { phase };
+			assert.equal(applyRunPhaseEvent(running, { type: "wrapUp" }), false, phase.kind);
+			assert.equal(running.phase, phase);
+		}
+	});
+
 	it("keeps the phase when beforeApply throws", () => {
-		const running: { phase: RunPhase } = { phase: "running" };
+		const running: Pick<RunningSubagent, "phase"> = { phase: { kind: "running" } };
 		assert.throws(() =>
-			applyRunPhaseEvent(running, "timeLimit", () => {
+			applyRunPhaseEvent(running, { type: "timeLimit", expiry }, () => {
 				throw new Error("no expiry");
 			}),
 		);
-		assert.equal(running.phase, "running");
+		assert.deepEqual(running.phase, { kind: "running" });
+	});
+
+	it("reads each payload only from its phase", () => {
+		const read = (phase: RunPhaseState) => {
+			const running = { phase };
+			return {
+				wrapUp: timeoutWrapUpOf(running),
+				deadlineAt: timeoutWrapUpDeadlineAtOf(running),
+				expiry: timeoutExpiryOf(running),
+				stopBy: stopRequesterOf(running),
+			};
+		};
+		const none = { wrapUp: undefined, deadlineAt: undefined, expiry: undefined, stopBy: undefined };
+		assert.deepEqual(read({ kind: "running" }), none);
+		assert.deepEqual(read({ kind: "soft-limit", wrapUp: null }), none, "a kept completion carries no wrap-up");
+		assert.deepEqual(read(sample["soft-limit"]), { ...none, wrapUp: wrap.wrapUp, deadlineAt: wrap.deadlineAt });
+		assert.deepEqual(read(sample["wrapping-up"]), { ...none, wrapUp: wrap.wrapUp, deadlineAt: wrap.deadlineAt });
+		assert.deepEqual(read({ kind: "stopping", wrapUp: wrap, timeoutExpiry: expiry, stopRequestedBy: "parent" }), {
+			wrapUp: wrap.wrapUp,
+			deadlineAt: wrap.deadlineAt,
+			expiry,
+			stopBy: "parent",
+		});
+		assert.deepEqual(read({ kind: "ended" }), none, "the result record was built before the end");
 	});
 });
 
@@ -310,10 +378,135 @@ describe("run phase", () => {
 		const stopped = makeRunning(stoppedSession, { abortController: abort, childProcess: stoppedChild });
 		const watch = watchBackgroundSubagent(stopped, backgroundRuntime(stoppedChild, []), abort.signal);
 		await stopRunningSubagent(stopped, async () => {});
-		assert.equal(stopped.phase, "stopping");
+		assert.equal(stopped.phase.kind, "stopping");
 		stoppedChild.emit("exit", 143);
 		const stopResult = await settleWithin(watch, 4000, "stop request");
 		assert.equal(stopResult.error, "cancelled");
+	});
+
+	// Ticket C review: both orderings of a parent stop and the hard deadline during a pending wrap-up restart.
+	// Expected values: D7 (the first cause decides the end), EndedBy in result-record.ts (a hard kill ends by
+	// time_limit; a stop of the parent by parent), D21 (a stop gets no time-limit fact) and the on-timeout
+	// policy (TIME_LIMIT_RESUME_REASON: only a hard kill of an agent that refuses it blocks the resume).
+	for (const order of ["deadline then stop", "stop seen first"] as const) {
+		for (const blocksResume of [false, true]) {
+			it(`ends a pending wrap-up restart by its first cause: ${order}, blocks resume ${blocksResume}`, async () => {
+				const root = createTestDir();
+				dirs.push(root);
+				const sessionFile = createSessionFile(root, [{ type: "session", id: "sess", version: 3 }]);
+				const store = new ResultStore(join(root, "results"), () => {});
+				const reservation = store.reserve();
+				const child = new EventEmitter() as ChildProcess;
+				const abort = new AbortController();
+				const running = makeRunning(sessionFile, {
+					id: reservation.runId,
+					// Soft limit at 0.5 s, hard deadline at 2 s: the restart starts well before the hard deadline.
+					timeoutBudget: { timeoutSeconds: 2 },
+					timeoutWarnThreshold: 25,
+					timeoutBlocksResume: blocksResume,
+					abortController: abort,
+					childProcess: child,
+					resultTarget: { store, reservation, parentCwd: root, warnings: [] },
+				});
+				let restartEntered: () => void = () => {};
+				const entered = new Promise<void>((resolve) => {
+					restartEntered = resolve;
+				});
+				let failStartup: (error: Error) => void = () => {};
+				// A restart that awaits startup and does not observe its abort signal (a pane program start).
+				const startup = new Promise<void>((_resolve, reject) => {
+					failStartup = reject;
+				});
+				const watch = watchBackgroundSubagent(
+					running,
+					backgroundRuntime(child, [], async () => {
+						restartEntered();
+						await startup;
+					}),
+					abort.signal,
+				);
+				const endedEarly = watch.then((result) => {
+					throw new Error(`the watcher ended before the restart: ${JSON.stringify(result.resultOutcome)}`);
+				});
+				await settleWithin(Promise.race([entered, endedEarly]), 1500, "restart entry");
+				if (order === "deadline then stop") await sleep(Math.max(0, running.startTime + 2200 - Date.now()));
+				await stopRunningSubagent(running, async () => {}, undefined, "parent");
+				failStartup(new Error("startup interrupted"));
+				const result = await settleWithin(watch, 4000, order);
+
+				const wrapUp = { wrapUp: { kind: "timeout", seconds: 2, threshold: 25 }, deadlineAt: running.startTime + 2000 };
+				const record = store.read(reservation.runId);
+				const stored = {
+					outcome: record?.outcome,
+					endedBy: record?.endedBy,
+					timeLimit: record?.timeLimit,
+					resume: record?.resume,
+				};
+				if (order === "deadline then stop") {
+					assert.deepEqual(running.phase, {
+						kind: "stopping",
+						wrapUp,
+						stopRequestedBy: "parent",
+						timeoutExpiry: { kind: "timeout", seconds: 2 },
+					});
+					assert.deepEqual(stored, {
+						outcome: "timed_out",
+						endedBy: "time_limit",
+						timeLimit: { kind: "timeout", seconds: 2, wrapUp: false },
+						resume: blocksResume ? { resumable: false, reason: TIME_LIMIT_RESUME_REASON } : { resumable: true },
+					});
+					assert.equal(result.timedOut, "timeout", "the saved deadline wins over the later stop");
+				} else {
+					assert.deepEqual(running.phase, { kind: "stopping", wrapUp, stopRequestedBy: "parent" });
+					assert.deepEqual(stored, {
+						outcome: "cancelled",
+						endedBy: "parent",
+						timeLimit: undefined,
+						resume: { resumable: true },
+					});
+					assert.equal(result.error, "cancelled", "the stop the restart saw first wins");
+				}
+				assert.equal(result.resultOutcome, stored.outcome, "the carrier shows the stored outcome");
+				routeSubagentOutcome({ pi: { sendMessage() {} }, running, result, updateWidget() {} });
+				assert.deepEqual(running.phase, { kind: "ended" });
+				assert.equal(
+					buildCompletedSubagentResult(running, result).status,
+					order === "deadline then stop" ? "failed" : "cancelled",
+				);
+			});
+		}
+	}
+
+	it("keeps a completion accepted during the soft limit: the wrap-up never runs and its marker is gone", async () => {
+		const sessionFile = makeSession();
+		const child = new EventEmitter() as ChildProcess;
+		const signals: NodeJS.Signals[] = [];
+		const running = makeRunning(sessionFile, {
+			timeoutBudget: { timeoutSeconds: 2 },
+			timeoutWarnThreshold: 25,
+			childProcess: child,
+		});
+		const trace = tracePhases(running);
+		const watch = watchBackgroundSubagent(
+			running,
+			{
+				cleanupNoSessionSessionFile() {},
+				terminateBackgroundChildProcess(_running: RunningSubagent, signal: NodeJS.Signals) {
+					signals.push(signal);
+					if (signal !== "SIGTERM") return;
+					// The child accepts its completion call on the way out of the soft interruption.
+					appendAssistantEntry(sessionFile, "final", "Sweep finished.");
+					writeSubagentExitSidecar(sessionFile, { type: "done", acceptedCall: { toolCallId: "call-done", args: {} } });
+					child.emit("exit", 0);
+				},
+			},
+			new AbortController().signal,
+		);
+		const result = await settleWithin(watch, 4000, "kept completion");
+		assert.deepEqual(running.phase, { kind: "soft-limit", wrapUp: null });
+		assert.equal(result.timeoutWrapUp, undefined);
+		assert.equal(result.timedOut, undefined);
+		assert.deepEqual(trace.phases, ["running", "soft-limit"]);
 	});
 
 	it("ends a run whose watcher failed, and sends a closed parent nothing", async () => {
@@ -324,7 +517,7 @@ describe("run phase", () => {
 			const pi = { sendMessage: (message: unknown) => sent.push(message) } as unknown as ExtensionAPI;
 			wireSubagentSteerBack(pi, running, Promise.reject(new Error("watcher crashed")), () => {});
 			await sleep(10);
-			assert.equal(running.phase, "ended");
+			assert.equal(running.phase.kind, "ended");
 			assert.equal(sent.length, closeParent ? 0 : 1, closeParent ? "closed parent" : "open parent");
 		}
 	});
@@ -343,7 +536,7 @@ describe("run phase", () => {
 			const childSignals: unknown[] = [];
 			const abort = new AbortController();
 			const stopped = makeRunning(makeSession(), {
-				phase: "ended",
+				phase: { kind: "ended" },
 				abortController: abort,
 				childProcess: fakeChild(childSignals),
 			});
@@ -351,7 +544,7 @@ describe("run phase", () => {
 			await stopRunningSubagent(stopped, async () => {
 				surfaceCloses++;
 			});
-			assert.equal(stopped.phase, "ended");
+			assert.equal(stopped.phase.kind, "ended");
 			assert.equal(surfaceCloses, 0, "no surface close");
 			assert.equal(abort.signal.aborted, false, "no watcher abort");
 			assert.deepEqual(childSignals, []);
@@ -361,7 +554,7 @@ describe("run phase", () => {
 				const closed = makeRunning(makeSession(), {
 					id: `ended-${mode}`,
 					mode,
-					phase: "ended",
+					phase: { kind: "ended" },
 					childProcess: fakeChild(closedSignals),
 				});
 				let closes = 0;
@@ -378,7 +571,7 @@ describe("run phase", () => {
 					},
 					{ escalationMs: 10 },
 				);
-				assert.equal(closed.phase, "ended", mode);
+				assert.equal(closed.phase.kind, "ended", mode);
 				assert.equal(closes, 0, `${mode}: no surface close`);
 				assert.equal(closed.shutdownTimer, undefined, `${mode}: no SIGKILL escalation`);
 				assert.deepEqual(closedSignals, [], mode);
@@ -403,7 +596,7 @@ describe("run phase", () => {
 			childProcess: child,
 		});
 		// A parent close without an abort controller sets stopping and signals the child itself.
-		running.phase = "stopping";
+		running.phase = { kind: "stopping" };
 		const watch = watchBackgroundSubagent(
 			running,
 			{
@@ -416,8 +609,7 @@ describe("run phase", () => {
 		);
 		await sleep(2600); // past the soft limit, two polls and the reaper's grace
 		assert.deepEqual(signals, [], "the watcher adds no signal to a stopping run");
-		assert.equal(running.timeoutWrapUp, undefined);
-		assert.equal(running.phase, "stopping");
+		assert.deepEqual(running.phase, { kind: "stopping" }, "no wrap-up joins a stopping run");
 		child.emit("exit", 143);
 		await settleWithin(watch, 4000, "stopping run exit");
 	});

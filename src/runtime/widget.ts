@@ -183,7 +183,7 @@ export class SubagentWidgetManager {
 				task: agent.task,
 				title: agent.title,
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "continue",
 				blocking: false,
 				async: true,

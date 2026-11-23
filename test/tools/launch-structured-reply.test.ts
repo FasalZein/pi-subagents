@@ -33,6 +33,7 @@ import {
 	setRunningSubagentForTest,
 } from "../support/index.ts";
 import { sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
+import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 
 // T28 at the extension boundary: a real Pi parent session with a faux provider calls the real
 // launch tool, directly or from a codemode script. The children are fakes; launch, routing, the
@@ -177,7 +178,7 @@ async function startParent(
 				agent: params.agent,
 				modelRef: CHILD_MODEL,
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
 				// worker-batch waits by the batch rule (blocking, not async: false), so Esc reaches its wait (D04a).
 				blocking: params.agent === "worker-wait" || params.agent === "worker-batch",
@@ -493,7 +494,7 @@ describe("T28 fix round 1: launch facts and failure text", () => {
 			assert.equal(value?.children[0]?.state, "started");
 			assert.equal(value?.children[0]?.runId, runOf(harness, "child-wait").id);
 			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child.
-			assert.equal(runOf(harness, "child-wait").stopRequestedBy, "operator");
+			assert.equal(stopRequesterOf(runOf(harness, "child-wait")), "operator");
 		} finally {
 			await harness.dispose();
 		}

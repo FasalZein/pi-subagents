@@ -237,7 +237,7 @@ export function buildRunningItems(ctx: OverlayContext): OverlayItem[] {
 			onKill: async () => {
 				// Operator surface: a human may cancel even a non-recipient's run.
 				// The item can outlive the run: stop then leaves an ended run as it is (T83).
-				if (a.phase === "ended") {
+				if (a.phase.kind === "ended") {
 					ctx.ui.notify(`${a.name} already ended`, "info");
 					return;
 				}

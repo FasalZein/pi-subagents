@@ -31,7 +31,7 @@ function makeRunning(id: string): RunningSubagent {
 		title: "Task",
 		agent: "worker",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

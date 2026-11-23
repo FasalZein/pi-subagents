@@ -909,6 +909,8 @@ Use `auto-exit: true` for autonomous agents. The child exits after a normal assi
 
 Once the operator interrupts (Escape) or sends input to the child, auto-exit is permanently disabled for that session — the child warns the operator and stays open. Run `/auto-exit` inside the child to re-arm it: the next normal assistant completion closes the child again. Background children never receive operator input and are unaffected.
 
+A retryable provider error arms a recovery window (30, 60 and 90 s by default). When the window passes with no successful turn, the child gets a "continue" message; the last window ends the run as failed. Every successful turn ends the window and restarts the failure count: an answer, or a turn that ends after a launch or resume, also when the child stays open for queued messages or live children. After the operator takes over, a provider error sends no "continue": the pane shows the error, and closing the pane reports it unless a later turn succeeds.
+
 ### `subagent_done`
 
 `subagent_done` closes a headless child that runs without auto-exit. Ordinary background launches and headless resumes force auto-exit, also when the agent says `auto-exit: false`, so those children do not have it. It has no parameters. The last assistant message before the call is the result, so the child writes its final report first and then makes the call. The result is untyped.

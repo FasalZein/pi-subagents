@@ -245,7 +245,7 @@ describe("resume by run id (D8)", () => {
 				stopped.push(running.id);
 			},
 		);
-		const running = { id: "bbbb0001", name: "worker" } as RunningSubagent;
+		const running = { id: "bbbb0001", name: "worker", phase: { kind: "running" } } as RunningSubagent;
 		runningSubagents.set(running.id, running);
 		try {
 			await kill!.execute("k1", { runId: "bbbb0001" });

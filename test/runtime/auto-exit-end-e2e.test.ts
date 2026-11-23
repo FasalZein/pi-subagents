@@ -144,7 +144,7 @@ async function watchAndPublish(sessionFile: string) {
 		task: "Work",
 		agent: "scout",
 		mode: "background",
-		phase: "running",
+		phase: { kind: "running" },
 		parentClosePolicy: "terminate",
 		async: true,
 		startTime: Date.now(),

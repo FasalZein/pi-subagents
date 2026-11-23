@@ -779,6 +779,117 @@ describe("subagent-done.ts", () => {
 			}
 		});
 
+		// M8 (owner 2026-11-23T20:09Z): every successful turn ends the earlier error's window
+		// and resets the failure count, also when the child stays open. Red on 4adc766.
+		const retryableErrorEnd = {
+			messages: [{ role: "assistant", stopReason: "error", errorMessage: "Connection error." }],
+		};
+		const answerEnd = {
+			messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "partial answer" }] }],
+		};
+		function recoveryStatus(h: ReturnType<typeof loadRecoveryChild>) {
+			return h.statusUpdates.filter((update) => update.key === "pi-subagent-recovery").at(-1)?.text;
+		}
+		for (const stayOpen of [
+			{
+				name: "live children",
+				hold: () => publishRunningSubagentCountForTest(() => 1),
+			},
+			{
+				name: "a queued message",
+				hold: (h: ReturnType<typeof loadRecoveryChild>) => {
+					(h.ctx as { hasPendingMessages?: () => boolean }).hasPendingMessages = () => true;
+				},
+			},
+		]) {
+			it(`a successful turn with ${stayOpen.name} ends the earlier error's recovery window`, () => {
+				mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+				const h = loadRecoveryChild();
+				try {
+					h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+					stayOpen.hold(h);
+					h.handlers.get("agent_end")?.(answerEnd, h.ctx);
+					assert.equal(recoveryStatus(h), undefined, "the pane shows no retry countdown");
+					mock.timers.tick(70_000);
+					assert.deepEqual(h.sentMessages, []);
+					assert.equal(h.shutdowns, 0);
+					assertNoExit(h);
+				} finally {
+					cleanup(h.dir);
+					mock.timers.reset();
+				}
+			});
+		}
+
+		it("a successful turn with live children restarts the consecutive failure count", () => {
+			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+			const h = loadRecoveryChild();
+			try {
+				h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+				mock.timers.tick(10_000);
+				assert.deepEqual(h.sentMessages, ["continue"]);
+				publishRunningSubagentCountForTest(() => 1);
+				h.handlers.get("agent_end")?.(answerEnd, h.ctx);
+
+				// The 10,20,30 override is clamped to 10 s windows: failures 1 and 2 nudge, failure 3 ends the run.
+				h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+				assert.match(recoveryStatus(h) ?? "", /\(1\/3\)/);
+				mock.timers.tick(10_000);
+				h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+				mock.timers.tick(10_000);
+				assert.deepEqual(h.sentMessages, ["continue", "continue", "continue"]);
+				assertNoExit(h);
+
+				h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+				mock.timers.tick(10_000);
+				mock.timers.tick(1);
+				assert.equal(h.sentMessages.length, 3);
+				const exit = readExit(h);
+				assert.equal(exit.type, "error");
+				// Three errors with no successful turn between them: "consecutive" is true.
+				assert.match(exit.errorMessage, /exhausted after 3 consecutive/);
+			} finally {
+				cleanup(h.dir);
+				mock.timers.reset();
+			}
+		});
+
+		// Review round 1 (P1): an intentional coordinator yield after a launch or resume is a
+		// successful turn too, so it restarts the count. Red on abfabb7.
+		for (const toolName of ["subagent", "subagent_resume"]) {
+			it(`a successful ${toolName} yield between provider errors restarts the failure count`, () => {
+				mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+				const h = loadRecoveryChild();
+				try {
+					const failOnce = () => {
+						h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+						mock.timers.tick(10_000);
+					};
+					failOnce();
+					failOnce();
+					assert.deepEqual(h.sentMessages, ["continue", "continue"]);
+					h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 0 });
+					h.handlers.get("tool_execution_end")?.({
+						type: "tool_execution_end",
+						toolName,
+						result: { content: [{ type: "text", text: "started" }], terminate: true },
+						isError: false,
+					});
+					h.handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "toolUse" }] }, h.ctx);
+					h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+					assert.match(recoveryStatus(h) ?? "", /\(1\/3\)/);
+					mock.timers.tick(10_000);
+					mock.timers.tick(1);
+					assert.deepEqual(h.sentMessages, ["continue", "continue", "continue"]);
+					assert.equal(h.shutdowns, 0);
+					assertNoExit(h);
+				} finally {
+					cleanup(h.dir);
+					mock.timers.reset();
+				}
+			});
+		}
+
 		it("writes background provider errors on shutdown and cancels pending retry timers", () => {
 			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 			const h = loadRecoveryChild({ interactive: false });

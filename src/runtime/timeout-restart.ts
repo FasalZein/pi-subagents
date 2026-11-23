@@ -63,9 +63,7 @@ export async function startTimeoutWrapUpWithinDeadline(
 		if (deadlineReached || expiry) {
 			const resolvedExpiry = expiry ?? checkSubagentTimeout(running, hardDeadlineAt ?? Date.now());
 			if (!resolvedExpiry) return null;
-			applyRunPhaseEvent(running, "timeLimit", () => {
-				running.timeoutExpiry = resolvedExpiry;
-			});
+			applyRunPhaseEvent(running, { type: "timeLimit", expiry: resolvedExpiry });
 			await stopStarted();
 			return { kind: "timedOut", expiry: resolvedExpiry };
 		}

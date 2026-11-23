@@ -23,6 +23,7 @@ import {
 	resetSubagentStateForTest,
 	setRunningSubagentForTest,
 } from "../support/index.ts";
+import { stopRequesterOf } from "../../src/runtime/run-phase.ts";
 
 // T23 at the extension boundary: a real Pi parent session with a faux provider calls the real
 // public launch tool with two waiting (async: false) children. The children are fakes; routing,
@@ -62,7 +63,7 @@ function launchRuntime(children: {
 				task: params.task,
 				agent: "worker-a",
 				mode: "background",
-				phase: "running",
+				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
 				blocking: true,
 				// D04a: an explicitly synchronous run (async: false) ignores Esc; a run that waits by the
@@ -256,7 +257,11 @@ describe("T23: a launch that waits takes its results through the queue (real Pi 
 			await parent.session.abort();
 			await run;
 			// D04a: as v2.9.2 (cf6dbf4), the launch wait that observed Esc stops the child it waited for.
-			assert.equal(runningSubagents.get("id-child-two")?.stopRequestedBy, "operator", "child 2 was stopped");
+			assert.equal(
+				stopRequesterOf(runningSubagents.get("id-child-two") ?? assert.fail("child 2 is missing")),
+				"operator",
+				"child 2 was stopped",
+			);
 			// The queue hands child 1 over as its own message, so it does not depend on the aborted
 			// reply: a codemode bridge discards that reply after an abort.
 			const messages = parent.session.messages.filter(
