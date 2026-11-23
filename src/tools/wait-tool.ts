@@ -39,7 +39,8 @@ const SubagentWaitParams = Type.Object(
 /**
  * D16: what a codemode script gets instead of the text: the records and the pending ids. An entry
  * carries no rendered text, as a launch child carries none: a script reads the record (owner
- * decision 2026-11-23). An entry in results is an ended run; record null says it published none.
+ * decision 2026-11-23). An entry in results is an ended run; record null says that no record is
+ * available to this wait.
  */
 export const SubagentWaitOutput = Type.Object({
 	status: Type.Union([
@@ -54,7 +55,7 @@ export const SubagentWaitOutput = Type.Object({
 		Type.Object({
 			runId: Type.String(),
 			name: Type.String(),
-			/** The run's published record (D13); null when the run published none. */
+			/** The run's published record (D13); null when no record is available to this wait. */
 			record: Type.Union([ResultRecordSchema, Type.Null()]),
 		}),
 	),

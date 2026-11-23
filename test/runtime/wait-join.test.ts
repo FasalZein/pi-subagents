@@ -353,29 +353,8 @@ describe("T24: the tool gives scripts structured records", () => {
 		assert.equal(record.outcome, "done");
 		assert.equal(record.typed, true);
 		assert.deepEqual(record.data, { answer: 42 });
-		resetSubagentStateForTest();
-	});
-
-	it("a script entry has no rendered text; the direct reply keeps the text", async () => {
-		resetSubagentStateForTest();
-		// biome-ignore lint/suspicious/noExplicitAny: the captured definition is probed dynamically.
-		let tool: any;
-		registerSubagentWaitTool({ registerTool: (definition: unknown) => (tool = definition) } as never, () => true, {
-			mayLaunch: () => true,
-		});
-		const sent: Sent[] = [];
-		const finish = startRun("one", sent, createTestDir());
-		const call = tool.execute("c1", { runIds: ["id-one"] }, undefined, undefined, parentToolCtx(createTestDir(), {}));
-		await tick();
-		finish("ONE-REPORT");
-		const result = await call;
-		const structured = result.structuredContent as SubagentWaitStructured;
-		assert.deepEqual(
-			structured.results.map((entry) => Object.keys(entry).sort()),
-			[["name", "record", "runId"]],
-			"a script reads the record, not the rendering",
-		);
-		assert.equal(result.details, result.structuredContent);
+		// Owner decision 2026-11-23: a script reads the record, not the rendering; a direct call keeps the text.
+		assert.deepEqual(Object.keys(structured.results[0] ?? {}).sort(), ["name", "record", "runId"]);
 		assert.match(result.content[0].text, /ONE-REPORT/, "the direct reply keeps its text");
 		resetSubagentStateForTest();
 	});

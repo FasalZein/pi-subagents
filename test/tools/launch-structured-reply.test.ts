@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { pendingRunEndCount, queuedRunEndIds, registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { outstandingWork } from "../../src/runtime/outstanding-work.ts";
+import { getSessionResultsDir } from "../../src/artifact-storage.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
@@ -21,7 +22,7 @@ import { type JoinOutcome, joinRuns } from "../../src/runtime/wait-join.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { getIgnoredModelOverrideWarning } from "../../src/tools/policy.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
+import { registerSubagentWaitTool, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	assert,
@@ -108,7 +109,9 @@ async function startParent(
 		refreshOnCreate: false,
 	});
 	modelRuntime.registerNativeProvider(faux.provider);
-	const store = new ResultStore(join(root, "results"), () => {});
+	// As the launch paths do: runs reserve their records in this parent session's results folder.
+	const sessionManager = SessionManager.create(root, join(root, "sessions"));
+	const store = new ResultStore(getSessionResultsDir(root, sessionManager.getSessionId()), () => {});
 	const finish = new Map<string, (result: SubagentResult) => void>();
 	const runs = new Map<string, RunningSubagent>();
 	const stopped: string[] = [];
@@ -238,7 +241,7 @@ async function startParent(
 		model: faux.getModel(),
 		resourceLoader,
 		settingsManager: SettingsManager.inMemory(options.codemode ? { defaultTools: ["+codemode"] } : {}),
-		sessionManager: SessionManager.create(root, join(root, "sessions")),
+		sessionManager,
 	});
 	// An interactive parent: a headless one awaits every launch.
 	// Pi spreads the UI context: a method that the parent calls (notify) must be an own key.
@@ -594,7 +597,7 @@ describe("T28: a batch whose later child fails to launch", () => {
 			const value = scriptValue(harness) as {
 				launch: { status: string; failed: unknown; children: ScriptChild[] };
 				ended: string[];
-				waited: { status: string; results: Record<string, unknown>[]; pending: string[] };
+				waited: SubagentWaitStructured;
 			};
 			const one = runOf(harness, "child-one").id;
 			const two = runOf(harness, "child-two").id;
@@ -616,17 +619,13 @@ describe("T28: a batch whose later child fails to launch", () => {
 			assert.deepEqual(harness.stopped, [two], "the started child was stopped by its run id");
 			assert.equal(value.waited.status, "complete");
 			assert.deepEqual(value.waited.pending, []);
-			// The wait tool reads records from the session's results folder, not this harness's store, so
-			// both records are null. A script has no rendering to fall back on: an entry in results shows
-			// that the run ended (owner decision 2026-11-23: scripts read records only).
-			const byRunId = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-				String(a.runId).localeCompare(String(b.runId));
+			// Owner decision 2026-11-23: a script reads each report from its record, in the requested order.
 			assert.deepEqual(
-				[...value.waited.results].sort(byRunId),
+				value.waited.results.map((result) => [result.runId, result.name, result.record?.summary]),
 				[
-					{ runId: one, name: "child-one", record: null },
-					{ runId: two, name: "child-two", record: null },
-				].sort(byRunId),
+					[one, "child-one", "ONE-DONE-EARLY"],
+					[two, "child-two", "STOPPED child-two"],
+				],
 			);
 			assert.equal(harness.launched(FAILING_CHILD), false, "the failed child never ran");
 		} finally {
