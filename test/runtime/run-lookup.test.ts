@@ -12,7 +12,6 @@ import {
 	setResultStorageNotice,
 } from "../../src/runtime/result-files.ts";
 import type { RunId } from "../../src/runtime/result-record.ts";
-import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { runningSubagents } from "../../src/runtime/state.ts";
@@ -168,7 +167,6 @@ describe("T25: lookup by run id", () => {
 		const reloaded = await tool.execute("c2", { runIds: [run.runId] }, undefined, undefined, session.ctx);
 		const text = reloaded.content[0].text as string;
 		assert.equal(text, delivered[0]!.content, "the same rendering from the record file");
-		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS);
 		const structured = reloaded.structuredContent as SubagentWaitStructured;
 		assert.ok(Value.Check(SubagentWaitOutput, structured));
 		assert.equal(structured.status, "complete");
@@ -178,13 +176,13 @@ describe("T25: lookup by run id", () => {
 		unsubscribe();
 	});
 
-	it("check 1: a long summary is still capped at 1,900 characters by the lookup", async () => {
+	it("check 1: a long summary reaches the lookup whole", async () => {
 		resetSubagentStateForTest();
 		const session = parentSession();
 		const store = sessionResultStore(session.resultsDir);
 		const runId = publishRecord(store, "long", 1_000, "x".repeat(5_000));
 		const reply = await waitTool().execute("c1", { runIds: [runId] }, undefined, undefined, session.ctx);
-		assert.ok(reply.content[0].text.length <= RESULT_TEXT_MAX_CHARS);
+		assert.ok(reply.content[0].text.includes(`\n${"x".repeat(5_000)}\n`));
 		assert.match(reply.content[0].text, new RegExp(`run: ${runId}`));
 	});
 
@@ -259,7 +257,7 @@ describe("T25: the recent list", () => {
 		const text = reply.content[0].text as string;
 		const lines = text.split("\n");
 		assert.equal(lines.length, 20);
-		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS);
+		assert.ok(text.length <= 1_900, "the recent list keeps its 1,900-character cap (D16)");
 		const expected = [...ids]
 			.sort((a, b) => b.endedAt - a.endedAt || (a.runId < b.runId ? -1 : 1))
 			.slice(0, 20)

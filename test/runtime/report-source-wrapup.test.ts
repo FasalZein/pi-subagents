@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
-import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { resultTextOf } from "../../src/runtime/unpublished-result.ts";
 import { selectUntypedReport } from "../../src/runtime/untyped-report.ts";
@@ -141,7 +140,7 @@ describe("D12 untyped report source (cf6dbf4)", () => {
 });
 
 describe("D12 report storage failure", () => {
-	it("keeps every delivery capped and returns the full report only to a lookup by run id", async () => {
+	it("delivers the whole untyped answer, so a lookup by run id adds no second copy of it", async () => {
 		const long = syntheticReport(6000);
 		const root = createTestDir();
 		dirs.push(root);
@@ -151,15 +150,13 @@ describe("D12 report storage failure", () => {
 		const published = publishRunResult(running, watchedEnd());
 		assert.equal(published?.record.report.saved, false);
 		const delivered = published?.text ?? "";
-		assert.ok(delivered.length <= RESULT_TEXT_MAX_CHARS, "the delivered copy stays capped");
+		assert.ok(delivered.includes(`\n${long}\n`), "the delivered copy holds the whole answer");
 		assert.ok(!delivered.includes(UNSAVED_REPORT_HEADING));
 		const record = store.read(reservation.runId);
 		assert.ok(record);
-		assert.ok((store.storedRendering(record) ?? "").length <= RESULT_TEXT_MAX_CHARS, "a replayed copy stays capped");
+		assert.equal(store.storedRendering(record), delivered, "a replayed copy is the delivered one");
 		const lookup = await joinRuns({ ids: [reservation.runId] }, undefined, { store, cwd: root });
-		const text = lookup.results[0]?.text ?? "";
-		assert.ok(text.startsWith(delivered), "the lookup starts with the delivered rendering");
-		assert.ok(text.endsWith(`${UNSAVED_REPORT_HEADING}\n${long}`), "the lookup recovers the full report");
+		assert.equal(lookup.results[0]?.text, delivered, "the summary is the report, so the lookup adds nothing");
 	});
 });
 

@@ -4,11 +4,10 @@ import { join } from "node:path";
 // package exports, so the test imports the file.
 import { resolveToCwd } from "../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
-import { CUT_MARK, type ReportStorage, type ResultRecord } from "../../src/runtime/result-record.ts";
+import { type ReportStorage, type ResultRecord } from "../../src/runtime/result-record.ts";
 import {
 	FRAME_MAX_CHARS,
 	KILL_UNCONFIRMED_WARNING,
-	RESULT_TEXT_MAX_CHARS,
 	renderResult,
 	shortestReadLocator,
 	type VerifierFooter,
@@ -64,14 +63,14 @@ function renderedSummary(text: string): string {
 		.split(/\n(?:run|resume): /)[0];
 }
 
-describe("result renderer: G1.3 bounded text", () => {
+describe("result renderer: whole summary in a bounded frame", () => {
 	const savedReport: ReportStorage = {
 		saved: true,
 		path: join(HOME, ".pi/artifacts/pi-subagents/results/r-0001/report-1.md"),
 	};
 	for (const length of [400, 3_572, 4_964, 29_993]) {
 		for (const typed of [true, false]) {
-			it(`a ${length}-character ${typed ? "typed" : "untyped"} report renders within the limits`, () => {
+			it(`a ${length}-character ${typed ? "typed" : "untyped"} report renders whole within the frame limit`, () => {
 				const record = recordFor(length, typed, savedReport);
 				const text = renderResult(record, {
 					cwd: CWD,
@@ -80,8 +79,7 @@ describe("result renderer: G1.3 bounded text", () => {
 					verifierFooter: VERIFIER_FOOTER,
 					showContextUsage: true,
 				});
-				assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
-				assert.ok(text.includes(record.summary), "the whole summary fits with a short locator");
+				assert.ok(text.includes(`\n${record.summary}\n`), "the whole summary stays");
 				assert.ok(frameLength(text, record.summary) <= FRAME_MAX_CHARS, `frame ${frameLength(text, record.summary)}`);
 				assert.match(text.split("\n")[0], typed ? / · partial · .* · typed · data error$/ : / · done · .* · untyped$/);
 				assert.ok(text.includes("run: r-0001"));
@@ -94,7 +92,7 @@ describe("result renderer: G1.3 bounded text", () => {
 		}
 	}
 
-	it("a 600-character report path keeps its whole locator and cuts the summary further", () => {
+	it("a 600-character report path keeps its whole locator and the whole summary", () => {
 		const longDir = Array.from({ length: 12 }, (_, i) => `segment-${i}-${"d".repeat(40)}`).join("/");
 		const path = join(HOME, longDir).slice(0, 600 - "/report.md".length) + "/report.md";
 		assert.equal(path.length, 600);
@@ -103,17 +101,15 @@ describe("result renderer: G1.3 bounded text", () => {
 		const text = renderResult(record, options);
 		const locator = `~/${path.slice(HOME.length + 1)}`;
 		assert.ok(text.includes(`run: r-0001 · ${locator}\n`), "the footer names the whole ~ locator");
-		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
 		assert.ok(text.includes("\nverifier: winner staged"), "the verifier's staged fact is a required field (D18)");
 		for (const warning of WARNINGS) assert.ok(!text.includes(warning), "warnings get no room beyond 400 characters");
 		const summary = renderedSummary(text);
 		assert.ok(frameLength(text, summary) <= FRAME_MAX_CHARS + locator.length, "only the locator widens the frame");
-		assert.ok(summary.endsWith(CUT_MARK), "the summary is cut further with a cut mark");
-		assert.ok(summary.length < record.summary.length);
+		assert.equal(summary, record.summary, "the summary stays whole");
 		assert.equal(resolveToCwd(locator, CWD), path, "Pi's read tool resolves the locator");
 	});
 
-	it("report paths up to the macOS limit of 1,024 characters keep the text within 1,900", () => {
+	it("report paths up to the macOS limit of 1,024 characters keep the whole locator and the whole summary", () => {
 		for (let pathLength = 20; pathLength <= 1_024; pathLength += 41) {
 			const path = `/${"p/".repeat(pathLength)}`.slice(0, pathLength - 3) + ".md";
 			for (const reportLength of [1, 1_499, 1_500, 1_501, 29_993]) {
@@ -125,7 +121,7 @@ describe("result renderer: G1.3 bounded text", () => {
 					verifierFooter: VERIFIER_FOOTER,
 					showContextUsage: true,
 				});
-				assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `path ${pathLength}, report ${reportLength}: ${text.length}`);
+				assert.ok(text.includes(`\n${record.summary}\n`), `path ${pathLength}, report ${reportLength}`);
 				assert.ok(text.includes(` · ${path}`), "the whole locator stays");
 			}
 		}
@@ -135,7 +131,7 @@ describe("result renderer: G1.3 bounded text", () => {
 		const record = recordFor(3_572, true, { saved: false, error: "EACCES: permission denied" });
 		const text = renderResult(record, { cwd: CWD, homeDir: HOME });
 		assert.ok(text.includes("report not saved: EACCES: permission denied"));
-		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS);
+		assert.ok(text.includes(`\n${record.summary}\n`), "the whole summary stays");
 	});
 
 	it("each outcome word appears in the header", () => {
@@ -225,7 +221,7 @@ describe("result renderer: frame budget (D14)", () => {
 		assert.ok(text.includes("\ncontext: 91000/100000 tokens"));
 	});
 
-	it("a verifier text over 1,900 characters keeps the frame and the total within their caps", () => {
+	it("a verifier text over 1,900 characters keeps the frame within its cap", () => {
 		const detail = `provenance ${"p".repeat(1_950)}`;
 		for (const report of [
 			{ saved: false as const, error: saveError },
@@ -238,7 +234,6 @@ describe("result renderer: frame budget (D14)", () => {
 				verifierFooter: { winner: "not applied", detail },
 				showContextUsage: true,
 			});
-			assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `length ${text.length}`);
 			assert.ok(
 				frameLength(text, "s".repeat(1_500)) <= FRAME_MAX_CHARS,
 				`frame ${frameLength(text, "s".repeat(1_500))}`,

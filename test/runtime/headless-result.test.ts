@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { watchBackgroundSubagent } from "../../src/runtime/background-watch.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
-import { RESULT_TEXT_MAX_CHARS } from "../../src/runtime/result-render.ts";
 import { writeSubagentExitSidecar } from "../../src/session/exit-sidecar.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import { afterEach, assert, createSessionFile, createTestDir, describe, it, rmSync } from "../support/index.ts";
@@ -52,6 +51,10 @@ function makeRunning(sessionFile: string, childProcess: ChildProcess, options: T
 	};
 }
 
+function recordOf(running: RunningSubagent) {
+	return running.resultTarget?.store.list().find((record) => record.runId === running.id);
+}
+
 async function finishHeadless(
 	entries: object[],
 	options: TargetOptions & { exitPayload?: object } = {},
@@ -76,19 +79,29 @@ describe("headless results through the assembler (T07)", () => {
 		for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 	});
 
-	it("caps a 20,000-character answer and names a report file that holds all of it", async () => {
+	it("delivers a 20,000-character answer whole and names a report file that holds all of it", async () => {
 		assert.equal(LONG_ANSWER.length, 20_000);
 		const { running, result } = await finishHeadless([assistantText(LONG_ANSWER)]);
 		const text = messageText(result, running);
-		assert.ok(text.length <= RESULT_TEXT_MAX_CHARS, `text is ${text.length} characters`);
-		assert.ok(text.includes(START_MARKER));
-		assert.ok(!text.includes(END_MARKER));
+		// Owner decision 2026-11-23: the result carries the child's full last text (v2.9.2 behaviour).
+		assert.equal(recordOf(running)?.summary, LONG_ANSWER, "the record summary is whole");
+		assert.ok(text.includes(`\n${LONG_ANSWER}\n`), "the rendered text holds the whole answer");
 		const reportFile = result.reportFile;
 		assert.ok(reportFile, "the result names its report file");
 		assert.ok(text.includes(`run: ${running.id}`));
 		const report = readFileSync(reportFile, "utf8");
 		assert.equal(report, LONG_ANSWER);
 		assert.ok(report.includes(START_MARKER) && report.includes(END_MARKER));
+	});
+
+	it("delivers a 20,000-character caller_ping message whole", async () => {
+		const { running, result } = await finishHeadless([assistantText("I need a decision.")], {
+			exitPayload: { type: "ping", name: "w", message: LONG_ANSWER },
+		});
+		const text = messageText(result, running);
+		assert.match(text, / · blocked · /);
+		assert.equal(recordOf(running)?.summary, LONG_ANSWER, "the record summary is whole");
+		assert.ok(text.includes(`\n${LONG_ANSWER}\n`), "the rendered text holds the whole ping message");
 	});
 
 	it("gives the message path and the waiting-launch path the same text", async () => {
@@ -107,7 +120,6 @@ describe("headless results through the assembler (T07)", () => {
 		const launchText = await waitText(result, running, warnings.join("\n\n"));
 		const message = messageText(result, running);
 		assert.equal(launchText, message);
-		assert.ok(launchText.length <= RESULT_TEXT_MAX_CHARS, `text is ${launchText.length} characters`);
 		assert.ok(launchText.includes("warning: background launches always use auto-exit: true"), launchText);
 	});
 
@@ -117,8 +129,7 @@ describe("headless results through the assembler (T07)", () => {
 		});
 		const message = messageText(result, running);
 		assert.equal(await waitText(result, running), message);
-		assert.ok(message.length <= RESULT_TEXT_MAX_CHARS, `text is ${message.length} characters`);
-		assert.ok(message.includes(START_MARKER) && !message.includes(END_MARKER));
+		assert.ok(message.includes(`\n${LONG_ANSWER}\n`), "the rendered text holds the whole answer");
 		assert.match(message, /not resumable: stopped early by its context-warning policy/);
 		assert.ok(result.reportFile, "the result names its report file");
 		assert.equal(readFileSync(result.reportFile, "utf8"), LONG_ANSWER);

@@ -2,14 +2,12 @@ import { isAbsolute, relative } from "node:path";
 import { formatElapsedSeconds } from "../tools/overlay/render-helpers.ts";
 import { SUBAGENT_RESUME_TOOL_NAME } from "../tools/tool-names.ts";
 import { cutText } from "./result-assembler.ts";
-import { CUT_MARK, type EndedBy, type ResultOutcome, type ResultRecord, SUMMARY_MAX_CHARS } from "./result-record.ts";
+import { CUT_MARK, type EndedBy, type ResultOutcome, type ResultRecord } from "./result-record.ts";
 
 /** D14: everything around the summary, unless a long report locator needs more. */
 export const FRAME_MAX_CHARS = 400;
-/** D14 and G1.3: the whole rendered text. */
-export const RESULT_TEXT_MAX_CHARS = 1900;
 
-/** Header names and short footer facts stay this short so the summary keeps its room. */
+/** Header names and short footer facts stay this short so the frame keeps its room. */
 const NAME_MAX_CHARS = 60;
 const FACT_MAX_CHARS = 160;
 
@@ -221,11 +219,11 @@ function optionalLines(options: RenderOptions): string[] {
 }
 
 /**
- * D14: one text for the parent: header, summary, footer. The required fields come first; optional
- * lines fill the rest of FRAME_MAX_CHARS. The frame exceeds FRAME_MAX_CHARS only when the required
- * fields with the whole report locator do not fit; the summary is then cut further, so the text
- * stays within RESULT_TEXT_MAX_CHARS. The session path, raw watcher errors and the resume command
- * line are not part of the text.
+ * D14: one text for the parent: header, the whole summary, footer (owner decision 2026-11-23: the
+ * summary is never cut, as in v2.9.2). The required fields come first; optional lines fill the rest of
+ * FRAME_MAX_CHARS. The frame exceeds FRAME_MAX_CHARS only when the required fields with the whole
+ * report locator do not fit. The session path, raw watcher errors and the resume command line are not
+ * part of the text.
  */
 export function renderResult(record: ResultRecord, options: RenderOptions): string {
 	const header = headerLine(record);
@@ -237,7 +235,5 @@ export function renderResult(record: ResultRecord, options: RenderOptions): stri
 		if (room <= CUT_MARK.length) break;
 		footer.push(cutText(line, room));
 	}
-	const summaryRoom = Math.min(SUMMARY_MAX_CHARS, RESULT_TEXT_MAX_CHARS - frameLength(footer));
-	const summary = cutText(record.summary, Math.max(0, summaryRoom));
-	return [header, summary, ...footer].join("\n");
+	return [header, record.summary, ...footer].join("\n");
 }

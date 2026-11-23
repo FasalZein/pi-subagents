@@ -6,10 +6,7 @@ export type CallOutcome = Extract<ResultOutcome, "done" | "partial" | "blocked">
 
 export const CALL_OUTCOMES: readonly CallOutcome[] = ["done", "partial", "blocked"];
 
-/** D12: a summary holds at most this many characters, the cut mark included. */
-export const SUMMARY_MAX_CHARS = 1500;
-
-/** Appended where the assembler or the renderer shortens text. */
+/** Appended where the renderer or a line of the recent list shortens text. */
 export const CUT_MARK = " [cut]";
 
 declare const runIdBrand: unique symbol;
@@ -66,7 +63,7 @@ type RecordFields = {
 	title?: string;
 	modelRef?: string;
 	outcome: ResultOutcome;
-	/** At most SUMMARY_MAX_CHARS characters. */
+	/** The child's whole answer or ping message, or the runtime's account of the end; never cut. */
 	summary: string;
 	sessionFile?: string;
 	artifacts: string[];

@@ -1,7 +1,6 @@
 import { mock } from "node:test";
 import { buildBackgroundLaunchPlan } from "../../src/launch/background.ts";
 import { assembleResult, NO_REPORT_LINE } from "../../src/runtime/result-assembler.ts";
-import { CUT_MARK, SUMMARY_MAX_CHARS } from "../../src/runtime/result-record.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import {
 	ASSISTANT_MSG,
@@ -206,15 +205,14 @@ describe("completion call (T72, D12 records)", () => {
 		assert.equal(report, `Wrote the file.\n\n${NO_REPORT_LINE}`);
 	});
 
-	it("an older session's typed summary over the limit is cut and kept whole in the report", () => {
+	it("an older session's 2,000-character typed summary stays whole in the record and the report", () => {
 		const summary = longText(2_000, "END-OF-SUMMARY");
 		const args = { outcome: "done", summary };
 		const { record, report } = assembleResult(
 			facts([sessionHeader(), user("task"), toolCall(DONE, args, "c2"), toolResult(DONE, "c2", "ok")]),
 		);
 		assert.equal(record.typed, true);
-		assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-		assert.ok(record.summary.endsWith(CUT_MARK));
+		assert.equal(record.summary, summary);
 		assert.ok(report.includes(summary), "the report holds the full summary with its last marker");
 	});
 
@@ -230,8 +228,7 @@ describe("completion call (T72, D12 records)", () => {
 				facts([sessionHeader(), user("task")], { end: { kind: "pinged", message } }),
 			);
 			assert.equal(record.outcome, "blocked");
-			assert.ok(record.summary.length <= SUMMARY_MAX_CHARS);
-			assert.ok(record.summary.endsWith(CUT_MARK));
+			assert.equal(record.summary, message);
 			assert.equal(report, message);
 			assert.ok(report.endsWith("END-OF-PING"));
 		}),

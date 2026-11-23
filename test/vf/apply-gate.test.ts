@@ -108,9 +108,8 @@ describe("verified fan-out apply gate (live processes)", () => {
 		// ONE logical result: the winner's report plus the compact footer.
 		const result = verifiedRunToSubagentResult(manifest, runDir, { name: "vf-run", task: "do the thing" }, Date.now());
 		assert.equal(result.exitCode, 0);
-		// D18: the capped text keeps the winner report and the staged fact; the report file keeps the full provenance.
-		assert.ok(result.resultText && result.resultText.length <= 1900);
-		assert.ok(result.resultText.includes(selection.winnerReport.trim()), "text holds the winner report");
+		// D18: the text keeps the winner report and the staged fact; the report file keeps the full provenance.
+		assert.ok(result.resultText?.includes(selection.winnerReport.trim()), "text holds the winner report");
 		assert.match(result.resultText, /verifier: winner staged/);
 		assert.match(result.resultText, /git diff --staged/);
 		assert.ok(result.reportFile, "the text names a report file");

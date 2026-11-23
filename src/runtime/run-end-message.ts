@@ -36,7 +36,7 @@ interface GroupedRunEndMessage {
 	details: GroupedRunEndDetails;
 }
 
-/** Separates the capped renderings in a grouped message; each copy keeps its own cap (D15). */
+/** Separates the renderings in a grouped message (D15). */
 const RESULT_SEPARATOR = "\n\n";
 
 /** One run end leaves in its own shape; several leave as one grouped subagent_result message. */

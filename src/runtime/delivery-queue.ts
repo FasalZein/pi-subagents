@@ -351,7 +351,7 @@ export function queuedRunEndIds(): string[] {
  * the call that waited for it is returned. A returned reply delivers the results it holds: they
  * leave the queue and their lease ends once by id. An aborted call's reply may never reach the
  * model (codemode discards it), so every result it holds is handed over as one message that starts
- * no turn; when Pi commits the reply anyway, the second copy is capped like every copy.
+ * no turn; when Pi commits the reply anyway, the parent holds a second copy of the same rendering.
  */
 export function settleWaitReply(ids: readonly string[], reported: readonly string[], signal?: AbortSignal): void {
 	const returned = new Set(reported);

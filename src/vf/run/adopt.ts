@@ -300,7 +300,7 @@ function deliverVerifiedRunResult(
 		manifest.runId.slice(-8),
 		{
 			customType: "subagent_result",
-			// D14 and D18: the renderer's capped text; the delivery id stays in the details.
+			// D14 and D18: the renderer's text; the delivery id stays in the details.
 			content: result.resultText,
 			display: true,
 			details: {

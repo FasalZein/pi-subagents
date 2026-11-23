@@ -103,7 +103,7 @@ function discardReservation(reservation: Reservation): void {
 }
 
 /**
- * D16: the capped rendering of one report revision, next to its report. It is written before the
+ * D16: the rendering of one report revision, next to its report. It is written before the
  * record commits that revision, so a lookup replays the delivered text, display facts included.
  */
 function renderingPathFor(reportPath: string): string {
@@ -351,7 +351,7 @@ export class ResultStore {
 
 	/**
 	 * D12: the full report of a record whose report file failed, kept in this session's memory. Only an
-	 * explicit lookup by run id returns it; ordinary deliveries stay capped.
+	 * explicit lookup by run id returns it; ordinary deliveries carry the summary alone.
 	 */
 	unsavedReport(record: ResultRecord): string | undefined {
 		return record.report.saved ? undefined : this.memoryReports.get(record.runId);
