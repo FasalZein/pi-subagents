@@ -854,6 +854,42 @@ describe("subagent-done.ts", () => {
 			}
 		});
 
+		// Review round 1 (P1): an intentional coordinator yield after a launch or resume is a
+		// successful turn too, so it restarts the count. Red on abfabb7.
+		for (const toolName of ["subagent", "subagent_resume"]) {
+			it(`a successful ${toolName} yield between provider errors restarts the failure count`, () => {
+				mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+				const h = loadRecoveryChild();
+				try {
+					const failOnce = () => {
+						h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+						mock.timers.tick(10_000);
+					};
+					failOnce();
+					failOnce();
+					assert.deepEqual(h.sentMessages, ["continue", "continue"]);
+					h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 0 });
+					h.handlers.get("tool_execution_end")?.({
+						type: "tool_execution_end",
+						toolName,
+						result: { content: [{ type: "text", text: "started" }], terminate: true },
+						isError: false,
+					});
+					h.handlers.get("agent_end")?.({ messages: [{ role: "assistant", stopReason: "toolUse" }] }, h.ctx);
+					h.handlers.get("agent_end")?.(retryableErrorEnd, h.ctx);
+					assert.match(recoveryStatus(h) ?? "", /\(1\/3\)/);
+					mock.timers.tick(10_000);
+					mock.timers.tick(1);
+					assert.deepEqual(h.sentMessages, ["continue", "continue", "continue"]);
+					assert.equal(h.shutdowns, 0);
+					assertNoExit(h);
+				} finally {
+					cleanup(h.dir);
+					mock.timers.reset();
+				}
+			});
+		}
+
 		it("writes background provider errors on shutdown and cancels pending retry timers", () => {
 			mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
 			const h = loadRecoveryChild({ interactive: false });

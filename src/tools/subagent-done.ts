@@ -170,6 +170,18 @@ export default function (pi: ExtensionAPI) {
 		armPiRecoveryFailureTimer(piRecoveryNoCompactionGraceMs);
 	}
 
+	/**
+	 * A successful turn (an answer, or an intentional coordinator yield after a launch
+	 * or resume) supersedes any earlier error, its recovery window and the failure
+	 * count, also when the child stays open (M8, owner 2026-11-23T20:09Z).
+	 */
+	function recordSuccessfulTurn() {
+		pendingProviderError = null;
+		takeover.clearUnrecoveredError();
+		providerErrorRecovery.cancelPendingRecovery(true);
+		cancelPendingPiRecovery();
+	}
+
 	function enforceDeniedTools() {
 		try {
 			const deniedNames = getDeniedToolNames(autoExit);
@@ -403,9 +415,7 @@ export default function (pi: ExtensionAPI) {
 			const coordinatorOnlyTurnStop =
 				intentionallyTerminatedToolBatch && terminatingSubagentLaunchesThisTurn > 0;
 			if (endedAtToolUseBoundary(messages) && coordinatorOnlyTurnStop) {
-				pendingProviderError = null;
-				providerErrorRecovery.cancelPendingRecovery();
-				cancelPendingPiRecovery();
+				recordSuccessfulTurn();
 				consecutiveToolBoundaryEnds = 0;
 				return;
 			}
@@ -467,13 +477,8 @@ export default function (pi: ExtensionAPI) {
 				providerErrorRecovery.handleProviderError(errorInfo, ctx);
 				return;
 			}
-			// A successful answer supersedes any earlier error, its recovery window and
-			// the failure count, also when the child stays open for queued messages or
-			// live children (M8, owner 2026-11-23T20:09Z).
-			pendingProviderError = null;
-			takeover.clearUnrecoveredError();
-			providerErrorRecovery.cancelPendingRecovery(true);
-			cancelPendingPiRecovery();
+			// Before the returns for queued messages and live children.
+			recordSuccessfulTurn();
 			if (ctx.hasPendingMessages?.()) return;
 			// Keep the coordinator alive until every live child has reported back.
 			if (getPublishedRunningSubagentCount() > 0) return;
