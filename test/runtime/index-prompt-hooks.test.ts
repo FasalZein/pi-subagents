@@ -432,6 +432,32 @@ describe("agent index at prompt start", () => {
 		}
 	});
 
+	it("tells only a codemode session what subagent_wait resolves to", async () => {
+		const deferred = MANAGEMENT.map((name) => ({ name, exposure: "deferred" }));
+		const cases: Array<[string, { all: ToolInfoStub[]; active: string[] }, boolean]> = [
+			[
+				"codemode",
+				{ all: [{ name: "codemode" }, { name: "subagent" }, ...deferred], active: ["codemode", "subagent"] },
+				true,
+			],
+			[
+				"tool search",
+				{ all: [{ name: "tool_search" }, { name: "subagent" }, ...deferred], active: ["tool_search", "subagent"] },
+				false,
+			],
+			["direct", { all: LOADOUT, active: ["subagent", ...MANAGEMENT] }, false],
+		];
+		for (const [label, tools, hinted] of cases) {
+			const { handlers, ctx } = setup(tools);
+			const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
+			const line = hinted
+				? "More tools: subagent_wait({runIds?}) (resolves to {status, results: [{runId, name, record}], pending, missing}; the answer is record?.summary), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail)."
+				: "More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).";
+			assert.ok(section.split("\n").includes(line), `${label}\n${section}`);
+			resetSubagentStateForTest();
+		}
+	});
+
 	it("lets a coordinator without file tools or subagent_agents find an agent the index has no line for (D06)", async () => {
 		// tools: none, extensions: none and deny-tools: subagent_agents leave only the launch tool.
 		process.env.PI_SUBAGENT_AGENT = "coordinator";

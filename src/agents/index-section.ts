@@ -73,8 +73,18 @@ const INDEX_CALL_FORMS: Record<IndexMoreTool, string> = {
 	subagent_agents: "subagent_agents({query?, name?}) (search; name: full detail)",
 };
 
-/** The management tools this session may call, so the index names only usable tools (D06). */
-type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool> };
+// What tools.subagent_wait resolves to in a codemode script: SubagentWaitOutput
+// (src/tools/wait-tool.ts) without the optional recent list. A deferred tool
+// shows only its call form, and scripts that guessed the shape missed the
+// summary (context-compare-upstream-eb2e64b, review-workflow).
+const WAIT_CODEMODE_RESULT =
+	" (resolves to {status, results: [{runId, name, record}], pending, missing}; the answer is record?.summary)";
+
+/**
+ * The management tools this session may call, so the index names only usable
+ * tools (D06), and whether codemode is active, so scripts know a result shape.
+ */
+type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool>; codemode?: boolean };
 
 const ALL_TOOLS: IndexToolAccess = { callable: new Set(INDEX_MORE_TOOLS) };
 
@@ -156,7 +166,9 @@ function renderNamesLine(names: readonly string[], hidden: number): string {
 }
 
 function renderMoreToolsLine(tools: IndexToolAccess): string[] {
-	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) => INDEX_CALL_FORMS[name]);
+	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) =>
+		name === "subagent_wait" && tools.codemode ? INDEX_CALL_FORMS[name] + WAIT_CODEMODE_RESULT : INDEX_CALL_FORMS[name],
+	);
 	return names.length > 0 ? [`More tools: ${names.join(", ")}.`] : [];
 }
 
