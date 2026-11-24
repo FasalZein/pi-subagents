@@ -76,7 +76,7 @@ function launchChildIds(details: unknown): Array<string | undefined> {
  * Where the original text of a folded call is: the parent's session file keeps every call in full,
  * one JSON line each, so the line that holds the call id is the call (rg or read can find it).
  */
-export function originalRoute(callId: string, sessionFile: string | undefined): string {
+function originalRoute(callId: string, sessionFile: string | undefined): string {
 	return `the line with "${callId}" in ${sessionFile ?? "this session's file"}`;
 }
 
