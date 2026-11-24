@@ -289,6 +289,7 @@ export async function launchVerifiedFanOut(
 		const startTime = Date.now();
 		const running: RunningSubagent = {
 			id: runId.slice(-8),
+			parentSessionId: parentSessionId ?? undefined,
 			name: params.name,
 			task: params.task,
 			title: params.title,

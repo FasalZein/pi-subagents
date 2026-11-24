@@ -172,6 +172,7 @@ describe("T25 check 5: a continue child that ended after its parent exited", () 
 			const running = await resumeSubagentSession(
 				{
 					resultsDir: getSessionResultsDir(parentCwd, sessionId),
+					parentSessionId: "test-parent",
 					parent: { parentCwd, warnings: [] },
 					sessionFile: "child.jsonl",
 					task: "Keep going.",

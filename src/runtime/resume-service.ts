@@ -77,6 +77,8 @@ interface ResumeSessionInput {
 	sessionFile: string;
 	/** The parent session's results folder; the resume reserves its run id there (D13). */
 	resultsDir: string;
+	/** The resuming parent's session id: it owns the new run (settle fold task end). */
+	parentSessionId: string;
 	parent: ResultParent; // The receiving parent's cwd and the warnings its rendered result repeats (D14).
 	task?: string;
 	name?: string;
@@ -469,6 +471,7 @@ async function resumeSubagentSessionWithoutWidth(
 	sessionResultStore(input.resultsDir).noteLaunch(reservation, sessionFile);
 	const running: RunningSubagent = {
 		id: reservation.runId,
+		parentSessionId: input.parentSessionId,
 		name,
 		task: task ?? "resumed session",
 		agent: resumedAgent,

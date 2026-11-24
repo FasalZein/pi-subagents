@@ -168,6 +168,7 @@ describe("headless child environment boundary (D34)", () => {
 			await resumeSubagentSession(
 				{
 					resultsDir: testResultsDir(),
+					parentSessionId: "test-parent",
 					parent: { parentCwd: process.cwd(), warnings: [] },
 					sessionFile,
 					task: "Probe.",

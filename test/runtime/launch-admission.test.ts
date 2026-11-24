@@ -157,6 +157,7 @@ describe("launch admission without a cumulative cap (D17)", () => {
 		for (let index = 0; index < 65; index++) assertStarted(await launch(), `launch ${index + 1}`);
 		const input = {
 			resultsDir: createTestDir(),
+			parentSessionId: "test-parent",
 			parent: { parentCwd: process.cwd(), warnings: [] },
 			sessionFile: join(createTestDir(), "missing.jsonl"),
 		};

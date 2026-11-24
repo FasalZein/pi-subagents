@@ -21,6 +21,7 @@ import {
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
+import { pendingRunEndIds } from "./delivery-queue.ts";
 import { sessionResultStore } from "./result-files.ts";
 import { recordAsJson } from "./result-record-schema.ts";
 import { isFinishedStatus } from "./run-end-message.ts";
@@ -29,7 +30,8 @@ import { runningSubagents } from "./state.ts";
 
 /**
  * The settle fold (owner rule 2026-11-22T08:40Z; model statecharts/context-fold/target/Target.tla).
- * When the parent settles idle, every run the model already used folds: from then on each provider
+ * When the parent settles idle with its task closed (taskOpen, owner rule 2026-11-24T09:59Z), every
+ * run the model already used folds: from then on each provider
  * request carries a short stub instead of that run's launch brief and its result message. The
  * session file keeps the full text, and subagent_wait({ runIds }) returns the stored result (D16).
  *
@@ -70,12 +72,34 @@ function launchChildIds(details: unknown): Array<string | undefined> {
 	return [str(details.id)];
 }
 
+/**
+ * Where the original text of a folded call is: the parent's session file keeps every call in full,
+ * one JSON line each, so the line that holds the call id is the call (rg or read can find it).
+ */
+function originalRoute(callId: string, sessionFile: string | undefined): string {
+	return `the line with "${callId}" in ${sessionFile ?? "this session's file"}`;
+}
+
+/**
+ * The stub of a folded run's task text in the parent's own launch or resume call. It must not read as
+ * the task the parent sent: a model that saw the run stub there took it for its own mistake
+ * (review-fix regression, 2026-11-24). It names both routes: the original text and the result.
+ */
+export function taskStub(run: FoldedRun, route: string): string {
+	return `[Task text folded by the harness after run ${run.id} (${run.name}) ended; the child got your full text. Original text: ${route}. Outcome: ${run.outcome}, report ${run.report}. Result: subagent_wait({ runIds: ["${run.id}"] })]`;
+}
+
 /** A direct launch call: the children list when nonempty, else the top-level form (the launch normalizer). */
-function foldLaunchArgs(args: Rec, ids: Array<string | undefined>, folded: ReadonlyMap<string, FoldedRun>): Rec {
+function foldLaunchArgs(
+	args: Rec,
+	ids: Array<string | undefined>,
+	folded: ReadonlyMap<string, FoldedRun>,
+	route: string,
+): Rec {
 	const stubFor = (index: number) => {
 		const id = ids[index];
 		const run = id ? folded.get(id) : undefined;
-		return run ? runStub(run) : undefined;
+		return run ? taskStub(run, route) : undefined;
 	};
 	const children = parseJsonContainer(args.children);
 	if (!Array.isArray(children) || children.length === 0) {
@@ -95,11 +119,12 @@ function foldLaunchArgs(args: Rec, ids: Array<string | undefined>, folded: Reado
 }
 
 /** A frozen launch-only script: its whole code becomes one stub naming its runs (context-fold-scripts.ts). */
-function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>): string | undefined {
+function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>, route: string): string | undefined {
 	const runs = script.runIds.map((id) => folded.get(id));
 	if (runs.some((run) => run === undefined)) return undefined;
 	const lines = (runs as FoldedRun[]).map((run) => `// ${runStub(run)}`);
-	return [`// Folded launch script of runs ${script.runIds.join(", ")}.`, ...lines].join("\n");
+	const head = `// Folded launch script of runs ${script.runIds.join(", ")}. The harness folded your original script; original code: ${route}.`;
+	return [head, ...lines].join("\n");
 }
 
 /** The runs of a tool result that can fold, and for a launch reply the head lines it keeps. */
@@ -202,17 +227,20 @@ function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>, us
  * content of a result message and the content of a clean wait, launch or resume reply change;
  * tool-call ids, other tool results, thinking blocks and every other message stay the same objects.
  * Each call pairs with the tool results of its own turn. Without a change the same list returns.
+ * A folded call's stub names the parent's session file (`sessionFile`) as the way to its original text.
  */
 export function foldMessages<T>(
 	messages: T[],
 	folded: ReadonlyMap<string, FoldedRun>,
 	scripts: ReadonlyMap<string, FoldedScript>,
 	used: UsedBeforeFold,
+	sessionFile?: string,
 ): T[] {
 	if (folded.size === 0) return messages;
 	let changed = false;
+	const fold = { folded, scripts, used, sessionFile };
 	const next = messages.map((message, index) => {
-		const out = foldMessage(message as unknown, () => turnResults(messages, index), folded, scripts, used);
+		const out = foldMessage(message as unknown, () => turnResults(messages, index), fold);
 		if (out !== message) changed = true;
 		return out as T;
 	});
@@ -231,13 +259,15 @@ function turnResults(messages: readonly unknown[], index: number): Map<string, R
 	return results;
 }
 
-function foldMessage(
-	message: unknown,
-	results: () => Map<string, Rec>,
-	folded: ReadonlyMap<string, FoldedRun>,
-	scripts: ReadonlyMap<string, FoldedScript>,
-	used: UsedBeforeFold,
-): unknown {
+interface FoldSet {
+	folded: ReadonlyMap<string, FoldedRun>;
+	scripts: ReadonlyMap<string, FoldedScript>;
+	used: UsedBeforeFold;
+	sessionFile: string | undefined;
+}
+
+function foldMessage(message: unknown, results: () => Map<string, Rec>, fold: FoldSet): unknown {
+	const { folded, scripts, used, sessionFile } = fold;
 	if (!isRecord(message)) return message;
 	if (message.role === "custom") {
 		const ids = messageRunIds(message.customType, message.content, message.details);
@@ -253,15 +283,16 @@ function foldMessage(
 		if (!isRecord(block) || block.type !== "toolCall" || !isRecord(block.arguments)) return block;
 		if (block.name !== "subagent" && block.name !== "subagent_resume" && block.name !== "codemode") return block;
 		let args = block.arguments;
+		const route = originalRoute(typeof block.id === "string" ? block.id : "", sessionFile);
 		if (block.name !== "codemode") {
 			// A resume call has the single form (task, no children); its reply names the new run id.
 			turn ??= results();
 			const result = typeof block.id === "string" ? turn.get(block.id) : undefined;
-			args = foldLaunchArgs(block.arguments, launchChildIds(result?.details), folded);
+			args = foldLaunchArgs(block.arguments, launchChildIds(result?.details), folded, route);
 		} else {
 			const key = typeof block.id === "string" ? scriptKey(block.id, message.timestamp) : undefined;
 			const script = key ? scripts.get(key) : undefined;
-			const stub = script && typeof block.arguments.code === "string" ? scriptStub(script, folded) : undefined;
+			const stub = script && typeof block.arguments.code === "string" ? scriptStub(script, folded, route) : undefined;
 			if (stub) args = { ...block.arguments, code: stub };
 		}
 		if (args === block.arguments) return block;
@@ -274,6 +305,23 @@ function foldMessage(
 function isRunning(id: string): boolean {
 	const running = runningSubagents.get(id);
 	return running !== undefined && running.phase.kind !== "ended";
+}
+
+/**
+ * The task of parent session `sessionId` is open while a child it owns runs (a foreign verified-run
+ * observer is not its child) or a result of a run it owns is not committed yet: queued, held by a
+ * wait, or in flight (the delivery queue). A settle then is a pause inside the task, not its end.
+ * The registry and the queue are module-wide, shared by every parent session in this process, so
+ * each run counts only for its owner (parentSessionId). A run without an owner counts for every
+ * parent: missing a parent's own open work is the regression this guard prevents.
+ */
+function taskOpen(sessionId: string): boolean {
+	const owns = (owner: string | undefined) => owner === undefined || owner === sessionId;
+	for (const running of runningSubagents.values()) {
+		const open = running.phase.kind !== "ended" && !running.verifiedRunCancelDenied;
+		if (open && owns(running.parentSessionId)) return true;
+	}
+	return pendingRunEndIds().some((id) => owns(runningSubagents.ownerOf(id)));
 }
 
 export function registerContextFold(pi: ExtensionAPI): void {
@@ -294,6 +342,9 @@ export function registerContextFold(pi: ExtensionAPI): void {
 		if (runIds.length > 0) pi.appendEntry(CONTEXT_FOLD_NESTED_ENTRY, { callId, nestedId, runIds });
 	});
 	pi.on("agent_settled", (_event, ctx) => {
+		// Fold only at task end: a fold inside an open task hides from the parent its own launch text
+		// and the results it still needs for its answer. The fold set stays as it was.
+		if (taskOpen(ctx.sessionManager.getSessionId())) return;
 		const branch = ctx.sessionManager.getBranch();
 		// A nested take's stub facts: the run's record in this session's results folder. A run whose
 		// record this session cannot read (a verified run, a fork before the settle) stays full.
@@ -317,6 +368,7 @@ export function registerContextFold(pi: ExtensionAPI): void {
 			readFoldedRuns(branch),
 			readFoldedScripts(branch),
 			readFoldOrder(branch),
+			ctx.sessionManager.getSessionFile(),
 		);
 		// An unchanged list goes back as no result, so Pi keeps it as it is (extensions.md, context).
 		return messages === event.messages ? undefined : { messages };

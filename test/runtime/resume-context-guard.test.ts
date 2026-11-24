@@ -131,6 +131,7 @@ describe("context-exhausted resume guard", () => {
 				resumeSubagentSession(
 					{
 						resultsDir: testResultsDir(),
+						parentSessionId: "test-parent",
 						parent: { parentCwd: process.cwd(), warnings: [] },
 						sessionFile,
 						mode: "background",
@@ -155,6 +156,7 @@ describe("context-exhausted resume guard", () => {
 				resumeSubagentSession(
 					{
 						resultsDir: testResultsDir(),
+						parentSessionId: "test-parent",
 						parent: { parentCwd: process.cwd(), warnings: [] },
 						sessionFile,
 						mode: "background",

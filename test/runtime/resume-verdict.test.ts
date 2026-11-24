@@ -108,6 +108,7 @@ function serviceResume(sessionFile: string, runtime: ReturnType<typeof createRun
 	return resumeSubagentSession(
 		{
 			resultsDir: testResultsDir(),
+			parentSessionId: "test-parent",
 			parent: { parentCwd: process.cwd(), warnings: [] },
 			sessionFile,
 			mode: "background",

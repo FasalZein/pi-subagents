@@ -209,6 +209,12 @@ export interface RunningSubagent {
 	stdoutTail?: string;
 	startTime: number;
 	sessionFile: string;
+	/**
+	 * The session id of the parent that launched, resumed or adopted this run (its owner; settle fold
+	 * task end). Every production launch, resume and adoption sets it; optional only because test
+	 * fixtures build runs without it. A run without it counts as open work for every parent.
+	 */
+	parentSessionId?: string;
 	entries?: number;
 	bytes?: number;
 	launchEntryCount?: number;

@@ -174,6 +174,7 @@ function registerAdoptedWatcher(
 	const ownerSlot = extraSlots?.split(1);
 	const running: RunningSubagent = {
 		id: manifest.runId.slice(-8),
+		parentSessionId: options.sessionId,
 		name: manifest.request.name,
 		task: manifest.request.taskPrompt,
 		title: manifest.request.title,

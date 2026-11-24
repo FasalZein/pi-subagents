@@ -108,6 +108,7 @@ describe("resume authority (b2 g2)", () => {
 				const running = await resumeSubagentSession(
 					{
 						resultsDir: testResultsDir(),
+						parentSessionId: "test-parent",
 						parent: { parentCwd: projectA, warnings: [] },
 						sessionFile: pathKind === "relative" ? "child.jsonl" : join(projectA, "child.jsonl"),
 						task: "Resume probe.",
@@ -160,6 +161,7 @@ describe("resume authority (b2 g2)", () => {
 			const running = await resumeSubagentSession(
 				{
 					resultsDir: testResultsDir(),
+					parentSessionId: "test-parent",
 					parent: { parentCwd: f.dir, warnings: [] },
 					sessionFile,
 					task: "Resume probe.",

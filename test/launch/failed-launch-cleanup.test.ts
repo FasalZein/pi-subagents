@@ -225,7 +225,13 @@ async function resumeFailingInteractive(failing: FailingStep): Promise<void> {
 		const resultsDir = join(testResultsDir(), `t30-${failing}`);
 		await assert.rejects(
 			resumeSubagentSession(
-				{ resultsDir, parent: { parentCwd: dir, warnings: [] }, sessionFile, task: "Continue." },
+				{
+					resultsDir,
+					parentSessionId: "test-parent",
+					parent: { parentCwd: dir, warnings: [] },
+					sessionFile,
+					task: "Continue.",
+				},
 				resumeRuntime(),
 			),
 			isInjectedFailure(failing),
@@ -320,7 +326,14 @@ describe("a failed launch removes what it made (D6)", () => {
 			const runtime = resumeRuntime();
 			await assert.rejects(
 				resumeSubagentSession(
-					{ resultsDir, parent: { parentCwd: dir, warnings: [] }, sessionFile, task: "Continue.", thinking: "high" },
+					{
+						resultsDir,
+						parentSessionId: "test-parent",
+						parent: { parentCwd: dir, warnings: [] },
+						sessionFile,
+						task: "Continue.",
+						thinking: "high",
+					},
 					runtime,
 				),
 				isSpawnEnoent,
@@ -345,6 +358,7 @@ describe("a started child is never rolled back (D6)", () => {
 			const running = await resumeSubagentSession(
 				{
 					resultsDir: join(testResultsDir(), "t30-metadata-append"),
+					parentSessionId: "test-parent",
 					parent: { parentCwd: tmux.dir, warnings },
 					sessionFile,
 					task: "Continue.",

@@ -149,7 +149,13 @@ describe("resume and stop through the real tools and the real headless watcher (
 			// The overlay's resume call (overlay/controller.ts doResume): the service with the override, then steer-back.
 			const overlayResume = async (): Promise<RunningSubagent> => {
 				const running = await resumeSubagentSession(
-					{ sessionFile, resultsDir, parent: { parentCwd: dir, warnings: [] }, operatorOverride: true },
+					{
+						sessionFile,
+						resultsDir,
+						parentSessionId: "test-parent",
+						parent: { parentCwd: dir, warnings: [] },
+						operatorOverride: true,
+					},
 					runtime as never,
 				);
 				if (running.completionPromise) wireSubagentSteerBack(pi as never, running, running.completionPromise);

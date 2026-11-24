@@ -74,6 +74,8 @@ async function startParent(
 		 * published record and replies with the lookup copy (running-registry.ts lookUpEnded).
 		 */
 		lookup?: boolean;
+		/** The calls for a last user-role message that no plan key names, such as a result message. */
+		react?: (text: string) => ToolCall[] | undefined;
 	} = {},
 ): Promise<Parent> {
 	const root = options.root ?? createTestDir();
@@ -83,7 +85,8 @@ async function startParent(
 	const step = (context: { messages: { role: string; content: unknown }[] }): AssistantMessage => {
 		requests.push(JSON.stringify(context.messages.map((message) => message.content)));
 		const last = context.messages.at(-1);
-		const calls = last?.role === "user" ? plan[textOf(last.content)] : undefined;
+		const text = last?.role === "user" ? textOf(last.content) : undefined;
+		const calls = text === undefined ? undefined : (plan[text] ?? options.react?.(text));
 		if (calls) return fauxAssistantMessage(calls, { stopReason: "toolUse" });
 		return fauxAssistantMessage("ok");
 	};
@@ -117,6 +120,7 @@ async function startParent(
 			const reservation = sessionStore().reserve();
 			const running = {
 				id: reservation.runId,
+				parentSessionId: session.sessionManager.getSessionId(),
 				name: params.name,
 				task: params.task,
 				agent: "worker-a",
@@ -222,7 +226,7 @@ async function startParent(
 				return;
 			}
 			finish?.({
-				name: "child-one",
+				name: child.name,
 				task: "t",
 				summary: published.summary,
 				summarySource: published.summarySource,
@@ -300,6 +304,13 @@ describe("context fold in a real Pi session", () => {
 			assert.match(after, new RegExp(`Folded subagent run ${runId} \\(child-one\\): done, report /[^ ]+\\.md\\.`));
 			assert.match(after, new RegExp(`subagent_wait\\(\\{ runIds: \\[\\\\"${runId}\\\\"\\] \\}\\)`));
 			file = parent.session.sessionManager.getSessionFile() ?? assert.fail("no session file");
+			// The task stub names the way back to the original brief: the call's line in the session file.
+			const route = `Original text: the line with \\"launch-1\\" in ${file}.`;
+			assert.ok(after.includes(route), "the stub names the original call");
+			const line = readFileSync(file, "utf8")
+				.split("\n")
+				.find((entry) => entry.includes('"launch-1"') && entry.includes('"toolCall"'));
+			assert.match(line ?? "", new RegExp(BRIEF), "that line holds the original brief");
 			root = parent.session.sessionManager.getCwd();
 			const stored = JSON.stringify(SessionManager.open(file).getEntries());
 			assert.match(stored, new RegExp(BRIEF), "the session file keeps the brief");
@@ -333,7 +344,12 @@ describe("context fold in a real Pi session", () => {
 			await reloaded.session.waitForIdle();
 			const after = reloaded.requests.at(-1) ?? "";
 			assert.doesNotMatch(after, new RegExp(REPORT), "after the next settle the lookup reply is a stub");
-			assert.equal(after.split(`Folded subagent run ${runId}`).length - 1, 3, "brief, result and lookup are stubs");
+			assert.equal(after.split(`Folded subagent run ${runId}`).length - 1, 2, "result and lookup are stubs");
+			assert.match(
+				after,
+				new RegExp(`Task text folded by the harness after run ${runId} \\(child-one\\)`),
+				"the brief is the task stub",
+			);
 			assert.equal(reloaded.foldEntries(), 2, "a settle with no newly used reply appends no entry");
 		} finally {
 			await reloaded.dispose();
@@ -355,6 +371,9 @@ describe("context fold in a real Pi session", () => {
 			assert.doesNotMatch(after, new RegExp(BRIEF), "the script's brief is gone");
 			assert.doesNotMatch(after, new RegExp(REPORT));
 			assert.match(after, new RegExp(`Folded launch script of runs ${parent.runId()}\\.`));
+			// The head names the parent's own script as folded; the children never got this script.
+			assert.match(after, /The harness folded your original script; original code: the line with \\"script-1\\" in /);
+			assert.doesNotMatch(after, /got your full code/);
 		} finally {
 			await parent.dispose();
 		}
@@ -688,6 +707,72 @@ describe("context fold in a real Pi session", () => {
 					await parent.dispose();
 				}
 			}
+		}
+	});
+
+	it("folds nothing while the task is open: a settle with a running child keeps every request full (review-fix shape)", async () => {
+		// The review-fix benchmark (2026-11-24): async launch of child 1, the parent settles while it
+		// runs, its result comes, the parent launches child 2, settles while child 2 runs, its result
+		// comes, and the final request must still hold the first brief and result in full.
+		const BRIEF_TWO = "BRIEF-TEXT-OF-CHILD-TWO";
+		const REPORT_TWO = "CHILD-TWO-FULL-REPORT";
+		const second = fauxToolCall(
+			"subagent",
+			{ name: "child-two", task: BRIEF_TWO, title: "Two", agent: "worker-a" },
+			{ id: "launch-2" },
+		);
+		const parent = await startParent(PLAN, { react: (text) => (text.includes(REPORT) ? [second] : undefined) });
+		try {
+			await useOneRun(parent);
+			await until(
+				() =>
+					runningSubagents.size > 0 &&
+					parent.session.messages.some((m) => m.role === "toolResult" && m.toolCallId === "launch-2"),
+				"the second launch",
+			);
+			await parent.session.waitForIdle();
+			const entriesWhileOpen = parent.foldEntries();
+			const before = parent.requests.length;
+			parent.finish(REPORT_TWO);
+			await until(() => parent.requests.length > before, "the second result turn");
+			await parent.session.waitForIdle();
+			const final = parent.requests.at(-1) ?? "";
+			assert.match(final, new RegExp(REPORT_TWO));
+			assert.doesNotMatch(final, /Folded|folded by the harness/, "no stub in a request of the open task");
+			assert.match(final, new RegExp(BRIEF), "the parent's own first launch keeps its task text");
+			assert.match(final, new RegExp(REPORT), "the first result stays full");
+			assert.equal(entriesWhileOpen, 0, "a settle while child 2 runs folds nothing");
+			// The settle after the last result closes the task: both runs fold, the launch calls with the task stub.
+			await until(() => parent.foldEntries() === 1, "the fold entry of the task-end settle");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			const after = parent.requests.at(-1) ?? "";
+			for (const text of [BRIEF, REPORT, BRIEF_TWO, REPORT_TWO]) assert.doesNotMatch(after, new RegExp(text));
+			assert.equal(
+				after.split("Task text folded by the harness after run").length - 1,
+				2,
+				"both launch tasks carry the task stub",
+			);
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("another parent's running child does not keep this parent's task open (owner scope)", async () => {
+		// Review round 1: two parent sessions in one process share the registry and the queue. A's
+		// child still runs; B's task is closed, so B folds at its settle.
+		const a = await startParent(PLAN);
+		const b = await startParent(PLAN);
+		try {
+			await a.session.prompt("delegate");
+			await a.session.waitForIdle();
+			assert.ok(runningSubagents.has(a.runId()), "A's child runs");
+			await useOneRun(b);
+			await until(() => b.foldEntries() === 1, "B's fold entry while A's child runs");
+			assert.equal(a.foldEntries(), 0, "A's own running child keeps A's task open");
+		} finally {
+			await b.dispose();
+			await a.dispose();
 		}
 	});
 

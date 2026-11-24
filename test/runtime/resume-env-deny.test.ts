@@ -96,7 +96,7 @@ cat > '${stdinLog}'
 
 
 			await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
+				{ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Background deny-env probe.", model: "provider/override:high" },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -190,7 +190,7 @@ cat > '${stdinLog}'
 
 			const quietResult = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
+				{ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -276,7 +276,7 @@ esac
 			});
 
 			const running = await resumeSubagentSession(
-				{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Interactive deny-env probe." },
+				{ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Interactive deny-env probe." },
 				{
 					isMuxAvailable: () => true,
 					getShellReadyDelayMs: () => 0,
@@ -377,7 +377,7 @@ esac
 
 			await assert.rejects(
 				resumeSubagentSession(
-					{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Failure probe." },
+					{ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Failure probe." },
 					{
 						isMuxAvailable: () => true,
 						getShellReadyDelayMs: () => 0,
@@ -516,6 +516,7 @@ describe("standalone sessions keep the agent's deny-env on resume (B3 g4)", () =
 				await resumeSubagentSession(
 					{
 						resultsDir: testResultsDir(),
+						parentSessionId: "test-parent",
 						parent: { parentCwd: process.cwd(), warnings: [] },
 						sessionFile,
 						task: "Resume probe.",
@@ -538,6 +539,7 @@ describe("standalone sessions keep the agent's deny-env on resume (B3 g4)", () =
 			await resumeSubagentSession(
 				{
 					resultsDir: testResultsDir(),
+					parentSessionId: "test-parent",
 					parent: { parentCwd: process.cwd(), warnings: [] },
 					sessionFile,
 					task: "Resume probe.",
@@ -565,6 +567,7 @@ describe("standalone sessions keep the agent's deny-env on resume (B3 g4)", () =
 					resumeSubagentSession(
 						{
 							resultsDir: testResultsDir(),
+							parentSessionId: "test-parent",
 							parent: { parentCwd: process.cwd(), warnings: [] },
 							sessionFile,
 							task: "Resume probe.",
@@ -605,6 +608,7 @@ describe("a default-manual pane keeps its lifecycle on resume (T69)", () => {
 			const running = await resumeSubagentSession(
 				{
 					resultsDir: testResultsDir(),
+					parentSessionId: "test-parent",
 					parent: { parentCwd: process.cwd(), warnings: [] },
 					sessionFile,
 					task: "Resume probe.",
