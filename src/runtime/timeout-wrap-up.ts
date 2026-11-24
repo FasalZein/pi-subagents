@@ -215,7 +215,7 @@ export async function restartSubagentForTimeoutWrapUp(
 			running.sessionFile,
 			launch.cwd ?? process.cwd(),
 		);
-		piArgs.push(...buildPiPromptArgs([], `@${taskPath}`));
+		piArgs.push(...buildPiPromptArgs([], { kind: "wrap-up", path: taskPath, text: launch.prompt }));
 		if (programSession) Object.assign(launch.env, programSession.childEnv);
 		if (surface) launch.env.PI_SUBAGENT_SURFACE = surface;
 		const {

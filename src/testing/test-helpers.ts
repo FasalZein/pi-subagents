@@ -63,6 +63,7 @@ import { resolveResumeLaunchMetadataForInvocation } from "../runtime/resume-serv
 import { ChildSessionStorage } from "../session/child-session-storage.ts";
 import {
 	buildPiPromptArgs,
+	type ChildPromptFile,
 	type PersistedSubagentLaunchMetadata,
 	readSubagentLaunchMetadata,
 	resolveEffectiveSessionMode,
@@ -279,8 +280,8 @@ export function resolveEffectiveSessionModeForTest(
 	return resolveEffectiveSessionMode(params, agentDefs);
 }
 
-export function buildPiPromptArgsForTest(skills: string[], taskArg: string) {
-	return buildPiPromptArgs(skills, taskArg);
+export function buildPiPromptArgsForTest(skills: string[], file: ChildPromptFile) {
+	return buildPiPromptArgs(skills, file);
 }
 
 export function writeSystemPromptArtifactForTest(

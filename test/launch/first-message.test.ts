@@ -6,16 +6,22 @@ import { join } from "node:path";
 import { parseArgs } from "../../node_modules/@earendil-works/pi-coding-agent/dist/cli/args.js";
 import { processFileArguments } from "../../node_modules/@earendil-works/pi-coding-agent/dist/cli/file-processor.js";
 import { buildInitialMessage } from "../../node_modules/@earendil-works/pi-coding-agent/dist/cli/initial-message.js";
+import { buildBackgroundLaunchPlan } from "../../src/launch/background.ts";
 import { resumeSubagentSession } from "../../src/runtime/resume-service.ts";
 import { restartSubagentForTimeoutWrapUp } from "../../src/runtime/timeout-wrap-up.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import {
+	ASSISTANT_MSG,
 	assert,
 	buildPiPromptArgsForTest,
+	createSessionFile,
 	createTestDir,
 	describe,
 	it,
+	MODEL_CHANGE,
+	SESSION_HEADER,
+	USER_MSG,
 	writeExecutable,
 	writeSubagentLaunchMetadataEntryForTest,
 } from "../support/index.ts";
@@ -32,9 +38,40 @@ async function freshLaunchNote(): Promise<string> {
 	const dir = mkdtempSync(join(tmpdir(), "pi-subagents-first-message-"));
 	const taskPath = join(dir, "task.md");
 	writeFileSync(taskPath, "x");
-	return (await firstMessageOf(buildPiPromptArgsForTest([], `@${taskPath}`))).slice(
+	return (await firstMessageOf(buildPiPromptArgsForTest([], { kind: "task", path: taskPath, text: "x" }))).slice(
 		`<file name="${taskPath}">\nx\n</file>\n`.length,
 	);
+}
+
+/** The text Pi puts after the task file's block in the first message; throws when the block is not first. */
+function afterTaskFile(initialMessage: string, taskPath: string): string {
+	const fileBlock = `<file name="${taskPath}">\n${readFileSync(taskPath, "utf8")}\n</file>\n`;
+	assert.ok(initialMessage.startsWith(fileBlock), `first message does not start with the task file: ${initialMessage}`);
+	return initialMessage.slice(fileBlock.length);
+}
+
+/** A real fresh background launch plan for an agent with the given frontmatter lines. */
+async function freshBackgroundLaunch(frontmatter: string[], task: string) {
+	const cwd = createTestDir();
+	process.env.PI_ARTIFACT_PROJECT_ROOT = join(cwd, "artifacts");
+	mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+	writeFileSync(
+		join(cwd, ".pi", "agents", "probe.md"),
+		["---", "name: probe", "auto-exit: true", ...frontmatter, "---", "Probe body."].join("\n"),
+	);
+	const parentSession = createSessionFile(cwd, [SESSION_HEADER, MODEL_CHANGE, USER_MSG, ASSISTANT_MSG]);
+	const plan = await buildBackgroundLaunchPlan(
+		{ name: "probe-child", title: "Probe", task, agent: "probe" },
+		{
+			cwd,
+			sessionManager: {
+				getSessionFile: () => parentSession,
+				getSessionId: () => "parent-session-id",
+				getLeafId: () => "asst-001",
+			},
+		},
+	);
+	return { taskPath: plan.taskArg.slice(1), initialMessage: await firstMessageOf(plan.args) };
 }
 
 /** A fake tmux on PATH that logs its argv; an interactive launch then writes a capsule with the child's pi argv. */
@@ -106,7 +143,9 @@ async function firstMessageFor(skills: string[]) {
 	const dir = mkdtempSync(join(tmpdir(), "pi-subagents-first-message-"));
 	const taskPath = join(dir, "task.md");
 	writeFileSync(taskPath, "Reply with exactly LIVE_A_OK.");
-	const parsed = parseArgs(buildPiPromptArgsForTest(skills, `@${taskPath}`));
+	const parsed = parseArgs(
+		buildPiPromptArgsForTest(skills, { kind: "task", path: taskPath, text: "Reply with exactly LIVE_A_OK." }),
+	);
 	const { text } = await processFileArguments(parsed.fileArgs, { autoResizeImages: false });
 	const { initialMessage } = buildInitialMessage({ parsed, fileText: text });
 	return { taskPath, initialMessage: initialMessage ?? "", laterMessages: parsed.messages };
@@ -142,7 +181,10 @@ describe("child first message", () => {
 		const dir = createTestDir();
 		const logFile = useFakeTmux(dir);
 		const sessionFile = writeChildSession(dir);
-		await writeSubagentLaunchMetadataEntryForTest(sessionFile, interactiveMetadata(dir));
+		await writeSubagentLaunchMetadataEntryForTest(sessionFile, {
+			...interactiveMetadata(dir),
+			sessionMode: "lineage-only",
+		});
 		await resumeSubagentSession(
 			{
 				resultsDir: testResultsDir(),
@@ -167,7 +209,7 @@ describe("child first message", () => {
 		assert.equal(initialMessage, fileBlock + (await freshLaunchNote()));
 	});
 
-	it("a pane time-limit wrap-up says after its task file that the file is the task, as a fresh launch does", async () => {
+	it("a pane time-limit wrap-up says after its prompt file that the file is the runtime's report request", async () => {
 		const dir = createTestDir();
 		const logFile = useFakeTmux(dir);
 		const sessionFile = writeChildSession(dir);
@@ -189,7 +231,39 @@ describe("child first message", () => {
 		};
 		await restartSubagentForTimeoutWrapUp(running, { getShellReadyDelayMs: () => 0 });
 		const { taskPath, initialMessage } = await paneFirstMessage(logFile);
-		const fileBlock = `<file name="${taskPath}">\n${readFileSync(taskPath, "utf8")}\n</file>\n`;
-		assert.equal(initialMessage, fileBlock + (await freshLaunchNote()));
+		// Review P2 (2026-11-25): the file is the runtime's report-only prompt, not a task from the
+		// launching agent, and the note must not send the child back to its original task.
+		const note = afterTaskFile(initialMessage, taskPath);
+		assert.match(note, /runtime/i);
+		assert.match(note, /report/i);
+		assert.doesNotMatch(note, /agent that launched you|earlier instructions/i);
+	});
+
+	// Review P2 (2026-11-25): Pi takes the next plain argument as the value of an unknown long flag, so
+	// an agent whose `flags:` ends with a boolean extension flag swallowed the note.
+	it("keeps the note when the agent's flags end with a boolean extension flag", async () => {
+		const { taskPath, initialMessage } = await freshBackgroundLaunch(
+			["session-mode: lineage-only", "flags: --some-ext-bool"],
+			"Reply with exactly LIVE_A_OK",
+		);
+		assert.equal(afterTaskFile(initialMessage, taskPath), await freshLaunchNote());
+	});
+
+	// Review P2 (2026-11-25): a fork child's earlier conversation is the parent's, which the fork
+	// boundary says is not its task; the note must not point the child at it.
+	it("a fork child's note does not point at the earlier conversation", async () => {
+		const { taskPath, initialMessage } = await freshBackgroundLaunch(
+			["session-mode: fork"],
+			"Reply with exactly LIVE_A_OK",
+		);
+		const note = afterTaskFile(initialMessage, taskPath);
+		assert.match(note, /\btask\b/i);
+		assert.doesNotMatch(note, /earlier|conversation/i);
+	});
+
+	// Review P2 (2026-11-25): Pi skips an empty file, so an empty fork task must not get a note about "the file above".
+	it("an empty fork task gets no note about a file", async () => {
+		const { initialMessage } = await freshBackgroundLaunch(["session-mode: fork"], "");
+		assert.doesNotMatch(initialMessage, /file/i);
 	});
 });

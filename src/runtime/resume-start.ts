@@ -134,7 +134,8 @@ async function startInteractiveChild(start: ResumedChildStart): Promise<void> {
 			sessionFile,
 			start.resumeCwd ?? process.cwd(),
 		);
-		piArgs.push(...buildPiPromptArgs([], `@${taskPath}`));
+		const kind = start.invocationMetadata?.sessionMode === "fork" ? "fork-task" : "task";
+		piArgs.push(...buildPiPromptArgs([], { kind, path: taskPath, text: start.expandedTask }));
 	}
 	if (programSession) Object.assign(resumeEnvVars, programSession.childEnv);
 	if (ordinarySurface) resumeEnvVars.PI_SUBAGENT_SURFACE = ordinarySurface;
