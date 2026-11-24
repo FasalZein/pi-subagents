@@ -150,8 +150,9 @@ function isCompletedRequest(entry: unknown): boolean {
  * The runs to fold at this settle: a run ended, a message with its finished result was committed,
  * a later completed provider request saw it, and its report file exists now (the stub's lookup
  * must work after a reload). A run that runs again does not fold; once it ended again and a request
- * saw its new result message, it folds again with the new facts. A later wait or launch reply for a
- * folded run stays full (owner rule) and triggers no new fold.
+ * saw its new result message, it folds again with the new facts. A later wait or launch reply of a
+ * folded run (a lookup copy) refolds it with its old facts and a new foldedAt, so that reply folds
+ * too and every earlier stub keeps its text (fold-waits D3).
  */
 export function settleFold(
 	entries: readonly unknown[],
@@ -175,7 +176,11 @@ export function settleFold(
 	const runs: FoldedRun[] = [];
 	for (const [id, { index, messageIndex, facts }] of commits) {
 		const fold = folded.get(id);
-		if (index > lastRequest || isRunning(id) || (fold && messageIndex < fold.index)) continue;
+		if (index > lastRequest || isRunning(id) || (fold && index < fold.index)) continue;
+		if (fold && messageIndex < fold.index) {
+			if (reportExists(fold.run.report)) runs.push({ ...fold.run, foldedAt: now });
+			continue;
+		}
 		if (!facts.report || !reportExists(facts.report)) continue;
 		runs.push({
 			id,

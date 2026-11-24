@@ -290,7 +290,15 @@ describe("context fold in a real Pi session", () => {
 				new RegExp(REPORT),
 				"the lookup returns the stored result",
 			);
-			assert.equal(reloaded.foldEntries(), 1, "a settle with no newly used run appends no entry");
+			assert.match(reloaded.requests.at(-1) ?? "", new RegExp(REPORT), "in its own turn the lookup reply is full");
+			// D3: the settle after the turn that saw the lookup refolds the run, so the reply folds too.
+			await until(() => reloaded.foldEntries() === 2, "the refold entry of the settle");
+			await reloaded.session.prompt("next");
+			await reloaded.session.waitForIdle();
+			const after = reloaded.requests.at(-1) ?? "";
+			assert.doesNotMatch(after, new RegExp(REPORT), "after the next settle the lookup reply is a stub");
+			assert.equal(after.split(`Folded subagent run ${runId}`).length - 1, 3, "brief, result and lookup are stubs");
+			assert.equal(reloaded.foldEntries(), 2, "a settle with no newly used reply appends no entry");
 		} finally {
 			await reloaded.dispose();
 		}

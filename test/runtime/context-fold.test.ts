@@ -166,9 +166,10 @@ describe("context fold: the fold set a settle decides", () => {
 		assert.deepEqual([...readFoldedRuns(third).keys()], [A, B]);
 	});
 
-	it("a later wait reply for a folded run triggers no new fold; a resumed run's new result folds at a later settle", () => {
+	it("a later reply of a folded run refolds it at the next settle with the same facts (D3); a new result brings new facts", () => {
 		const first = [userEntry("a"), resultEntry(A, "one"), assistantEntry()];
 		const folded = [...first, foldEntry(settleFold(first, notRunning, AT, exists))];
+		// A lookup copy: its record facts differ from the result message, so the old facts must win.
 		const lookup = {
 			type: "message",
 			id: entryId(),
@@ -177,11 +178,29 @@ describe("context fold: the fold set a settle decides", () => {
 				toolName: "subagent_wait",
 				toolCallId: "w1",
 				content: [{ type: "text", text: "R" }],
-				details: { status: "complete", results: [{ runId: A, name: "one", text: "R" }] },
+				details: {
+					status: "complete",
+					results: [{ runId: A, text: "R", record: { outcome: "other", report: { saved: true, path: "/r/x.md" } } }],
+				},
 			},
 		};
-		const looked = [...folded, userEntry("b"), lookup, assistantEntry()];
-		assert.deepEqual(settleFold(looked, notRunning, 200, exists), []);
+		const unseen = [...folded, userEntry("b"), lookup];
+		assert.deepEqual(settleFold(unseen, notRunning, 200, exists), [], "a reply no request saw does not refold");
+		const seenLookup = [...unseen, assistantEntry()];
+		const refolded = settleFold(seenLookup, notRunning, 200, exists);
+		assert.deepEqual(refolded, [{ id: A, name: "one", outcome: "done", report: "/r/one.md", foldedAt: 200 }]);
+		assert.deepEqual(
+			settleFold(seenLookup, notRunning, 200, () => false),
+			[],
+			"no refold when the report file is gone; the reply stays full",
+		);
+		assert.deepEqual(
+			settleFold(seenLookup, (id) => id === A, 200, exists),
+			[],
+			"no refold of a running run",
+		);
+		const looked = [...seenLookup, foldEntry(refolded)];
+		assert.deepEqual(settleFold(looked, notRunning, 250, exists), [], "the refold entry settles it");
 		const resumedEnd = {
 			...resultEntry(A, "one", "SECOND-REPORT"),
 			details: { id: A, name: "one", outcome: "partial", reportFile: "/r/one-2.md" },
@@ -478,6 +497,21 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 		const reply = launchToolReply(`${SINGLE_HEAD}\n\nLOOKUP-TEXT`, { ...finished(A, "one"), runId: A, lookup: true });
 		const out = foldMessages([reply], folded(RUN_A));
 		assert.equal((out[0] as typeof reply).content[0].text, `${SINGLE_HEAD}\n\n${runStub(RUN_A)}`);
+	});
+
+	it("a lookup reply after the fold stays full until a refold moves foldedAt; earlier stubs keep their text (D3)", () => {
+		const brief = resultMessage({ id: A, name: "one" }, "REPORT-ONE");
+		const lookup = launchToolReply(`${SINGLE_HEAD}\n\nLOOKUP-TEXT`, finished(A, "one"), { timestamp: AT + 1 });
+		const messages = [brief, lookup];
+		const before = foldMessages(messages, folded(RUN_A));
+		assert.equal(before[1], lookup, "in its own turn the lookup reply stays full");
+		const after = foldMessages(messages, folded({ ...RUN_A, foldedAt: AT + 50 }));
+		assert.equal(
+			(after[0] as typeof brief).content,
+			(before[0] as typeof brief).content,
+			"the earlier stub is the same text",
+		);
+		assert.equal((after[1] as typeof lookup).content[0].text, `${SINGLE_HEAD}\n\n${runStub(RUN_A)}`);
 	});
 
 	it("stays the same object when not every child delivered a used, finished report", () => {
