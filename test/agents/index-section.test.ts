@@ -5,6 +5,7 @@ import {
 	AGENT_INDEX_MAX_CHARS,
 	AGENT_INDEX_SECTION_NAME,
 	applyAgentIndexSection,
+	INDEX_MORE_TOOLS,
 	type IndexLaunchPolicy,
 	indexFallbackMessages,
 	renderAgentIndexRequestText,
@@ -12,6 +13,7 @@ import {
 	selectIndexTargets,
 } from "../../src/agents/index-section.ts";
 import { parseSpawnEnv } from "../../src/spawn/policy.ts";
+import { SubagentWaitOutput, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import { loadExtension } from "../support/extension-host.ts";
 import { afterEach, assert, createTestDir, describe, it, join, mkdirSync } from "../support/index.ts";
 
@@ -259,6 +261,27 @@ describe("agent index section", () => {
 		assert.deepEqual(names({}), ["coordinator", "scout"]);
 	});
 
+	it("states the codemode result of subagent_wait as SubagentWaitOutput declares it", () => {
+		// Expected shape from the output schema (src/tools/wait-tool.ts), not from the index code.
+		const schema = SubagentWaitOutput as unknown as {
+			required: string[];
+			properties: { results: { items: { properties: Record<string, unknown> } } };
+		};
+		const results = Object.keys(schema.properties.results.items.properties);
+		const shape = `{${schema.required.map((key) => (key === "results" ? `results: [{${results.join(", ")}}]` : key)).join(", ")}}`;
+		assert.ok(results.includes("record"), results.join());
+		// Compile check: a non-null record carries a string summary.
+		const summary: NonNullable<SubagentWaitStructured["results"][number]["record"]>["summary"] = "";
+		assert.equal(typeof summary, "string");
+		const section =
+			renderAgentIndexSection([entry("solo")], PANE, { callable: new Set(INDEX_MORE_TOOLS), codemode: true }) ?? "";
+		assert.ok(
+			section.includes(`subagent_wait({runIds?}) (resolves to ${shape}; the answer is record?.summary), `),
+			section,
+		);
+		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
+	});
+
 	it("returns no section when no agent may be launched", () => {
 		assert.equal(renderAgentIndexSection([], PANE), undefined);
 		assert.equal(renderAgentIndexSection([entry("blank", { description: "  " })], PANE), undefined);
@@ -281,6 +304,9 @@ describe("agent index section", () => {
 		for (const { name } of entries)
 			assert.ok(lines.some((line) => line.startsWith(`- ${name}: `)) || namesLine.includes(name), name);
 		assert.ok(namesLine.includes("agent-039"), "an agent without a line is named");
+		const coded =
+			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_kill"]), codemode: true }) ?? "";
+		assert.equal(coded.split("\n")[2], "More tools: subagent_kill({runId}).", "no wait hint without subagent_wait");
 		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set() });
 		assert.ok(!none?.includes("More tools"), none);
 		// A lone descriptionless agent is still reachable without the lookup.

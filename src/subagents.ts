@@ -95,7 +95,7 @@ import {
 } from "./tools/subagent-tools.ts";
 import { isToolCallable } from "./tools/policy.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
-import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
+import { CODEMODE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
 
 export { classifyAssistantMessageForMixedBatch as classifyAssistantMessageForMixedBatchForTest } from "./runtime/batch-classifier.ts";
@@ -271,7 +271,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv),
 			{ paneAvailable: ctx.hasUI && lastMuxDetection(), forcesWait: shouldForceSynchronousLaunch(ctx.hasUI) },
 			// Pi's live tool surface after the exposure step: excluded, inactive and hidden tools are not named.
-			{ callable: new Set(INDEX_MORE_TOOLS.filter((name) => isToolCallable(pi, name))) },
+			{
+				callable: new Set(INDEX_MORE_TOOLS.filter((name) => isToolCallable(pi, name))),
+				codemode: pi.getActiveTools().includes(CODEMODE_TOOL_NAME),
+			},
 		);
 		if (!indexSection) return undefined;
 		return applyAgentIndexSection(event, indexSection, spawnEnv.callerAgent !== null);
