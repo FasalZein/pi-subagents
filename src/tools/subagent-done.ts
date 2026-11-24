@@ -13,6 +13,7 @@ import { createExitSignalWriter, inMemoryFinalOutput } from "./exit-signal.ts";
 import { deleteMarkedSessionFileOnProcessExit } from "../session/delete-on-exit.ts";
 import { holdSubagentExitSidecar, releaseSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { installSubagentTimeoutReminders } from "./timeout-reminders.ts";
+import { installRootOnlyContextStrip } from "./root-only-context.ts";
 import { type FinalContextSnapshot, getFinalContextSnapshot } from "./final-context-snapshot.ts";
 import { createPaneTakeover } from "./pane-takeover.ts";
 import { installWrittenFileRecorder } from "./written-files.ts";
@@ -59,6 +60,8 @@ export default function (pi: ExtensionAPI) {
 	// Factory-scoped because the takeover machinery that suppresses it lives
 	// inside the `if (autoExit)` block, while caller_ping registers outside it.
 	const callerPingState = createCallerPingState();
+	// First prompt hook: every later one reads the context without the root-only blocks.
+	installRootOnlyContextStrip(pi);
 	const contextReminders = installSubagentContextReminders(pi);
 	installSubagentTimeoutReminders(pi);
 	installWrittenFileRecorder(pi);
