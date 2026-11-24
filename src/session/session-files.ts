@@ -8,6 +8,7 @@ import { AGENT_INDEX_SECTION_NAME } from "../agents/index-section.ts";
 import type { HerdrPlacementPolicy } from "../mux/herdr-surfaces.ts";
 import type { RexPlacementPolicy } from "../mux/rex.ts";
 import type { ZellijPlacementPolicy } from "../mux/zellij-placement.ts";
+import { withoutRootOnlyContext } from "../tools/root-only-context.ts";
 import type { ParentClosePolicy, SubagentParamsInput } from "../types.ts";
 import { getEntries } from "./session.ts";
 
@@ -138,25 +139,27 @@ export function writeHeaderOnlySubagentSessionFile(
 
 type SystemSections = { sections?: Record<string, unknown> };
 
-function withoutIndexSection<T extends SystemSections>(message: T): T {
-	if (!message.sections || !(AGENT_INDEX_SECTION_NAME in message.sections)) return message;
-	const { [AGENT_INDEX_SECTION_NAME]: _parentIndex, ...sections } = message.sections;
-	return { ...message, sections };
+function forChild<T extends SystemSections>(message: T): T {
+	const stripped = withoutRootOnlyContext(message);
+	if (!stripped.sections || !(AGENT_INDEX_SECTION_NAME in stripped.sections)) return stripped;
+	const { [AGENT_INDEX_SECTION_NAME]: _parentIndex, ...sections } = stripped.sections;
+	return { ...stripped, sections };
 }
 
 /**
  * A fork child gets the parent's conversation, not the parent's agent index:
  * the index lists what the parent may launch, and the child writes its own
- * (D19). The index lives in system messages and in the compaction state.
+ * (D19). Nor does it get the parent's root-only AGENTS.md blocks. Both live in
+ * system messages and in the compaction state.
  */
 function withoutParentIndex(entry: Record<string, unknown>): Record<string, unknown> {
 	const message = entry.message as ({ role?: unknown } & SystemSections) | undefined;
 	if (entry.type === "message" && message?.role === "system") {
-		return { ...entry, message: withoutIndexSection(message) };
+		return { ...entry, message: forChild(message) };
 	}
 	const systemMessage = entry.systemMessage as SystemSections | undefined;
 	if (entry.type === "compaction" && systemMessage) {
-		return { ...entry, systemMessage: withoutIndexSection(systemMessage) };
+		return { ...entry, systemMessage: forChild(systemMessage) };
 	}
 	return entry;
 }
