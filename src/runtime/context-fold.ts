@@ -21,6 +21,7 @@ import {
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
+import { pendingRunEndCount } from "./delivery-queue.ts";
 import { sessionResultStore } from "./result-files.ts";
 import { recordAsJson } from "./result-record-schema.ts";
 import { isFinishedStatus } from "./run-end-message.ts";
@@ -29,7 +30,8 @@ import { runningSubagents } from "./state.ts";
 
 /**
  * The settle fold (owner rule 2026-11-22T08:40Z; model statecharts/context-fold/target/Target.tla).
- * When the parent settles idle, every run the model already used folds: from then on each provider
+ * When the parent settles idle with its task closed (taskOpen, owner rule 2026-11-24T09:59Z), every
+ * run the model already used folds: from then on each provider
  * request carries a short stub instead of that run's launch brief and its result message. The
  * session file keeps the full text, and subagent_wait({ runIds }) returns the stored result (D16).
  *
@@ -70,12 +72,21 @@ function launchChildIds(details: unknown): Array<string | undefined> {
 	return [str(details.id)];
 }
 
+/**
+ * The stub of a folded run's task text in the parent's own launch or resume call. It must not read as
+ * the task the parent sent: a model that saw the run stub there took it for its own mistake
+ * (review-fix regression, 2026-11-24).
+ */
+export function taskStub(run: FoldedRun): string {
+	return `[Task text folded by the harness after run ${run.id} (${run.name}) ended; the child got your full text. Outcome: ${run.outcome}, report ${run.report}. Result: subagent_wait({ runIds: ["${run.id}"] })]`;
+}
+
 /** A direct launch call: the children list when nonempty, else the top-level form (the launch normalizer). */
 function foldLaunchArgs(args: Rec, ids: Array<string | undefined>, folded: ReadonlyMap<string, FoldedRun>): Rec {
 	const stubFor = (index: number) => {
 		const id = ids[index];
 		const run = id ? folded.get(id) : undefined;
-		return run ? runStub(run) : undefined;
+		return run ? taskStub(run) : undefined;
 	};
 	const children = parseJsonContainer(args.children);
 	if (!Array.isArray(children) || children.length === 0) {
@@ -99,7 +110,8 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 	const runs = script.runIds.map((id) => folded.get(id));
 	if (runs.some((run) => run === undefined)) return undefined;
 	const lines = (runs as FoldedRun[]).map((run) => `// ${runStub(run)}`);
-	return [`// Folded launch script of runs ${script.runIds.join(", ")}.`, ...lines].join("\n");
+	const head = `// Folded launch script of runs ${script.runIds.join(", ")}. The harness folded your code after the runs ended; they got your full code.`;
+	return [head, ...lines].join("\n");
 }
 
 /** The runs of a tool result that can fold, and for a launch reply the head lines it keeps. */
@@ -276,6 +288,18 @@ function isRunning(id: string): boolean {
 	return running !== undefined && running.phase.kind !== "ended";
 }
 
+/**
+ * The parent's task is open while a child of this session runs (a foreign verified-run observer is
+ * not its child) or a result of this session is not committed yet: queued, held by a wait, or in
+ * flight (the delivery queue). A settle then is a pause inside the task, not its end.
+ */
+function taskOpen(): boolean {
+	for (const running of runningSubagents.values()) {
+		if (running.phase.kind !== "ended" && !running.verifiedRunCancelDenied) return true;
+	}
+	return pendingRunEndCount() > 0;
+}
+
 export function registerContextFold(pi: ExtensionAPI): void {
 	// A script's nested call: Pi records it (id, final status) on the script's result, but not the
 	// runs it started or the run ends it took. Both entries keep run ids only (owner rule
@@ -294,6 +318,9 @@ export function registerContextFold(pi: ExtensionAPI): void {
 		if (runIds.length > 0) pi.appendEntry(CONTEXT_FOLD_NESTED_ENTRY, { callId, nestedId, runIds });
 	});
 	pi.on("agent_settled", (_event, ctx) => {
+		// Fold only at task end: a fold inside an open task hides from the parent its own launch text
+		// and the results it still needs for its answer. The fold set stays as it was.
+		if (taskOpen()) return;
 		const branch = ctx.sessionManager.getBranch();
 		// A nested take's stub facts: the run's record in this session's results folder. A run whose
 		// record this session cannot read (a verified run, a fork before the settle) stays full.

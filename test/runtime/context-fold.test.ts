@@ -1,4 +1,4 @@
-import { foldMessages, runStub } from "../../src/runtime/context-fold.ts";
+import { foldMessages, runStub, taskStub } from "../../src/runtime/context-fold.ts";
 import {
 	CONTEXT_FOLD_ENTRY,
 	type FoldedRun,
@@ -337,7 +337,7 @@ describe("context fold: the provider messages", () => {
 		assert.equal(block.id, "l1");
 		assert.equal(block.name, "subagent");
 		assert.deepEqual(block.arguments.children, [
-			{ name: "one", agent: "w", title: "One", task: runStub(RUN_A) },
+			{ name: "one", agent: "w", title: "One", task: taskStub(RUN_A) },
 			{ name: "two", agent: "w", title: "Two", task: "BRIEF-TWO" },
 		]);
 		assert.equal((out[0] as typeof call).content[0], call.content[0], "the thinking block is the same object");
@@ -357,7 +357,7 @@ describe("context fold: the provider messages", () => {
 		assert.deepEqual((single[0] as { content: { arguments?: unknown }[] }).content[1].arguments, {
 			agent: "w",
 			name: "one",
-			task: runStub(RUN_A),
+			task: taskStub(RUN_A),
 		});
 		const children = JSON.stringify([{ name: "one", agent: "w", task: "BRIEF" }]);
 		const asString = fold(
@@ -366,7 +366,7 @@ describe("context fold: the provider messages", () => {
 		);
 		const args = (asString[0] as { content: { arguments?: { children: string } }[] }).content[1].arguments!;
 		assert.equal(typeof args.children, "string");
-		assert.deepEqual(JSON.parse(args.children), [{ name: "one", agent: "w", task: runStub(RUN_A) }]);
+		assert.deepEqual(JSON.parse(args.children), [{ name: "one", agent: "w", task: taskStub(RUN_A) }]);
 	});
 
 	it("folds the task text of a waited resume of a folded run; a started or interrupted resume stays", () => {
@@ -386,7 +386,7 @@ describe("context fold: the provider messages", () => {
 		const out = fold([call, reply], folded(RUN_A));
 		assert.deepEqual((out[0] as { content: { arguments?: unknown }[] }).content[0].arguments, {
 			runId: "older01",
-			task: runStub(RUN_A),
+			task: taskStub(RUN_A),
 		});
 		assert.equal(out[1], reply, "the resume reply is unchanged");
 		const started = [

@@ -411,7 +411,7 @@ describe("context fold safety: codemode launch scripts (owner rule 2026-11-23T11
 		assert.equal(
 			code,
 			[
-				"// Folded launch script of runs aaaa0001, bbbb0002.",
+				"// Folded launch script of runs aaaa0001, bbbb0002. The harness folded your code after the runs ended; they got your full code.",
 				`// [Folded subagent run aaaa0001 (one): done, report ${path}. Full result: subagent_wait({ runIds: ["aaaa0001"] })]`,
 				`// [Folded subagent run bbbb0002 (two): done, report ${other}. Full result: subagent_wait({ runIds: ["bbbb0002"] })]`,
 			].join("\n"),
