@@ -344,3 +344,77 @@ describe("context fold: the provider messages", () => {
 		assert.equal((all[0] as typeof grouped).content, `${runStub(RUN_A)}\n${runStub(RUN_B)}`);
 	});
 });
+
+/** A subagent_wait reply as Pi builds it (wait-tool.ts): text content, structured details, a creation time. */
+function waitReply(details: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+	return {
+		role: "toolResult",
+		toolCallId: "w1",
+		toolName: "subagent_wait",
+		content: [{ type: "text", text: "REPORT-ONE\n\nREPORT-TWO" }],
+		details,
+		isError: false,
+		timestamp: 1,
+		...extra,
+	};
+}
+const complete = (...ids: string[]) => ({
+	status: "complete",
+	results: ids.map((runId) => ({ runId, name: runId, record: null })),
+	pending: [],
+	missing: [],
+});
+
+describe("context fold: wait replies (fold-waits S2)", () => {
+	it("a clean join of folded runs becomes one stub line per run; call id, tool name, details and flag stay", () => {
+		const reply = waitReply(complete(A, B));
+		const out = foldMessages([reply], folded(RUN_A, RUN_B));
+		assert.deepEqual(out[0], {
+			...reply,
+			content: [{ type: "text", text: `${runStub(RUN_A)}\n${runStub(RUN_B)}` }],
+		});
+		assert.equal((out[0] as typeof reply).details, reply.details, "details are the same object");
+		assert.equal(reply.content[0].text, "REPORT-ONE\n\nREPORT-TWO", "the input reply is not changed");
+	});
+
+	it("stays the same object when it is not a clean, used join", () => {
+		const cases: Array<[string, ReturnType<typeof waitReply>]> = [
+			["a timeout with pending runs", waitReply({ ...complete(A), status: "timeout", pending: [B] })],
+			["pending runs", waitReply({ ...complete(A), pending: [B] })],
+			["a missing run", waitReply({ ...complete(A), missing: [{ runId: C, error: "no record" }] })],
+			[
+				"an interrupted wait",
+				waitReply({ status: "interrupted", results: [], pending: [A], missing: [] }, { isError: true }),
+			],
+			["an error flag", waitReply(complete(A), { isError: true })],
+			[
+				"image content",
+				waitReply(complete(A), {
+					content: [
+						{ type: "text", text: "REPORT-ONE" },
+						{ type: "image", data: "AAAA", mimeType: "image/png" },
+					],
+				}),
+			],
+			["a reply created after the fold settle", waitReply(complete(A), { timestamp: AT + 1 })],
+			["no creation time", waitReply(complete(A), { timestamp: undefined })],
+			["a run that did not fold", waitReply(complete(A, C))],
+			["the recent list", waitReply({ status: "recent", results: [], pending: [], missing: [], recent: [] })],
+			["an empty join", waitReply({ status: "empty", results: [], pending: [], missing: [] })],
+			[
+				"a verified run",
+				waitReply({ ...complete(A), results: [{ runId: A, name: "one", record: { verifiedRunId: "vf1" } }] }),
+			],
+		];
+		for (const [what, reply] of cases) {
+			const messages = [reply];
+			assert.equal(foldMessages(messages, folded(RUN_A, RUN_B)), messages, what);
+		}
+	});
+
+	it("leaves other tool results alone, also with the same details shape", () => {
+		const other = { ...waitReply(complete(A)), toolName: "bash" };
+		const messages = [other];
+		assert.equal(foldMessages(messages, folded(RUN_A)), messages);
+	});
+});

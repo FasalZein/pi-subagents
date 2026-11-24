@@ -7,6 +7,7 @@ import {
 	type FoldedRun,
 	isChildTranscript,
 	isRecord,
+	isVerifiedOrNotice,
 	messageRunIds,
 	readFoldedRuns,
 	settleFold,
@@ -90,10 +91,47 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 }
 
 /**
- * The provider messages with the folded runs' briefs and result messages as stubs. Only the task
- * text of a launch or resume call, the code of a frozen launch-only script and the content of a result
- * message change; tool-call ids, results, thinking blocks and every other message stay the
- * same objects. Each call pairs with the tool results of its own turn. Without a change the same
+ * The run ids of a clean subagent_wait join reply (fold-waits S2), or undefined when the reply must
+ * stay full: an error (an interrupted wait), a status other than complete (timeout, empty, recent),
+ * a pending or missing run, no run, a verified run or provenance notice, content other than text
+ * (the reply text is then not only the reports), or no creation time to compare with a fold.
+ */
+function cleanWaitReply(message: Rec): { ids: string[]; sent: number } | undefined {
+	const { details, content, timestamp } = message;
+	if (message.toolName !== "subagent_wait" || message.isError !== false || typeof timestamp !== "number") return;
+	if (!Array.isArray(content) || !content.every((block) => isRecord(block) && block.type === "text")) return;
+	if (!isRecord(details) || details.status !== "complete" || !Array.isArray(details.results)) return;
+	if (!Array.isArray(details.pending) || details.pending.length > 0) return;
+	if (!Array.isArray(details.missing) || details.missing.length > 0) return;
+	if (details.results.length === 0) return;
+	const ids: string[] = [];
+	for (const item of details.results) {
+		if (!isRecord(item) || isVerifiedOrNotice(item)) return;
+		if (isRecord(item.record) && isVerifiedOrNotice(item.record)) return;
+		const id = str(item.runId);
+		if (!id) return;
+		ids.push(id);
+	}
+	return { ids, sent: timestamp };
+}
+
+/**
+ * A used wait reply becomes one stub line per run when every run in it folded at a settle after the
+ * reply was created (a request saw it). Call id, tool name, details and the error flag stay, so the
+ * reply still pairs with its call.
+ */
+function foldWaitReply(message: Rec, folded: ReadonlyMap<string, FoldedRun>): Rec {
+	const clean = cleanWaitReply(message);
+	if (!clean?.ids.every((id) => clean.sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
+	const text = clean.ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n");
+	return { ...message, content: [{ type: "text", text }] };
+}
+
+/**
+ * The provider messages with the folded runs' briefs, result messages and used wait replies as
+ * stubs. Only the task text of a launch or resume call, the code of a frozen launch-only script, the
+ * content of a result message and the content of a clean wait reply change; tool-call ids, other
+ * tool results, thinking blocks and every other message stay the same objects. Each call pairs with the tool results of its own turn. Without a change the same
  * list returns.
  */
 export function foldMessages<T>(
@@ -136,6 +174,7 @@ function foldMessage(
 		if (!ids || !ids.every((id) => sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
 		return { ...message, content: ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n") };
 	}
+	if (message.role === "toolResult") return foldWaitReply(message, folded);
 	if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
 	let changed = false;
 	let turn: Map<string, Rec> | undefined;

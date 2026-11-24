@@ -47,7 +47,7 @@ export function isChildTranscript(entries: readonly unknown[]): boolean {
 }
 
 /** A verified fan-out run or a provenance notice: never folded (owner-rules 2026-11-18T17:56Z). */
-function isVerifiedOrNotice(details: Rec): boolean {
+export function isVerifiedOrNotice(details: Rec): boolean {
 	return details.provenance === true || details.verifiedRunId !== undefined;
 }
 

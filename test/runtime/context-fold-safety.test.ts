@@ -146,25 +146,37 @@ describe("context fold safety: what folds at a settle", () => {
 		assert.match(await h.request(), /REPORT-A/);
 	});
 
-	it("a wait reply's record.report.path is the stub's report path", async () => {
+	it("a wait reply's record.report.path is the stub's report path; the used join reply folds too", async () => {
 		const path = report("one");
 		const entries = [
 			user("go"),
 			call("l1", "subagent", { agent: "w", name: "one", task: "BRIEF-A" }),
 			reply("l1", "subagent", { id: A, name: "one", status: "started" }),
 			call("w1", "subagent_wait", { runIds: [A] }),
-			reply("w1", "subagent_wait", {
-				status: "complete",
-				results: [{ runId: A, name: "one", text: "R", record: { outcome: "done", report: { saved: true, path } } }],
-			}),
+			reply(
+				"w1",
+				"subagent_wait",
+				{
+					status: "complete",
+					results: [{ runId: A, name: "one", record: { outcome: "done", report: { saved: true, path } } }],
+					pending: [],
+					missing: [],
+				},
+				{ content: [{ type: "text", text: "WAIT-REPORT-A" }], isError: false, timestamp: 1 },
+			),
 			assistant(),
 		];
 		const h = harness(entries);
+		assert.match(await h.request(), /WAIT-REPORT-A/, "before the settle the wait reply is full");
 		await h.settle();
 		const request = await h.request();
 		assert.doesNotMatch(request, /BRIEF-A/);
+		assert.doesNotMatch(request, /WAIT-REPORT-A/, "after the settle the wait reply is a stub");
 		assert.ok(request.includes(`report ${path}.`), "the stub names the saved report");
-		assert.match(request, /"text":"r"/, "the wait reply stays full");
+		assert.match(request, /"toolCallId":"w1","toolName":"subagent_wait"/, "the reply keeps its call id");
+		// A provider API without the fold gets the full reply again (the fold set is durable).
+		const bedrock = harness(entries, "bedrock-converse-stream");
+		assert.match(await bedrock.request(), /WAIT-REPORT-A/, "no fold for a gated API");
 	});
 
 	it("a forked child transcript reopened as a plain session never folds", async () => {

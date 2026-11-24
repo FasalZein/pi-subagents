@@ -315,6 +315,37 @@ describe("context fold in a real Pi session", () => {
 		}
 	});
 
+	it("folds a used subagent_wait join reply to its stub after the settle (fold-waits S2)", async () => {
+		const plan: Record<string, ToolCall[]> = { ...PLAN };
+		const parent = await startParent(plan);
+		try {
+			await parent.session.prompt("delegate");
+			await parent.session.waitForIdle();
+			plan.join = [fauxToolCall("subagent_wait", { runIds: [parent.runId()] }, { id: "wait-1" })];
+			const joined = parent.session.prompt("join");
+			await until(
+				() =>
+					parent.session.messages.some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("wait-1")),
+				"the wait call",
+			);
+			parent.finish(REPORT);
+			await joined;
+			await parent.session.waitForIdle();
+			const reply = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "subagent_wait");
+			assert.match(textOf((reply as { content?: unknown } | undefined)?.content), new RegExp(REPORT));
+			assert.match(parent.requests.at(-1) ?? "", new RegExp(REPORT), "before the settle the reply is full");
+			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			const after = parent.requests.at(-1) ?? "";
+			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the wait reply is a stub");
+			assert.doesNotMatch(after, new RegExp(BRIEF));
+			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
+		} finally {
+			await parent.dispose();
+		}
+	});
+
 	it("does not fold for a provider API that binds earlier messages (Bedrock Converse)", async () => {
 		const parent = await startParent(PLAN, { api: "bedrock-converse-stream" });
 		try {
