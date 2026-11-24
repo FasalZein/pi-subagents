@@ -15,9 +15,11 @@ export const REPORT_FOLDER_PREFIX = "  report folder: ";
 /** Owner decision 2026-11-24: where the child's report lands, readable by path after a reopen. */
 function renderReportFolderLine(child: LaunchedChild): string {
 	const folder = runReportFolder(child);
-	if (!folder) return `${REPORT_FOLDER_PREFIX}none (the results folder failed; the result arrives only as a message)`;
+	// True for a parent whose launches wait (the result is in the reply) and for one that gets messages.
+	if (!folder)
+		return `${REPORT_FOLDER_PREFIX}none (the results folder failed; the result is kept only in this session's memory)`;
 	const locator = shortestReadLocator(folder, child.resultTarget?.parentCwd ?? process.cwd(), homedir());
-	return `${REPORT_FOLDER_PREFIX}${locator}${child.verifiedRunDir ? " (g<n>/report.md)" : ""}`;
+	return `${REPORT_FOLDER_PREFIX}${locator}${child.verifiedRunDir ? " (created at its first report, g<n>/report.md)" : ""}`;
 }
 
 /**

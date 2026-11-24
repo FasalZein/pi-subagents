@@ -100,6 +100,16 @@ test("[T59a P1-1, owner 2026-11-24] review-workflow passes through a launch scri
 	// The eight run ends grouped into one message (D15) also reach the parent.
 	const grouped = { type: "custom_message", customType: "subagent_result", content: ALL_LINES, details: { results: MESSAGES.map(({ content, details }) => ({ customType: "subagent_result", content, details })) } };
 	assert.equal(verdict(flow([launchNested(NAMES)], [grouped])).result, "pass");
+	// Closure review P2: a run that only pinged inside a grouped message delivered no result.
+	const pingedLast = {
+		...grouped,
+		details: {
+			results: grouped.details.results.map((member, i) =>
+				i === NAMES.length - 1 ? { ...member, customType: "subagent_ping" } : member,
+			),
+		},
+	};
+	assert.equal(verdict(flow([launchNested(NAMES)], [pingedLast])).delivery.workflowScript, false);
 	// A result message that never arrived: the gate fails, also when the answer is right.
 	const missing = verdict(flow([launchNested(NAMES)], MESSAGES.slice(0, -1)));
 	assert.equal(missing.delivery.workflowScript, false);

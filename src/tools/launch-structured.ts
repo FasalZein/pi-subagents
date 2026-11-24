@@ -2,6 +2,7 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { readPublishedRecord } from "../runtime/published-record.ts";
 import { ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
+import { runReportFolder } from "../runtime/run-lookup.ts";
 import type { RunningSubagent } from "../types.ts";
 
 /**
@@ -16,6 +17,11 @@ const launchedChildFields = {
 	modelRef: Type.Optional(Type.String()),
 	sessionFile: Type.Optional(Type.String()),
 	where: Type.Union([Type.Literal("pane"), Type.Literal("headless")]),
+	/**
+	 * Owner decision 2026-11-24: the absolute folder where the run's report lands (the text reply's
+	 * "report folder" line, run-lookup.ts runReportFolder); null when the run folder could not be made.
+	 */
+	reportFolder: Type.Union([Type.String(), Type.Null()]),
 };
 
 const LaunchedChildSchema = Type.Union([
@@ -66,7 +72,7 @@ export const SubagentLaunchOutput = Type.Object({
 
 type ChildSource = Pick<
 	RunningSubagent,
-	"id" | "name" | "agent" | "modelRef" | "mode" | "noSession" | "sessionFile" | "resultTarget"
+	"id" | "name" | "agent" | "modelRef" | "mode" | "noSession" | "sessionFile" | "resultTarget" | "verifiedRunDir"
 >;
 
 /**
@@ -96,6 +102,7 @@ export function launchedChildData(
 		...(running.modelRef ? { modelRef: running.modelRef } : {}),
 		...(running.noSession || !running.sessionFile ? {} : { sessionFile: running.sessionFile }),
 		where: running.mode === "interactive" ? ("pane" as const) : ("headless" as const),
+		reportFolder: runReportFolder(running) ?? null,
 	};
 	if (record || delivered) return { ...base, state: "ended", record: record ? recordAsJson(record) : null };
 	return { ...base, state: "started" };

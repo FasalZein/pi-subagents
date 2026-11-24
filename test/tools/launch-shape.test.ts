@@ -211,7 +211,8 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 
 	// Owner decision 2026-11-24: each child line is followed by its report-folder line. These fake runs
 	// reserve no run folder, so the line says that there is none (launch-report-folder.test.ts covers a real one).
-	const NO_FOLDER = "  report folder: none (the results folder failed; the result arrives only as a message)";
+	const NO_FOLDER =
+		"  report folder: none (the results folder failed; the result is kept only in this session's memory)";
 
 	it("replies for two children with two child lines, one batch line and each resolved model ref", async () => {
 		// Pin a fake tmux: with no multiplexer the pane child would fall back to headless.

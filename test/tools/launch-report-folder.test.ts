@@ -5,6 +5,7 @@ import { getSessionResultsDir } from "../../src/artifact-storage.ts";
 import { RECORD_FILE, sessionResultStore } from "../../src/runtime/result-files.ts";
 import { publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { REPORT_FOLDER_PREFIX, renderLaunchReply } from "../../src/tools/launch-reply.ts";
+import { launchedChildData } from "../../src/tools/launch-structured.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 import { assistant, sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
@@ -79,6 +80,9 @@ describe("owner decision 2026-11-24: the launch reply names each run's report fo
 			assert.ok(lines[index * 2]?.startsWith(`- ${running.name} `), `the folder line follows the child line: ${text}`);
 		const folders = namedFolders(text, cwd);
 		assert.equal(folders.length, runs.length);
+		// Closure review P1: a codemode script gets the structured reply; each child carries the same folder.
+		const structured = runs.map((running) => launchedChildData(running, "worker", false).reportFolder);
+		assert.deepEqual(structured, folders, "the structured reply names the folder the text reply names");
 		const reports = runs.map((running) => endRun(running, running.name.endsWith("-typed")));
 		for (const [index, report] of reports.entries()) {
 			assert.equal(dirname(report), folders[index], `${runs[index]?.name}: the report is in the named folder`);
@@ -96,7 +100,16 @@ describe("owner decision 2026-11-24: the launch reply names each run's report fo
 		noFolder.resultTarget = { ...target, reservation: { runId: target.reservation.runId, error: "EACCES" } };
 		const text = renderLaunchReply([verified, noFolder], [null, null], []);
 		assert.ok(text.includes(`${REPORT_FOLDER_PREFIX}`), text);
-		assert.match(text, /report folder: vf-runs\/abcd1234\/result \(g<n>\/report\.md\)/);
-		assert.match(text, /report folder: none \(the results folder failed; the result arrives only as a message\)/);
+		// The generation folder is created at the first publish: the line says so (closure review P2).
+		assert.match(text, /report folder: vf-runs\/abcd1234\/result \(created at its first report, g<n>\/report\.md\)/);
+		// True for both parents: a waiting parent gets the result in the reply, another one by message.
+		assert.match(
+			text,
+			/report folder: none \(the results folder failed; the result is kept only in this session's memory\)/,
+		);
+		assert.doesNotMatch(text, /arrives only as a message/);
+		// The structured children carry the same facts: the verified folder, and null for none.
+		assert.equal(launchedChildData(verified, "worker", false).reportFolder, join(cwd, "vf-runs", "abcd1234", "result"));
+		assert.equal(launchedChildData(noFolder, "worker", false).reportFolder, null);
 	});
 });

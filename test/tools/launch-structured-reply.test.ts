@@ -340,6 +340,14 @@ describe("T28: structured launch replies", () => {
 					modelRef: CHILD_MODEL,
 					sessionFile: runOf(harness, name).sessionFile,
 					where: "headless",
+					// Owner decision 2026-11-24: the run folder reserved in this parent's results folder.
+					reportFolder: join(
+						getSessionResultsDir(
+							harness.session.sessionManager.getCwd(),
+							harness.session.sessionManager.getSessionId(),
+						),
+						runOf(harness, name).id,
+					),
 					state: "started",
 				})),
 			);

@@ -677,11 +677,11 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` resolves to an object, not text: `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child (a launch that waited by the rules of [Launch children](#launch-children)) also has its result `record`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started. A launch inside a script does not end the parent's turn (codemode passes no turn end on); the results still arrive as messages.
+In a script, `tools.subagent` resolves to an object, not text: `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId`, a `reportFolder` (the absolute folder where its report lands, or `null` when the run folder could not be made) and a `state` of `started` or `ended`. An `ended` child (a launch that waited by the rules of [Launch children](#launch-children)) also has its result `record`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started. A launch inside a script does not end the parent's turn (codemode passes no turn end on); the results still arrive as messages.
 
 ### Recipe: launch a batch in one script
 
-The script launches the batch and returns one entry per child: run id, name and state. It says that each result arrives as a message and that the work of these runs must not be redone. When a later child fails to launch, it names that child; the children before it started and report by message.
+The script launches the batch and returns one entry per child: run id, name, state and report folder (the folder where the run's report lands, `reportFolder` in the structured reply; read the result there by path after a reopen or a compaction). It says that each result arrives as a message and that the work of these runs must not be redone. When a later child fails to launch, it names that child; the children before it started and report by message.
 
 Both recipes launch an agent named `worker`. A new installation has no such agent. Write a `worker` agent, or put the name of one of your agents in `BATCH` and in the `spawning` list of the coordinator.
 
@@ -700,6 +700,7 @@ const runs = launch.children.map((child) => ({
 	id: child.runId,
 	name: child.name,
 	state: child.state,
+	reportFolder: child.reportFolder,
 	...(child.record ? { outcome: child.record.outcome, report: child.record.report.saved ? child.record.report.path : undefined } : {}),
 }));
 const reply = { runs, note: "Each result arrives as a message when its run ends. Do not redo the work of these runs." };

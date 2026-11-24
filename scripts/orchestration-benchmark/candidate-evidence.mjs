@@ -185,12 +185,17 @@ function calledTool(events, name) {
 	return direct || nestedCalls(events).some((call) => call.name === name);
 }
 
-/** Run ids that a subagent_result message names, also each member of a grouped message (D15). */
+/**
+ * Run ids whose result a subagent_result message carries, also each result member of a grouped
+ * message (D15). A ping member (customType subagent_ping) inside a group is no result.
+ */
 function resultMessageRunIds(events) {
 	const ids = new Set();
 	for (const e of events) {
 		if (e?.type !== "custom_message" || e.customType !== "subagent_result") continue;
-		const members = Array.isArray(e.details?.results) ? e.details.results.map((m) => m?.details) : [e.details];
+		const members = Array.isArray(e.details?.results)
+			? e.details.results.filter((m) => m?.customType === "subagent_result").map((m) => m.details)
+			: [e.details];
 		for (const d of members) if (typeof d?.id === "string") ids.add(d.id);
 	}
 	return ids;

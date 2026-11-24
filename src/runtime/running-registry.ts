@@ -210,8 +210,9 @@ export async function getLaunchedSubagentResult(
 }
 
 /**
- * D16: the run already ended and another wait took its end (a ping leaves no cached result), so
- * the launch wait finds it neither running nor cached. Its published record still answers, as a
+ * D16: the run already ended before this launch's wait found it, and its end is neither running,
+ * cached nor queued: a ping that already went out as a message before the launch claimed the run
+ * (a ping leaves no cached result), or a cached result the person deleted in the overlay first. Its published record still answers, as a
  * lookup copy that settles nothing again.
  */
 function lookUpEnded(running: RunningSubagent) {
