@@ -56,6 +56,7 @@ import {
 	type SubagentSessionMode,
 } from "./session/session-files.ts";
 import { setResultStorageNotice } from "./runtime/result-files.ts";
+import { installRootOnlyMarkerCheck } from "./tools/root-only-context.ts";
 import type { SubagentParamsInput } from "./types.ts";
 
 export {
@@ -260,6 +261,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	// The section of the current prompt, for the fallback when another
 	// extension's whole prompt replaces the sections.
 	let indexSection: string | undefined;
+	installRootOnlyMarkerCheck(pi);
 	pi.on("before_agent_start", (event, ctx) => {
 		managementToolExposure.finalize(ctx.sessionManager.getBranch());
 		indexSection = undefined;

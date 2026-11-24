@@ -89,6 +89,8 @@ const AGENTS_MD_FOR_CHILD = [
 	"",
 	"Defaults for software work.",
 	"",
+	// A block goes with its own lines only; the blank lines around it stay.
+	"",
 	"## Design",
 	"",
 	"- Choose the simplest design.",
@@ -96,6 +98,7 @@ const AGENTS_MD_FOR_CHILD = [
 	"## Verification integrity",
 	"",
 	"1. Make a failing check pass by fixing its cause.",
+	"",
 	"",
 	"## Formal verification",
 	"",
@@ -207,18 +210,66 @@ describe("root-only AGENTS.md blocks", () => {
 		assert.equal(run.base.contextFiles[0]?.content, AGENTS_MD, "the loaded base options keep the file text");
 	});
 
-	it("a child whose prompt another hook forces whole still loses the blocks", async () => {
+	it("a later child hook that forces the prompt whole (time limit) sees it without the blocks", async () => {
 		process.env[PI_SUBAGENT_TIMEOUT] = "600";
 		process.env[PI_SUBAGENT_TIMEOUT_WARN_THRESHOLD] = "80";
-		const earlierForce: Handler = (event) => ({
-			systemPrompt: `${(event as { systemPrompt: string }).systemPrompt}\n\nEARLIER EXTENSION`,
-		});
-		const run = await promptStart([earlierForce, ...childHandlers()], [{ path: GLOBAL_PATH, content: AGENTS_MD }]);
+		const run = await promptStart(childHandlers(), [{ path: GLOBAL_PATH, content: AGENTS_MD }]);
 		assert.ok(run.options.forceSystemPrompt, "the prompt is forced whole");
 		assert.doesNotMatch(run.prompt, /junior developer|pi-subagents:root-only/);
 		assert.match(run.prompt, /## Verification integrity/);
-		assert.match(run.prompt, /EARLIER EXTENSION/);
 		assert.match(run.prompt, /Time-budget contract|600s|time limit/i);
+	});
+
+	// Review P2 (2026-11-24): a marker counts only on a line of its own.
+	it("a child keeps a marker inside prose or inline code as text, and never joins two lines", async () => {
+		const content = [
+			`Wrap text in \`${OPEN}\` and \`${CLOSE}\`.`,
+			`para one ${OPEN} x ${CLOSE}`,
+			"",
+			"para two",
+			OPEN,
+			"root only",
+			CLOSE,
+			"para three",
+			"",
+		].join("\n");
+		const run = await promptStart(childHandlers(), [{ path: GLOBAL_PATH, content }]);
+		assert.equal(
+			run.options.contextFiles[0]?.content,
+			[
+				`Wrap text in \`${OPEN}\` and \`${CLOSE}\`.`,
+				`para one ${OPEN} x ${CLOSE}`,
+				"",
+				"para two",
+				"para three",
+				"",
+			].join("\n"),
+		);
+	});
+
+	// Review P2 (2026-11-24): the parent warns its person, since a background child's stderr stays hidden on success.
+	it("the root warns once per malformed file, naming the file", async () => {
+		const dir = createTestDir();
+		const configDir = join(dir, "agent-root");
+		mkdirSync(join(configDir, "agents"), { recursive: true });
+		// The root registers its hooks only when it has an agent to launch.
+		writeFileSync(
+			join(configDir, "agents", "scout.md"),
+			"---\nname: scout\ndescription: Map\nmode: background\n---\n\nbody.",
+		);
+		process.env.PI_CODING_AGENT_DIR = configDir;
+		const notes: string[] = [];
+		const uiCtx = { ...ctx, hasUI: true, ui: { ...ctx.ui, notify: (message: string) => notes.push(message) } };
+		const handlers = collect((pi) => subagentsExtension(pi));
+		const files = [
+			{ path: GLOBAL_PATH, content: `keep A\n${OPEN}\nkeep B\n` },
+			{ path: PROJECT_PATH, content: `${OPEN}\nroot only\n${CLOSE}\nshared\n` },
+		];
+		const first = await promptStart(handlers, files, uiCtx);
+		await promptStart(handlers, files, uiCtx);
+		assert.equal(notes.length, 1, notes.join("\n"));
+		assert.ok(notes[0]?.includes(GLOBAL_PATH) && notes[0]?.includes("child sessions get that file whole"), notes[0]);
+		assert.match(first.prompt, /root only/, "the root still keeps its blocks");
 	});
 
 	it("the root session keeps the root-only blocks", async () => {

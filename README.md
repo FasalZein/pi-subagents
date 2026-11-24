@@ -953,6 +953,21 @@ The child's output is its result: the summary of its completion call, or its who
 
 For large output, let the child use Pi's `write` tool and name the path in `artifacts` or in its summary.
 
+## Root-only AGENTS.md text
+
+A context file (`AGENTS.md`, `CLAUDE.md`) can hold text that only the root session gets, such as rules about talking to the person or launching agents. Wrap it in two markers, each on a line of its own:
+
+```markdown
+<!-- pi-subagents:root-only -->
+I am a junior developer. Write to me in plain words.
+<!-- /pi-subagents:root-only -->
+```
+
+- Every child session gets the file without these blocks: the marker lines and every line between them are removed, and nothing else changes. The file on disk and the root session keep the text.
+- A marker counts only when it is alone on its line (spaces and tabs around it are allowed). A marker inside a sentence, inside inline code, or followed by other text on the line is ordinary text. A marker line inside a fenced code block still counts.
+- Markers pair up in order: open, close, open, close. When they do not (a close first, two opens in a row, an open never closed), the child keeps that whole file, root-only text included, so a typo never drops shared rules. Each such file gets one warning: the parent shows it at its next prompt start (in the UI, or on stderr in print mode), and the child writes it to its own UI or stderr. The parent checks the files it loads itself; a file only a child loads (a project file under a child's own `cwd`) is warned about by that child only.
+- A `fork` child, a time-limit wrap-up that loads the fork seed, and a resumed child session saved before this rule also lose the blocks: the seed copies the parent's system messages without them, and each child request removes them from any inherited system message.
+
 ## Child tools and extensions
 
 `extensions`, `tools`, and `deny-tools` shape the Pi capabilities available to the child model. They are not a sandbox for untrusted code. Loaded extensions still execute with the child process permissions, and freeform `flags` can override generated CLI arguments. Use OS or container isolation for hard security boundaries.

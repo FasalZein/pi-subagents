@@ -305,6 +305,53 @@ describe("fork session launch behavior", () => {
 		assert.deepEqual(seeded.find((entry) => entry.id === "cmp-001")?.systemMessage.sections, { preamble: "Base" });
 	});
 
+	// Requirement (review P1, 2026-11-24): a fork child never inherits the parent's root-only AGENTS.md blocks.
+	it("drops the parent's root-only blocks from inherited system messages and compaction state", () => {
+		const dir = createTestDir();
+		const parent = join(dir, "parent.jsonl");
+		const child = join(dir, "child.jsonl");
+		const open = "<!-- pi-subagents:root-only -->";
+		const close = "<!-- /pi-subagents:root-only -->";
+		// Shaped like Pi's renderProjectContext inside the project_context section tag.
+		const section = (global: string, project: string) =>
+			`<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/g/AGENTS.md">\n${global}\n</project_instructions>\n\n<project_instructions path="/r/AGENTS.md">\n${project}\n</project_instructions>\n</project_context>`;
+		const malformed = `kept\n${open}\nunclosed\n`;
+		const parentSection = section(`shared A\n${open}\nROOT ONLY\n${close}\nshared B\n`, malformed);
+		const childSection = section("shared A\nshared B\n", malformed);
+		const system = { role: "system", content: "", sections: { preamble: "Base", project_context: parentSection } };
+		const entries = [
+			{ ...SESSION_HEADER, cwd: dir, timestamp: "2026-08-07T20:00:00.000Z" },
+			{ type: "message", id: "sys-001", parentId: null, timestamp: "2026-08-07T20:00:01.000Z", message: system },
+			{
+				type: "compaction",
+				id: "cmp-001",
+				parentId: "sys-001",
+				timestamp: "2026-08-07T20:00:03.000Z",
+				summary: "summary",
+				firstKeptEntryId: "sys-001",
+				tokensBefore: 10,
+				systemMessage: system,
+			},
+			{
+				type: "message",
+				id: "asst-001",
+				parentId: "cmp-001",
+				timestamp: "2026-08-07T20:00:04.000Z",
+				message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+			},
+		];
+		writeFileSync(parent, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+		seedSubagentSessionFileForTest("fork", parent, child, dir, { activeLeafId: "asst-001" });
+
+		const seeded = getEntries(child) as Array<{ id?: string; message?: unknown; systemMessage?: unknown }>;
+		assert.equal(JSON.stringify(seeded).includes("ROOT ONLY"), false);
+		const sections = (value: unknown) => (value as { sections?: unknown } | undefined)?.sections;
+		const expected = { preamble: "Base", project_context: childSection };
+		assert.deepEqual(sections(seeded.find((entry) => entry.id === "sys-001")?.message), expected);
+		assert.deepEqual(sections(seeded.find((entry) => entry.id === "cmp-001")?.systemMessage), expected);
+	});
+
 	it("does not copy an ancestor's launch metadata into a fork, so resume reads the child's own grant", () => {
 		const dir = createTestDir();
 		const parent = join(dir, "parent.jsonl");
