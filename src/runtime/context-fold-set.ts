@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getOwnedHistoryStartIndex } from "../session/session-files.ts";
+import { isVerifiedReportPath } from "../vf/run/winner-store.ts";
 import { isFinishedStatus, runEnds } from "./run-end-message.ts";
 
 /**
@@ -46,9 +48,24 @@ export function isChildTranscript(entries: readonly unknown[]): boolean {
 	);
 }
 
-/** A verified fan-out run or a provenance notice: never folded (owner-rules 2026-11-18T17:56Z). */
+/**
+ * A verified fan-out run or a provenance notice: never folded (owner-rules 2026-11-18T17:56Z). An
+ * adopted delivery carries verifiedRunId; a waited launch, a join item and a lookup of a verified
+ * winner carry only its report path, which lies in the run's generation folder.
+ */
 export function isVerifiedOrNotice(details: Rec): boolean {
-	return details.provenance === true || details.verifiedRunId !== undefined;
+	if (details.provenance === true || details.verifiedRunId !== undefined) return true;
+	const report = reportPath(details);
+	return report !== undefined && isVerifiedReportPath(report);
+}
+
+/**
+ * The digest of the one text block a waited launch, resume or join reply was built with, kept in
+ * its details (fold-waits review round 1). Another extension's tool_result handler can change the
+ * content but leave the details: a reply folds only while its text still has this digest.
+ */
+export function replyDigest(text: string): string {
+	return createHash("sha256").update(text).digest("hex").slice(0, 32);
 }
 
 type RunFacts = { id: string; name?: string; outcome?: string; report?: string };

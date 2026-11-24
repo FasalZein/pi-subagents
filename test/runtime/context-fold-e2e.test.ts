@@ -16,7 +16,8 @@ import { registerContextFold } from "../../src/runtime/context-fold.ts";
 import { registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
-import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { getLaunchedSubagentResult, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
+import { runningSubagents } from "../../src/runtime/state.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
 import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
@@ -60,7 +61,20 @@ interface Parent {
 
 async function startParent(
 	plan: Record<string, ToolCall[]>,
-	options: { api?: string; resumeFile?: string; root?: string; codemode?: boolean; blocking?: boolean } = {},
+	options: {
+		api?: string;
+		resumeFile?: string;
+		root?: string;
+		codemode?: boolean;
+		blocking?: boolean;
+		/** Another extension's tool_result handler, as Pi chains it after this package's handlers. */
+		annotate?: (event: { toolName: string; content: { type: string; text?: string }[] }) => unknown;
+		/**
+		 * The launch wait finds the run already taken (another wait took its ping): it reads the
+		 * published record and replies with the lookup copy (running-registry.ts lookUpEnded).
+		 */
+		lookup?: boolean;
+	} = {},
 ): Promise<Parent> {
 	const root = options.root ?? createTestDir();
 	const agentDir = join(root, "agent");
@@ -89,6 +103,10 @@ async function startParent(
 		return store;
 	};
 	let finish: ((result: SubagentResult) => void) | undefined;
+	let publishedOnceResolve: () => void = () => {};
+	const publishedOnce = new Promise<void>((resolve) => {
+		publishedOnceResolve = resolve;
+	});
 	let child: RunningSubagent | undefined;
 	const runtime: SubagentToolRuntime = {
 		loadAgentDefaults: () => ({ spawning: true, async: true, mode: "background" }) as never,
@@ -127,7 +145,17 @@ async function startParent(
 		getWatcherSignal: (_running, controller) => controller.signal,
 		wireSubagentSteerBack: (pi, running, promise) => wireSubagentSteerBack(pi as never, running, promise, () => {}),
 		startWidgetRefresh: () => {},
-		getLaunchedSubagentResult: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
+		getLaunchedSubagentResult: options.lookup
+			? async (running) => {
+					await publishedOnce;
+					return getLaunchedSubagentResult(running, {
+						updateWidget: () => {},
+						waitForSubagentResult: async () => ({ details: { error: "not_found" } }),
+						stopRunningSubagent: async () => {},
+						asSubagentToolResult: (result) => result,
+					});
+				}
+			: (running, signal) => getLaunchedSubagentResultForTest(running, signal),
 		listLaunchableAgents: () => [],
 		muxUnavailableResult: () => ({ content: [{ type: "text", text: "mux" }], details: {} }),
 	};
@@ -136,6 +164,8 @@ async function startParent(
 		registerContextFold(pi);
 		registerSubagentCoreTools(pi, () => true, runtime);
 		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
+		const annotate = options.annotate;
+		if (annotate) pi.on("tool_result", (event) => annotate(event as never) as never);
 	};
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root,
@@ -185,6 +215,12 @@ async function startParent(
 			};
 			const published = publishRunResult(child, end);
 			if (!published) assert.fail("the run published no record");
+			if (options.lookup) {
+				// The other wait took the run's end: it is no longer running and no result message follows.
+				runningSubagents.delete(child.id);
+				publishedOnceResolve();
+				return;
+			}
 			finish?.({
 				name: "child-one",
 				task: "t",
@@ -389,6 +425,86 @@ describe("context fold in a real Pi session", () => {
 			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
 		} finally {
 			await parent.dispose();
+		}
+	});
+
+	it("a waited launch reply that holds the lookup copy of a taken run folds with its saved report", async () => {
+		const parent = await startParent(PLAN, { blocking: true, lookup: true });
+		try {
+			const delegated = parent.session.prompt("delegate");
+			await until(
+				() =>
+					parent.session.messages.some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("launch-1")),
+				"the launch call",
+			);
+			parent.finish(REPORT);
+			await delegated;
+			await parent.session.waitForIdle();
+			const reply = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "subagent");
+			assert.equal((reply as { details?: { lookup?: boolean } }).details?.lookup, true, "the reply is the lookup copy");
+			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			const after = parent.requests.at(-1) ?? "";
+			assert.doesNotMatch(after, new RegExp(BRIEF), "the brief folds");
+			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("keeps a waited launch or join reply full when another extension changed its text", async () => {
+		const ANNOTATION = "NOTE-FROM-ANOTHER-EXTENSION";
+		const forms: Array<[string, (text: string) => { type: string; text: string }[]]> = [
+			[
+				"an appended text block",
+				(text) => [
+					{ type: "text", text },
+					{ type: "text", text: ANNOTATION },
+				],
+			],
+			["text appended to the one block", (text) => [{ type: "text", text: `${text}\n\n${ANNOTATION}` }]],
+		];
+		for (const [form, change] of forms) {
+			for (const tool of ["subagent", "subagent_wait"] as const) {
+				const plan: Record<string, ToolCall[]> = { ...PLAN };
+				const parent = await startParent(plan, {
+					blocking: tool === "subagent",
+					annotate: (event) =>
+						event.toolName === tool ? { content: change(event.content.map((b) => b.text ?? "").join("")) } : undefined,
+				});
+				try {
+					if (tool === "subagent") {
+						const delegated = parent.session.prompt("delegate");
+						await until(() => parent.session.messages.some((m) => m.role === "assistant"), "the launch call");
+						parent.finish(REPORT);
+						await delegated;
+					} else {
+						await parent.session.prompt("delegate");
+						await parent.session.waitForIdle();
+						plan.join = [fauxToolCall("subagent_wait", { runIds: [parent.runId()] }, { id: "wait-1" })];
+						const joined = parent.session.prompt("join");
+						await until(
+							() =>
+								parent.session.messages.some(
+									(m) => m.role === "assistant" && JSON.stringify(m.content).includes("wait-1"),
+								),
+							"the wait call",
+						);
+						parent.finish(REPORT);
+						await joined;
+					}
+					await parent.session.waitForIdle();
+					await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
+					await parent.session.prompt("next");
+					await parent.session.waitForIdle();
+					const after = parent.requests.at(-1) ?? "";
+					assert.match(after, new RegExp(ANNOTATION), `${tool}, ${form}: the other extension's text stays`);
+					assert.match(after, new RegExp(REPORT), `${tool}, ${form}: the reply stays whole`);
+				} finally {
+					await parent.dispose();
+				}
+			}
 		}
 	});
 

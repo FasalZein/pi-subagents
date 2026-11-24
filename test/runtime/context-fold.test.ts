@@ -1,5 +1,11 @@
 import { foldMessages, runStub } from "../../src/runtime/context-fold.ts";
-import { CONTEXT_FOLD_ENTRY, type FoldedRun, readFoldedRuns, settleFold } from "../../src/runtime/context-fold-set.ts";
+import {
+	CONTEXT_FOLD_ENTRY,
+	type FoldedRun,
+	readFoldedRuns,
+	replyDigest,
+	settleFold,
+} from "../../src/runtime/context-fold-set.ts";
 import { assert, describe, it } from "../support/index.ts";
 
 // The settle fold rules of statecharts/context-fold/target/Target.tla at the smallest boundary:
@@ -366,7 +372,7 @@ describe("context fold: the provider messages", () => {
 
 /** A subagent_wait reply as Pi builds it (wait-tool.ts): text content, structured details, a creation time. */
 function waitReply(details: Record<string, unknown>, extra: Record<string, unknown> = {}) {
-	return {
+	return withDigest({
 		role: "toolResult",
 		toolCallId: "w1",
 		toolName: "subagent_wait",
@@ -375,7 +381,21 @@ function waitReply(details: Record<string, unknown>, extra: Record<string, unkno
 		isError: false,
 		timestamp: 1,
 		...extra,
-	};
+	});
+}
+
+/**
+ * The tools keep the digest of the one text block they built in the details (context-fold-e2e and
+ * test/vf/winner-launch.test.ts drive the real tools); a fixture gets the digest of its first block.
+ */
+function withDigest<T extends { content: { text?: string }[]; details: Record<string, unknown> }>(reply: T): T {
+	if ("replyDigest" in reply.details) return reply;
+	return { ...reply, details: { ...reply.details, replyDigest: replyDigest(reply.content[0]?.text ?? "") } };
+}
+
+/** The reply after another extension changed its text and left its details (fold-waits review round 1). */
+function annotated<T extends { content: { type: string; text?: string }[] }>(reply: T): T {
+	return { ...reply, content: [{ type: "text", text: `${reply.content[0]?.text}\n\nNOTE` }] };
 }
 const complete = (...ids: string[]) => ({
 	status: "complete",
@@ -420,6 +440,24 @@ describe("context fold: wait replies (fold-waits S2)", () => {
 			["a run that did not fold", waitReply(complete(A, C))],
 			["the recent list", waitReply({ status: "recent", results: [], pending: [], missing: [], recent: [] })],
 			["an empty join", waitReply({ status: "empty", results: [], pending: [], missing: [] })],
+			["text another extension changed", annotated(waitReply(complete(A)))],
+			[
+				"a second text block",
+				waitReply(complete(A), {
+					content: [
+						{ type: "text", text: "R" },
+						{ type: "text", text: "NOTE" },
+					],
+				}),
+			],
+			["no digest (a reply written before the digest)", { ...waitReply(complete(A)), details: complete(A) }],
+			[
+				"a verified run by its report path",
+				waitReply({
+					...complete(A),
+					results: [{ runId: A, name: "one", record: { report: { saved: true, path: "/v/run/result/g1/report.md" } } }],
+				}),
+			],
 			[
 				"a verified run",
 				waitReply({ ...complete(A), results: [{ runId: A, name: "one", record: { verifiedRunId: "vf1" } }] }),
@@ -446,7 +484,7 @@ describe("context fold: wait replies (fold-waits S2)", () => {
 const WAITED = "This call waited for its children; each report follows below.";
 const childLine = (name: string, id: string) => `- ${name} (agent w): run ${id}, model not set, headless`;
 function launchToolReply(text: string, details: Record<string, unknown>, extra: Record<string, unknown> = {}) {
-	return {
+	return withDigest({
 		role: "toolResult",
 		toolCallId: "l1",
 		toolName: "subagent",
@@ -455,7 +493,7 @@ function launchToolReply(text: string, details: Record<string, unknown>, extra: 
 		isError: false,
 		timestamp: 1,
 		...extra,
-	};
+	});
 }
 const finished = (id: string, name: string) => ({
 	id,
@@ -557,6 +595,12 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 					{ ...finished(A, "one"), lookup: true },
 					{ timestamp: AT + 1 },
 				),
+			],
+			["text another extension changed", annotated(single())],
+			["no digest (a reply written before the digest)", { ...single(), details: finished(A, "one") }],
+			[
+				"a verified child by its report path",
+				launchToolReply(`${SINGLE_HEAD}\n\nR`, { ...finished(A, "one"), reportFile: "/v/run/result/g2/report.md" }),
 			],
 			["a verified child", launchToolReply(`${SINGLE_HEAD}\n\nR`, { ...finished(A, "one"), verifiedRunId: "vf1" })],
 			["a provenance notice", launchToolReply(`${SINGLE_HEAD}\n\nR`, { ...finished(A, "one"), provenance: true })],

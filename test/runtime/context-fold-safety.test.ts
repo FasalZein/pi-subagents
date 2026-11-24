@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerContextFold } from "../../src/runtime/context-fold.ts";
+import { replyDigest } from "../../src/runtime/context-fold-set.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 
 // Review round 1 (reviewer/context-fold-settle-gpt-2026-11-23-090148.md): each case is a sequence
@@ -161,6 +162,8 @@ describe("context fold safety: what folds at a settle", () => {
 					results: [{ runId: A, name: "one", record: { outcome: "done", report: { saved: true, path } } }],
 					pending: [],
 					missing: [],
+					// The wait tool keeps the digest of the text it built (context-fold-e2e drives the real tool).
+					replyDigest: replyDigest("WAIT-REPORT-A"),
 				},
 				{ content: [{ type: "text", text: "WAIT-REPORT-A" }], isError: false, timestamp: 1 },
 			),

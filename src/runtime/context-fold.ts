@@ -11,6 +11,7 @@ import {
 	isVerifiedOrNotice,
 	messageRunIds,
 	readFoldedRuns,
+	replyDigest,
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
@@ -96,16 +97,28 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 type CleanReply = { ids: string[]; sent: number; head?: string };
 
 /**
+ * The text of a reply that is still what its tool built: one text block whose digest the tool kept
+ * in the details. Another extension's change to the content (an added block, an appended note)
+ * leaves the details, so the digest no longer matches and the reply stays full.
+ */
+function producerText(content: unknown, details: Rec): string | undefined {
+	if (!Array.isArray(content) || content.length !== 1) return;
+	const block = content[0];
+	if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") return;
+	return details.replyDigest === replyDigest(block.text) ? block.text : undefined;
+}
+
+/**
  * The run ids of a clean subagent_wait join reply (fold-waits S2), or undefined when the reply must
  * stay full: an error (an interrupted wait), a status other than complete (timeout, empty, recent),
- * a pending or missing run, no run, a verified run or provenance notice, content other than text
- * (the reply text is then not only the reports), or no creation time to compare with a fold.
+ * a pending or missing run, no run, a verified run or provenance notice, content that is not the
+ * tool's own text (producerText), or no creation time to compare with a fold.
  */
 function cleanWaitReply(message: Rec): CleanReply | undefined {
 	const { details, content, timestamp } = message;
 	if (message.toolName !== "subagent_wait" || message.isError !== false || typeof timestamp !== "number") return;
-	if (!Array.isArray(content) || !content.every((block) => isRecord(block) && block.type === "text")) return;
-	if (!isRecord(details) || details.status !== "complete" || !Array.isArray(details.results)) return;
+	if (!isRecord(details) || producerText(content, details) === undefined) return;
+	if (details.status !== "complete" || !Array.isArray(details.results)) return;
 	if (!Array.isArray(details.pending) || details.pending.length > 0) return;
 	if (!Array.isArray(details.missing) || details.missing.length > 0) return;
 	if (details.results.length === 0) return;
@@ -124,7 +137,7 @@ function cleanWaitReply(message: Rec): CleanReply | undefined {
  * The run ids and head lines of a waited launch or resume reply (fold-waits S3, D2 keep-head), or
  * undefined when it must stay full: an error (a launch failure), a child that did not deliver a
  * finished report (started, interrupted, wait failed), a verified child or provenance notice, content
- * other than one text block, or no creation time. The head (child lines up to the first blank line)
+ * that is not the tool's own text (producerText), or no creation time. The head (child lines up to the first blank line)
  * must be one line per child and then the waited return line; any other head (a partly waited batch,
  * a wait error, a warning) stays full.
  */
@@ -132,9 +145,8 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
 	const { details, content, timestamp } = message;
 	if (message.toolName !== "subagent" && message.toolName !== "subagent_resume") return;
 	if (message.isError !== false || typeof timestamp !== "number" || !isRecord(details)) return;
-	if (!Array.isArray(content) || content.length !== 1) return;
-	const block = content[0];
-	if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") return;
+	const text = producerText(content, details);
+	if (text === undefined) return;
 	const children = Array.isArray(details.children) ? details.children : [details];
 	if (Array.isArray(details.children) && details.status !== "batch") return;
 	if (children.length === 0) return;
@@ -146,8 +158,8 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
 		if (!id) return;
 		ids.push(id);
 	}
-	const end = block.text.indexOf("\n\n");
-	const head = end < 0 ? undefined : block.text.slice(0, end);
+	const end = text.indexOf("\n\n");
+	const head = end < 0 ? undefined : text.slice(0, end);
 	const lines = head?.split("\n");
 	if (!lines || lines.length !== ids.length + 1 || lines.at(-1) !== WAITED_RETURN_LINE) return;
 	return { ids, sent: timestamp, head };
@@ -160,8 +172,14 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
  */
 function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>): Rec {
 	const clean = message.toolName === "subagent_wait" ? cleanWaitReply(message) : cleanLaunchReply(message);
-	if (!clean?.ids.every((id) => clean.sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
-	const stubs = clean.ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n");
+	if (!clean) return message;
+	const runs: FoldedRun[] = [];
+	for (const id of clean.ids) {
+		const run = folded.get(id);
+		if (!run || clean.sent > run.foldedAt) return message;
+		runs.push(run);
+	}
+	const stubs = runs.map(runStub).join("\n");
 	const text = clean.head === undefined ? stubs : `${clean.head}\n\n${stubs}`;
 	return { ...message, content: [{ type: "text", text }] };
 }

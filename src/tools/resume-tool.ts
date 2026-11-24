@@ -3,6 +3,7 @@ import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-ag
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
+import { replyDigest } from "../runtime/context-fold-set.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { CALL_OUTCOMES, parseRunId, type ResultRecord, type RunId } from "../runtime/result-record.ts";
@@ -235,9 +236,15 @@ export function registerSubagentResumeTool(
 					reported.length > 0
 						? { report: [isRenderedResult(result) ? "" : warning, resultBody].filter(Boolean).join("\n\n") }
 						: { waitError: resultBody };
+				const text = renderLaunchReply([running], [delivery], []);
 				return {
 					...result,
-					content: [{ type: "text" as const, text: renderLaunchReply([running], [delivery], []) }],
+					content: [{ type: "text" as const, text }],
+					// A delivered report can fold after use; the digest proves the reply text unchanged.
+					details:
+						reported.length > 0 && typeof result.details === "object" && result.details !== null
+							? { ...result.details, replyDigest: replyDigest(text) }
+							: result.details,
 					structuredContent: asStructuredContent({
 						status: "launched",
 						children: [launchedChildData(running, running.agent ?? "", reported.length > 0, result.details)],

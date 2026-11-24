@@ -12,6 +12,7 @@ import {
 } from "../launch/policy.ts";
 import type { SubagentLaunchContext } from "../launch/prep.ts";
 import { getLaunchCallChildren } from "../runtime/batch-classifier.ts";
+import { replyDigest } from "../runtime/context-fold-set.ts";
 import { reportedRunIds, settleWaitReply } from "../runtime/delivery-queue.ts";
 import { isFinishedStatus } from "../runtime/run-end-message.ts";
 import { isRenderedResult, launchWarningLines } from "../runtime/run-result.ts";
@@ -493,11 +494,15 @@ export function registerSubagentCoreTools(
 					),
 				};
 				const structuredContent = asStructuredContent(structured);
+				// A reply whose every child delivered its report can fold after use; the digest proves its text unchanged.
+				const digest = deliveries.every((delivery) => delivery && "report" in delivery)
+					? { replyDigest: replyDigest(text) }
+					: {};
 				if (launched.length === 1) {
 					return asSubagentToolResult({
 						...results[0],
 						content: [{ type: "text", text }],
-						details: replyDetails(results[0], 0),
+						details: { ...replyDetails(results[0], 0), ...digest },
 						structuredContent,
 					});
 				}
@@ -514,6 +519,7 @@ export function registerSubagentCoreTools(
 							name: (result.details as { name?: string } | undefined)?.name ?? prepared[index]?.child.name,
 							...(deliveries[index] && "report" in deliveries[index] ? { report: deliveries[index].report } : {}),
 						})),
+						...digest,
 					},
 					structuredContent,
 					...getSubagentBatchStopMetadata(),

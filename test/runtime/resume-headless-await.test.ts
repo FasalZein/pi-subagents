@@ -1,5 +1,7 @@
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { foldMessages, runStub } from "../../src/runtime/context-fold.ts";
+import { settleFold } from "../../src/runtime/context-fold-set.ts";
 import type { PersistedSubagentLaunchMetadata } from "../../src/session/session-files.ts";
 import { writeSubagentLaunchMetadataEntry } from "../../src/session/session-files.ts";
 import { registerSubagentResumeTool } from "../../src/tools/resume-tool.ts";
@@ -46,7 +48,7 @@ function writeAsyncChildSession(dir: string): string {
 	return sessionFile;
 }
 
-function registerResumeTool() {
+function registerResumeTool(reply?: (running: RunningSubagent) => unknown) {
 	const awaited: RunningSubagent[] = [];
 	const empty = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
 	const runtime = {
@@ -61,6 +63,7 @@ function registerResumeTool() {
 		wireSubagentSteerBack: () => {},
 		getLaunchedSubagentResult: async (running: RunningSubagent) => {
 			awaited.push(running);
+			if (reply) return reply(running);
 			return { content: [{ type: "text", text: "completed" }], details: { status: "completed" } };
 		},
 	};
@@ -142,6 +145,53 @@ describe("subagent_resume from a headless parent", () => {
 			assert.equal(awaited.length, 0);
 			assert.equal(result.details.status, "started");
 			assert.equal(result.terminate, true);
+		});
+	});
+});
+
+describe("subagent_resume reply and the settle fold (fold-waits review round 1)", () => {
+	afterEach(() => resetSubagentStateForTest());
+
+	it("a waited resume reply folds to its head and stub after use; a reply another extension changed stays", async () => {
+		const dir = createTestDir();
+		const bin = writeExecutable(dir, "quiet-pi", "#!/usr/bin/env bash\nexit 0\n");
+		const reportFile = join(dir, "report-1.md");
+		writeFileSync(reportFile, "# report\n");
+		await withFakePi(bin, async () => {
+			const sessionFile = writeAsyncChildSession(dir);
+			// The waited result as the wait gives it (wait-result.ts): the report and its saved path.
+			const { tool } = registerResumeTool((running) => ({
+				content: [{ type: "text", text: "RESUMED-REPORT" }],
+				details: { id: running.id, name: running.name, status: "completed", outcome: "done", reportFile },
+			}));
+			const result = (await tool.execute("call-1", { sessionFile, task: "go on" }, undefined, undefined, {
+				...parentToolCtx(dir, { hasUI: false }),
+			})) as { content: { type: string; text: string }[]; details: { id: string } };
+			const message = {
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "subagent_resume",
+				content: result.content,
+				details: result.details,
+				isError: false,
+				timestamp: 1,
+			};
+			const entries = [
+				{ type: "message", id: "e1", message: { role: "user", content: [{ type: "text", text: "resume" }] } },
+				{ type: "message", id: "e2", message },
+				{ type: "message", id: "e3", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } },
+			];
+			const runs = settleFold(entries, () => false, 100);
+			assert.equal(runs.length, 1, "the waited resume commits its run");
+			const folded = new Map(runs.map((run) => [run.id, run]));
+			const [out] = foldMessages([message], folded) as (typeof message)[];
+			const text = result.content[0].text;
+			const head = text.slice(0, text.indexOf("\n\n"));
+			assert.match(head, /This call waited for its children; each report follows below\.$/);
+			assert.deepEqual(out.content, [{ type: "text", text: `${head}\n\n${runStub(runs[0])}` }]);
+			const changed = { ...message, content: [{ type: "text", text: `${text}\n\nNOTE` }] };
+			const list = [changed];
+			assert.equal(foldMessages(list, folded), list, "a reply another extension changed stays full");
 		});
 	});
 });
