@@ -532,10 +532,11 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 | `model` | no | A model for this launch. See [Model names](#model-names) |
 | `thinking` | no | A thinking level for this launch, such as `high` |
 
-The launch reply has one line per child, then one line that says how the results return, then warnings:
+The launch reply has one line per child, each followed by the folder where that run's report lands, then one line that says how the results return, then warnings:
 
 ```text
 - auth-scout (agent scout): run <run>, model <provider/model>, headless
+  report folder: ~/.pi/history/<project>/artifacts/<session id>/results/<run>
 Each report arrives later, and this turn may stop after this call so the reports can arrive; do not poll, redo the delegated work or claim its results.
 ```
 
@@ -572,7 +573,7 @@ A refused launch also names the first children that fit in the free slots now. I
 Error: batch of 4 subagents exceeds the spawn width limit of 3. Nothing started. The first 1 child (1 slot) fits now: call subagent with only that child. Then end this turn (a codemode script returns); when one of the runs auth-scout-1, diff-reviewer-2 ends it frees its slots and its result arrives as a message that starts your next turn. When that result arrives, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
 ```
 
-A refused resume says to call `subagent_resume` again, not to launch. A child that needs more slots than the whole limit gets no next step, because no run end frees enough slots. A launch that is still starting holds its slots without a run id; the refusal then says so and tells the parent to retry after that launch replies. The refusal names no wait tool: the fork has none since 2026-11-24 (owner).
+A session whose launches wait (`pi -p`, a background child such as the coordinator below, no UI, the first prompt of `pi "task"`) gets another next step, because it has no later turn and gets no result message: launch the children that fit now, do not end the turn, and retry the rest when that launch returns. For example: `The first 1 child (1 slot) fits now: call subagent with only that child. Launches in this session wait: that call returns when the child ends, which frees its slots. Do not end your turn: when it returns, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused.` A refused resume says to call `subagent_resume` again, not to launch. A child that needs more slots than the whole limit gets no next step, because no run end frees enough slots. A launch that is still starting holds its slots without a run id; the refusal then says so and tells the parent to retry after that launch replies. The refusal names no wait tool: the fork has none since 2026-11-24 (owner).
 
 ### The result of a run
 
@@ -638,7 +639,7 @@ Two known limits:
 
 ### No wait tool
 
-The fork had a `subagent_wait` tool from 2026-11-18 to 2026-11-24. The owner removed it, as upstream did on 2026-05-10 (6240c43): while the parent waited, the owner could not talk to it. After an async launch the parent turn ends (see below), and each result arrives as a `subagent_result` message that starts a new turn. A result message names the run id and the report file. Old sessions that hold `subagent_wait` calls still load: Pi shows them as calls of a tool that is not there, and their replies fold as before.
+The fork had a `subagent_wait` tool from 2026-11-18 to 2026-11-24. The owner removed it, as upstream did on 2026-05-10 (6240c43): while the parent waited, the owner could not talk to it. After an async launch the parent turn ends (see below), and each result arrives as a `subagent_result` message that starts a new turn. A result message names the run id and the report file. To read a result by path after a reopen or a compaction, use the `report folder` line under the child in the launch reply: a session run keeps `report-<n>.md` and `record.json` there, a verified run `g<n>/report.md`. Old sessions that hold `subagent_wait` calls still load: Pi shows them as calls of a tool that is not there, and their replies fold as before.
 
 #### Mixed sync and async batches
 
@@ -713,7 +714,7 @@ return JSON.stringify(reply);
 
 ### After a failed script
 
-A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Do not rerun it. Each child that started reports by message when it ends, also after the script failed. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry names it or a later child. A result message names the run id and the report file; the record of a run is `record.json` under `results/<run id>/` in the session's artifact folder, and its `launch.json` names the child's session file.
+A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Do not rerun it. Each child that started reports by message when it ends, also after the script failed. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry names it or a later child. The launch reply names each run's report folder, and a result message names the run id and the report file; the record of a run is `record.json` under `results/<run id>/` in the session's artifact folder, and its `launch.json` names the child's session file.
 
 ### Limits of a script
 

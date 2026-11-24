@@ -17,7 +17,8 @@ const RESULTS_FOLDER = "result";
 const REPORT_FILE = "report.md";
 const GENERATION_FOLDER = /^g([1-9][0-9]*)$/;
 
-function resultsRoot(runDir: string): string {
+/** The folder that holds a verified run's published generations, g<N>/report.md each. */
+export function resultsRoot(runDir: string): string {
 	return join(runDir, RESULTS_FOLDER);
 }
 

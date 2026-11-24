@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getSessionResultsDir } from "../artifact-storage.ts";
 import { parseJsonContainer } from "../tools/json-string-args.ts";
-import { WAITED_RETURN_LINE } from "../tools/launch-reply.ts";
+import { REPORT_FOLDER_PREFIX, WAITED_RETURN_LINE } from "../tools/launch-reply.ts";
 import { type FoldedScript, readFoldedScripts, scriptKey, settleScripts } from "./context-fold-scripts.ts";
 import {
 	CONTEXT_FOLD_ENTRY,
@@ -147,7 +147,8 @@ function producerText(content: unknown, details: Rec): string | undefined {
 
 /**
  * Compatibility for old sessions: the fork had a subagent_wait tool until 2026-11-24, and a stored
- * reply of it still folds as before, so an old session's provider prefix does not change.
+ * reply of it still folds as before. The prefix of an old session changes once all the same (one
+ * prompt-cache miss): its existing stubs lost the "Full result: subagent_wait(...)" ending.
  * The run ids of a clean subagent_wait join reply (fold-waits S2), or undefined when the reply must
  * stay full: an error (an interrupted wait), a status other than complete (timeout, empty, recent),
  * a pending or missing run, no run, a verified run or provenance notice, content that is not the
@@ -200,7 +201,12 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
 	const end = text.indexOf("\n\n");
 	const head = end < 0 ? undefined : text.slice(0, end);
 	const lines = head?.split("\n");
-	if (!lines || lines.length !== ids.length + 1 || lines.at(-1) !== WAITED_RETURN_LINE) return;
+	if (!lines || lines.at(-1) !== WAITED_RETURN_LINE) return;
+	// One line per child, each followed by its report-folder line since 2026-11-24 (owner); an older
+	// session's reply has the child lines alone.
+	const body = lines.slice(0, -1);
+	const folderLines = body.filter((line) => line.startsWith(REPORT_FOLDER_PREFIX)).length;
+	if (body.length - folderLines !== ids.length || (folderLines !== 0 && folderLines !== ids.length)) return;
 	return { ids, head };
 }
 

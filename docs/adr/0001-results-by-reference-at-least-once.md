@@ -22,7 +22,7 @@ Changed on 2026-11-24 by the owner: the wait tool (subagent_wait) is removed, as
 ## Consequences
 
 - A parent that needs detail reads the report file, as a visible choice.
-- After a workflow script fails, nothing comes back by itself; the parent recovers the results by lookup.
+- After a workflow script fails, each child it started still reports by message (since 2026-11-24; before, the parent recovered the results by lookup). A result the parent no longer has in context is read by path: each launch reply names the run report folder.
 - Removing delivered results from the parent context waits until Pi offers a final read-only dispatch hook, or until measurements show that capped summaries still dominate parent input.
 - Verified fan-out keeps its v2.9.2 lease, receipt and adoption; only its text is capped. Its adoption can deliver a winner again, within the cap.
 - A child that outlives its parent gets no result record. The one exception is a verified fan-out winner, which the origin or an authorized ancestor can adopt after the origin exits.

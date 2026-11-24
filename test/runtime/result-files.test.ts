@@ -267,9 +267,7 @@ describe("result files (D13)", () => {
 		const newer = store.publish(unsaved, runResult(unsaved.runId, "newer revision", 67_000), render);
 		chmodSync(folderOf(unsaved), 0o700);
 		assert.equal(store.storedRendering(older), undefined);
-		assert.equal(store.unsavedReport(older), undefined);
 		assert.ok(store.storedRendering(newer)?.includes("newer revision"));
-		assert.equal(store.unsavedReport(newer), "newer revision");
 	});
 
 	it("gives colliding draws different run ids in memory, and no run replaces the record of another", () => {

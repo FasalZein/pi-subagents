@@ -591,6 +591,23 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text }] });
 	});
 
+	it("a waited batch whose child lines carry report-folder lines (owner 2026-11-24) keeps them and folds", () => {
+		const folder = (id: string) => `  report folder: ~/.pi/history/p/artifacts/s/results/${id}`;
+		const head = `${childLine("one", A)}\n${folder(A)}\n${childLine("two", B)}\n${folder(B)}\n${WAITED}`;
+		const reply = batch([finished(A, "one"), finished(B, "two")], head);
+		const out = fold([reply], folded(RUN_A, RUN_B));
+		assert.deepEqual(out[0], {
+			...reply,
+			content: [{ type: "text", text: `${head}\n\n${runStub(RUN_A)}\n${runStub(RUN_B)}` }],
+		});
+		// Only one of two children with a folder line is no reply this tool built: it stays full.
+		const odd = batch(
+			[finished(A, "one"), finished(B, "two")],
+			`${childLine("one", A)}\n${folder(A)}\n${childLine("two", B)}\n${WAITED}`,
+		);
+		assert.equal(fold([odd], folded(RUN_A, RUN_B))[0], odd);
+	});
+
 	it("a waited resume reply folds the same way", () => {
 		const reply = single({ toolName: "subagent_resume", toolCallId: "r1" });
 		const out = fold([reply], folded(RUN_A));
