@@ -189,7 +189,7 @@ function assertNeverFolds(toolName: string, reply: any, runId: string) {
 	);
 	const run: FoldedRun = { id: runId, name: "vf-run", outcome: "done", report: "/r/vf.md", foldedAt: 100 };
 	const messages = [message];
-	assert.equal(foldMessages(messages, new Map([[runId, run]])), messages, `the reply stays full (${toolName})`);
+	assert.equal(foldMessages(messages, new Map([[runId, run]]), new Map(), () => true), messages, `the reply stays full (${toolName})`);
 }
 
 describe("verified fan-out replies and the settle fold", () => {

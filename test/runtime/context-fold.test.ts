@@ -2,6 +2,7 @@ import { foldMessages, runStub } from "../../src/runtime/context-fold.ts";
 import {
 	CONTEXT_FOLD_ENTRY,
 	type FoldedRun,
+	type RunFacts,
 	readFoldedRuns,
 	replyDigest,
 	settleFold,
@@ -45,6 +46,49 @@ const exists = () => true;
 const AT = 100;
 
 describe("context fold: the fold set a settle decides", () => {
+	it("a nested take commits only at a successful codemode result whose final record names the call ok (S5)", () => {
+		const facts = (id: string) => ({ id, name: "one", outcome: "done", report: "/r/one.md" });
+		const script = (toolName: string, isError: boolean | undefined, status: string) => [
+			userEntry("go"),
+			{
+				type: "message",
+				id: entryId(),
+				message: { role: "assistant", content: [{ type: "toolCall", id: "c1", name: toolName, arguments: {} }] },
+			},
+			{
+				type: "custom",
+				id: entryId(),
+				customType: "subagent_context_fold_nested",
+				data: { callId: "c1", nestedId: "n1", runIds: [A] },
+			},
+			{
+				type: "message",
+				id: entryId(),
+				message: {
+					role: "toolResult",
+					toolCallId: "c1",
+					toolName,
+					content: [{ type: "text", text: "out" }],
+					...(isError === undefined ? {} : { isError }),
+					nestedCalls: { complete: true, calls: [{ id: "n1", name: "subagent_wait", status }] },
+				},
+			},
+			assistantEntry(),
+		];
+		const settle = (entries: unknown[], read: (id: string) => RunFacts | undefined = facts) =>
+			settleFold(entries, notRunning, AT, exists, read);
+		assert.deepEqual(settle(script("codemode", false, "ok")), [{ ...facts(A), foldedAt: AT }]);
+		assert.deepEqual(settle(script("codemode", true, "ok")), [], "an outer script error counts nothing");
+		assert.deepEqual(settle(script("codemode", undefined, "ok")), [], "no explicit isError false counts nothing");
+		assert.deepEqual(settle(script("codemode", false, "error")), [], "a call Pi finalized as an error counts nothing");
+		assert.deepEqual(settle(script("wrapper", false, "ok")), [], "another tool's nested calls count nothing");
+		assert.deepEqual(
+			settle(script("codemode", false, "ok"), () => undefined),
+			[],
+			"an unreadable record stays full",
+		);
+	});
+
 	it("folds a run whose result a later request saw; not one delivered in the settle step, not a running one", () => {
 		const entries = [
 			userEntry("delegate"),
@@ -223,6 +267,17 @@ describe("context fold: the fold set a settle decides", () => {
 const RUN_A: FoldedRun = { id: A, name: "one", outcome: "done", report: "/r/one.md", foldedAt: AT };
 const RUN_B: FoldedRun = { id: B, name: "two", outcome: "partial", report: "/r/two.md", foldedAt: AT };
 const folded = (...runs: FoldedRun[]) => new Map(runs.map((run) => [run.id, run]));
+/**
+ * The fold of the provider messages with message order given by the fixtures' times: a copy at or
+ * before its run's foldedAt was used before the fold. The context hook reads the same order from the
+ * branch (readFoldOrder); context-fold-safety drives that with a clock that goes back.
+ */
+function fold<T>(messages: T[], runs: ReadonlyMap<string, FoldedRun>): T[] {
+	return foldMessages(messages, runs, new Map(), (message, id) => {
+		const run = runs.get(id);
+		return typeof message.timestamp === "number" && run !== undefined && message.timestamp <= run.foldedAt;
+	});
+}
 
 function launchCall(callId: string, args: Record<string, unknown>) {
 	const thinking = { type: "thinking", thinking: "plan", thinkingSignature: "sig-1" };
@@ -259,8 +314,8 @@ describe("context fold: the provider messages", () => {
 			launchCall("l1", { agent: "w", name: "one", task: "BRIEF" }),
 			launchReply("l1", { id: A, status: "started" }),
 		];
-		assert.equal(foldMessages(messages, new Map()), messages);
-		assert.equal(foldMessages(messages, folded(RUN_B)), messages);
+		assert.equal(fold(messages, new Map()), messages);
+		assert.equal(fold(messages, folded(RUN_B)), messages);
 	});
 
 	it("replaces the brief of each folded child and keeps the call shape, ids and thinking", () => {
@@ -272,7 +327,7 @@ describe("context fold: the provider messages", () => {
 		});
 		const reply = launchReply("l1", { status: "started", children: [{ id: A }, { id: B }] });
 		const messages = [call, reply];
-		const out = foldMessages(messages, folded(RUN_A));
+		const out = fold(messages, folded(RUN_A));
 		assert.notEqual(out, messages);
 		const block = (out[0] as typeof call).content[1] as unknown as {
 			id: string;
@@ -295,7 +350,7 @@ describe("context fold: the provider messages", () => {
 	});
 
 	it("folds the top-level single form and a children list sent as a JSON string", () => {
-		const single = foldMessages(
+		const single = fold(
 			[launchCall("l1", { agent: "w", name: "one", task: "BRIEF" }), launchReply("l1", { id: A, status: "completed" })],
 			folded(RUN_A),
 		);
@@ -305,7 +360,7 @@ describe("context fold: the provider messages", () => {
 			task: runStub(RUN_A),
 		});
 		const children = JSON.stringify([{ name: "one", agent: "w", task: "BRIEF" }]);
-		const asString = foldMessages(
+		const asString = fold(
 			[launchCall("l2", { children }), launchReply("l2", { status: "started", children: [{ id: A }] })],
 			folded(RUN_A),
 		);
@@ -328,7 +383,7 @@ describe("context fold: the provider messages", () => {
 		});
 		const call = resumeCall("r1", { runId: "older01", task: "FOLLOW-UP" });
 		const reply = resumeReply("r1", { id: A, status: "completed", reportFile: "/r/one.md" });
-		const out = foldMessages([call, reply], folded(RUN_A));
+		const out = fold([call, reply], folded(RUN_A));
 		assert.deepEqual((out[0] as { content: { arguments?: unknown }[] }).content[0].arguments, {
 			runId: "older01",
 			task: runStub(RUN_A),
@@ -338,14 +393,14 @@ describe("context fold: the provider messages", () => {
 			resumeCall("r2", { runId: "older01", task: "FOLLOW-UP" }),
 			resumeReply("r2", { id: B, status: "started" }),
 		];
-		assert.equal(foldMessages(started, folded(RUN_A)), started, "a started resume of an unfolded run stays");
+		assert.equal(fold(started, folded(RUN_A)), started, "a started resume of an unfolded run stays");
 		const interrupted = [
 			resumeCall("r3", { runId: "older01", task: "FOLLOW-UP" }),
 			resumeReply("r3", { error: "interrupted", id: B }),
 		];
-		assert.equal(foldMessages(interrupted, folded(RUN_A)), interrupted, "an interrupted resume stays");
+		assert.equal(fold(interrupted, folded(RUN_A)), interrupted, "an interrupted resume stays");
 		const noTask = [resumeCall("r4", { runId: "older01" }), resumeReply("r4", { id: A, status: "completed" })];
-		assert.equal(foldMessages(noTask, folded(RUN_A)), noTask, "a resume without a task has nothing to fold");
+		assert.equal(fold(noTask, folded(RUN_A)), noTask, "a resume without a task has nothing to fold");
 	});
 
 	it("replaces a result message with its stub; a grouped message folds only when all its runs fold", () => {
@@ -359,13 +414,13 @@ describe("context fold: the provider messages", () => {
 			},
 			"REPORT-ONE\n\nREPORT-TWO",
 		);
-		const partly = foldMessages([single, grouped], folded(RUN_A));
+		const partly = fold([single, grouped], folded(RUN_A));
 		assert.equal((partly[0] as typeof single).content, runStub(RUN_A));
 		assert.equal(partly[1], grouped, "a grouped message with an unfolded run stays full");
 		const later = { ...single, timestamp: AT + 1 };
 		const resumed = [later];
-		assert.equal(foldMessages(resumed, folded(RUN_A)), resumed, "a result sent after the fold stays full");
-		const all = foldMessages([grouped], folded(RUN_A, RUN_B));
+		assert.equal(fold(resumed, folded(RUN_A)), resumed, "a result sent after the fold stays full");
+		const all = fold([grouped], folded(RUN_A, RUN_B));
 		assert.equal((all[0] as typeof grouped).content, `${runStub(RUN_A)}\n${runStub(RUN_B)}`);
 	});
 });
@@ -407,7 +462,7 @@ const complete = (...ids: string[]) => ({
 describe("context fold: wait replies (fold-waits S2)", () => {
 	it("a clean join of folded runs becomes one stub line per run; call id, tool name, details and flag stay", () => {
 		const reply = waitReply(complete(A, B));
-		const out = foldMessages([reply], folded(RUN_A, RUN_B));
+		const out = fold([reply], folded(RUN_A, RUN_B));
 		assert.deepEqual(out[0], {
 			...reply,
 			content: [{ type: "text", text: `${runStub(RUN_A)}\n${runStub(RUN_B)}` }],
@@ -465,14 +520,14 @@ describe("context fold: wait replies (fold-waits S2)", () => {
 		];
 		for (const [what, reply] of cases) {
 			const messages = [reply];
-			assert.equal(foldMessages(messages, folded(RUN_A, RUN_B)), messages, what);
+			assert.equal(fold(messages, folded(RUN_A, RUN_B)), messages, what);
 		}
 	});
 
 	it("leaves other tool results alone, also with the same details shape", () => {
 		const other = { ...waitReply(complete(A)), toolName: "bash" };
 		const messages = [other];
-		assert.equal(foldMessages(messages, folded(RUN_A)), messages);
+		assert.equal(fold(messages, folded(RUN_A)), messages);
 	});
 });
 
@@ -512,7 +567,7 @@ const batch = (children: Record<string, unknown>[], head = BATCH_HEAD) =>
 describe("context fold: launch and resume replies (fold-waits S3)", () => {
 	it("a waited single launch keeps its head lines, then one stub per run; call id, details and flag stay", () => {
 		const reply = single();
-		const out = foldMessages([reply], folded(RUN_A));
+		const out = fold([reply], folded(RUN_A));
 		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text: `${SINGLE_HEAD}\n\n${runStub(RUN_A)}` }] });
 		assert.equal((out[0] as typeof reply).details, reply.details, "details are the same object");
 		assert.match(reply.content[0].text, /REPORT-ONE/, "the input reply is not changed");
@@ -520,20 +575,20 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 
 	it("a waited batch (a batch barrier) keeps its child lines and folds every report", () => {
 		const reply = batch([finished(A, "one"), finished(B, "two")]);
-		const out = foldMessages([reply], folded(RUN_A, RUN_B));
+		const out = fold([reply], folded(RUN_A, RUN_B));
 		const text = `${BATCH_HEAD}\n\n${runStub(RUN_A)}\n${runStub(RUN_B)}`;
 		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text }] });
 	});
 
 	it("a waited resume reply folds the same way", () => {
 		const reply = single({ toolName: "subagent_resume", toolCallId: "r1" });
-		const out = foldMessages([reply], folded(RUN_A));
+		const out = fold([reply], folded(RUN_A));
 		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text: `${SINGLE_HEAD}\n\n${runStub(RUN_A)}` }] });
 	});
 
 	it("a lookup copy created before the fold settle folds as a used reply (D3)", () => {
 		const reply = launchToolReply(`${SINGLE_HEAD}\n\nLOOKUP-TEXT`, { ...finished(A, "one"), runId: A, lookup: true });
-		const out = foldMessages([reply], folded(RUN_A));
+		const out = fold([reply], folded(RUN_A));
 		assert.equal((out[0] as typeof reply).content[0].text, `${SINGLE_HEAD}\n\n${runStub(RUN_A)}`);
 	});
 
@@ -541,9 +596,9 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 		const brief = resultMessage({ id: A, name: "one" }, "REPORT-ONE");
 		const lookup = launchToolReply(`${SINGLE_HEAD}\n\nLOOKUP-TEXT`, finished(A, "one"), { timestamp: AT + 1 });
 		const messages = [brief, lookup];
-		const before = foldMessages(messages, folded(RUN_A));
+		const before = fold(messages, folded(RUN_A));
 		assert.equal(before[1], lookup, "in its own turn the lookup reply stays full");
-		const after = foldMessages(messages, folded({ ...RUN_A, foldedAt: AT + 50 }));
+		const after = fold(messages, folded({ ...RUN_A, foldedAt: AT + 50 }));
 		assert.equal(
 			(after[0] as typeof brief).content,
 			(before[0] as typeof brief).content,
@@ -624,7 +679,7 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 		];
 		for (const [what, reply] of cases) {
 			const messages = [reply];
-			assert.equal(foldMessages(messages, folded(RUN_A, RUN_B)), messages, what);
+			assert.equal(fold(messages, folded(RUN_A, RUN_B)), messages, what);
 		}
 	});
 });

@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
 import {
@@ -364,10 +364,17 @@ describe("context fold in a real Pi session", () => {
 	 * A codemode script that waits for its child inside itself (fold-waits S5, D4): its nested call
 	 * takes the run's end, so no result message follows. The child ends while the script waits.
 	 */
-	async function runWaitingScript(code: string, options: { blocking?: boolean } = {}) {
+	async function runWaitingScript(
+		code: string,
+		options: {
+			blocking?: boolean;
+			annotate?: NonNullable<Parameters<typeof startParent>[1]>["annotate"];
+			answer?: boolean;
+		} = {},
+	) {
 		const parent = await startParent(
 			{ ...PLAN, delegate: [fauxToolCall("codemode", { code }, { id: "script-1" })] },
-			{ codemode: true, blocking: options.blocking },
+			{ codemode: true, blocking: options.blocking, annotate: options.annotate },
 		);
 		const delegated = parent.session.prompt("delegate");
 		await until(() => runningSubagents.size > 0, "the nested launch");
@@ -376,7 +383,7 @@ describe("context fold in a real Pi session", () => {
 		await parent.session.waitForIdle();
 		const result = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "codemode");
 		const content = JSON.stringify((result as { content?: unknown } | undefined)?.content);
-		assert.match(content, new RegExp(REPORT), "the script returned the child's answer");
+		if (options.answer !== false) assert.match(content, new RegExp(REPORT), "the script returned the child's answer");
 		assert.equal(
 			parent.session.messages.some((m) => m.role === "custom"),
 			false,
@@ -403,8 +410,11 @@ describe("context fold in a real Pi session", () => {
 				const nested = parent.session.sessionManager
 					.getEntries()
 					.filter((entry) => entry.type === "custom" && entry.customType === "subagent_context_fold_nested");
-				assert.equal(nested.length, 1, `${form}: one nested-result entry`);
-				assert.doesNotMatch(JSON.stringify(nested), new RegExp(`${REPORT}|${BRIEF}`), `${form}: facts only`);
+				assert.equal(nested.length, 1, `${form}: one nested-take entry`);
+				// Owner rule 2026-11-23T11:58Z: run ids only.
+				const data = (nested[0] as { data: Record<string, unknown> }).data;
+				assert.deepEqual(Object.keys(data).sort(), ["callId", "nestedId", "runIds"], `${form}: the persisted keys`);
+				assert.deepEqual(data.runIds, [parent.runId()], `${form}: the run id`);
 				await until(() => parent.foldEntries() === 1, `${form}: the fold entry of the settle`);
 				await parent.session.prompt("next");
 				await parent.session.waitForIdle();
@@ -419,12 +429,19 @@ describe("context fold in a real Pi session", () => {
 	});
 
 	it("keeps a waiting script whole when it also calls another tool or throws after the wait (S5)", async () => {
-		const scripts: Array<[string, string]> = [
-			["a mixed script", WAITING_SCRIPTS[0][1].replace("return", 'await tools.bash({ command: "echo hi" });\nreturn')],
-			["a script that throws", `${LAUNCH}\nthrow new Error("after " + r.children[0].record.summary);`],
+		// [form, code, expected script error, expected fold entries]
+		const scripts: Array<[string, string, boolean, number]> = [
+			[
+				"a mixed script",
+				WAITING_SCRIPTS[0][1].replace("return", 'await tools.bash({ command: "echo hi" });\nreturn'),
+				false,
+				1,
+			],
+			["a script that throws", `${LAUNCH}\nthrow new Error("after " + r.children[0].record.summary);`, true, 0],
 		];
-		for (const [form, code] of scripts) {
+		for (const [form, code, expectError, expectFolds] of scripts) {
 			const { parent, content, isError } = await runWaitingScript(code, { blocking: true });
+			assert.equal(isError, expectError, `${form}: the script's error flag`);
 			try {
 				const before = parent.requests.at(-1) ?? "";
 				await parent.session.prompt("next");
@@ -434,9 +451,94 @@ describe("context fold in a real Pi session", () => {
 				assert.ok(after.startsWith(before.slice(0, -1)), `${form}: the earlier messages are byte-identical`);
 				assert.ok(after.includes(content), `${form}: the script result stays`);
 				// A thrown script showed the model no answer: its run is not used and does not fold.
-				assert.equal(parent.foldEntries(), isError ? 0 : 1, form);
+				assert.equal(parent.foldEntries(), expectFolds, form);
 			} finally {
 				await parent.dispose();
+			}
+		}
+	});
+
+	it("a nested wait that a later handler turned into an error counts as no use, even when the script caught it", async () => {
+		const code = `${LAUNCH}\ntry {\n  await tools.subagent_wait({ runIds: [r.children[0].runId] });\n  return "no error";\n} catch {\n  return "caught";\n}`;
+		const { parent, content, isError } = await runWaitingScript(code, {
+			answer: false,
+			annotate: (event) =>
+				event.toolName === "subagent_wait" && (event as { parentToolCallId?: string }).parentToolCallId
+					? { isError: true, content: [{ type: "text", text: "denied by policy" }] }
+					: undefined,
+		});
+		try {
+			assert.equal(isError, false, "the script succeeded");
+			assert.match(content, /caught/, "the script caught the failed wait");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			assert.equal(parent.foldEntries(), 0, "the failed wait folds nothing");
+			assert.match(parent.requests.at(-1) ?? "", new RegExp(BRIEF), "the code stays whole");
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("a nested take survives reload and /fork: before the settle it folds only where the record is readable", async () => {
+		const { parent } = await runWaitingScript(WAITING_SCRIPTS[0][1], { blocking: true });
+		let file = "";
+		let root = "";
+		let runId = "";
+		try {
+			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
+			file = parent.session.sessionManager.getSessionFile() ?? assert.fail("no session file");
+			root = parent.session.sessionManager.getCwd();
+			runId = parent.runId();
+		} finally {
+			await parent.dispose();
+		}
+		const entries = SessionManager.open(file).getEntries();
+		const foldAt = entries.findIndex((entry) => entry.type === "custom" && entry.customType === FOLD_ENTRY);
+		const stub = new RegExp(`Folded launch script of runs ${runId}\\.`);
+		// The session file as it was before the settle (the process stopped first): cut at the fold entry.
+		const lines = readFileSync(file, "utf8").split("\n");
+		const reloaded = join(root, "sessions", "before-settle.jsonl");
+		const cut = lines.findIndex((line) => line.includes(`"customType":"${FOLD_ENTRY}"`));
+		writeFileSync(reloaded, `${lines.slice(0, cut).join("\n")}\n`);
+		const open = async (resumeFile: string) => {
+			const session = await startParent({}, { resumeFile, root, codemode: true });
+			await session.session.prompt("again");
+			await session.session.waitForIdle();
+			const first = session.requests.at(-1) ?? "";
+			await session.session.prompt("next");
+			await session.session.waitForIdle();
+			return { first, after: session.requests.at(-1) ?? "", folds: session.foldEntries(), session };
+		};
+		// After the settle: the fold entry holds the facts, so reload and fork keep the stubs.
+		const forkedAfter = SessionManager.open(file).createBranchedSession(entries[entries.length - 1].id);
+		for (const [form, resumeFile] of [
+			["reload after the settle", file],
+			["fork after the settle", forkedAfter ?? assert.fail("no fork")],
+		] as const) {
+			const { first, after, session } = await open(resumeFile);
+			try {
+				assert.doesNotMatch(first, new RegExp(BRIEF), `${form}: the code stays a stub`);
+				assert.match(first, stub, form);
+				assert.doesNotMatch(after, new RegExp(BRIEF), form);
+			} finally {
+				await session.dispose();
+			}
+		}
+		// Before the settle (the process stopped first): the same session reads the run's record and folds
+		// at its next settle; a fork has a new session id, cannot read the record, and stays full.
+		const forkedBefore = SessionManager.open(file).createBranchedSession(entries[foldAt - 1].id);
+		for (const [form, resumeFile, folds] of [
+			["reload before the settle", reloaded, 1],
+			["fork before the settle", forkedBefore ?? assert.fail("no fork"), 0],
+		] as const) {
+			const { first, after, folds: count, session } = await open(resumeFile);
+			try {
+				assert.match(first, new RegExp(BRIEF), `${form}: no fold before the settle`);
+				assert.equal(count, folds, `${form}: fold entries`);
+				if (folds === 1) assert.match(after, stub, `${form}: the code folds at the next settle`);
+				else assert.match(after, new RegExp(BRIEF), `${form}: the code stays whole`);
+			} finally {
+				await session.dispose();
 			}
 		}
 	});

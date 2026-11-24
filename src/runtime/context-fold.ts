@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getSessionResultsDir } from "../artifact-storage.ts";
 import { parseJsonContainer } from "../tools/json-string-args.ts";
 import { WAITED_RETURN_LINE } from "../tools/launch-reply.ts";
 import { type FoldedScript, readFoldedScripts, scriptKey, settleScripts } from "./context-fold-scripts.ts";
@@ -12,12 +14,17 @@ import {
 	isVerifiedOrNotice,
 	messageRunIds,
 	readFoldedRuns,
+	readFoldOrder,
 	replyDigest,
 	replyRunFacts,
+	runFacts,
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
+import { sessionResultStore } from "./result-files.ts";
+import { recordAsJson } from "./result-record-schema.ts";
 import { isFinishedStatus } from "./run-end-message.ts";
+import { lookUpRecord } from "./run-lookup.ts";
 import { runningSubagents } from "./state.ts";
 
 /**
@@ -95,8 +102,11 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 	return [`// Folded launch script of runs ${script.runIds.join(", ")}.`, ...lines].join("\n");
 }
 
-/** The runs of a tool result that can fold, its creation time, and for a launch reply the head lines it keeps. */
-type CleanReply = { ids: string[]; sent: number; head?: string };
+/** The runs of a tool result that can fold, and for a launch reply the head lines it keeps. */
+type CleanReply = { ids: string[]; head?: string };
+
+/** Whether a run's copy in this message was used before the run's fold (branch order, readFoldOrder). */
+type UsedBeforeFold = (message: Rec, runId: string) => boolean;
 
 /**
  * The text of a reply that is still what its tool built: one text block whose digest the tool kept
@@ -132,7 +142,7 @@ function cleanWaitReply(message: Rec): CleanReply | undefined {
 		if (!id) return;
 		ids.push(id);
 	}
-	return { ids, sent: timestamp };
+	return { ids };
 }
 
 /**
@@ -164,7 +174,7 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
 	const head = end < 0 ? undefined : text.slice(0, end);
 	const lines = head?.split("\n");
 	if (!lines || lines.length !== ids.length + 1 || lines.at(-1) !== WAITED_RETURN_LINE) return;
-	return { ids, sent: timestamp, head };
+	return { ids, head };
 }
 
 /**
@@ -172,13 +182,13 @@ function cleanLaunchReply(message: Rec): CleanReply | undefined {
  * the reply was created (a request saw it): one stub line per run, after the head lines of a launch
  * reply. Call id, tool name, details and the error flag stay, so the reply still pairs with its call.
  */
-function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>): Rec {
+function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>, used: UsedBeforeFold): Rec {
 	const clean = message.toolName === "subagent_wait" ? cleanWaitReply(message) : cleanLaunchReply(message);
 	if (!clean) return message;
 	const runs: FoldedRun[] = [];
 	for (const id of clean.ids) {
 		const run = folded.get(id);
-		if (!run || clean.sent > run.foldedAt) return message;
+		if (!run || !used(message, id)) return message;
 		runs.push(run);
 	}
 	const stubs = runs.map(runStub).join("\n");
@@ -196,12 +206,13 @@ function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>): R
 export function foldMessages<T>(
 	messages: T[],
 	folded: ReadonlyMap<string, FoldedRun>,
-	scripts: ReadonlyMap<string, FoldedScript> = new Map(),
+	scripts: ReadonlyMap<string, FoldedScript>,
+	used: UsedBeforeFold,
 ): T[] {
 	if (folded.size === 0) return messages;
 	let changed = false;
 	const next = messages.map((message, index) => {
-		const out = foldMessage(message as unknown, () => turnResults(messages, index), folded, scripts);
+		const out = foldMessage(message as unknown, () => turnResults(messages, index), folded, scripts, used);
 		if (out !== message) changed = true;
 		return out as T;
 	});
@@ -225,15 +236,16 @@ function foldMessage(
 	results: () => Map<string, Rec>,
 	folded: ReadonlyMap<string, FoldedRun>,
 	scripts: ReadonlyMap<string, FoldedScript>,
+	used: UsedBeforeFold,
 ): unknown {
 	if (!isRecord(message)) return message;
 	if (message.role === "custom") {
 		const ids = messageRunIds(message.customType, message.content, message.details);
-		const sent = typeof message.timestamp === "number" ? message.timestamp : 0;
-		if (!ids || !ids.every((id) => sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
-		return { ...message, content: ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n") };
+		const runs = ids?.map((id) => folded.get(id));
+		if (!ids || !runs || ids.some((id, i) => !runs[i] || !used(message, id))) return message;
+		return { ...message, content: (runs as FoldedRun[]).map(runStub).join("\n") };
 	}
-	if (message.role === "toolResult") return foldToolResult(message, folded);
+	if (message.role === "toolResult") return foldToolResult(message, folded, used);
 	if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
 	let changed = false;
 	let turn: Map<string, Rec> | undefined;
@@ -265,25 +277,32 @@ function isRunning(id: string): boolean {
 }
 
 export function registerContextFold(pi: ExtensionAPI): void {
-	// A script's nested call: Pi records it (id, status) on the script's result, but not the runs it
-	// started or the run ends it took. The launch entry keeps only the run ids, never the task text;
-	// the nested-result entry keeps only the facts a stub names, never the answer (fold-waits D4).
+	// A script's nested call: Pi records it (id, final status) on the script's result, but not the
+	// runs it started or the run ends it took. Both entries keep run ids only (owner rule
+	// 2026-11-23T11:58Z), never task or answer text; the settle trusts Pi's final record, not this
+	// early view of the call (fold-waits D4).
 	pi.on("tool_result", (event, ctx) => {
-		const { toolName, parentToolCallId: callId, toolCallId: nestedId } = event;
+		const { toolName, parentToolCallId: callId, toolCallId: nestedId, details } = event;
 		if (!callId || event.isError) return;
 		if (toolName !== "subagent" && toolName !== "subagent_resume" && toolName !== "subagent_wait") return;
 		if (isChildTranscript(ctx.sessionManager.getBranch())) return;
-		const details = (event as { details?: unknown }).details;
-		const runIds = toolName === "subagent" ? launchChildIds(details) : [];
-		if (runIds.length > 0 && runIds.every((id) => id !== undefined)) {
-			pi.appendEntry(CONTEXT_FOLD_LAUNCH_ENTRY, { callId, nestedId, runIds });
+		const launched = toolName === "subagent" ? launchChildIds(details) : [];
+		if (launched.length > 0 && launched.every((id) => id !== undefined)) {
+			pi.appendEntry(CONTEXT_FOLD_LAUNCH_ENTRY, { callId, nestedId, runIds: launched });
 		}
-		const runs = replyRunFacts(toolName, details);
-		if (runs.length > 0) pi.appendEntry(CONTEXT_FOLD_NESTED_ENTRY, { callId, nestedId, runs });
+		const runIds = replyRunFacts(toolName, details).map((run) => run.id);
+		if (runIds.length > 0) pi.appendEntry(CONTEXT_FOLD_NESTED_ENTRY, { callId, nestedId, runIds });
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const branch = ctx.sessionManager.getBranch();
-		const runs = settleFold(branch, isRunning);
+		// A nested take's stub facts: the run's record in this session's results folder. A run whose
+		// record this session cannot read (a verified run, a fork before the settle) stays full.
+		const recordFacts = (id: string) => {
+			const store = sessionResultStore(getSessionResultsDir(ctx.cwd, ctx.sessionManager.getSessionId()));
+			const record = lookUpRecord(store, id);
+			return record ? runFacts(id, { record: recordAsJson(record) }) : undefined;
+		};
+		const runs = settleFold(branch, isRunning, Date.now(), existsSync, recordFacts);
 		if (isChildTranscript(branch)) return;
 		const folded = new Set([...readFoldedRuns(branch).keys(), ...runs.map((run) => run.id)]);
 		const scripts = settleScripts(branch, (id) => folded.has(id));
@@ -293,7 +312,12 @@ export function registerContextFold(pi: ExtensionAPI): void {
 		if (!foldsForApi(ctx.model?.api)) return undefined;
 		const branch = ctx.sessionManager.getBranch();
 		if (isChildTranscript(branch)) return undefined;
-		const messages = foldMessages(event.messages, readFoldedRuns(branch), readFoldedScripts(branch));
+		const messages = foldMessages(
+			event.messages,
+			readFoldedRuns(branch),
+			readFoldedScripts(branch),
+			readFoldOrder(branch),
+		);
 		// An unchanged list goes back as no result, so Pi keeps it as it is (extensions.md, context).
 		return messages === event.messages ? undefined : { messages };
 	});

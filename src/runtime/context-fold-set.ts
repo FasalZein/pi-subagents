@@ -13,9 +13,10 @@ export const CONTEXT_FOLD_ENTRY = "subagent_context_fold";
 /** The run ids one nested subagent call of a codemode script started (no task text). */
 export const CONTEXT_FOLD_LAUNCH_ENTRY = "subagent_context_fold_launch";
 /**
- * The runs whose finished result one nested launch, resume or wait call of a codemode script took
- * (fold-waits S5, D4): the facts a stub names, never the answer text. No result message follows such
- * a call, so this entry is the run's commit; it counts once the script's own result is committed.
+ * The run ids whose finished result one nested launch, resume or wait call of a codemode script took
+ * (fold-waits S5, D4; owner rule 2026-11-23T11:58Z: run ids only). No result message follows such a
+ * call, so this entry is the run's commit; it counts only when Pi's final record of the script's
+ * successful result names the nested call as ok. The stub facts come from the run's record at settle.
  */
 export const CONTEXT_FOLD_NESTED_ENTRY = "subagent_context_fold_nested";
 
@@ -27,8 +28,8 @@ export interface FoldedRun {
 	/** The saved report; a run folds only when this file exists at the settle. */
 	report: string;
 	/**
-	 * Epoch ms of the settle that folded the run. A result message of the same run id from after it
-	 * is not used yet and stays full until a later settle folds it.
+	 * Epoch ms of the settle that folded the run, kept as a fact only. Which messages fold follows
+	 * branch order, not this time (a clock correction must not fold an unseen reply): readFoldOrder.
 	 */
 	foldedAt: number;
 }
@@ -74,7 +75,7 @@ export function replyDigest(text: string): string {
 	return createHash("sha256").update(text).digest("hex").slice(0, 32);
 }
 
-type RunFacts = { id: string; name?: string; outcome?: string; report?: string };
+export type RunFacts = { id: string; name?: string; outcome?: string; report?: string };
 
 /** The saved report path: reportFile of a run end or launch reply, record.report.path of a wait reply. */
 function reportPath(details: Rec): string | undefined {
@@ -83,7 +84,7 @@ function reportPath(details: Rec): string | undefined {
 	return str(details.reportFile) ?? (report?.saved === true ? str(report.path) : undefined);
 }
 
-function runFacts(id: string, details: Rec): RunFacts {
+export function runFacts(id: string, details: Rec): RunFacts {
 	const record = isRecord(details.record) ? details.record : {};
 	return {
 		id,
@@ -151,39 +152,66 @@ function committedResults(entry: unknown): RunFacts[] {
 	return replyRunFacts(message.toolName, message.details);
 }
 
-/** The outer script call id and run facts of a nested-result entry, parsed from the session file. */
-function nestedResults(entry: unknown): { callId: string; runs: RunFacts[] } | undefined {
+/** One nested call that took finished runs, parsed from its entry in the session file. */
+type NestedTake = { callId: string; nestedId: string; runIds: string[] };
+
+function nestedTake(entry: unknown): NestedTake | undefined {
 	if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== CONTEXT_FOLD_NESTED_ENTRY) return;
 	const data = isRecord(entry.data) ? entry.data : {};
 	const callId = str(data.callId);
-	if (!callId || !Array.isArray(data.runs)) return;
-	const runs = data.runs.flatMap((run): RunFacts[] => {
-		const id = isRecord(run) ? str(run.id) : undefined;
-		if (!id) return [];
-		return [{ id, name: str(run.name), outcome: str(run.outcome), report: str(run.report) }];
-	});
-	return { callId, runs };
+	const nestedId = str(data.nestedId);
+	if (!callId || !nestedId || !Array.isArray(data.runIds)) return;
+	return {
+		callId,
+		nestedId,
+		runIds: data.runIds.filter((id): id is string => typeof id === "string" && id.length > 0),
+	};
 }
 
 /**
- * The runs each entry commits, by branch index. A nested-result entry sits before its script's
- * result (Pi appends it while the script runs): its runs commit at the script's result entry, and
- * only when that result is no error (a script that threw showed the model none of its answers).
+ * The nested call ids that Pi finalized as ok in a codemode script's result, or undefined when the
+ * result is not a successful script result: another tool, an error, or no explicit isError false.
+ * Pi writes a nested call's final status after every tool_result handler ran, so a later handler
+ * that turned the call into an error shows here, even when the script caught it.
+ */
+function finalizedOkCalls(message: Rec): Set<string> | undefined {
+	if (message.toolName !== "codemode" || message.isError !== false) return;
+	const record = isRecord(message.nestedCalls) ? message.nestedCalls : undefined;
+	if (!record || !Array.isArray(record.calls)) return;
+	const ok = new Set<string>();
+	for (const call of record.calls) {
+		if (isRecord(call) && call.status === "ok" && typeof call.id === "string") ok.add(call.id);
+	}
+	return ok;
+}
+
+/**
+ * The runs each entry commits, by branch index. A nested-take entry sits before its script's result
+ * (Pi appends it while the script runs): its runs commit at the script's result entry, only when that
+ * is a successful codemode result whose final nested record names the call as ok. Their facts come
+ * from `recordFacts` (the run's record); an unreadable record gives no report, so the run stays full.
  * A script without a committed result commits nothing; an assistant message ends the wait for it.
  */
-function commitsByIndex(entries: readonly unknown[]): Array<{ index: number; isMessage: boolean; facts: RunFacts[] }> {
+function commitsByIndex(
+	entries: readonly unknown[],
+	recordFacts: (id: string) => RunFacts | undefined,
+): Array<{ index: number; isMessage: boolean; facts: RunFacts[] }> {
 	const commits: Array<{ index: number; isMessage: boolean; facts: RunFacts[] }> = [];
-	let nested = new Map<string, RunFacts[]>();
+	let nested = new Map<string, NestedTake[]>();
 	entries.forEach((entry, index) => {
 		const message = isRecord(entry) && entry.type === "message" && isRecord(entry.message) ? entry.message : undefined;
 		if (message?.role === "assistant") nested = new Map();
-		const pending = nestedResults(entry);
-		if (pending) nested.set(pending.callId, [...(nested.get(pending.callId) ?? []), ...pending.runs]);
+		const take = nestedTake(entry);
+		if (take) nested.set(take.callId, [...(nested.get(take.callId) ?? []), take]);
 		const facts = committedResults(entry);
 		if (message?.role === "toolResult" && typeof message.toolCallId === "string") {
-			const taken = nested.get(message.toolCallId);
+			const takes = nested.get(message.toolCallId) ?? [];
 			nested.delete(message.toolCallId);
-			if (taken && message.isError !== true) facts.push(...taken);
+			const ok = takes.length > 0 ? finalizedOkCalls(message) : undefined;
+			for (const { nestedId, runIds } of takes) {
+				if (!ok?.has(nestedId)) continue;
+				facts.push(...runIds.map((id) => recordFacts(id) ?? { id }));
+			}
 		}
 		if (facts.length > 0) commits.push({ index, isMessage: isRecord(entry) && entry.type === "custom_message", facts });
 	});
@@ -210,6 +238,48 @@ export function readFoldedRuns(entries: readonly unknown[]): Map<string, FoldedR
 	return new Map([...scanFoldEntries(entries)].map(([id, { run }]) => [id, run]));
 }
 
+/**
+ * The key of one result message or tool result, the same for its session entry and for the message
+ * Pi builds from it (a custom message gets its entry's time in epoch ms).
+ */
+function occurrenceKey(message: Rec): string | undefined {
+	if (message.role === "toolResult" && typeof message.toolCallId === "string") {
+		return `tool:${message.toolCallId}@${String(message.timestamp)}`;
+	}
+	if (message.role === "custom" && typeof message.customType === "string") {
+		return `custom:${message.customType}@${String(message.timestamp)}`;
+	}
+	return undefined;
+}
+
+/**
+ * Whether a run's copy in one message was used before its fold, by branch order: the message's entry
+ * lies before the last fold entry that names the run. A settle folds a run only when a completed
+ * request saw its latest commit, so every earlier copy was seen too; a copy after that entry (a new
+ * lookup) stays full until a later settle names the run again. Fold entries only append, so a folded
+ * copy never comes back, whatever the clock says. A key seen twice takes its later entry.
+ */
+export function readFoldOrder(entries: readonly unknown[]): (message: Rec, runId: string) => boolean {
+	const position = new Map<string, number>();
+	entries.forEach((entry, index) => {
+		if (!isRecord(entry)) return;
+		const message =
+			entry.type === "message" && isRecord(entry.message)
+				? entry.message
+				: entry.type === "custom_message"
+					? { role: "custom", customType: entry.customType, timestamp: new Date(entry.timestamp as string).getTime() }
+					: undefined;
+		const key = message && occurrenceKey(message);
+		if (key) position.set(key, index);
+	});
+	const lastFold = scanFoldEntries(entries);
+	return (message, runId) => {
+		const key = occurrenceKey(message);
+		const at = key === undefined ? undefined : position.get(key);
+		return at !== undefined && at < (lastFold.get(runId)?.index ?? -1);
+	};
+}
+
 /** A provider request that completed: an errored or aborted one is no proof that the model read anything. */
 function isCompletedRequest(entry: unknown): boolean {
 	if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) return false;
@@ -230,12 +300,13 @@ export function settleFold(
 	isRunning: (id: string) => boolean,
 	now: number = Date.now(),
 	reportExists: (path: string) => boolean = existsSync,
+	recordFacts: (id: string) => RunFacts | undefined = () => undefined,
 ): FoldedRun[] {
 	if (isChildTranscript(entries)) return [];
 	const folded = scanFoldEntries(entries);
 	const commits = new Map<string, { index: number; messageIndex: number; facts: RunFacts }>();
 	const lastRequest = entries.findLastIndex(isCompletedRequest);
-	for (const { index, isMessage, facts: list } of commitsByIndex(entries)) {
+	for (const { index, isMessage, facts: list } of commitsByIndex(entries, recordFacts)) {
 		for (const facts of list) {
 			const known = commits.get(facts.id);
 			// The latest commit's facts only: an older report never joins a newer outcome.

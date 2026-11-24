@@ -184,14 +184,14 @@ describe("subagent_resume reply and the settle fold (fold-waits review round 1)"
 			const runs = settleFold(entries, () => false, 100);
 			assert.equal(runs.length, 1, "the waited resume commits its run");
 			const folded = new Map(runs.map((run) => [run.id, run]));
-			const [out] = foldMessages([message], folded) as (typeof message)[];
+			const [out] = foldMessages([message], folded, new Map(), () => true) as (typeof message)[];
 			const text = result.content[0].text;
 			const head = text.slice(0, text.indexOf("\n\n"));
 			assert.match(head, /This call waited for its children; each report follows below\.$/);
 			assert.deepEqual(out.content, [{ type: "text", text: `${head}\n\n${runStub(runs[0])}` }]);
 			const changed = { ...message, content: [{ type: "text", text: `${text}\n\nNOTE` }] };
 			const list = [changed];
-			assert.equal(foldMessages(list, folded), list, "a reply another extension changed stays full");
+			assert.equal(foldMessages(list, folded, new Map(), () => true), list, "a reply another extension changed stays full");
 		});
 	});
 });
