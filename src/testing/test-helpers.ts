@@ -279,8 +279,8 @@ export function resolveEffectiveSessionModeForTest(
 	return resolveEffectiveSessionMode(params, agentDefs);
 }
 
-export function buildPiPromptArgsForTest(skills: string[], taskArg: string, directTask: boolean) {
-	return buildPiPromptArgs(skills, taskArg, directTask);
+export function buildPiPromptArgsForTest(skills: string[], taskArg: string) {
+	return buildPiPromptArgs(skills, taskArg);
 }
 
 export function writeSystemPromptArtifactForTest(

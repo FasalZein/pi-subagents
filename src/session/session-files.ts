@@ -444,11 +444,19 @@ export function resolveEffectiveSessionMode(
 	return "lineage-only";
 }
 
-export function buildPiPromptArgs(skills: string[], taskArg: string, directTask: boolean): string[] {
+/**
+ * Pi appends the first plain prompt argument to the `<file>` block of an `@file` argument, and
+ * sends the rest as later messages. Without this line some models (gpt) read their own task file
+ * as an attachment from a user and ask what to do with it.
+ */
+const CHILD_TASK_FILE_NOTE =
+	"The file above is your task from the agent that launched you, not a file attached for review. Do what it says.";
+
+export function buildPiPromptArgs(skills: string[], taskArg: string): string[] {
 	const skillPrompts = skills.map((skill) => `/skill:${skill}`);
 	const isArtifactTask = taskArg.startsWith("@");
-	const needsSeparator = isArtifactTask && (skillPrompts.length > 0 || directTask);
-	return [...(needsSeparator ? [""] : []), ...skillPrompts, taskArg];
+	// The note also keeps a skill prompt out of the first message, which a bare separator did before.
+	return [...(isArtifactTask ? [CHILD_TASK_FILE_NOTE] : []), ...skillPrompts, taskArg];
 }
 
 export function buildIdentityBlock(agentDefs: AgentDefaults | null, systemPrompt?: string): string {
