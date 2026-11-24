@@ -179,16 +179,17 @@ export function carriers(events, parentToolAllowlist) {
 		)
 			return;
 		// A wait or lookup reply (candidate subagent_wait) lists ended runs under results,
-		// each with its own runId (T67: the launch children's field name) and text; pending
-		// and missing runs carry nothing.
+		// each with its own runId (T67: the launch children's field name); pending and
+		// missing runs carry nothing.
 		if (Array.isArray(m.details?.results)) {
+			const replyText = textOf(m.content);
 			for (const member of m.details.results)
 				found.push({
 					kind: "tool-result",
 					index,
 					runId: typeof member?.runId === "string" ? member.runId : null,
 					tool: m.toolName,
-					text: typeof member?.text === "string" ? member.text : "",
+					text: waitMemberText(member, replyText),
 				});
 			return;
 		}
@@ -223,6 +224,17 @@ export function carriers(events, parentToolAllowlist) {
 		}
 	});
 	return found;
+}
+
+/**
+ * Text one wait entry handed to the parent. 9dd9b35 entries carry their rendered text.
+ * eb2e64b entries carry only the record (owner decision 2026-11-23): the reply text
+ * holds each whole summary, so the summary counts only when that text contains it.
+ */
+function waitMemberText(member, replyText) {
+	if (typeof member?.text === "string") return member.text;
+	const summary = member?.record?.summary;
+	return typeof summary === "string" && summary && replyText.includes(summary) ? summary : "";
 }
 
 /**

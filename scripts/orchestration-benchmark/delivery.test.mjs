@@ -652,3 +652,42 @@ test("[T67] a subagent_wait entry binds to its run by runId, the launch children
 		[["tool-result", "r2", "subagent_wait", "y-2"]],
 	);
 });
+
+test("a wait reply delivers a run whose record summary the parent received in the reply text, with or without a text field", () => {
+	// Release shapes of one wait reply (src/tools/wait-tool.ts): 9dd9b35 entries carry text; eb2e64b entries carry only
+	// the record (owner decision 2026-11-23), and the reply content holds the header, the whole summary and the footer.
+	const scenario = { parentToolAllowlist: ["subagent", "subagent_wait"], parentLoadTool: "subagent" };
+	const content = (summary) => `a · bench-a · done · 9.8s · untyped\n${summary}\nrun: r1 · results/r1/report-1.md`;
+	const wait = (summary, entry) => ({
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent_wait",
+			content: [{ type: "text", text: content(summary) }],
+			details: { status: "complete", results: [{ runId: "r1", name: "a", ...entry }], pending: [], missing: [] },
+		},
+	});
+	const record = (summary) => ({ runId: "r1", name: "a", outcome: "done", summary });
+	const run = (events) =>
+		deliveryAccounting({
+			parentEvents: [launch([["r1", "a"]]), ...events, assistant("stop", "x-1")],
+			children: [child("a", "x-1")],
+			answeredAt: events.length + 1,
+			scenario,
+			workDir: WORK,
+		}).runs[0];
+	const shapes = {
+		cf6dbf4: [result("r1", "x-1")],
+		"9dd9b35": [wait("x-1", { text: content("x-1"), record: record("x-1") })],
+		eb2e64b: [wait("x-1", { record: record("x-1") })],
+	};
+	for (const [release, events] of Object.entries(shapes))
+		assert.deepEqual(
+			[release, run(events).handover, run(events).delivered, run(events).outcome],
+			[release, "delivered", true, "clean_yield"],
+		);
+	// A record summary that the reply text does not hold did not reach the parent; neither did a null record.
+	const unsent = wait("other", { record: record("x-1") });
+	assert.deepEqual([run([unsent]).delivered, run([unsent]).outcome], [false, "auxiliary"]);
+	assert.equal(run([wait("x-1", { record: null })]).delivered, false);
+});
