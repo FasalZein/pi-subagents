@@ -237,6 +237,8 @@ function lookUpEnded(running: RunningSubagent) {
 			endedBy: record.endedBy,
 			runId: record.runId,
 			sessionFile: record.sessionFile,
+			// The saved report of this exact record, as every other reply that carries a result names it.
+			...(record.report.saved ? { reportFile: record.report.path } : {}),
 			lookup: true,
 		},
 	};

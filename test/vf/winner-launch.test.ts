@@ -3,6 +3,8 @@ import { basename, dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { loadAgentDefaults } from "../../src/agents/definitions.ts";
 import { resolveSubagentCwd } from "../../src/launch/runtime-paths.ts";
+import { foldMessages } from "../../src/runtime/context-fold.ts";
+import { type FoldedRun, settleFold } from "../../src/runtime/context-fold-set.ts";
 import { resetSpawnWidthForTest } from "../../src/runtime/spawn-width.ts";
 import {
 	getLaunchedSubagentResultForTest,
@@ -39,6 +41,9 @@ async function launchWaitedVerifiedRun(options: { detached?: boolean } = {}): Pr
 	text: string;
 	artifactRoot: string;
 	structured: SubagentLaunchStructured;
+	/** The launch tool's whole reply: content, details and flags. */
+	// biome-ignore lint/suspicious/noExplicitAny: the captured launch tool is probed dynamically.
+	result: any;
 	// biome-ignore lint/suspicious/noExplicitAny: the captured wait tool is probed dynamically.
 	wait: (args: unknown) => Promise<any>;
 }> {
@@ -96,6 +101,7 @@ async function launchWaitedVerifiedRun(options: { detached?: boolean } = {}): Pr
 	return {
 		text: (result.content[0] as { text: string }).text,
 		artifactRoot,
+		result,
 		structured: result.structuredContent as SubagentLaunchStructured,
 		wait: (args) => tools.get("subagent_wait").execute("w1", args, undefined, undefined, ctx),
 	};
@@ -142,6 +148,68 @@ describe("owner decision 2026-11-23: a script reads a verified run's published r
 		const looked = (await wait({ runIds: [runId] })).structuredContent as SubagentWaitStructured;
 		assert.equal(looked.results[0]?.runId, runId);
 		assertVerifiedRecord(looked.results[0]?.record, runId);
+	});
+});
+
+/** A producer's tool reply as Pi stores it, in a branch where a later completed request saw it. */
+// biome-ignore lint/suspicious/noExplicitAny: the captured tool replies are probed dynamically.
+function seenReply(toolName: string, reply: any) {
+	const message = {
+		role: "toolResult",
+		toolCallId: "call-1",
+		toolName,
+		content: reply.content,
+		details: reply.details,
+		isError: reply.isError ?? false,
+		timestamp: 1,
+	};
+	const entries = [
+		{ type: "message", id: "e1", message: { role: "user", content: [{ type: "text", text: "go" }] } },
+		{ type: "message", id: "e2", message },
+		{
+			type: "message",
+			id: "e3",
+			message: { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" },
+		},
+	];
+	return { message, entries };
+}
+
+/**
+ * Review round 1 of fold-waits (P1, lost provenance): a verified winner never folds, neither at the
+ * settle nor in a session whose older fold entry already names the run (owner-rules 2026-11-18T17:56Z).
+ */
+// biome-ignore lint/suspicious/noExplicitAny: the captured tool replies are probed dynamically.
+function assertNeverFolds(toolName: string, reply: any, runId: string) {
+	const { message, entries } = seenReply(toolName, reply);
+	assert.deepEqual(
+		settleFold(entries, () => false, 100),
+		[],
+		`the settle does not fold the verified run (${toolName})`,
+	);
+	const run: FoldedRun = { id: runId, name: "vf-run", outcome: "done", report: "/r/vf.md", foldedAt: 100 };
+	const messages = [message];
+	assert.equal(foldMessages(messages, new Map([[runId, run]]), new Map(), () => true), messages, `the reply stays full (${toolName})`);
+}
+
+describe("verified fan-out replies and the settle fold", () => {
+	it("a waited verified launch reply never folds", async () => {
+		const { result, structured } = await launchWaitedVerifiedRun();
+		assertNeverFolds("subagent", result, structured.children[0]?.runId ?? "");
+	});
+
+	it("a wait join of a verified run never folds", async () => {
+		const { structured, wait } = await launchWaitedVerifiedRun({ detached: true });
+		const runId = structured.children[0]?.runId ?? "";
+		const joined = await wait({ runIds: [runId], timeout: 60 });
+		assert.equal(joined.details.status, "complete");
+		assertNeverFolds("subagent_wait", joined, runId);
+	});
+
+	it("a lookup of a delivered verified run never folds", async () => {
+		const { structured, wait } = await launchWaitedVerifiedRun();
+		const runId = structured.children[0]?.runId ?? "";
+		assertNeverFolds("subagent_wait", await wait({ runIds: [runId] }), runId);
 	});
 });
 

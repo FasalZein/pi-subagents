@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerContextFold } from "../../src/runtime/context-fold.ts";
+import { replyDigest } from "../../src/runtime/context-fold-set.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 
 // Review round 1 (reviewer/context-fold-settle-gpt-2026-11-23-090148.md): each case is a sequence
@@ -48,7 +49,8 @@ function harness(entries: Entry[], api = "anthropic-messages") {
 								content: entry.content,
 								display: true,
 								details: entry.details,
-								timestamp: 1,
+								// As Pi's createCustomMessage: the entry's time in epoch ms.
+								timestamp: new Date(entry.timestamp as string).getTime(),
 							},
 						]
 					: [],
@@ -82,7 +84,9 @@ const assistant = (stopReason = "stop"): Entry => ({
 	message: { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason },
 });
 function resultMessage(details: Entry, content: string): Entry {
-	return { type: "custom_message", id: entryId(), customType: "subagent_result", content, display: true, details };
+	const id = entryId();
+	const timestamp = new Date(n).toISOString();
+	return { type: "custom_message", id, customType: "subagent_result", content, display: true, details, timestamp };
 }
 function call(callId: string, name: string, args: Entry): Entry {
 	const id = entryId();
@@ -146,25 +150,89 @@ describe("context fold safety: what folds at a settle", () => {
 		assert.match(await h.request(), /REPORT-A/);
 	});
 
-	it("a wait reply's record.report.path is the stub's report path", async () => {
+	it("a wait reply's record.report.path is the stub's report path; the used join reply folds too", async () => {
 		const path = report("one");
 		const entries = [
 			user("go"),
 			call("l1", "subagent", { agent: "w", name: "one", task: "BRIEF-A" }),
 			reply("l1", "subagent", { id: A, name: "one", status: "started" }),
 			call("w1", "subagent_wait", { runIds: [A] }),
-			reply("w1", "subagent_wait", {
-				status: "complete",
-				results: [{ runId: A, name: "one", text: "R", record: { outcome: "done", report: { saved: true, path } } }],
-			}),
+			reply(
+				"w1",
+				"subagent_wait",
+				{
+					status: "complete",
+					results: [{ runId: A, name: "one", record: { outcome: "done", report: { saved: true, path } } }],
+					pending: [],
+					missing: [],
+					// The wait tool keeps the digest of the text it built (context-fold-e2e drives the real tool).
+					replyDigest: replyDigest("WAIT-REPORT-A"),
+				},
+				{ content: [{ type: "text", text: "WAIT-REPORT-A" }], isError: false, timestamp: 1 },
+			),
 			assistant(),
 		];
 		const h = harness(entries);
+		assert.match(await h.request(), /WAIT-REPORT-A/, "before the settle the wait reply is full");
 		await h.settle();
 		const request = await h.request();
 		assert.doesNotMatch(request, /BRIEF-A/);
+		assert.doesNotMatch(request, /WAIT-REPORT-A/, "after the settle the wait reply is a stub");
 		assert.ok(request.includes(`report ${path}.`), "the stub names the saved report");
-		assert.match(request, /"text":"r"/, "the wait reply stays full");
+		assert.match(request, /"toolCallId":"w1","toolName":"subagent_wait"/, "the reply keeps its call id");
+		// A provider API without the fold gets the full reply again (the fold set is durable).
+		const bedrock = harness(entries, "bedrock-converse-stream");
+		assert.match(await bedrock.request(), /WAIT-REPORT-A/, "no fold for a gated API");
+	});
+
+	it("a clock that goes back or stands still never folds an unseen lookup and never unfolds a reply (S4)", async () => {
+		const TIMES = [900, 950, 1000];
+		const realNow = Date.now;
+		const waitReply = (callId: string, text: string, timestamp: number, path: string) =>
+			reply(
+				callId,
+				"subagent_wait",
+				{
+					status: "complete",
+					results: [{ runId: A, name: "one", record: { outcome: "done", report: { saved: true, path } } }],
+					pending: [],
+					missing: [],
+					replyDigest: replyDigest(text),
+				},
+				{ content: [{ type: "text", text }], isError: false, timestamp },
+			);
+		try {
+			for (const sent1 of TIMES)
+				for (const fold1 of TIMES)
+					for (const sent2 of TIMES)
+						for (const fold2 of TIMES) {
+							const at = `reply ${sent1}, fold ${fold1}, lookup ${sent2}, refold ${fold2}`;
+							const path = report("one");
+							const entries = [
+								user("go"),
+								call("w1", "subagent_wait", { runIds: [A] }),
+								waitReply("w1", "FIRST-REPLY", sent1, path),
+								assistant(),
+							];
+							const h = harness(entries);
+							Date.now = () => fold1;
+							await h.settle();
+							assert.doesNotMatch(await h.request(), /FIRST-REPLY/, `${at}: the used reply folds`);
+							entries.push(user("again"), call("w2", "subagent_wait", { runIds: [A] }));
+							entries.push(waitReply("w2", "LOOKUP-REPLY", sent2, path));
+							const first = await h.request();
+							assert.match(first, /LOOKUP-REPLY/, `${at}: the new lookup is full on its first read`);
+							assert.doesNotMatch(first, /FIRST-REPLY/, `${at}: the folded reply stays folded`);
+							entries.push(assistant());
+							Date.now = () => fold2;
+							await h.settle();
+							const after = await h.request();
+							assert.doesNotMatch(after, /FIRST-REPLY/, `${at}: the refold does not unfold the older reply`);
+							assert.doesNotMatch(after, /LOOKUP-REPLY/, `${at}: the seen lookup folds at the next settle`);
+						}
+		} finally {
+			Date.now = realNow;
+		}
 	});
 
 	it("a forked child transcript reopened as a plain session never folds", async () => {

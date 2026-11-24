@@ -54,14 +54,27 @@ export function latestVerifiedRecord(runDir: string): ResultRecord | undefined {
 }
 
 /**
+ * Whether `reportFile` is a verified run's generation report (<runDir>/result/g<N>/report.md). A
+ * session store names its reports report-<revision>.md, so this path shape marks a verified run in
+ * every reply that names its report, also in a session written before any other marker existed.
+ */
+export function isVerifiedReportPath(reportFile: string): boolean {
+	const folder = dirname(reportFile);
+	return (
+		basename(reportFile) === REPORT_FILE &&
+		GENERATION_FOLDER.test(basename(folder)) &&
+		basename(dirname(folder)) === RESULTS_FOLDER
+	);
+}
+
+/**
  * The published generation record whose saved report is `reportFile`, the file that the run's end
  * named. It is that generation's record, never a later one found by run id; undefined when the path
  * is no generation report of `runId`.
  */
 export function generationRecordOfReport(reportFile: string, runId: RunId): ResultRecord | undefined {
+	if (!isVerifiedReportPath(reportFile)) return undefined;
 	const folder = dirname(reportFile);
-	if (basename(reportFile) !== REPORT_FILE || !GENERATION_FOLDER.test(basename(folder))) return undefined;
-	if (basename(dirname(folder)) !== RESULTS_FOLDER) return undefined;
 	const record = readRecordQuietly(folder);
 	return record?.runId === runId && record.report.saved && record.report.path === reportFile ? record : undefined;
 }

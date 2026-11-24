@@ -2,6 +2,7 @@ import type { JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { getSessionResultsDir } from "../artifact-storage.ts";
+import { replyDigest } from "../runtime/context-fold-set.ts";
 import { sessionResultStore } from "../runtime/result-files.ts";
 import { ResultOutcomeSchema, ResultRecordSchema, recordAsJson } from "../runtime/result-record-schema.ts";
 import { type RecentRun, recentRuns, renderRecentRuns } from "../runtime/run-lookup.ts";
@@ -128,9 +129,11 @@ export function registerSubagentWaitTool(
 			const { runIds, ...rest } = params;
 			const outcome = await joinRuns({ ...rest, ids: runIds }, signal, { store, cwd: ctx.cwd });
 			const structured = toStructured(outcome);
+			const text = replyText(outcome);
 			return {
-				content: [{ type: "text" as const, text: replyText(outcome) }],
-				details: structured,
+				content: [{ type: "text" as const, text }],
+				// A complete join can fold after use; the digest proves the reply text unchanged.
+				details: outcome.status === "complete" ? { ...structured, replyDigest: replyDigest(text) } : structured,
 				// The one cast: a record's data is typed unknown but is JSON (D12 accepts only JSON data,
 				// and a stored record is parsed from record.json).
 				structuredContent: structured as unknown as JsonValue,
