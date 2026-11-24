@@ -418,3 +418,135 @@ describe("context fold: wait replies (fold-waits S2)", () => {
 		assert.equal(foldMessages(messages, folded(RUN_A)), messages);
 	});
 });
+
+/**
+ * A waited launch or resume reply as the launch tools build it (launch-reply.ts, D23): one line per
+ * child, the waited return line, then each report after a blank line. Written out here from the
+ * documented reply format, not built by the code.
+ */
+const WAITED = "This call waited for its children; each report follows below.";
+const childLine = (name: string, id: string) => `- ${name} (agent w): run ${id}, model not set, headless`;
+function launchToolReply(text: string, details: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+	return {
+		role: "toolResult",
+		toolCallId: "l1",
+		toolName: "subagent",
+		content: [{ type: "text", text }],
+		details,
+		isError: false,
+		timestamp: 1,
+		...extra,
+	};
+}
+const finished = (id: string, name: string) => ({
+	id,
+	name,
+	status: "completed",
+	outcome: "done",
+	reportFile: `/r/${name}.md`,
+});
+const SINGLE_HEAD = `${childLine("one", A)}\n${WAITED}`;
+const BATCH_HEAD = `${childLine("one", A)}\n${childLine("two", B)}\n${WAITED}`;
+const single = (extra: Record<string, unknown> = {}) =>
+	launchToolReply(`${SINGLE_HEAD}\n\nREPORT-ONE`, finished(A, "one"), extra);
+const batch = (children: Record<string, unknown>[], head = BATCH_HEAD) =>
+	launchToolReply(`${head}\n\nREPORT-ONE\n\nREPORT-TWO`, { status: "batch", children });
+
+describe("context fold: launch and resume replies (fold-waits S3)", () => {
+	it("a waited single launch keeps its head lines, then one stub per run; call id, details and flag stay", () => {
+		const reply = single();
+		const out = foldMessages([reply], folded(RUN_A));
+		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text: `${SINGLE_HEAD}\n\n${runStub(RUN_A)}` }] });
+		assert.equal((out[0] as typeof reply).details, reply.details, "details are the same object");
+		assert.match(reply.content[0].text, /REPORT-ONE/, "the input reply is not changed");
+	});
+
+	it("a waited batch (a batch barrier) keeps its child lines and folds every report", () => {
+		const reply = batch([finished(A, "one"), finished(B, "two")]);
+		const out = foldMessages([reply], folded(RUN_A, RUN_B));
+		const text = `${BATCH_HEAD}\n\n${runStub(RUN_A)}\n${runStub(RUN_B)}`;
+		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text }] });
+	});
+
+	it("a waited resume reply folds the same way", () => {
+		const reply = single({ toolName: "subagent_resume", toolCallId: "r1" });
+		const out = foldMessages([reply], folded(RUN_A));
+		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text: `${SINGLE_HEAD}\n\n${runStub(RUN_A)}` }] });
+	});
+
+	it("a lookup copy created before the fold settle folds as a used reply (D3)", () => {
+		const reply = launchToolReply(`${SINGLE_HEAD}\n\nLOOKUP-TEXT`, { ...finished(A, "one"), runId: A, lookup: true });
+		const out = foldMessages([reply], folded(RUN_A));
+		assert.equal((out[0] as typeof reply).content[0].text, `${SINGLE_HEAD}\n\n${runStub(RUN_A)}`);
+	});
+
+	it("stays the same object when not every child delivered a used, finished report", () => {
+		const PARTLY = "Each report of a finished child follows below.";
+		const cases: Array<[string, ReturnType<typeof launchToolReply>]> = [
+			[
+				"a partly waited batch",
+				batch(
+					[finished(A, "one"), { id: B, name: "two", status: "started" }],
+					`${childLine("one", A)}\n${childLine("two", B)}\n${PARTLY}\nReturn line.`,
+				),
+			],
+			[
+				"a launch failure",
+				launchToolReply(
+					"Error: child 2 of 2, two (agent w), failed to launch: boom",
+					{
+						status: "launch_failed",
+						children: [finished(A, "one")],
+					},
+					{ isError: true },
+				),
+			],
+			[
+				"an interrupted wait",
+				launchToolReply(`${childLine("one", A)}\nInterrupted.`, { id: A, name: "one", status: "interrupted" }),
+			],
+			[
+				"a batch with a wait error",
+				batch(
+					[finished(A, "one"), { id: B, name: "two", status: "wait_failed" }],
+					`${childLine("one", A)}\n${childLine("two", B)}\n${PARTLY}\nTimed out.`,
+				),
+			],
+			[
+				"a started (detached) launch",
+				launchToolReply(`${childLine("one", A)}\nReturn line.`, { id: A, status: "started" }),
+			],
+			[
+				"a lookup copy created after the fold settle",
+				launchToolReply(
+					`${SINGLE_HEAD}\n\nLOOKUP-TEXT`,
+					{ ...finished(A, "one"), lookup: true },
+					{ timestamp: AT + 1 },
+				),
+			],
+			["a verified child", launchToolReply(`${SINGLE_HEAD}\n\nR`, { ...finished(A, "one"), verifiedRunId: "vf1" })],
+			["a provenance notice", launchToolReply(`${SINGLE_HEAD}\n\nR`, { ...finished(A, "one"), provenance: true })],
+			["a run that did not fold", batch([finished(A, "one"), finished(C, "three")])],
+			["an error flag", single({ isError: true })],
+			["no creation time", single({ timestamp: undefined })],
+			[
+				"image content",
+				single({
+					content: [
+						{ type: "text", text: `${SINGLE_HEAD}\n\nR` },
+						{ type: "image", data: "AAAA", mimeType: "image/png" },
+					],
+				}),
+			],
+			[
+				"a head without the waited return line",
+				launchToolReply(`${childLine("one", A)}\nOther line.\n\nR`, finished(A, "one")),
+			],
+			["a head with a warning line", launchToolReply(`${SINGLE_HEAD}\nWarning: x\n\nR`, finished(A, "one"))],
+		];
+		for (const [what, reply] of cases) {
+			const messages = [reply];
+			assert.equal(foldMessages(messages, folded(RUN_A, RUN_B)), messages, what);
+		}
+	});
+});

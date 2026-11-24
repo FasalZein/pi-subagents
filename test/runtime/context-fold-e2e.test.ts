@@ -60,7 +60,7 @@ interface Parent {
 
 async function startParent(
 	plan: Record<string, ToolCall[]>,
-	options: { api?: string; resumeFile?: string; root?: string; codemode?: boolean } = {},
+	options: { api?: string; resumeFile?: string; root?: string; codemode?: boolean; blocking?: boolean } = {},
 ): Promise<Parent> {
 	const root = options.root ?? createTestDir();
 	const agentDir = join(root, "agent");
@@ -105,8 +105,9 @@ async function startParent(
 				mode: "background",
 				phase: { kind: "running" },
 				parentClosePolicy: "terminate",
-				blocking: false,
-				async: true,
+				// A blocking child makes the launch call wait for its report (a synchronous launch).
+				blocking: options.blocking ?? false,
+				async: !options.blocking,
 				startTime: Date.now(),
 				sessionFile: join(root, `${params.name}.jsonl`),
 				resultTarget: { store: sessionStore(), reservation, parentCwd: root, warnings: [] },
@@ -340,6 +341,43 @@ describe("context fold in a real Pi session", () => {
 			const after = parent.requests.at(-1) ?? "";
 			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the wait reply is a stub");
 			assert.doesNotMatch(after, new RegExp(BRIEF));
+			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
+		} finally {
+			await parent.dispose();
+		}
+	});
+
+	it("folds a used waited launch reply to its head lines and stub after the settle (fold-waits S3)", async () => {
+		const parent = await startParent(PLAN, { blocking: true });
+		try {
+			const delegated = parent.session.prompt("delegate");
+			await until(
+				() =>
+					parent.session.messages.some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("launch-1")),
+				"the launch call",
+			);
+			parent.finish(REPORT);
+			await delegated;
+			await parent.session.waitForIdle();
+			const reply = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "subagent");
+			assert.match(
+				textOf((reply as { content?: unknown } | undefined)?.content),
+				new RegExp(REPORT),
+				"the call waited",
+			);
+			assert.match(parent.requests.at(-1) ?? "", new RegExp(REPORT), "before the settle the reply is full");
+			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
+			await parent.session.prompt("next");
+			await parent.session.waitForIdle();
+			const after = parent.requests.at(-1) ?? "";
+			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the launch reply is a stub");
+			assert.doesNotMatch(after, new RegExp(BRIEF));
+			assert.match(
+				after,
+				new RegExp(`- child-one \\(agent worker-a\\): run ${parent.runId()}`),
+				"the child line stays",
+			);
+			assert.match(after, /This call waited for its children; each report follows below\./, "the return line stays");
 			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
 		} finally {
 			await parent.dispose();

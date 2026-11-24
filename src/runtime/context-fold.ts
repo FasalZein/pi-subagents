@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseJsonContainer } from "../tools/json-string-args.ts";
+import { WAITED_RETURN_LINE } from "../tools/launch-reply.ts";
 import { type FoldedScript, readFoldedScripts, scriptKey, settleScripts } from "./context-fold-scripts.ts";
 import {
 	CONTEXT_FOLD_ENTRY,
@@ -13,6 +14,7 @@ import {
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
+import { isFinishedStatus } from "./run-end-message.ts";
 import { runningSubagents } from "./state.ts";
 
 /**
@@ -90,13 +92,16 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 	return [`// Folded launch script of runs ${script.runIds.join(", ")}.`, ...lines].join("\n");
 }
 
+/** The runs of a tool result that can fold, its creation time, and for a launch reply the head lines it keeps. */
+type CleanReply = { ids: string[]; sent: number; head?: string };
+
 /**
  * The run ids of a clean subagent_wait join reply (fold-waits S2), or undefined when the reply must
  * stay full: an error (an interrupted wait), a status other than complete (timeout, empty, recent),
  * a pending or missing run, no run, a verified run or provenance notice, content other than text
  * (the reply text is then not only the reports), or no creation time to compare with a fold.
  */
-function cleanWaitReply(message: Rec): { ids: string[]; sent: number } | undefined {
+function cleanWaitReply(message: Rec): CleanReply | undefined {
 	const { details, content, timestamp } = message;
 	if (message.toolName !== "subagent_wait" || message.isError !== false || typeof timestamp !== "number") return;
 	if (!Array.isArray(content) || !content.every((block) => isRecord(block) && block.type === "text")) return;
@@ -116,23 +121,57 @@ function cleanWaitReply(message: Rec): { ids: string[]; sent: number } | undefin
 }
 
 /**
- * A used wait reply becomes one stub line per run when every run in it folded at a settle after the
- * reply was created (a request saw it). Call id, tool name, details and the error flag stay, so the
- * reply still pairs with its call.
+ * The run ids and head lines of a waited launch or resume reply (fold-waits S3, D2 keep-head), or
+ * undefined when it must stay full: an error (a launch failure), a child that did not deliver a
+ * finished report (started, interrupted, wait failed), a verified child or provenance notice, content
+ * other than one text block, or no creation time. The head (child lines up to the first blank line)
+ * must be one line per child and then the waited return line; any other head (a partly waited batch,
+ * a wait error, a warning) stays full.
  */
-function foldWaitReply(message: Rec, folded: ReadonlyMap<string, FoldedRun>): Rec {
-	const clean = cleanWaitReply(message);
+function cleanLaunchReply(message: Rec): CleanReply | undefined {
+	const { details, content, timestamp } = message;
+	if (message.toolName !== "subagent" && message.toolName !== "subagent_resume") return;
+	if (message.isError !== false || typeof timestamp !== "number" || !isRecord(details)) return;
+	if (!Array.isArray(content) || content.length !== 1) return;
+	const block = content[0];
+	if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") return;
+	const children = Array.isArray(details.children) ? details.children : [details];
+	if (Array.isArray(details.children) && details.status !== "batch") return;
+	if (children.length === 0) return;
+	const ids: string[] = [];
+	for (const child of children) {
+		if (!isRecord(child) || isVerifiedOrNotice(child) || !isFinishedStatus(str(child.status))) return;
+		if (isRecord(child.record) && isVerifiedOrNotice(child.record)) return;
+		const id = str(child.id) ?? str(child.runId);
+		if (!id) return;
+		ids.push(id);
+	}
+	const end = block.text.indexOf("\n\n");
+	const head = end < 0 ? undefined : block.text.slice(0, end);
+	const lines = head?.split("\n");
+	if (!lines || lines.length !== ids.length + 1 || lines.at(-1) !== WAITED_RETURN_LINE) return;
+	return { ids, sent: timestamp, head };
+}
+
+/**
+ * A used wait, launch or resume reply becomes its stubs when every run in it folded at a settle after
+ * the reply was created (a request saw it): one stub line per run, after the head lines of a launch
+ * reply. Call id, tool name, details and the error flag stay, so the reply still pairs with its call.
+ */
+function foldToolResult(message: Rec, folded: ReadonlyMap<string, FoldedRun>): Rec {
+	const clean = message.toolName === "subagent_wait" ? cleanWaitReply(message) : cleanLaunchReply(message);
 	if (!clean?.ids.every((id) => clean.sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
-	const text = clean.ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n");
+	const stubs = clean.ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n");
+	const text = clean.head === undefined ? stubs : `${clean.head}\n\n${stubs}`;
 	return { ...message, content: [{ type: "text", text }] };
 }
 
 /**
- * The provider messages with the folded runs' briefs, result messages and used wait replies as
+ * The provider messages with the folded runs' briefs, result messages and used waited replies as
  * stubs. Only the task text of a launch or resume call, the code of a frozen launch-only script, the
- * content of a result message and the content of a clean wait reply change; tool-call ids, other
- * tool results, thinking blocks and every other message stay the same objects. Each call pairs with the tool results of its own turn. Without a change the same
- * list returns.
+ * content of a result message and the content of a clean wait, launch or resume reply change;
+ * tool-call ids, other tool results, thinking blocks and every other message stay the same objects.
+ * Each call pairs with the tool results of its own turn. Without a change the same list returns.
  */
 export function foldMessages<T>(
 	messages: T[],
@@ -174,7 +213,7 @@ function foldMessage(
 		if (!ids || !ids.every((id) => sent <= (folded.get(id)?.foldedAt ?? -1))) return message;
 		return { ...message, content: ids.map((id) => runStub(folded.get(id) as FoldedRun)).join("\n") };
 	}
-	if (message.role === "toolResult") return foldWaitReply(message, folded);
+	if (message.role === "toolResult") return foldToolResult(message, folded);
 	if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
 	let changed = false;
 	let turn: Map<string, Rec> | undefined;

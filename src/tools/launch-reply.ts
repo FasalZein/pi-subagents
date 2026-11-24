@@ -9,7 +9,8 @@ type LaunchedChild = Pick<RunningSubagent, "agent" | "name" | "id" | "modelRef" 
  */
 export type ChildDelivery = { report: string } | { waitError: string } | null;
 
-const WAITED_RETURN_LINE = "This call waited for its children; each report follows below.";
+/** The return line of a reply whose every child delivered its report; the settle fold keys on it. */
+export const WAITED_RETURN_LINE = "This call waited for its children; each report follows below.";
 const PARTLY_WAITED_RETURN_LINE = "Each report of a finished child follows below.";
 
 /** One line per started child: agent, name, run id, the model ref that runs, pane or headless (D23). */
