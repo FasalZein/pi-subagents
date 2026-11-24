@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { assembleResult } from "../../src/runtime/result-assembler.ts";
 import { RECORD_FILE, ResultStore } from "../../src/runtime/result-files.ts";
 import { parseRunId } from "../../src/runtime/result-record.ts";
-import { recentRuns, renderRecentRuns } from "../../src/runtime/run-lookup.ts";
 import { assert, createTestDir, describe, it } from "../support/index.ts";
 import { assistant, facts, sessionHeader } from "../support/result-fixtures.ts";
 
@@ -66,7 +65,7 @@ describe("T25 fix round 1: records at the file-read boundary", () => {
 		assert.equal(results.read(parseRunId(outside.runId)), undefined);
 	});
 
-	it("a record that names another run, or has no valid end time, is skipped and recent does not throw", () => {
+	it("a record that names another run, or has no valid end time, is skipped and the list does not throw", () => {
 		const { dir, store: results } = store();
 		mkdirSync(dir, { recursive: true });
 		const good = validRunFolder("good-run");
@@ -79,7 +78,7 @@ describe("T25 fix round 1: records at the file-read boundary", () => {
 		assert.equal(results.read(parseRunId("feedbeef")), undefined, "the record names another run id");
 		assert.equal(results.read(parseRunId("badc0ffe")), undefined, "the record has no valid shape");
 		assert.deepEqual(
-			recentRuns(results).map((run) => run.runId),
+			results.list().map((run) => run.runId),
 			[good.runId],
 		);
 	});
@@ -110,10 +109,5 @@ describe("T25 fix round 1: records at the file-read boundary", () => {
 			assembleResult(facts([sessionHeader(), assistant("own run")], { runId, endedAt: 1_000 })),
 		);
 		assert.deepStrictEqual(results.read(runId), mine, "the own in-memory record, also with an earlier end time");
-	});
-
-	it("a name with line breaks stays on its one recent line", () => {
-		const text = renderRecentRuns([{ runId: "abcd1234", name: "two\nlines\r\nhere", outcome: "done", endedAt: 0 }]);
-		assert.equal(text, "abcd1234 · two lines here · done · 1970-01-01T00:00:00.000Z");
 	});
 });

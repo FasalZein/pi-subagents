@@ -23,7 +23,7 @@ One execution of a child, from its launch or resume to its result. A resume star
 _Avoid_: job, task, invocation
 
 **Run id**:
-The short name of one run. Replies, waits, resume and stop use it in place of a session path.
+The short name of one run. Replies, result messages, resume and stop use it in place of a session path.
 _Avoid_: handle, session reference
 
 **Batch**:
@@ -72,28 +72,28 @@ The file that holds one run's report.
 _Avoid_: handle, artifact (an artifact is a file the child chose to write)
 
 **Delivery**:
-The handover of one result to the parent: a wait returns it, or a message that carries it is committed to the parent session. Delivery happens at least once and does not mean that the model read the result.
+The handover of one result to the parent: a launch or resume that waits returns it, or a message that carries it is committed to the parent session. Delivery happens at least once and does not mean that the model read the result.
 _Avoid_: receipt, consumption
 
 **Lookup**:
-A request for a copy of a delivered result by its run id, or for the list of recently ended runs of a parent session. It changes nothing.
+A copy of a delivered result by its run id: a launch reply can carry one for a run that already ended. It changes nothing. The lookup tool (subagent_wait) is gone since 2026-11-24 (owner); a result message names the report file instead.
 _Avoid_: replay, retrieval
 
 ### Orchestration
 
 **Wait**:
-The parent's blocking request for the results of named runs, or of all its outstanding runs.
-_Avoid_: join, await, blocking launch
+A launch or resume call that returns only when its runs ended (an agent with async: false, a parent without a durable turn, a mixed batch). The separate wait tool subagent_wait was removed on 2026-11-24 (owner); a parent no longer blocks on runs it launched in an earlier call.
+_Avoid_: join, await
 
 **Turn boundary**:
 The point in a parent turn after a set of tool calls has ended and before the next model request, or the end of the turn.
 
 **Workflow script**:
-A script that the parent writes to launch a batch, wait for it and return one digest.
+A script that the parent writes to launch a batch and return its run ids; the results arrive as messages (owner 2026-11-24: no wait tool).
 _Avoid_: workflow, pipeline, orchestration script
 
 **Digest**:
-The text that a workflow script returns to the parent.
+The text that a workflow script or a coordinator child returns to the parent.
 
 ### Finding agents
 

@@ -113,7 +113,6 @@ describe("launch coordinator", () => {
 			"subagent_agents",
 			"subagent_kill",
 			"subagent_resume",
-			"subagent_wait",
 		]);
 
 		const entries = getEntries(launch.prepared.subagentSessionFile) as Array<Record<string, unknown>>;

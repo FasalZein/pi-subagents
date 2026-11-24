@@ -19,7 +19,7 @@ import {
 	runPiPrompt,
 } from "../support/pi-session.ts";
 
-const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume", "subagent_wait"];
+const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume"];
 const SUBAGENT_TOOLS = ["subagent", ...MANAGEMENT_TOOLS];
 
 /** A workspace with one worker agent, so the extension registers its tools. */

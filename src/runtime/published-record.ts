@@ -3,7 +3,7 @@ import type { ResultStore } from "./result-files.ts";
 import { parseRunId, type ResultRecord } from "./result-record.ts";
 
 /** Where an ended run's published record is read (D13, D18). */
-export interface PublishedRecordSources {
+interface PublishedRecordSources {
 	/** The run's own store. */
 	runStore?: ResultStore;
 	/** This parent session's store. */

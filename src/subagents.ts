@@ -86,7 +86,6 @@ import { registerSubagentMessageRenderers } from "./tools/message-renderers.ts";
 import { selectLaunchableAgents } from "./agents/launchable-agents.ts";
 import { registerSubagentAgentsTool } from "./tools/agents-tool.ts";
 import { registerSubagentKillTool } from "./tools/kill-tool.ts";
-import { registerSubagentWaitTool } from "./tools/wait-tool.ts";
 import { createManagementToolExposure } from "./tools/tool-exposure.ts";
 import { registerSubagentResumeTool } from "./tools/resume-tool.ts";
 import {
@@ -96,7 +95,7 @@ import {
 } from "./tools/subagent-tools.ts";
 import { isToolCallable } from "./tools/policy.ts";
 import { registerSubagentsView } from "./tools/subagents-view.ts";
-import { CODEMODE_TOOL_NAME, SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
+import { SUBAGENT_TOOL_NAME } from "./tools/tool-names.ts";
 import { adoptVerifiedRuns } from "./vf/run/adopt.ts";
 
 export { classifyAssistantMessageForMixedBatch as classifyAssistantMessageForMixedBatchForTest } from "./runtime/batch-classifier.ts";
@@ -273,10 +272,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			selectIndexTargets(getAgentListEntries(ctx.cwd), spawnEnv),
 			{ paneAvailable: ctx.hasUI && lastMuxDetection(), forcesWait: shouldForceSynchronousLaunch(ctx.hasUI) },
 			// Pi's live tool surface after the exposure step: excluded, inactive and hidden tools are not named.
-			{
-				callable: new Set(INDEX_MORE_TOOLS.filter((name) => isToolCallable(pi, name))),
-				codemode: pi.getActiveTools().includes(CODEMODE_TOOL_NAME),
-			},
+			{ callable: new Set(INDEX_MORE_TOOLS.filter((name) => isToolCallable(pi, name))) },
 		);
 		if (!indexSection) return undefined;
 		return applyAgentIndexSection(event, indexSection, spawnEnv.callerAgent !== null);
@@ -391,7 +387,6 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	const grant = { mayLaunch };
 	const managementTools = managementToolExposure.recordingApi;
 	registerSubagentKillTool(managementTools, shouldRegister, stopRunningSubagent);
-	registerSubagentWaitTool(managementTools, shouldRegister, grant);
 	registerSubagentResumeTool(
 		managementTools,
 		shouldRegister,

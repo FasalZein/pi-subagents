@@ -45,9 +45,11 @@ const toolResult = (id, toolName, text, extra = {}) => ({
 
 test("[T59a P1-2] the wait tool is allowed only on a release that has it; a refused wait on v2.9.2 still fails", () => {
 	assert.deepEqual(forRelease(recon, { candidate: false }).parentToolAllowlist, ["subagent"]);
-	assert.deepEqual(forRelease(recon, { candidate: true }).parentToolAllowlist, ["subagent", "subagent_wait"]);
+	assert.deepEqual(forRelease(recon, { candidate: true, waitTool: true }).parentToolAllowlist, ["subagent", "subagent_wait"]);
+	// Owner 2026-11-24: a candidate without the wait tool keeps the allowlist as written.
+	assert.deepEqual(forRelease(recon, { candidate: true, waitTool: false }).parentToolAllowlist, ["subagent"]);
 	const listed = { parentToolAllowlist: ["codemode", "subagent", "subagent_wait"], parentLoadTool: "subagent" };
-	assert.deepEqual(forRelease(listed, { candidate: true }).parentToolAllowlist, listed.parentToolAllowlist);
+	assert.deepEqual(forRelease(listed, { candidate: true, waitTool: true }).parentToolAllowlist, listed.parentToolAllowlist);
 	// A v2.9.2-shaped transcript: after one result the model asks for the unregistered
 	// subagent_wait, gets a tool error, then answers right. T04 (40e6162) scores
 	// wrong-delegation from the recorded call name; so does this harness on v2.9.2.
@@ -65,18 +67,20 @@ test("[T59a P1-2] the wait tool is allowed only on a release that has it; a refu
 			scenario: forRelease(recon, release),
 		});
 	assert.equal(score({ candidate: false }), "wrong-delegation");
-	assert.equal(score({ candidate: true }), "pass");
+	assert.equal(score({ candidate: true, waitTool: true }), "pass");
 });
 
-test("[T59a P1-2] release capabilities: the candidate declares subagent_wait, a checkout without it does not", () => {
+test("[T59a P1-2] release capabilities: the candidate declares subagent_agents and, since 2026-11-24, no subagent_wait", () => {
 	const repo = join(HERE, "..", "..");
-	assert.deepEqual(releaseCapabilities(repo), { candidate: true });
+	assert.deepEqual(releaseCapabilities(repo), { candidate: true, waitTool: false });
 	const old = mkdtempSync(join(tmpdir(), "bench-release-"));
 	try {
 		mkdirSync(join(old, "src", "tools"), { recursive: true });
 		writeFileSync(join(old, "src", "tools", "tool-names.ts"), 'export const X = "subagent_done";\n');
-		assert.deepEqual(releaseCapabilities(old), { candidate: false });
-		assert.deepEqual(releaseCapabilities(join(old, "missing")), { candidate: false });
+		assert.deepEqual(releaseCapabilities(old), { candidate: false, waitTool: false });
+		assert.deepEqual(releaseCapabilities(join(old, "missing")), { candidate: false, waitTool: false });
+		writeFileSync(join(old, "src", "tools", "tool-names.ts"), 'const A = "subagent_agents";\nconst W = "subagent_wait";\n');
+		assert.deepEqual(releaseCapabilities(old), { candidate: true, waitTool: true }, "a candidate checkout before 2026-11-24");
 	} finally {
 		rmSync(old, { recursive: true, force: true });
 	}

@@ -3,7 +3,7 @@ import { CONTEXT_FOLD_ENTRY, CONTEXT_FOLD_LAUNCH_ENTRY, isRecord, str } from "./
 /**
  * Codemode launch scripts in the settle fold (owner rule 2026-11-23T11:58Z). A script folds only as
  * a whole, and only when it is launch-only: Pi's nested-call record of the script is complete, holds
- * only subagent and subagent_wait calls that all succeeded, and every run its subagent calls started
+ * only subagent calls that all succeeded, and every run its subagent calls started
  * is folded. The settle that folds a script freezes the decision in its fold entry by the script's
  * occurrence (outer tool-call id and the assistant message time), so a later entry or a reused id
  * cannot unfold it or change the prefix mid-turn. Any other script stays byte-identical.
@@ -17,7 +17,7 @@ export interface FoldedScript {
 	runIds: string[];
 }
 
-const LAUNCH_ONLY_TOOLS: ReadonlySet<string> = new Set(["subagent", "subagent_wait"]);
+const LAUNCH_ONLY_TOOLS: ReadonlySet<string> = new Set(["subagent"]);
 
 /** The key of one script occurrence in a fold entry and in a provider message. */
 export function scriptKey(callId: string, at: unknown): string | undefined {

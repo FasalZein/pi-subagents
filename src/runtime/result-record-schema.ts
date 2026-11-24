@@ -19,7 +19,7 @@ const ResultTypingSchema = Type.Union([
 	}),
 ]);
 
-export const ResultOutcomeSchema = Type.Union([
+const ResultOutcomeSchema = Type.Union([
 	Type.Literal("done"),
 	Type.Literal("partial"),
 	Type.Literal("blocked"),

@@ -14,21 +14,21 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveReadPath, textOf } from "./record.mjs";
 
-// The candidate's wait and lookup tool (D15). v2.9.2 (cf6dbf4) registers no such tool.
+// The wait and lookup tool that candidate checkouts had until 2026-11-24 (D15; removed by the
+// owner). v2.9.2 (cf6dbf4) registers no such tool. Recorded sessions of those checkouts hold it.
 const WAIT_TOOL = "subagent_wait";
+// A tool that every candidate checkout declares and v2.9.2 does not (D4).
+const CANDIDATE_TOOL = "subagent_agents";
 
 /**
- * Release capabilities of the measured checkout: the candidate declares the wait
- * tool name in src/tools/tool-names.ts; v2.9.2 does not.
- * @returns {{candidate: boolean}}
+ * Release capabilities of the measured checkout, from src/tools/tool-names.ts: the candidate
+ * declares subagent_agents (v2.9.2 does not); waitTool says whether it still declares the wait tool.
+ * @returns {{candidate: boolean, waitTool: boolean}}
  */
 export function releaseCapabilities(checkout) {
-	const names = join(checkout, "src", "tools", "tool-names.ts");
-	return {
-		candidate:
-			existsSync(names) &&
-			readFileSync(names, "utf8").includes(`"${WAIT_TOOL}"`),
-	};
+	const path = join(checkout, "src", "tools", "tool-names.ts");
+	const names = existsSync(path) ? readFileSync(path, "utf8") : "";
+	return { candidate: names.includes(`"${CANDIDATE_TOOL}"`), waitTool: names.includes(`"${WAIT_TOOL}"`) };
 }
 
 /**
@@ -43,6 +43,7 @@ export function forRelease(scenario, release) {
 	const list = scenario.parentToolAllowlist;
 	const addWait =
 		release.candidate &&
+		release.waitTool === true &&
 		list.includes(scenario.parentLoadTool) &&
 		!list.includes(WAIT_TOOL);
 	return {

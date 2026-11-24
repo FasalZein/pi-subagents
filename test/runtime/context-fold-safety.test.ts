@@ -214,7 +214,7 @@ describe("context fold safety: what folds at a settle", () => {
 		assert.match(await h.request(), /REPORT-A/);
 	});
 
-	it("a wait reply's record.report.path is the stub's report path; the used join reply folds too", async () => {
+	it("compatibility (old sessions): a stored wait reply's record.report.path is the stub's report path; the used join reply folds too", async () => {
 		const path = report("one");
 		const entries = [
 			user("go"),
@@ -242,14 +242,14 @@ describe("context fold safety: what folds at a settle", () => {
 		const request = await h.request();
 		assert.doesNotMatch(request, /BRIEF-A/);
 		assert.doesNotMatch(request, /WAIT-REPORT-A/, "after the settle the wait reply is a stub");
-		assert.ok(request.includes(`report ${path}.`), "the stub names the saved report");
+		assert.ok(request.includes(`report ${path}]`), "the stub names the saved report");
 		assert.match(request, /"toolCallId":"w1","toolName":"subagent_wait"/, "the reply keeps its call id");
 		// A provider API without the fold gets the full reply again (the fold set is durable).
 		const bedrock = harness(entries, "bedrock-converse-stream");
 		assert.match(await bedrock.request(), /WAIT-REPORT-A/, "no fold for a gated API");
 	});
 
-	it("a clock that goes back or stands still never folds an unseen lookup and never unfolds a reply (S4)", async () => {
+	it("compatibility (old sessions): a clock that goes back or stands still never folds an unseen lookup and never unfolds a reply (S4)", async () => {
 		const TIMES = [900, 950, 1000];
 		const realNow = Date.now;
 		const waitReply = (callId: string, text: string, timestamp: number, path: string) =>
@@ -388,12 +388,9 @@ describe("context fold safety: what the provider gets", () => {
 describe("context fold safety: codemode launch scripts (owner rule 2026-11-23T11:58Z)", () => {
 	const LAUNCH = [
 		'const r = await tools.subagent({ children: [{ agent: "w", name: "one", task: "BRIEF-A" }, { agent: "w", name: "two", task: \'BRIEF-B\' }] });',
-		"return await tools.subagent_wait({ runIds: r.children.map((c) => c.runId) });",
+		"return r.children.map((c) => c.runId);",
 	].join("\n");
-	const LAUNCH_CALLS = [
-		{ id: "c1/1", name: "subagent", status: "ok" },
-		{ id: "c1/2", name: "subagent_wait", status: "ok" },
-	];
+	const LAUNCH_CALLS = [{ id: "c1/1", name: "subagent", status: "ok" }];
 
 	interface ScriptCase {
 		code?: string;
@@ -477,8 +474,8 @@ describe("context fold safety: codemode launch scripts (owner rule 2026-11-23T11
 			[
 				// The head names the original parent script, not the children's input (review round 1).
 				'// Folded launch script of runs aaaa0001, bbbb0002. The harness folded your original script; original code: the line with "c1" in /s/parent.jsonl.',
-				`// [Folded subagent run aaaa0001 (one): done, report ${path}. Full result: subagent_wait({ runIds: ["aaaa0001"] })]`,
-				`// [Folded subagent run bbbb0002 (two): done, report ${other}. Full result: subagent_wait({ runIds: ["bbbb0002"] })]`,
+				`// [Folded subagent run aaaa0001 (one): done, report ${path}]`,
+				`// [Folded subagent run bbbb0002 (two): done, report ${other}]`,
 			].join("\n"),
 		);
 	});
@@ -501,7 +498,9 @@ describe("context fold safety: codemode launch scripts (owner rule 2026-11-23T11
 	it("an incomplete call record, a failed call or a launch without its entry keeps the script full", async () => {
 		for (const c of [
 			{ complete: false },
-			{ calls: [LAUNCH_CALLS[0], { id: "c1/2", name: "subagent_wait", status: "error" }] },
+			{ calls: [{ ...LAUNCH_CALLS[0], status: "error" }] },
+			// An old session's script that also waited (the fork had subagent_wait until 2026-11-24).
+			{ calls: [...LAUNCH_CALLS, { id: "c1/2", name: "subagent_wait", status: "ok" }] },
 			{ calls: [...LAUNCH_CALLS, { id: "c1/3", name: "subagent", status: "ok" }] },
 		]) {
 			const { h } = await scriptSession({

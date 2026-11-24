@@ -53,7 +53,7 @@ export function renderLaunchFailure(
 ): string {
 	return [
 		`Error: child ${failed.position} of ${total}, ${failed.name} (agent ${failed.agent}), failed to launch: ${failed.error}`,
-		"These children started; wait for them with subagent_wait or stop one that still runs with subagent_kill, by run id:",
+		"These children started; each result arrives as a message when its run ends. Stop one that still runs with subagent_kill, by run id:",
 		...started.map(renderLaunchChildLine),
 		...notes.filter(Boolean),
 	].join("\n");

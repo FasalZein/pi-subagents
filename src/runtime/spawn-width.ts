@@ -1,5 +1,3 @@
-import { SUBAGENT_WAIT_TOOL_NAME } from "../tools/tool-names.ts";
-
 export const MAX_SPAWN_WIDTH = 16;
 
 let configuredWidth: number | null | undefined;
@@ -102,7 +100,7 @@ export function releaseSpawnWidthSlotOnCompletion<T>(owner: SlotOwner, promise: 
 	return promise.finally(() => releaseSpawnWidthSlot(owner));
 }
 
-/** Run ids of the runs that hold slots now, in claim order. Each one is registered, so subagent_wait can wait for it. */
+/** Run ids of the runs that hold slots now, in claim order. Each one ends with a result message that frees its slots. */
 function getSlotHolderRunIds(): string[] {
 	return [...slotOwners.keys()].map((owner) => owner.id);
 }
@@ -136,8 +134,9 @@ export type WidthRefusedCall = "subagent" | "subagent_resume";
 /**
  * D9/T89b: the refusal of a launch or resume that the spawn width does not admit. Every step it
  * names works when a parent follows it literally: the fit-now count uses the same slot costs as
- * admission, the wait call names only runs that subagent_wait can wait for (never a launch that is
- * still starting), and one wait is never promised to admit the rest.
+ * admission, the end-turn step names only runs whose end brings a result message (never a launch
+ * that is still starting), and one run end is never promised to admit the rest (owner 2026-11-24:
+ * no wait tool).
  */
 export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: readonly number[], limit: number): string {
 	const live = getLiveSlotCount();
@@ -159,18 +158,22 @@ export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: reado
 			`The first ${plural(fit.count, "child", "children")} (${plural(fit.slots, "slot")}) ${fit.count === 1 ? "fits" : "fit"} now: call subagent with only ${fit.count === 1 ? "that child" : "those children"}.`,
 		);
 	}
-	const then = fit.count > 0 ? "Then call" : "Next call:";
+	// Owner 2026-11-24: no wait tool. A run's end frees its slots and its result arrives as a
+	// message that starts the parent's next turn, so the next step is to end this turn.
+	const then = fit.count > 0 ? "Then" : "Next:";
 	if (holders.length > 0) {
 		parts.push(
-			`${then} ${SUBAGENT_WAIT_TOOL_NAME}({ runIds: ${JSON.stringify(holders)}, mode: "any" }); it returns when one of these runs ends and frees its slots.`,
+			`${then} end this turn (a codemode script returns); when one of the runs ${holders.join(", ")} ends it frees its slots and its result arrives as a message that starts your next turn.`,
 		);
 	} else if (fit.count > 0) {
-		parts.push(`Then call ${SUBAGENT_WAIT_TOOL_NAME} with mode "any" and the runIds of that launch reply.`);
+		parts.push(
+			"Then end this turn (a codemode script returns); when a started child ends it frees its slots and its result arrives as a message that starts your next turn.",
+		);
 	}
 	if (starting > 0) {
 		const retry = holders.length > 0 || fit.count > 0 ? "Or retry" : "Retry";
 		parts.push(
-			`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet, so ${SUBAGENT_WAIT_TOOL_NAME} cannot wait for it. ${retry} the refused call after that launch replies.`,
+			`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet. ${retry} the refused call after that launch replies.`,
 		);
 	}
 	if (holders.length > 0 || fit.count > 0) {
@@ -178,7 +181,7 @@ export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: reado
 			call === "subagent"
 				? "call subagent again with the children that have not started, at most as many as fit then"
 				: "call subagent_resume again";
-		parts.push(`When the wait returns, ${retry}; repeat while it is refused.`);
+		parts.push(`When that result arrives, ${retry}; repeat while it is refused.`);
 	}
 	if (holders.length > 0) parts.push("Or free a slot with subagent_kill on one of these runs.");
 	parts.push(AUTO_EXIT_PANE_NOTE);

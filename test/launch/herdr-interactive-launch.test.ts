@@ -628,7 +628,6 @@ describe("Herdr interactive launch parity", () => {
 			"subagent_resume",
 			"subagent_kill",
 			"subagent_agents",
-			"subagent_wait",
 			"grep",
 			"set_tab_title",
 		]);
@@ -646,7 +645,7 @@ describe("Herdr interactive launch parity", () => {
 		assert.equal(capsule.overrides.PI_SUBAGENT_AUTO_EXIT, "1");
 		assert.equal(
 			capsule.overrides.PI_DENY_TOOLS,
-			"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title",
+			"subagent,subagent_resume,subagent_kill,subagent_agents,grep,set_tab_title",
 		);
 		assert.equal(capsule.overrides.PI_SUBAGENT_EXTENSIONS, "");
 		const modelIndex = capsule.args.indexOf("--model");
@@ -667,7 +666,7 @@ describe("Herdr interactive launch parity", () => {
 		assert.notEqual(excludeIndex, -1);
 		assert.equal(
 			capsule.args[excludeIndex + 1],
-			"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,grep,set_tab_title",
+			"subagent,subagent_resume,subagent_kill,subagent_agents,grep,set_tab_title",
 		);
 		const skillIndex = capsule.args.indexOf("--skill");
 		assert.notEqual(skillIndex, -1);
@@ -747,10 +746,7 @@ describe("Herdr interactive launch parity", () => {
 				assert.doesNotMatch(launch.task, /subagent_done|When your task is complete/);
 				// Expected from the fixture: tools read,bash plus caller_ping; spawning off; subagent_done excluded.
 				assert.equal(launch.tools, "read,bash,caller_ping");
-				assert.equal(
-					launch.excludeTools,
-					"subagent,subagent_resume,subagent_kill,subagent_agents,subagent_wait,subagent_done",
-				);
+				assert.equal(launch.excludeTools, "subagent,subagent_resume,subagent_kill,subagent_agents,subagent_done");
 				if (!fork) {
 					assert.ok(launch.task.includes(MANUAL_MODE_HINT), launch.task);
 					assert.ok(launch.task.trimEnd().endsWith(MANUAL_SUMMARY), launch.task);

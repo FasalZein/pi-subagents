@@ -308,17 +308,14 @@ test("[T59a] a digest is no transfer; a result message after it is the run's one
 	assert.deepEqual([delivery.transfers, delivery.extraCopies, delivery.digests, delivery.undelivered], [1, 0, 7, 0]);
 });
 
-// T88 fix round 1 (review P1): the wait tool takes runIds (the launch reply key). Differential: the runs
-// the real wait tool targets (its own schema through Pi's validation, then its id-or-name rule) against
-// the runs the scorer credits as joined. Older recorded calls that used ids keep their coverage.
-test("[T88] a wait by runIds joins exactly the runs the wait tool targets; recorded ids calls still score", async () => {
-	const { validateToolArguments } = await import("@earendil-works/pi-ai");
-	const { registerSubagentWaitTool } = await import("../../src/tools/wait-tool.ts");
-	let waitTool;
-	registerSubagentWaitTool({ registerTool: (tool) => (waitTool = tool) }, () => true, { mayLaunch: () => true });
+// T88 fix round 1 (review P1): the wait tool took runIds (the launch reply key). The tool was removed on
+// 2026-11-24 (owner); recorded sessions still hold its calls. Differential: the runs the wait tool
+// targeted (its rule, frozen from src/tools/wait-tool.ts at c540fcb: mode any returns none here, no
+// runIds means every run, else id or name) against the runs the scorer credits as joined. Older
+// recorded calls that used ids keep their coverage.
+test("[T88] a recorded wait by runIds joins exactly the runs the wait tool targeted; recorded ids calls still score", () => {
 	const launched = new Set(IDS);
-	const targeted = (args) => {
-		const valid = validateToolArguments(waitTool, { type: "toolCall", id: "w", name: "subagent_wait", arguments: args });
+	const targeted = (valid) => {
 		if (valid.mode === "any") return new Set();
 		if (valid.runIds === undefined) return launched;
 		return new Set(FOLDERS.filter((f) => valid.runIds.includes(f.runId) || valid.runIds.includes(f.name)).map((f) => f.runId));
@@ -332,6 +329,4 @@ test("[T88] a wait by runIds joins exactly the runs the wait tool targets; recor
 	// A call from before T88 (recorded transcripts) used ids; the scorer keeps reading it.
 	const recorded = [...script("c1", [launchNested(NAMES), waitRecordedIds([IDS[0]])], ALL_LINES), answer()];
 	assert.deepEqual([...[...scriptCoverage(recorded, FOLDERS).values()][0].joined], [IDS[0]]);
-	// The current tool refuses that key, so a new transcript with it records a failed call.
-	assert.throws(() => targeted({ ids: [IDS[0]] }));
 });

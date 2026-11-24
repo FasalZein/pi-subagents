@@ -9,7 +9,7 @@ import type { RunningSubagent } from "../types.ts";
  * is data only: the reply text never shows it.
  */
 const launchedChildFields = {
-	/** The run id that subagent_wait, subagent_kill and subagent_resume accept. */
+	/** The run id that subagent_kill and subagent_resume accept, and that the result message names. */
 	runId: Type.String(),
 	name: Type.String(),
 	agent: Type.String(),

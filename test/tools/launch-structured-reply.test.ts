@@ -18,11 +18,9 @@ import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { runDeliveryState } from "../../src/runtime/wait-holds.ts";
-import { type JoinOutcome, joinRuns } from "../../src/runtime/wait-join.ts";
 import { registerSubagentKillTool } from "../../src/tools/kill-tool.ts";
 import { getIgnoredModelOverrideWarning } from "../../src/tools/policy.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	assert,
@@ -131,7 +129,8 @@ async function startParent(
 		writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 		const end: WatchedEnd = {
 			exitCode: 0,
-			operatorClosed: false, closedByPerson: false,
+			operatorClosed: false,
+			closedByPerson: false,
 			stopped: false,
 			...(ping === undefined ? {} : { ping: { message: ping } }),
 			exitSignal:
@@ -213,7 +212,6 @@ async function startParent(
 	const extension: ExtensionFactory = (pi) => {
 		registerDeliveryQueue(pi);
 		registerSubagentCoreTools(pi, () => true, runtime);
-		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
 		// A stop ends the fake child as its watcher would: with its own record.
 		registerSubagentKillTool(
 			pi,
@@ -402,7 +400,11 @@ describe("D05: launch input forms through Pi validation", () => {
 	const forms: Array<[string, unknown, string[]]> = [
 		["the top-level single form", child("solo-worker"), ["solo-worker"]],
 		["an empty children list with top-level fields", { ...child("solo-worker"), children: [] }, ["solo-worker"]],
-		["a children list sent as a JSON string", { children: JSON.stringify([child("child-one"), child("child-two")]) }, ["child-one", "child-two"]],
+		[
+			"a children list sent as a JSON string",
+			{ children: JSON.stringify([child("child-one"), child("child-two")]) },
+			["child-one", "child-two"],
+		],
 	];
 	for (const [what, args, names] of forms) {
 		it(`${what} starts ${names.join(" and ")}`, async () => {
@@ -422,7 +424,9 @@ describe("D05: launch input forms through Pi validation", () => {
 	it("a JSON-looking task string reaches the child as the same string", async () => {
 		const task = '{"verdict":"approve"}';
 		const harness = await startParent({
-			go: [fauxToolCall("subagent", { children: JSON.stringify([{ ...child("child-one"), task }]) }, { id: "launch-1" })],
+			go: [
+				fauxToolCall("subagent", { children: JSON.stringify([{ ...child("child-one"), task }]) }, { id: "launch-1" }),
+			],
 		});
 		try {
 			await harness.session.prompt("go");
@@ -565,7 +569,7 @@ describe("T28: a batch whose later child fails to launch", () => {
 		}
 	});
 
-	it("checks 2 to 4: a script gets the object, recovers on it alone with one sibling already ended, then waits for and stops the started children by id", async () => {
+	it("checks 2 to 4: a script gets the object, recovers on it alone with one sibling already ended, then stops the started children by id; their results arrive by message", async () => {
 		// The script uses only the launch object: the ended sibling's record, the started sibling's run id.
 		const script = [
 			"let r;",
@@ -577,8 +581,7 @@ describe("T28: a batch whose later child fails to launch", () => {
 			'const running = r.children.filter((c) => c.state === "started");',
 			"const stops = [];",
 			"for (const c of running) stops.push(await tools.subagent_kill({ runId: c.runId }));",
-			"const waited = await tools.subagent_wait({ runIds: r.children.map((c) => c.runId), timeout: 5 });",
-			'return "JSON " + JSON.stringify({ launch: r, ended: ended.map((c) => c.record.summary), stops, waited });',
+			'return "JSON " + JSON.stringify({ launch: r, ended: ended.map((c) => c.record.summary), stops });',
 		].join("\n");
 		const harness = await startParent(
 			{ go: [fauxToolCall("codemode", { code: script }, { id: "script-1" })] },
@@ -597,7 +600,6 @@ describe("T28: a batch whose later child fails to launch", () => {
 			const value = scriptValue(harness) as {
 				launch: { status: string; failed: unknown; children: ScriptChild[] };
 				ended: string[];
-				waited: SubagentWaitStructured;
 			};
 			const one = runOf(harness, "child-one").id;
 			const two = runOf(harness, "child-two").id;
@@ -617,16 +619,13 @@ describe("T28: a batch whose later child fails to launch", () => {
 			);
 			assert.deepEqual(value.ended, ["ONE-DONE-EARLY"], "the ended sibling carries its record");
 			assert.deepEqual(harness.stopped, [two], "the started child was stopped by its run id");
-			assert.equal(value.waited.status, "complete");
-			assert.deepEqual(value.waited.pending, []);
-			// Owner decision 2026-11-23: a script reads each report from its record, in the requested order.
-			assert.deepEqual(
-				value.waited.results.map((result) => [result.runId, result.name, result.record?.summary]),
-				[
-					[one, "child-one", "ONE-DONE-EARLY"],
-					[two, "child-two", "STOPPED child-two"],
-				],
-			);
+			// Owner 2026-11-24 (no wait tool): the stopped child's result reaches the parent as a message.
+			const messages = harness.session.messages
+				.filter((message) => message.role === "custom" && message.customType === "subagent_result")
+				.map((message) => JSON.stringify((message as { content: unknown }).content))
+				.join("\n");
+			assert.match(messages, new RegExp(two));
+			assert.match(messages, /STOPPED child-two/);
 			assert.equal(harness.launched(FAILING_CHILD), false, "the failed child never ran");
 		} finally {
 			await harness.dispose();
@@ -687,17 +686,18 @@ describe("g3 P1: a launch refused before any child starts", () => {
 	});
 });
 
-describe("T89b: a parent that follows a spawn-width refusal literally", () => {
-	/** The next step a refusal names: how many children to launch now and the wait call's arguments. */
-	function nextStep(refusal: string): { launchNow: number; wait?: { runIds?: string[]; mode: string } } {
+describe("T89b, amended 2026-11-24: a parent that follows a spawn-width refusal literally", () => {
+	/** The next step a refusal names: how many children to launch now, and the holders whose end frees slots. */
+	function nextStep(refusal: string): { launchNow: number; holders: string[] } {
 		const fit = /The first (\d+) child(?:ren)? \(\d+ slots?\) fits? now/.exec(refusal);
-		const call = /subagent_wait\(([^()]*)\)/.exec(refusal);
-		// Evaluated as the literal the parent copies; a placeholder in it is a SyntaxError.
-		const wait = call ? (new Function(`return (${call[1]});`)() as { runIds?: string[]; mode: string }) : undefined;
-		return { launchNow: fit ? Number(fit[1]) : 0, ...(wait ? { wait } : {}) };
+		const held =
+			/end this turn \(a codemode script returns\); when one of the runs (\S+(?:, \S+)*) ends it frees its slots/.exec(
+				refusal,
+			);
+		return { launchNow: fit ? Number(fit[1]) : 0, holders: held?.[1]?.split(", ") ?? [] };
 	}
 
-	it("gets every child of a refused batch admitted by launching what fits, waiting and retrying", async () => {
+	it("gets every child of a refused batch admitted by launching what fits, ending the turn and retrying after a result message", async () => {
 		const saved = process.env.PI_SUBAGENT_SPAWN_WIDTH;
 		process.env.PI_SUBAGENT_SPAWN_WIDTH = "2";
 		resetSubagentStateForTest();
@@ -723,6 +723,10 @@ describe("T89b: a parent that follows a spawn-width refusal literally", () => {
 			assert.ok(match, `the script returned JSON, got: ${reply?.text}`);
 			return JSON.parse(match[1] as string) as { admitted?: true; refusal?: string };
 		};
+		const resultMessages = () =>
+			harness.session.messages.filter(
+				(message) => message.role === "custom" && message.customType === "subagent_result",
+			).length;
 		try {
 			await harness.session.prompt("go");
 			await harness.session.waitForIdle();
@@ -731,24 +735,33 @@ describe("T89b: a parent that follows a spawn-width refusal literally", () => {
 			for (let round = 1; value.refusal !== undefined; round++) {
 				assert.ok(round <= 3, `admitted within 3 rounds; refusals: ${refusals.join(" | ")}`);
 				refusals.push(value.refusal);
+				assert.doesNotMatch(value.refusal, /subagent_wait/);
 				const step = nextStep(value.refusal);
-				assert.ok(step.wait?.runIds, `the refusal names a wait on known runs: ${value.refusal}`);
+				assert.ok(step.holders.length > 0, `the refusal names the runs whose end frees slots: ${value.refusal}`);
 				const now = pending.slice(0, step.launchNow);
 				pending = pending.slice(step.launchNow);
-				const lines = [
-					now.length > 0 ? `await tools.subagent(${JSON.stringify({ children: now })});` : "",
-					`await tools.subagent_wait(${JSON.stringify(step.wait)});`,
-					attempt(pending),
-				];
-				plan[`round-${round}`] = [fauxToolCall("codemode", { code: lines.join("\n") }, { id: `script-${round}` })];
-				const prompt = harness.session.prompt(`round-${round}`);
-				for (const entry of now) await until(() => harness.launched(entry.name), entry.name);
-				// One waited run ends, as a child does on its own; its slot frees.
-				const [firstId] = step.wait.runIds;
-				const name = [...harness.runs.values()].find((running) => running.id === firstId)?.name;
-				assert.ok(name, `the waited run ${firstId} is a launched child`);
+				if (now.length > 0) {
+					plan[`launch-${round}`] = [
+						fauxToolCall(
+							"codemode",
+							{ code: `await tools.subagent(${JSON.stringify({ children: now })});\nreturn "launched";` },
+							{ id: `launch-${round}` },
+						),
+					];
+					await harness.session.prompt(`launch-${round}`);
+					await harness.session.waitForIdle();
+					for (const entry of now) assert.ok(harness.launched(entry.name), entry.name);
+				}
+				// The turn ended. One named run ends, as a child does on its own: its slots free and its
+				// result arrives as a message.
+				const before = resultMessages();
+				const name = [...harness.runs.values()].find((running) => running.id === step.holders[0])?.name;
+				assert.ok(name, `the named run ${step.holders[0]} is a launched child`);
 				harness.finishWithCall(name, `${name} DONE`);
-				await prompt;
+				await until(() => resultMessages() > before, `the result message of ${name}`);
+				await harness.session.waitForIdle();
+				plan[`retry-${round}`] = [fauxToolCall("codemode", { code: attempt(pending) }, { id: `retry-${round}` })];
+				await harness.session.prompt(`retry-${round}`);
 				await harness.session.waitForIdle();
 				value = lastValue();
 			}
@@ -760,48 +773,6 @@ describe("T89b: a parent that follows a spawn-width refusal literally", () => {
 			if (saved === undefined) delete process.env.PI_SUBAGENT_SPAWN_WIDTH;
 			else process.env.PI_SUBAGENT_SPAWN_WIDTH = saved;
 			resetSubagentStateForTest();
-		}
-	});
-});
-
-describe("g2 P1: a launch wait for a ping that a concurrent subagent_wait took", () => {
-	it("reports the ping from its published record, not as not found", async () => {
-		let pingTaken: JoinOutcome | undefined;
-		const harness = await startParent(
-			{
-				go: [
-					fauxToolCall("subagent", {
-						children: [child("child-pinger", "worker-wait"), child("child-later", "worker-wait")],
-					}),
-				],
-			},
-			{
-				// While the second child's launch is held, the first pings and a concurrent wait takes the ping.
-				beforeLaunch: async (name) => {
-					if (name !== "child-later") return;
-					harness.finishWithPing("child-pinger", "WHICH BRANCH");
-					await new Promise((resolve) => setImmediate(resolve));
-					pingTaken = await joinRuns({ ids: [runOf(harness, "child-pinger").id] });
-				},
-			},
-		);
-		try {
-			const prompt = harness.session.prompt("go");
-			await until(() => harness.launched("child-later"), "the second launch");
-			harness.finishWithCall("child-later", "LATER DONE");
-			await prompt;
-			await harness.session.waitForIdle();
-			assert.equal(pingTaken?.status, "complete", "the concurrent wait took the ping");
-			const [reply] = harness.toolResults("subagent");
-			assert.ok(reply, "the launch tool replied");
-			assert.doesNotMatch(reply.text, /No subagent matches/);
-			assert.match(reply.text, /WHICH BRANCH/);
-			assert.match(reply.text, /LATER DONE/);
-			const children = (reply.details as { children?: { id?: string; status?: string; error?: string }[] }).children;
-			const pinger = children?.find((entry) => entry.id === runOf(harness, "child-pinger").id);
-			assert.equal(pinger?.error, undefined, "the launch wait found the run");
-		} finally {
-			await harness.dispose();
 		}
 	});
 });

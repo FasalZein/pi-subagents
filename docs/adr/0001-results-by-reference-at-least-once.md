@@ -10,6 +10,8 @@ We decided that every run that ends while its parent process watches it ends in 
 
 Changed on 2026-11-18 by the owner, after two plan reviews. The first version proved receipt: a result counted as received only when a later model request held it, a failed workflow script gave its results back once, and received results shrank to stubs under context pressure. Both reviews found that Pi offers no reliable point to observe receipt. A later handler can change a request, compaction and context edits can remove the entry that carries a result, and a competing wait can claim a give-back twice. The proof cost more than the duplicates it prevented.
 
+Changed on 2026-11-24 by the owner: the wait tool (subagent_wait) is removed, as upstream removed it. A result now goes to the launch or resume call that waits for it, or else in a message; nothing else takes it. A result that the parent did not see is found by the report path that each result message and fold stub names, or in record.json of its run folder, not by a lookup tool.
+
 ## Considered options
 
 - Cap the text in each of the three existing assemblers. Rejected: it keeps two consumers and the reproduced defects.

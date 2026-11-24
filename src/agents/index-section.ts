@@ -48,10 +48,9 @@ const UNKNOWN_PANE_LINE =
 
 const DESCRIPTION_CHARS = 100;
 
-function renderLaunchLine(tools: IndexToolAccess): string {
-	const wait = tools.callable.has("subagent_wait") ? "; subagent_wait joins now or looks up a run id" : "";
-	return `Helpers: launch with subagent (a children list). A result arrives as a message${wait}. A helper sees only its task text unless marked [fork].`;
-}
+// Owner 2026-11-24: no wait tool; every result arrives as a message that starts a turn.
+const LAUNCH_LINE =
+	"Helpers: launch with subagent (a children list). A result arrives as a message. A helper sees only its task text unless marked [fork].";
 
 // The routing rules of the v2.9.2 launch tool and roster (cf6dbf4
 // src/tools/subagent-tools.ts promptSnippet, src/agents/agent-list.ts rules),
@@ -60,31 +59,23 @@ const RULES_LINE =
 	"Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.";
 
 /** The management tools the index names, in index order. */
-export const INDEX_MORE_TOOLS = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"] as const;
+export const INDEX_MORE_TOOLS = ["subagent_resume", "subagent_kill", "subagent_agents"] as const;
 type IndexMoreTool = (typeof INDEX_MORE_TOOLS)[number];
 
 // The call form of each tool, argument names from its parameter schema, so a
 // parent calls it without a describeTool or searchTools lookup (T87). Only the
 // arguments a parent usually passes; `?` marks an optional one.
 const INDEX_CALL_FORMS: Record<IndexMoreTool, string> = {
-	subagent_wait: "subagent_wait({runIds?})",
 	subagent_resume: "subagent_resume({runId, task?})",
 	subagent_kill: "subagent_kill({runId})",
 	subagent_agents: "subagent_agents({query?, name?}) (search; name: full detail)",
 };
 
-// What tools.subagent_wait resolves to in a codemode script: SubagentWaitOutput
-// (src/tools/wait-tool.ts) without the optional recent list. A deferred tool
-// shows only its call form, and scripts that guessed the shape missed the
-// summary (context-compare-upstream-eb2e64b, review-workflow).
-const WAIT_CODEMODE_RESULT =
-	" (resolves to {status, results: [{runId, name, record}], pending, missing}; the answer is record?.summary)";
-
 /**
  * The management tools this session may call, so the index names only usable
- * tools (D06), and whether codemode is active, so scripts know a result shape.
+ * tools (D06).
  */
-type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool>; codemode?: boolean };
+type IndexToolAccess = { callable: ReadonlySet<IndexMoreTool> };
 
 const ALL_TOOLS: IndexToolAccess = { callable: new Set(INDEX_MORE_TOOLS) };
 
@@ -166,9 +157,7 @@ function renderNamesLine(names: readonly string[], hidden: number): string {
 }
 
 function renderMoreToolsLine(tools: IndexToolAccess): string[] {
-	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) =>
-		name === "subagent_wait" && tools.codemode ? INDEX_CALL_FORMS[name] + WAIT_CODEMODE_RESULT : INDEX_CALL_FORMS[name],
-	);
+	const names = INDEX_MORE_TOOLS.filter((name) => tools.callable.has(name)).map((name) => INDEX_CALL_FORMS[name]);
 	return names.length > 0 ? [`More tools: ${names.join(", ")}.`] : [];
 }
 
@@ -198,7 +187,7 @@ export function renderAgentIndexSection(
 	const lines = described.map((entry) => renderAgentLine(entry, policy));
 	const paneUnknown = policy.paneAvailable === "unknown" && lines.some((line) => line.includes(" [pane]"));
 	const fixed = [
-		renderLaunchLine(tools),
+		LAUNCH_LINE,
 		RULES_LINE,
 		...renderMoreToolsLine(tools),
 		...(policy.forcesWait ? [FORCED_WAIT_LINE] : []),

@@ -476,9 +476,9 @@ Before anything is paid for, Pi sends one small request to the backend you chose
 At the start of each prompt, Pi writes one named system-prompt section, `index`, into the parent prompt. Pi stores the section with the session, patches it only when it changes, and keeps it through compaction, resume, and reload. The section has at most 4,400 characters: three fixed lines, then one entry per agent that the session may launch. An entry is the agent line and the model lines of the v2.9.2 roster.
 
 ```text
-Helpers: launch with subagent (a children list). A result arrives as a message; subagent_wait joins now or looks up a run id. A helper sees only its task text unless marked [fork].
+Helpers: launch with subagent (a children list). A result arrives as a message. A helper sees only its task text unless marked [fork].
 Do tiny work yourself. Use each named helper once, no substitutes. Do not redo delegated work. Ask when ownership is unclear.
-More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).
+More tools: subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).
 - reviewer: Review a diff for bugs and missing tests. [pane] [manual]
   default_model: prov/model-a:high
   models: prov/model-a:high | prov/model-b | prov/model-c:low
@@ -486,7 +486,7 @@ More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_
   models: any model ref
 ```
 
-Each agent line holds the name and the first 100 characters of the `description`. The model lines follow it, as in the v2.9.2 roster: `default_model: <ref>` when the agent has a `model`, and `models: <default> | <allowed-models…>`, or `models: any model ref` without `allowed-models`. An agent with `allow-model-override: false` has no `models:` line. Agents with `pinned: true` come first, by name, and then the other agents, by name. An agent line and its model lines are kept or left out together. When the next entry does not fit in 4,400 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The third line gives each management tool as a call form with the argument names of its schema (`?` marks an optional one), so a parent can call it without a lookup. The index names only the tools that Pi lets the session call (an excluded, inactive or hidden tool is left out; a deferred one counts). Without `subagent_wait` the first line drops its clause. Without `subagent_agents` the agents that get no line, including agents without a description, are named on a last line, `More agents: a, b, c.`; agent lines give way to it until every name fits, and names that still do not fit are counted (`+<n> not shown`). When another extension replaces the whole system prompt, before or after this one, the index goes into each request as a leading message instead; the replaced prompt and the session file stay unchanged. In a child, a whole prompt composed earlier gets the section appended, as before.
+Each agent line holds the name and the first 100 characters of the `description`. The model lines follow it, as in the v2.9.2 roster: `default_model: <ref>` when the agent has a `model`, and `models: <default> | <allowed-models…>`, or `models: any model ref` without `allowed-models`. An agent with `allow-model-override: false` has no `models:` line. Agents with `pinned: true` come first, by name, and then the other agents, by name. An agent line and its model lines are kept or left out together. When the next entry does not fit in 4,400 characters, the last line counts the rest: `+<n> more: subagent_agents with a query`. A session whose launches always wait, such as a `pi -p` parent, gets the fixed line `Launches wait.` too. The second line holds the v2.9.2 routing rules in short form. The third line gives each management tool as a call form with the argument names of its schema (`?` marks an optional one), so a parent can call it without a lookup. The index names only the tools that Pi lets the session call (an excluded, inactive or hidden tool is left out; a deferred one counts). Without `subagent_agents` the agents that get no line, including agents without a description, are named on a last line, `More agents: a, b, c.`; agent lines give way to it until every name fits, and names that still do not fit are counted (`+<n> not shown`). When another extension replaces the whole system prompt, before or after this one, the index goes into each request as a leading message instead; the replaced prompt and the session file stay unchanged. In a child, a whole prompt composed earlier gets the section appended, as before.
 
 A flag shows only where an agent differs from the common case:
 
@@ -499,7 +499,7 @@ An agent without a `description` gets no agent line, and it stays launchable: `s
 
 ### Find the management tools
 
-`subagent` is declared in every session that may launch. When codemode or tool search is active at the first prompt, Pi registers `subagent_wait`, `subagent_resume`, `subagent_kill`, and `subagent_agents` as deferred: they are not in the active tool list until tool search loads them, and a codemode script calls them as `tools.subagent_wait` and so on. Without codemode and tool search, Pi declares them directly. `subagent_wait` and `subagent_agents` refuse a call when the session may not launch. `subagent_resume` and `subagent_kill` do not: a session that may not launch can still resume and stop children, and only their own `deny-tools` entry removes them.
+`subagent` is declared in every session that may launch. When codemode or tool search is active at the first prompt, Pi registers `subagent_resume`, `subagent_kill`, and `subagent_agents` as deferred: they are not in the active tool list until tool search loads them, and a codemode script calls them as `tools.subagent_resume` and so on. Without codemode and tool search, Pi declares them directly. `subagent_agents` refuses a call when the session may not launch. `subagent_resume` and `subagent_kill` do not: a session that may not launch can still resume and stop children, and only their own `deny-tools` entry removes them.
 
 ### Look up an agent with `subagent_agents`
 
@@ -521,7 +521,7 @@ Pi skips a malformed agent file and loads the other agents. A launch of that age
 
 ### Launch children
 
-`subagent` takes one child as top-level fields, or several in `children`: a list of up to the spawn width of children, each with the same fields. An empty `children` list starts the child of the top-level fields, as in v2.9.2. When a model sends `children` as a JSON string, the launch parses it. No other argument string is parsed: a JSON string in a launch field or in the `runIds` of `subagent_wait` stays a string. The fields are:
+`subagent` takes one child as top-level fields, or several in `children`: a list of up to the spawn width of children, each with the same fields. An empty `children` list starts the child of the top-level fields, as in v2.9.2. When a model sends `children` as a JSON string, the launch parses it. No other argument string is parsed: a JSON string in a launch field stays a string. The fields are:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -541,9 +541,9 @@ Each report arrives later, and this turn may stop after this call so the reports
 
 A launch waits for its results, and the reply holds them, when the agent has `async: false`, when the parent has no durable turn, or when the call shares a tool batch with a sync launch (see [Mixed sync and async batches](#mixed-sync-and-async-batches)). A direct launch next to a call of another tool, such as `read`, also waits, unless `PI_SUBAGENT_DISABLE_COORDINATOR_ONLY_TURN=1`. Inside codemode, a launch returns at once unless it waits by these rules.
 
-`Esc` during a launch or `subagent_resume` that waits stops the child it waits for, as in v2.9.2. A launch of an agent with `async: false` and a launch that waits because the parent has no durable turn ignore `Esc` and keep waiting. `subagent_wait` keeps its own `Esc`, which stops only the wait.
+`Esc` during a launch or `subagent_resume` that waits stops the child it waits for, as in v2.9.2. A launch of an agent with `async: false` and a launch that waits because the parent has no durable turn ignore `Esc` and keep waiting. After an async launch the parent's turn has already ended, so `Esc` stops only the parent's own turn and never a background child; stop a child with `subagent_kill` (owner, 2026-11-24: no wait tool).
 
-An unknown agent name is refused as in v2.9.2, with the requested name and the search locations and no other agent name: `Error: agent "<name>" was not found in .pi/agents/ or <agent dir>/agents.` When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Wait for them with `subagent_wait` or stop them with `subagent_kill`.
+An unknown agent name is refused as in v2.9.2, with the requested name and the search locations and no other agent name: `Error: agent "<name>" was not found in .pi/agents/ or <agent dir>/agents.` When a later child of a batch fails to launch, the reply is an error that names the failed child and lists the children that started, by run id. Their results arrive as messages; stop one with `subagent_kill`.
 
 ### Model names
 
@@ -563,20 +563,20 @@ Only the spawn width limits launches. It counts the runs that run at the same ti
 The refusal names the next steps, and each step works when the parent follows it as written. When every slot is busy, a launch or a resume gets the run ids that hold the slots and the wait call that returns when one of them ends:
 
 ```text
-Spawn width limit reached (2/2 slots busy, held by auth-scout-1, diff-reviewer-2). Nothing started. Next call: subagent_wait({ runIds: ["auth-scout-1","diff-reviewer-2"], mode: "any" }); it returns when one of these runs ends and frees its slots. When the wait returns, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
+Spawn width limit reached (2/2 slots busy, held by auth-scout-1, diff-reviewer-2). Nothing started. Next: end this turn (a codemode script returns); when one of the runs auth-scout-1, diff-reviewer-2 ends it frees its slots and its result arrives as a message that starts your next turn. When that result arrives, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
 ```
 
 A refused launch also names the first children that fit in the free slots now. It counts each child by its slots: a verified fan-out child takes one slot per candidate. One wait does not promise room for the rest. After each wait, retry with the children that have not started, and repeat while the launch is refused:
 
 ```text
-Error: batch of 4 subagents exceeds the spawn width limit of 3. Nothing started. The first 1 child (1 slot) fits now: call subagent with only that child. Then call subagent_wait({ runIds: ["auth-scout-1","diff-reviewer-2"], mode: "any" }); it returns when one of these runs ends and frees its slots. When the wait returns, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
+Error: batch of 4 subagents exceeds the spawn width limit of 3. Nothing started. The first 1 child (1 slot) fits now: call subagent with only that child. Then end this turn (a codemode script returns); when one of the runs auth-scout-1, diff-reviewer-2 ends it frees its slots and its result arrives as a message that starts your next turn. When that result arrives, call subagent again with the children that have not started, at most as many as fit then; repeat while it is refused. Or free a slot with subagent_kill on one of these runs. Interactive children with auto-exit: false keep their slot until the pane closes.
 ```
 
-A refused resume says to call `subagent_resume` again, not to launch. A child that needs more slots than the whole limit gets no wait call, because no wait admits it. A launch that is still starting holds its slots without a run id, so `subagent_wait` cannot wait for it. The refusal then says so and tells the parent to retry after that launch replies. A session that cannot call `subagent_wait` gets each run end as a message, and retries after it.
+A refused resume says to call `subagent_resume` again, not to launch. A child that needs more slots than the whole limit gets no next step, because no run end frees enough slots. A launch that is still starting holds its slots without a run id; the refusal then says so and tells the parent to retry after that launch replies. The refusal names no wait tool: the fork has none since 2026-11-24 (owner).
 
 ### The result of a run
 
-Every run that ends while its parent process watches it ends in one result record. The parent gets a rendering of it. The rendering holds the whole summary, as in v2.9.2. The report stays in a file. For an untyped run with an answer and for a `caller_ping`, the summary is the whole report. A typed `subagent_done` run has a report that the parent does not get by itself: the child's last text. When the report file cannot be written, the rendering says `report not saved`. The session keeps the full report in memory. When that report is more than the summary, `subagent_wait` with the run id of an already delivered run (a lookup) returns the rendering followed by the line `Full report (not saved to a file):` and the full report. A lookup inside a codemode script returns the record only, without the full report. Call `subagent_wait` directly to read the full report. The full report is gone when the session closes or the process exits.
+Every run that ends while its parent process watches it ends in one result record. The parent gets a rendering of it. The rendering holds the whole summary, as in v2.9.2. The report stays in a file. For an untyped run with an answer and for a `caller_ping`, the summary is the whole report. A typed `subagent_done` run has a report that the parent does not get by itself: the child's last text. When the report file cannot be written, the rendering says `report not saved`. The session keeps the full report in memory. Since 2026-11-24 (owner) the extension has no lookup tool, so that report does not reach the parent again; for an untyped run the delivered summary is the whole report, and the child's session file keeps its last text. The full report is gone when the session closes or the process exits.
 
 The record holds the run id, name, agent, title, model ref, outcome, `endedBy`, `typed`, summary, report file, session file, artifacts, data, data error, end time, elapsed time, exit facts, time-limit facts, context usage, and whether the run can be resumed, with the reason when it cannot. The outcome is `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`. A run that a person or the parent stopped ends as `cancelled`. `endedBy` says who ended the run: `child` (its completion call, `caller_ping`, its own exit, or a crash), `operator` (a person closed the pane, also after a takeover, or stopped the run from the `/subagents` overlay), `parent` (`subagent_kill` or another stop of the parent), or `time_limit` (a hard kill or a report-only wrap-up). The header of the rendering names the ender only when it is not `child`, for example `· ended by operator`. A run is typed only when the child made a valid completion call: a `caller_ping`, or a typed `subagent_done` in a session from before auto-exit children lost that tool (see [`subagent_done`](#subagent_done)). The summary of an untyped run with an answer is the whole report. A typed run's artifacts are the paths the child listed in its call. An untyped run's artifacts are the paths of the child's successful `write` and `edit` calls of this run, direct or from a script, as absolute paths against the child's working directory, without duplicates, in the order of the first write.
 
@@ -594,35 +594,35 @@ Each run has its own folder: `results/<run id>/` under the artifact folder of th
 
 Results exist only for runs that end while their parent process watches them. A `parent-close-policy: continue` child that ends after its parent process exited gets no result record. Its session file and exit record stay for a resume by hand, unless the child has `no-session: true`: then the child keeps no transcript, and nothing is left to resume.
 
-Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. `subagent_wait` with `recent` does not list it, and after a restart a lookup by its run id can answer `No result record`. In a codemode script, a launch or a wait gives an ended verified child the record of the generation that it delivered. The child carries `record: null` when that record is not available, for example when its report could not be written. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
+Verified fan-out is the one exception to the watched-only rule: its supervisor delivers to the launching session or an ancestor that starts next. A verified winner is stored under `vf-runs/<run id>/` in the project artifact folder, not in the session's `results/` folder. In a codemode script, a launch that waited gives an ended verified child the record of the generation that it delivered. The child carries `record: null` when that record is not available, for example when its report could not be written. Keep the report path from the result of a verified run. When the results folder cannot be written, the result text says `report not saved: <error>`, the session keeps the record in memory until it closes, and the person sees a notice.
 
 ### Delivery: at least once
 
-When a watched run ends, Pi writes its result files and then hands the result over: to every `subagent_wait` that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, with two exceptions. If you press `Esc` while the turn settles, the results of that aborted turn enter the next request when you type. If you press `Esc` during a `subagent_wait` or a launch that waits, the results that the wait already held leave as one message that starts no turn. Runs that end later still start turns.
+When a watched run ends, Pi writes its result files and then hands the result over: to the launch or resume call that waits for that run, or else as a `subagent_result` message. A message leaves at the next turn boundary, or at once when the parent is idle, and starts a turn. All results queued at one boundary leave as one message. A result never waits for you to type, with two exceptions. If you press `Esc` while the turn settles, the results of that aborted turn enter the next request when you type. If you press `Esc` during a launch that waits, the results that the launch already held leave as one message that starts no turn. Runs that end later still start turns.
 
-Pi hands each result over once by itself and does not check whether the model read it. A copy can come from a lookup, from an interrupted wait that gives its results back as a message, or from a verified winner that Pi adopts again because no receipt confirmed the first delivery. Every copy holds the same whole summary. One result can therefore reach the parent twice, for example in a wait reply and in a message after an interrupted wait. A closed or replaced session gets no more deliveries; its results stay in their files for a lookup after a resume.
+Pi hands each result over once by itself and does not check whether the model read it. A copy can come from an interrupted launch wait that gives its results back as a message, or from a verified winner that Pi adopts again because no receipt confirmed the first delivery. Every copy holds the same whole summary. One result can therefore reach the parent twice, for example in a launch reply and in a message after an interrupted launch wait. A closed or replaced session gets no more deliveries; its results stay in their files.
 
 ### Settle fold: used runs become stubs in later requests
 
 When the parent settles idle (Pi's `agent_settled`) at the end of its task, every run that the model already used folds. A run is used when it ended, a message or reply with its finished result was committed, and a later provider request completed without error or abort. The fold happens only at a settle, never inside a turn. The task is open while a child that this parent session launched, resumed or adopted runs, or while a result of such a run is not committed yet (queued, held by a wait, or in flight in the delivery queue). Runs of another parent session in the same process do not count. A settle with an open task folds nothing, and the fold set stays as it was. An interactive parent settles after each async launch turn while its children run, so it keeps every launch and result in full until its last child ended and its last result was delivered. The session file keeps every message in full. Only the provider requests change, from the next request on:
 
-- The task text of each folded child in a direct `subagent` call becomes a task stub. The task text of a `subagent_resume` call becomes a task stub when its resumed run is folded. Each call keeps its name, agent, title and call id. The task stub says that the harness folded the text and that the child got the full text, so the model does not read it as the task it sent. It also names where the original text is: the line of the parent's session file that holds the call id. For example `[Task text folded by the harness after run 1a2b3c4d (auth-scout) ended; the child got your full text. Original text: the line with "toolu_01" in <session file>. Outcome: done, report <path>/report-1.md. Result: subagent_wait({ runIds: ["1a2b3c4d"] })]`.
-- A codemode script folds only as a whole, and only when it launches and nothing else: Pi's complete record of its nested calls holds only `subagent` and `subagent_wait` calls that succeeded, and every run that it started is folded. Its whole code then becomes stub lines that name those runs, after a head line that says the harness folded the original script and names the line of the session file that holds the call id. Every other script stays unchanged. The settle that folds a script records it in its fold entry, so the decision stays fixed for that script.
+- The task text of each folded child in a direct `subagent` call becomes a task stub. The task text of a `subagent_resume` call becomes a task stub when its resumed run is folded. Each call keeps its name, agent, title and call id. The task stub says that the harness folded the text and that the child got the full text, so the model does not read it as the task it sent. It also names where the original text is: the line of the parent's session file that holds the call id. For example `[Task text folded by the harness after run 1a2b3c4d (auth-scout) ended; the child got your full text. Original text: the line with "toolu_01" in <session file>. Outcome: done, report <path>/report-1.md]`.
+- A codemode script folds only as a whole, and only when it launches and nothing else: Pi's complete record of its nested calls holds only `subagent` calls that succeeded (a script of an old session that also called `subagent_wait` stays unchanged), and every run that it started is folded. Its whole code then becomes stub lines that name those runs, after a head line that says the harness folded the original script and names the line of the session file that holds the call id. Every other script stays unchanged. The settle that folds a script records it in its fold entry, so the decision stays fixed for that script.
 - A `subagent_result` message becomes a stub when all its runs are folded.
 - A launch reply that waited becomes a stub when every child in it delivered a finished report and is folded. A sync child waits, and so does every child of a batch barrier (see "Mixed sync and async batches"). The reply keeps its head lines: one line per child, then the line that says the call waited. The reports after the head become one stub per child. A `subagent_resume` reply that waited folds in the same way.
-- A `subagent_wait` reply that joined runs becomes one stub per run. The wait must be complete: no run is pending or missing.
+- In an old session, a `subagent_wait` reply that joined runs (the fork had that tool until 2026-11-24) becomes one stub per run. The wait must be complete: no run is pending or missing.
 - A codemode script that launches or resumes a run and waits for it inside the script makes the run count as committed. For each nested call that returns a finished result, the extension writes a `subagent_context_fold_nested` entry with the run ids only, never the answer. The run counts as committed only when the script's own result is committed without error and Pi's final record of the script's nested calls marks that call as ok. A nested call that another extension turned into an error counts as no use, also when the script caught the error. The settle reads the stub facts from the run's record in the session's results folder. A run whose record the session cannot read stays full, for example in a session forked before the settle, because a fork has a new session id. A launch-only script can then fold its code by the rule above. The script result never folds, because it is script output.
 
-A later reply of a run that is already folded stays full in its turn. Examples are the stub's own lookup and a lookup copy in a launch reply. The next settle at task end after a completed request saw that reply folds the run again with the same stub facts, and from then on that reply is a stub too. Earlier stubs keep their text, so each lookup breaks the prompt cache once.
+A later reply of a run that is already folded stays full in its turn. An example is a lookup copy in a launch reply. The next settle at task end after a completed request saw that reply folds the run again with the same stub facts, and from then on that reply is a stub too. Earlier stubs keep their text, so each lookup breaks the prompt cache once.
 
-A result stub names the run id, the name, the outcome, the report path and the lookup, for example `[Folded subagent run 1a2b3c4d (auth-scout): done, report <path>/report-1.md. Full result: subagent_wait({ runIds: ["1a2b3c4d"] })]`. To get the result again, call `subagent_wait({ runIds })` or read the report path. Neither holds the original brief: it is only in the parent's session file, which the task stub names.
+A result stub names the run id, the name, the outcome and the report path, for example `[Folded subagent run 1a2b3c4d (auth-scout): done, report <path>/report-1.md]`. To get the result again, read the report path. It does not hold the original brief: it is only in the parent's session file, which the task stub names.
 
 A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker).
 
 A reply also stays full in these cases:
 
-- The reply is an error, such as a launch failure or a wait that you stopped with `Esc`.
-- A wait timed out, left a run pending or missing, found nothing to wait for, or listed `recent` runs.
+- The reply is an error, such as a launch failure or a launch wait that you stopped with `Esc`.
+- In an old session, a `subagent_wait` reply timed out, left a run pending or missing, found nothing to wait for, or listed `recent` runs.
 - A launch reply has a child that did not deliver a finished report, such as a started child in a partly waited batch, or its head holds another line, such as a warning or a wait error.
 - A resume started its run and did not wait for it.
 - The reply content is no longer the text that the tool built: more than one block, an image, or text that another extension changed. The tool stores a digest of its text in `details.replyDigest`, and the reply folds only while the text matches it.
@@ -634,20 +634,11 @@ Folding runs only for the Anthropic messages API (`anthropic-messages`) and the 
 Two known limits:
 
 - A completed request counts as proof that the model saw a result. If another extension's `context` hook removed the result from that request, the run can still fold.
-- After a parent `/fork`, the new session has its own session id. The stub's `subagent_wait` can then answer `No result record`, but the report path in the stub still works.
+- After a parent `/fork`, the new session has its own session id; the report path in a stub still works.
 
-### Wait, look up, and list runs with `subagent_wait`
+### No wait tool
 
-| Parameter | Default | Meaning |
-| --- | --- | --- |
-| `runIds` | every run of this session that is running or queued | Run ids or names to wait for |
-| `mode` | `all` | `all` returns when every run ended; `any` returns when one ended |
-| `timeout` | none | Time limit in seconds. Pending runs then report by message |
-| `recent` | `false` | `true` returns at once one line per ended run of this session: the last 20, newest first. `runIds`, `mode`, and `timeout` are ignored |
-
-The wait returns when the mode is met or the time limit passes, and at once when there is nothing to wait for. The reply has the rendered results, the pending run ids, and the run ids it did not find. Two waits on one run both get its result. `Esc` stops the wait; its runs keep running and report by message.
-
-A wait on a run whose result was already delivered is a lookup: it returns the same rendering at once from `record.json`. A lookup changes no state. The recent list holds the run id, name, outcome, and end time of each run, never full results; find an older run by its run id. A run id that is neither running nor recorded gets the answer `No result record for "<id>".`, with the session file from the launch metadata when this process knows it.
+The fork had a `subagent_wait` tool from 2026-11-18 to 2026-11-24. The owner removed it, as upstream did on 2026-05-10 (6240c43): while the parent waited, the owner could not talk to it. After an async launch the parent turn ends (see below), and each result arrives as a `subagent_result` message that starts a new turn. A result message names the run id and the report file. Old sessions that hold `subagent_wait` calls still load: Pi shows them as calls of a tool that is not there, and their replies fold as before.
 
 #### Mixed sync and async batches
 
@@ -661,7 +652,7 @@ subagent(sync), subagent(async), subagent(async) → all launch
 → returns all three completed results
 ```
 
-Pure async batches stay detached: the parent receives the launch reply, and each result arrives later as a message or in a `subagent_wait` reply.
+Pure async batches stay detached: the parent receives the launch reply, and each result arrives later as a message.
 
 After a pure async launch, the parent should get out of the way unless it has separate work. If the parent keeps solving the delegated task, you paid for two agents to race each other.
 
@@ -677,7 +668,7 @@ That only removes the runtime stop. The parent still owns only work it did not d
 
 ## Workflow scripts
 
-A workflow script is one `codemode` call that launches a batch, waits for it, and returns a short digest. Only the digest reaches the parent model, so the reports of many children cost the parent a few hundred tokens instead of their full text. The extension ships no workflow runner and no agent definitions: copy the recipes below and change the inputs.
+A workflow script is one `codemode` call that launches a batch and returns. It does not wait: the extension has no wait tool (owner, 2026-11-24; upstream removed `subagent_wait` on 2026-05-10). Each run that ends reaches the parent as a `subagent_result` message that starts a parent turn; results that are ready together arrive as one message. Each result carries the capped summary and names its report file. The extension ships no workflow runner and no agent definitions: copy the recipes below and change the inputs. For one digest of many results, launch a [coordinator child](#recipe-a-coordinator-child): its own launches wait, so the parent gets one result.
 
 To give a parent codemode, start Pi with the built-in codemode extension:
 
@@ -685,141 +676,49 @@ To give a parent codemode, start Pi with the built-in codemode extension:
 pi -e builtin:codemode --tools +codemode
 ```
 
-In a script, `tools.subagent` and `tools.subagent_wait` resolve to objects, not text. `tools.subagent` gives `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child also has its result `record`. `tools.subagent_wait` gives `{ status, results, pending, missing }`. Each entry of `results` is an ended run and has the run's `runId`, its launch `name` and its `record`, but no rendered text. `record: null` means that no record is available to this wait. The script then has no outcome, no reason and no report path, and the entry does not prove that the run published nothing. An entry shows that the parent stopped watching the run, not always that the child process stopped. After a time-limit kill that the system could not confirm, the record can say `timed_out` and resumable, and only the direct reply text warns. Check and close the pane before you start replacement work. With `runIds`, the entries come in the order of those ids, and without `runIds` the running runs come in launch order, then the ended runs not yet delivered. Join them to the launch children by `runId`. Each `missing` entry has the requested `runId` and an `error`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started.
+In a script, `tools.subagent` resolves to an object, not text: `{ status: "launched" | "launch_failed", children, failed? }`. Each child has a `runId` and a `state` of `started` or `ended`. An `ended` child (a launch that waited by the rules of [Launch children](#launch-children)) also has its result `record`. A launch that the spawn width refuses starts nothing and returns an error result, so the call rejects and the script fails. A launch error before the first child starts, such as an unknown agent, rejects the call, and the script fails with nothing started. A launch inside a script does not end the parent's turn (codemode passes no turn end on); the results still arrive as messages.
 
-### Recipe: run a batch in one script
+### Recipe: launch a batch in one script
 
-The script launches the batch, prints the run ids, and waits with a time limit. For each run it checks three fields of the record:
-
-- `outcome`: `done`, `partial`, `blocked`, `failed`, `timed_out`, or `cancelled`.
-- `typed`: `false` when the run ended without a valid completion call. A valid call is `caller_ping`, or in an older session a `subagent_done` with an `outcome` and a `summary`. An untyped result has no data, and its report is the last text of the child, which can be empty. Its `artifacts` list the files the child wrote with `write` and `edit` in this run. A `caller_ping` result is typed and `blocked`. The record's `endedBy` tells a person's close (`operator`) from the child's own end (`child`).
-- `dataError`: only in records of older sessions, whose child's `data` did not match the `schema` of its launch. The record then has no data.
-
-The script returns about 1,500 tokens or less: one entry per run with the run id, the outcome, a cut summary, the report file path, and the data or the reason for no data. A data value longer than 300 characters is left out whole, and the entry names the `subagent_wait` call that returns it. The script measures the digest. If the digest is too long, it leaves out summaries and data, and then everything except the run id, the outcome, and the check. A `note` field then says so. On the time limit the script returns the pending run ids and says that their work must not be redone.
+The script launches the batch and returns one entry per child: run id, name and state. It says that each result arrives as a message and that the work of these runs must not be redone. When a later child fails to launch, it names that child; the children before it started and report by message.
 
 Both recipes launch an agent named `worker`. A new installation has no such agent. Write a `worker` agent, or put the name of one of your agents in `BATCH` and in the `spawning` list of the coordinator.
 
 <!-- recipe: workflow-script -->
 ```js
-// @options: {"timeout_ms": 1800000, "max_output_tokens": 2000}
+// @options: {"timeout_ms": 120000, "max_output_tokens": 2000}
 // Inputs. Write fixed values here: a rerun repeats only what the script does not read from the clock or Math.random().
 const BATCH = [
 	{ agent: "worker", name: "auth-audit", title: "Audit the auth module", task: "Audit src/auth. Write your report to a file." },
 	{ agent: "worker", name: "billing-audit", title: "Audit the billing module", task: "Audit src/billing. Write your report to a file." },
 	{ agent: "worker", name: "search-audit", title: "Audit the search module", task: "Audit src/search. Write your report to a file." },
 ];
-const WAIT_SECONDS = 1500;
-// The digest stays near 1,500 tokens (6,000 characters). Codemode cuts output above max_output_tokens (8,000 characters).
-const DIGEST_CHARS = 6000;
-const SUMMARY_CHARS = 200;
-// A longer data value is left out whole, never cut: the entry names the lookup that returns it.
-const DATA_CHARS = 300;
 
 const launch = await tools.subagent({ children: BATCH });
-// The first output: if the script fails later, its partial output still names every run.
-text(`Run ids: ${launch.children.map((child) => child.runId).join(", ")}`);
-
-const lookUp = (id) => `subagent_wait({ runIds: ["${id}"] })`;
-
-function entry(id, record) {
-	if (!record) return { id, outcome: "unknown", check: "no result record" };
-	const run = {
-		id,
-		name: record.name,
-		outcome: record.outcome,
-		summary: record.summary.length > SUMMARY_CHARS ? `${record.summary.slice(0, SUMMARY_CHARS)} [cut]` : record.summary,
-		report: record.report.saved ? record.report.path : `not saved: ${record.report.error}`,
-	};
-	// An untyped done run is an ordinary success; a data error exists only in records of older sessions.
-	if (record.dataError) run.check = `data error: ${record.dataError.slice(0, SUMMARY_CHARS)}`;
-	else if (record.data !== undefined) {
-		const size = JSON.stringify(record.data).length;
-		if (size <= DATA_CHARS) run.data = record.data;
-		else run.dataOmitted = `${size} characters; read it with ${lookUp(id)}`;
-	}
-	return run;
-}
-
-const runs = launch.children.filter((child) => child.state === "ended").map((child) => entry(child.runId, child.record));
-const started = launch.children.filter((child) => child.state === "started").map((child) => child.runId);
-let pending = [];
-let missing = [];
-if (started.length > 0) {
-	const wait = await tools.subagent_wait({ runIds: started, timeout: WAIT_SECONDS });
-	runs.push(...wait.results.map((result) => entry(result.runId, result.record)));
-	pending = wait.pending;
-	missing = wait.missing.map((item) => ({ id: item.runId, error: item.error.slice(0, SUMMARY_CHARS) }));
-}
-
-const digest = {
-	ok: launch.status === "launched" && pending.length === 0 && missing.length === 0 && runs.every((run) => run.outcome === "done" && !run.check),
-};
+const runs = launch.children.map((child) => ({
+	id: child.runId,
+	name: child.name,
+	state: child.state,
+	...(child.record ? { outcome: child.record.outcome, report: child.record.report.saved ? child.record.report.path : undefined } : {}),
+}));
+const reply = { runs, note: "Each result arrives as a message when its run ends. Do not redo the work of these runs." };
 if (launch.status === "launch_failed")
-	digest.launchFailed = {
+	reply.launchFailed = {
 		...launch.failed,
-		error: launch.failed.error.slice(0, SUMMARY_CHARS),
-		note: "The children before it started and keep running. Launch only this child and the ones after it.",
+		error: launch.failed.error.slice(0, 200),
+		note: "The children before it started and report by message. Launch only this child and the ones after it.",
 	};
-if (pending.length > 0)
-	digest.pending = { ids: pending, note: "These runs still work and report by message. Do not redo their work. Wait for them with subagent_wait({ runIds: ids })." };
-if (missing.length > 0) digest.missing = missing;
-
-// Measure the digest. If it is too long, leave out summaries and data, then everything but id, outcome and check.
-const shorter = [
-	(run) => run,
-	({ summary, data, dataOmitted, ...run }) => run,
-	({ id, outcome, check }) => (check ? { id, outcome, check: check.slice(0, 60) } : { id, outcome }),
-];
-for (const [level, shape] of shorter.entries()) {
-	const serialized = JSON.stringify({
-		...digest,
-		runs: runs.map(shape),
-		...(level > 0 ? { note: "Left out to fit the digest: read a whole result with subagent_wait({ runIds: [id] })." } : {}),
-	});
-	if (serialized.length <= DIGEST_CHARS) return serialized;
-}
-return JSON.stringify({ ok: digest.ok, pending, runIds: runs.map((run) => run.id), note: "Too many runs for a digest: read each result with subagent_wait({ runIds: [id] })." });
+return JSON.stringify(reply);
 ```
 
-### Recover after a failed script
+### After a failed script
 
-A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Recover with this script instead. It launches nothing.
+A failed script keeps its partial output, and the children that it launched keep running. Tool calls are real: a rerun of the script launches the whole batch again. Do not rerun it. Each child that started reports by message when it ends, also after the script failed. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry names it or a later child. A result message names the run id and the report file; the record of a run is `record.json` under `results/<run id>/` in the session's artifact folder, and its `launch.json` names the child's session file.
 
-1. Copy the run ids from the `Run ids:` line of the partial output into `RUN_IDS`. If the output has no run ids, leave the list empty.
-2. Run the script. With run ids, it returns each ended run and waits for the runs that still work. Without run ids, it waits for every run of this session that is still running or queued, and then lists the last 20 ended runs of this session, newest first. Read an older run by its run id with `subagent_wait({ runIds: [id] })`.
-3. Launch a child of the batch again only when you know it never started: its launch was refused, or the `launchFailed` entry of the failed script names it or a later child. A missing entry in the result does not prove that a child never started: the recent list holds only the last 20 ended runs, and a verified run is never in it. Otherwise look for its `record.json` under `results/` in the session's artifact folder, or stop and decide.
+### Limits of a script
 
-<!-- recipe: recover -->
-```js
-// @options: {"timeout_ms": 900000, "max_output_tokens": 2000}
-// The run ids from the "Run ids:" line of the failed script. Leave the list empty if the output is lost.
-const RUN_IDS = [];
-const WAIT_SECONDS = 600;
-const brief = (result) => ({
-	id: result.runId,
-	name: result.name,
-	outcome: result.record?.outcome ?? "unknown",
-	report: result.record?.report.saved ? result.record.report.path : undefined,
-});
-if (RUN_IDS.length > 0) {
-	const wait = await tools.subagent_wait({ runIds: RUN_IDS, timeout: WAIT_SECONDS });
-	return { runs: wait.results.map(brief), pending: wait.pending, missing: wait.missing };
-}
-const running = await tools.subagent_wait({ timeout: WAIT_SECONDS });
-const recent = await tools.subagent_wait({ recent: true });
-return { runs: running.results.map(brief), pending: running.pending, recent: recent.recent };
-```
-
-A result can arrive twice: once in a wait reply and once by message, for example after an interrupted wait. A second delivery with the same run id is a copy, also when its text differs: an adopted verified winner can lack the launch warnings and the verifier detail of the first rendering. Only a verified retry delivers a different result under the same run id: a newer generation replaces the earlier one, and its report file path differs.
-
-### Limits of a waiting script
-
-- At most two codemode workers are alive in one Pi process by default, across all its sessions. `PI_CODEMODE_MAX_WORKERS` changes the limit. A waiting script holds one worker for the whole wait.
-- A third script waits for a free worker in arrival order. If no worker is free within 60 seconds, the script fails without running: `No codemode worker became free within 60 seconds.` A script whose `timeout_ms` is 60,000 or less fails at its deadline instead: `Script timed out: Execution timed out after <timeout_ms> ms while waiting for a free codemode worker`.
-- A cancelled worker keeps its slot until the worker exits.
-- A waiting script must not depend on another script. Two scripts that wait for each other hold both workers.
-- A script cannot be resumed from the middle. After a failure, recover as described above.
-- A steer is not an interrupt. A message that you type while a script waits stays in the queue until the script ends. To stop the script, press `Esc`. `Esc` stops the script and its `subagent_wait`, not the children. The children keep running and report by message.
+- At most two codemode workers are alive in one Pi process by default, across all its sessions. `PI_CODEMODE_MAX_WORKERS` changes the limit. A launch-only script holds a worker only until its launches reply.
+- A script cannot be resumed from the middle.
 - Time and random values come from outside the script if a rerun should repeat them. Write them into the inputs.
 - Each child runs in its own Pi process, so the scripts of a child do not take the workers of the parent.
 
@@ -939,7 +838,7 @@ Use `caller_ping` when the child needs the parent. The child sends a message up,
 
 ## Resuming child sessions
 
-`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name, given as `runId`. The three tools take the key of the launch reply: `subagent_resume` and `subagent_kill` take `runId`, and `subagent_wait` takes `runIds`. `subagent_kill` and `subagent_wait` refuse an unknown key such as `id` or `ids`; `subagent_resume` ignores extra keys next to a valid `runId` or `sessionFile`.
+`subagent_resume` starts an existing child session again. Name it by the run id of an earlier result (`runId`) or by its session file (`sessionFile`). You can pass a follow-up task. A run whose result record names a fact that no later run changes, such as a run without a session, is refused with the reason from that record. A time-limit or context-pressure reason in an older record does not decide alone: the resume checks the session's current state. After a later resume of that session ends with a published done, partial or blocked result, the old run id resumes the session. `subagent_kill` stops a running child by its run id or its name, given as `runId`. Both tools take the key of the launch reply, `runId`. `subagent_kill` refuses an unknown key such as `id`; `subagent_resume` ignores extra keys next to a valid `runId` or `sessionFile`.
 
 Only one resume of a session runs at a time in one Pi process: a second resume of the same session is refused, also when both start together. Two Pi processes that resume one session at the same moment are not covered.
 

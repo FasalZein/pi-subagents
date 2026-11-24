@@ -33,7 +33,7 @@ import { runningSubagents } from "./state.ts";
  * When the parent settles idle with its task closed (taskOpen, owner rule 2026-11-24T09:59Z), every
  * run the model already used folds: from then on each provider
  * request carries a short stub instead of that run's launch brief and its result message. The
- * session file keeps the full text, and subagent_wait({ runIds }) returns the stored result (D16).
+ * session file keeps the full text, and the stub names the run's report file (owner 2026-11-24: no wait tool).
  *
  * The fold set is the union of the durable fold entries on the session branch (context-fold-set.ts).
  * Only agent_settled appends one, so a fold never happens mid-turn, the set is the same on every
@@ -60,7 +60,7 @@ type Rec = Record<string, unknown>;
 
 /** The stub of one folded run, for its brief and its result alike. */
 export function runStub(run: FoldedRun): string {
-	return `[Folded subagent run ${run.id} (${run.name}): ${run.outcome}, report ${run.report}. Full result: subagent_wait({ runIds: ["${run.id}"] })]`;
+	return `[Folded subagent run ${run.id} (${run.name}): ${run.outcome}, report ${run.report}]`;
 }
 
 /** The run id of each child of a direct launch, by position; undefined where none is known. */
@@ -86,7 +86,7 @@ function originalRoute(callId: string, sessionFile: string | undefined): string 
  * (review-fix regression, 2026-11-24). It names both routes: the original text and the result.
  */
 export function taskStub(run: FoldedRun, route: string): string {
-	return `[Task text folded by the harness after run ${run.id} (${run.name}) ended; the child got your full text. Original text: ${route}. Outcome: ${run.outcome}, report ${run.report}. Result: subagent_wait({ runIds: ["${run.id}"] })]`;
+	return `[Task text folded by the harness after run ${run.id} (${run.name}) ended; the child got your full text. Original text: ${route}. Outcome: ${run.outcome}, report ${run.report}]`;
 }
 
 /** A direct launch call: the children list when nonempty, else the top-level form (the launch normalizer). */
@@ -146,6 +146,8 @@ function producerText(content: unknown, details: Rec): string | undefined {
 }
 
 /**
+ * Compatibility for old sessions: the fork had a subagent_wait tool until 2026-11-24, and a stored
+ * reply of it still folds as before, so an old session's provider prefix does not change.
  * The run ids of a clean subagent_wait join reply (fold-waits S2), or undefined when the reply must
  * stay full: an error (an interrupted wait), a status other than complete (timeout, empty, recent),
  * a pending or missing run, no run, a verified run or provenance notice, content that is not the
@@ -332,7 +334,7 @@ export function registerContextFold(pi: ExtensionAPI): void {
 	pi.on("tool_result", (event, ctx) => {
 		const { toolName, parentToolCallId: callId, toolCallId: nestedId, details } = event;
 		if (!callId || event.isError) return;
-		if (toolName !== "subagent" && toolName !== "subagent_resume" && toolName !== "subagent_wait") return;
+		if (toolName !== "subagent" && toolName !== "subagent_resume") return;
 		if (isChildTranscript(ctx.sessionManager.getBranch())) return;
 		const launched = toolName === "subagent" ? launchChildIds(details) : [];
 		if (launched.length > 0 && launched.every((id) => id !== undefined)) {
