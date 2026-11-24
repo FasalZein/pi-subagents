@@ -7,10 +7,12 @@ import { test } from "node:test";
 import { scriptCoverage } from "./candidate-evidence.mjs";
 import { deliveryAccounting, launchedRuns } from "./delivery.mjs";
 import {
+	answerParser,
 	childEnded,
 	childFulfils,
 	parentToolCalls,
 	scoreAttempt,
+	terminalAnswer,
 } from "./record.mjs";
 import review from "./scenarios/review/scenario.mjs";
 import workflow from "./scenarios/review-workflow/scenario.mjs";
@@ -62,7 +64,7 @@ const children = (scenario) =>
 	}));
 
 /** The verdict path of attempt.mjs for a correct answer: delivery accounting, then scoreAttempt. */
-function verdict(events, scenario = workflow, extra = {}) {
+function verdict(events, scenario = workflow, extra = {}, answerFacts = scenario.expectedFacts) {
 	const kids = children(scenario);
 	const delivery = deliveryAccounting({
 		parentEvents: events,
@@ -73,7 +75,7 @@ function verdict(events, scenario = workflow, extra = {}) {
 		runFolders: FOLDERS,
 	});
 	const result = scoreAttempt({
-		answer: scenario.expectedFacts,
+		answer: answerFacts,
 		childRoles: scenario.expectedChildRoles,
 		parentTools: parentToolCalls(events),
 		childOutcomes: kids.map((k, i) => ({ ...k.fulfils, delivered: delivery.runs[i].delivered })),
@@ -84,10 +86,48 @@ function verdict(events, scenario = workflow, extra = {}) {
 	return { result, delivery };
 }
 
-const SCRIPTED = [...script("c1", [launchNested(NAMES), waitNested(IDS)], ALL_LINES), answer()];
+// The message flow (owner 2026-11-24, no wait tool): the script launches and returns run ids; each
+// run's result arrives as its own subagent_result message; the parent then writes the digest.
+const MESSAGES = TARGETS.map((t, i) => ({ type: "custom_message", customType: "subagent_result", content: LINE(t), details: { id: IDS[i] } }));
+const flow = (nested, messages = MESSAGES) => [...script("c1", nested, `Run ids: ${IDS.join(", ")}`), ...messages, answer()];
+const SCRIPTED = flow([launchNested(NAMES)]);
+// The scenario as it was before 2026-11-24: the script waited and returned the digest. Recorded
+// sessions of that shape still go through the join-based digest rule of delivery.mjs.
+const LEGACY = { ...workflow, parentToolAllowlist: ["codemode", "subagent", "subagent_wait"], digestOperations: [{ toolName: "codemode", covers: NAMES }] };
 
-test("[T59a P1-1] review-workflow passes only through the workflow script; a correct direct fallback fails", () => {
+test("[T59a P1-1, owner 2026-11-24] review-workflow passes through a launch script and the result messages; a correct direct fallback fails", () => {
 	assert.equal(verdict(SCRIPTED).result, "pass");
+	// The eight run ends grouped into one message (D15) also reach the parent.
+	const grouped = { type: "custom_message", customType: "subagent_result", content: ALL_LINES, details: { results: MESSAGES.map(({ content, details }) => ({ customType: "subagent_result", content, details })) } };
+	assert.equal(verdict(flow([launchNested(NAMES)], [grouped])).result, "pass");
+	// Closure review P2: a run that only pinged inside a grouped message delivered no result.
+	const pingedLast = {
+		...grouped,
+		details: {
+			results: grouped.details.results.map((member, i) =>
+				i === NAMES.length - 1 ? { ...member, customType: "subagent_ping" } : member,
+			),
+		},
+	};
+	assert.equal(verdict(flow([launchNested(NAMES)], [pingedLast])).delivery.workflowScript, false);
+	// A result message that never arrived: the gate fails, also when the answer is right.
+	const missing = verdict(flow([launchNested(NAMES)], MESSAGES.slice(0, -1)));
+	assert.equal(missing.delivery.workflowScript, false);
+	assert.equal(missing.result, "wrong-delegation");
+	// The script quotes every verdict but no message came: no delivery, no pass.
+	const quoted = [...script("c1", [launchNested(NAMES)], ALL_LINES), answer()];
+	assert.equal(verdict(quoted).delivery.undelivered, 8);
+	assert.equal(verdict(quoted).result, "wrong-delegation");
+	// A wait tool call, nested or direct, whatever its status, fails the gate.
+	assert.equal(verdict(flow([launchNested(NAMES), waitNested(IDS)])).result, "wrong-delegation");
+	assert.equal(verdict(flow([launchNested(NAMES), { ...waitNested(IDS), status: "error" }])).result, "wrong-delegation");
+	const directWait = [...SCRIPTED.slice(0, -1), assistant("toolUse", "", [call("w1", "subagent_wait", { runIds: IDS })]), answer()];
+	assert.equal(verdict(directWait).delivery.workflowScript, false);
+	// The digest must name each run under its own target.
+	const wrongDigest = [...SCRIPTED.slice(0, -1), answer(ALL_LINES.replace(LINE(TARGETS[0]), `${TARGETS[0]}: approve-0000`))];
+	const parsed = terminalAnswer(wrongDigest, answerParser(workflow)).answer;
+	assert.equal(verdict(wrongDigest, workflow, {}, parsed).result, "wrong-answer");
+	assert.equal(verdict(SCRIPTED, workflow, {}, terminalAnswer(SCRIPTED, answerParser(workflow)).answer).result, "pass");
 	// The same work launched directly: eight result messages by their own run ids, a correct answer.
 	const direct = [
 		assistant("toolUse", "", [call("d1", "subagent", launchArgs(NAMES))]),
@@ -102,12 +142,9 @@ test("[T59a P1-1] review-workflow passes only through the workflow script; a cor
 	assert.equal(fallback.result, "wrong-delegation");
 	// The baseline arm accepts the same direct transcript.
 	assert.equal(verdict(direct, { ...review, release: { candidate: true } }).result, "pass");
-	// A script that launches but never joins the batch is no workflow either.
-	const unjoined = [...script("c1", [launchNested(NAMES)], ALL_LINES), answer()];
-	assert.equal(verdict(unjoined).result, "wrong-delegation");
 });
 
-test("[T59a P1-3] a digest counts only for runs its own script joined", () => {
+test("[T59a P1-3] recorded sessions of the waiting scenario: a digest counts only for runs its own script joined", () => {
 	const lastId = IDS.at(-1);
 	const firstSeven = TARGETS.slice(0, -1).map(LINE).join("\n");
 	// Script 1 joins seven runs; script 2 prints the eighth line without a wait.
@@ -116,7 +153,7 @@ test("[T59a P1-3] a digest counts only for runs its own script joined", () => {
 		...script("c2", [], LINE(TARGETS.at(-1))),
 		answer(),
 	];
-	const q = verdict(quoted);
+	const q = verdict(quoted, LEGACY);
 	assert.equal(q.delivery.runs.at(-1).runId, lastId);
 	assert.deepEqual([q.delivery.runs.at(-1).handover, q.delivery.runs.at(-1).delivered], ["undelivered", false]);
 	assert.equal(q.result, "wrong-delegation");
@@ -126,13 +163,13 @@ test("[T59a P1-3] a digest counts only for runs its own script joined", () => {
 		...script("c2", [waitNested([IDS[0]])], LINE(TARGETS.at(-1))),
 		answer(),
 	];
-	assert.equal(verdict(wrongWait).delivery.runs.at(-1).delivered, false);
+	assert.equal(verdict(wrongWait, LEGACY).delivery.runs.at(-1).delivered, false);
 	// A wait with mode any joins no run for the digest.
 	const anyWait = [...script("c1", [launchNested(NAMES), waitNested(IDS, { mode: "any" })], ALL_LINES), answer()];
-	assert.equal(verdict(anyWait).result, "wrong-delegation");
+	assert.equal(verdict(anyWait, LEGACY).result, "wrong-delegation");
 	// A wait by launch names (the wait tool takes ids or names) joins those runs.
 	const byName = [...script("c1", [launchNested(NAMES), waitNested(NAMES)], ALL_LINES), answer()];
-	assert.equal(verdict(byName).result, "pass");
+	assert.deepEqual(verdict(byName, LEGACY).delivery.runs.map((r) => r.handover), NAMES.map(() => "digest"));
 });
 
 test("[T59a P1-4] a successful read of the run's report locator carries its keyed line; a fixture read is duplicate work", () => {
@@ -226,7 +263,7 @@ test("[T72 review P1] a current autonomous caller_ping ends the child only with 
 });
 
 test("[T59a P1-6] a launch whose children list came as a JSON string binds the same runs", () => {
-	const raw = [...script("c1", [launchNested(NAMES, true), waitNested(IDS)], ALL_LINES), answer()];
+	const raw = flow([launchNested(NAMES, true)]);
 	assert.deepEqual(launchedRuns(raw, "subagent", FOLDERS).map((r) => r.runId), launchedRuns(SCRIPTED, "subagent", FOLDERS).map((r) => r.runId));
 	assert.equal(launchedRuns(raw, "subagent", FOLDERS).length, 8);
 	assert.equal(verdict(raw).result, "pass");
@@ -235,20 +272,17 @@ test("[T59a P1-6] a launch whose children list came as a JSON string binds the s
 // T78 fix round 1 (review P1). D05: the candidate parses only a children string. Pi's validation wraps an
 // ids string as one id (validateToolArguments on Type.Array(Type.String()) gives ["[\"a\",\"b\"]"]), so a
 // wait with stringified ids joins no run, and the scorer must not credit one.
-test("[T78] a wait whose ids came as a JSON string joins no run; an absent ids list joins the script's launches", () => {
-	const stringIds = [...script("c1", [launchNested(NAMES), waitNested(JSON.stringify(IDS))], ALL_LINES), answer()];
-	const { result, delivery } = verdict(stringIds);
-	assert.equal(delivery.workflowScript, false, "no join happened");
-	assert.equal(result, "wrong-delegation");
-	const noIds = [...script("c1", [launchNested(NAMES), { name: "subagent_wait", arguments: {} }], ALL_LINES), answer()];
-	assert.equal(verdict(noIds).result, "pass");
+test("[T78] a recorded wait whose ids came as a JSON string joins no run; an absent ids list joins the script's launches", () => {
+	const joined = (nested) => [...[...scriptCoverage([...script("c1", nested, ALL_LINES), answer()], FOLDERS).values()][0].joined];
+	assert.deepEqual(joined([launchNested(NAMES), waitNested(JSON.stringify(IDS))]), [], "no join happened");
+	assert.deepEqual(joined([launchNested(NAMES), { name: "subagent_wait", arguments: {} }]).sort(), [...IDS].sort());
 });
 
 // T78 (D05): cf6dbf4's top-level single form starts one child, also with an empty children list.
 const singleNested = (name, extra = {}) => ({ name: "subagent", arguments: { ...launchArgs([name]).children[0], ...extra } });
 test("[T78] single-form launches, and an empty children list with top-level fields, bind their runs", () => {
 	for (const extra of [{}, { children: [] }, { children: "[]" }]) {
-		const events = [...script("c1", [...NAMES.map((name) => singleNested(name, extra)), waitNested(IDS)], ALL_LINES), answer()];
+		const events = flow(NAMES.map((name) => singleNested(name, extra)));
 		assert.equal(launchedRuns(events, "subagent", FOLDERS).length, 8, JSON.stringify(extra));
 		assert.equal(verdict(events).result, "pass", JSON.stringify(extra));
 	}
@@ -258,7 +292,7 @@ test("[T59a P1-7] a repeated batch on the candidate is a counted failure", () =>
 	assert.equal(verdict(SCRIPTED, workflow, { repeatedLaunch: true }).result, "wrong-delegation");
 	// Two scripts that launch the same names: no name binds to one run.
 	const folders = [...FOLDERS, ...NAMES.map((name, i) => ({ runId: `b${i}000000`, name, report: null }))];
-	const twice = [...SCRIPTED.slice(0, 2), ...script("c2", [launchNested(NAMES), waitNested(NAMES)], ALL_LINES), answer()];
+	const twice = [...SCRIPTED.slice(0, 2), ...script("c2", [launchNested(NAMES)], ALL_LINES), answer()];
 	const runs = launchedRuns(twice, "subagent", folders);
 	assert.equal(runs.length, 16);
 	assert.equal(new Set(runs.map((r) => r.name)).size, 8);
@@ -266,7 +300,8 @@ test("[T59a P1-7] a repeated batch on the candidate is a counted failure", () =>
 
 test("[T59a P1-8] a nested fixture read is duplicate work whatever its status, like a direct read", () => {
 	const nestedRead = (status) => [
-		...script("c1", [launchNested(NAMES), waitNested(IDS), { name: "read", status, arguments: { path: "review/auth.md", offset: 999 } }], ALL_LINES),
+		...script("c1", [launchNested(NAMES), { name: "read", status, arguments: { path: "review/auth.md", offset: 999 } }], ALL_LINES),
+		...MESSAGES,
 		answer(),
 	];
 	for (const status of ["ok", "error"]) {
@@ -300,25 +335,23 @@ test("[T59a] a subagent_wait reply is one carrier per run it lists; a lookup aft
 	assert.deepEqual([lookedUp.transfers, lookedUp.extraCopies, lookedUp.undelivered], [3, 1, 0]);
 });
 
-test("[T59a] a digest is no transfer; a result message after it is the run's one transfer, no extra copy", () => {
-	const events = [...SCRIPTED.slice(0, 2), { type: "custom_message", customType: "subagent_result", content: LINE(TARGETS[0]), details: { id: IDS[0] } }, answer()];
-	const { delivery } = verdict(events);
+test("[T59a] recorded waiting scenario: a digest is no transfer; a result message after it is the run's one transfer, no extra copy", () => {
+	const waited = script("c1", [launchNested(NAMES), waitNested(IDS)], ALL_LINES);
+	const events = [...waited, MESSAGES[0], answer()];
+	const { delivery } = verdict(events, LEGACY);
 	assert.deepEqual([delivery.runs[0].handover, delivery.runs[0].transfers], ["delivered", 1]);
 	assert.deepEqual([delivery.runs[1].handover, delivery.runs[1].transfers], ["digest", 0]);
 	assert.deepEqual([delivery.transfers, delivery.extraCopies, delivery.digests, delivery.undelivered], [1, 0, 7, 0]);
 });
 
-// T88 fix round 1 (review P1): the wait tool takes runIds (the launch reply key). Differential: the runs
-// the real wait tool targets (its own schema through Pi's validation, then its id-or-name rule) against
-// the runs the scorer credits as joined. Older recorded calls that used ids keep their coverage.
-test("[T88] a wait by runIds joins exactly the runs the wait tool targets; recorded ids calls still score", async () => {
-	const { validateToolArguments } = await import("@earendil-works/pi-ai");
-	const { registerSubagentWaitTool } = await import("../../src/tools/wait-tool.ts");
-	let waitTool;
-	registerSubagentWaitTool({ registerTool: (tool) => (waitTool = tool) }, () => true, { mayLaunch: () => true });
+// T88 fix round 1 (review P1): the wait tool took runIds (the launch reply key). The tool was removed on
+// 2026-11-24 (owner); recorded sessions still hold its calls. Differential: the runs the wait tool
+// targeted (its rule, frozen from src/tools/wait-tool.ts at c540fcb: mode any returns none here, no
+// runIds means every run, else id or name) against the runs the scorer credits as joined. Older
+// recorded calls that used ids keep their coverage.
+test("[T88] a recorded wait by runIds joins exactly the runs the wait tool targeted; recorded ids calls still score", () => {
 	const launched = new Set(IDS);
-	const targeted = (args) => {
-		const valid = validateToolArguments(waitTool, { type: "toolCall", id: "w", name: "subagent_wait", arguments: args });
+	const targeted = (valid) => {
 		if (valid.mode === "any") return new Set();
 		if (valid.runIds === undefined) return launched;
 		return new Set(FOLDERS.filter((f) => valid.runIds.includes(f.runId) || valid.runIds.includes(f.name)).map((f) => f.runId));
@@ -332,6 +365,4 @@ test("[T88] a wait by runIds joins exactly the runs the wait tool targets; recor
 	// A call from before T88 (recorded transcripts) used ids; the scorer keeps reading it.
 	const recorded = [...script("c1", [launchNested(NAMES), waitRecordedIds([IDS[0]])], ALL_LINES), answer()];
 	assert.deepEqual([...[...scriptCoverage(recorded, FOLDERS).values()][0].joined], [IDS[0]]);
-	// The current tool refuses that key, so a new transcript with it records a failed call.
-	assert.throws(() => targeted({ ids: [IDS[0]] }));
 });

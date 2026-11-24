@@ -209,6 +209,11 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		assert.deepEqual(three.launched, ["scout-one", "scout-two", "scout-three"]);
 	});
 
+	// Owner decision 2026-11-24: each child line is followed by its report-folder line. These fake runs
+	// reserve no run folder, so the line says that there is none (launch-report-folder.test.ts covers a real one).
+	const NO_FOLDER =
+		"  report folder: none (the results folder failed; the result is kept only in this session's memory)";
+
 	it("replies for two children with two child lines, one batch line and each resolved model ref", async () => {
 		// Pin a fake tmux: with no multiplexer the pane child would fall back to headless.
 		process.env.PI_SUBAGENT_MUX = "tmux";
@@ -216,10 +221,12 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		const tool = fakeLaunchTool({ viewer: { mode: "interactive" }, scout: { mode: "background" } });
 		const text = await tool.launch([child("viewer", "pane-viewer"), child("scout", "bg-scout")]);
 		const lines = text.split("\n");
-		assert.equal(lines.length, 3, text);
+		assert.equal(lines.length, 5, text);
 		assert.equal(lines[0], "- pane-viewer (agent viewer): run run-pane-viewer, model stub/pane-viewer, pane");
-		assert.equal(lines[1], "- bg-scout (agent scout): run run-bg-scout, model stub/bg-scout, headless");
-		assert.match(lines[2], /report arrives later/);
+		assert.equal(lines[1], NO_FOLDER);
+		assert.equal(lines[2], "- bg-scout (agent scout): run run-bg-scout, model stub/bg-scout, headless");
+		assert.equal(lines[3], NO_FOLDER);
+		assert.match(lines[4], /report arrives later/);
 	});
 
 	it("gives a forced wait for two async children the child lines, one batch line and both reports", async () => {
@@ -228,10 +235,12 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		const text = result.content[0].text as string;
 		const lines = text.split("\n");
 		assert.equal(lines[0], "- scout-one (agent scout): run run-scout-one, model stub/scout-one, headless", text);
-		assert.equal(lines[1], "- scout-two (agent scout): run run-scout-two, model stub/scout-two, headless", text);
-		assert.match(lines[2], /reports? follows? below/i, text);
+		assert.equal(lines[1], NO_FOLDER, text);
+		assert.equal(lines[2], "- scout-two (agent scout): run run-scout-two, model stub/scout-two, headless", text);
+		assert.equal(lines[3], NO_FOLDER, text);
+		assert.match(lines[4], /reports? follows? below/i, text);
 		assert.doesNotMatch(text, /arrives later/);
-		assert.ok(text.indexOf("Report of scout-one.") > lines[2].length, text);
+		assert.ok(text.indexOf("Report of scout-one.") > lines.slice(0, 5).join("\n").length, text);
 		assert.ok(text.includes("Report of scout-two."), text);
 		// The TUI shows the reports of a batch only when its status says they were delivered.
 		assert.equal(result.details.status, "batch");
@@ -246,8 +255,10 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		const text = result.content[0].text as string;
 		const lines = text.split("\n");
 		assert.equal(lines[0], "- bg-scout (agent scout): run run-bg-scout, model stub/bg-scout, headless", text);
-		assert.equal(lines[1], "- fg-worker (agent worker): run run-fg-worker, model stub/fg-worker, headless", text);
-		assert.match(lines[2], /reports? follows? below/i, text);
+		assert.equal(lines[1], NO_FOLDER, text);
+		assert.equal(lines[2], "- fg-worker (agent worker): run run-fg-worker, model stub/fg-worker, headless", text);
+		assert.equal(lines[3], NO_FOLDER, text);
+		assert.match(lines[4], /reports? follows? below/i, text);
 		assert.ok(text.includes("Report of bg-scout.") && text.includes("Report of fg-worker."), text);
 		assert.equal(result.details.status, "batch");
 	});
@@ -258,7 +269,8 @@ describe("launch shape, launch reply and closest names (T18)", () => {
 		const text = result.content[0].text as string;
 		const lines = text.split("\n");
 		assert.equal(lines[0], "- fg-worker (agent worker): run run-fg-worker, model stub/fg-worker, headless", text);
-		assert.match(lines[1], /reports? follows? below/i, text);
+		assert.equal(lines[1], NO_FOLDER, text);
+		assert.match(lines[2], /reports? follows? below/i, text);
 		assert.ok(text.includes("Report of fg-worker."), text);
 		assert.equal(result.details.status, "completed");
 	});

@@ -63,7 +63,6 @@ describe("child launch plan", () => {
 			"subagent_agents",
 			"subagent_kill",
 			"subagent_resume",
-			"subagent_wait",
 		]);
 		assert.deepEqual(plan.capability.skillLaunchPlan.launchArgs, ["--no-skills"]);
 	});

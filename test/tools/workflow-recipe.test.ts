@@ -16,9 +16,7 @@ import { registerDeliveryQueue } from "../../src/runtime/delivery-queue.ts";
 import { sessionResultStore } from "../../src/runtime/result-files.ts";
 import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
-import { isRunEndHeld } from "../../src/runtime/wait-holds.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	assert,
@@ -31,11 +29,11 @@ import {
 } from "../support/index.ts";
 import { assistant, sessionHeader, toolCall, toolResult, user } from "../support/result-fixtures.ts";
 
-// T51: the workflow script and recovery recipes of the README, run as written in a real Pi parent
-// with a faux provider and codemode. Only the inputs change (batch, time limits, run ids), each by
-// one exact substitution, so a README edit that drops a substituted line fails this test. Children are fakes that end the way
-// their watcher does (a published record); launch, waits, delivery and the result store are
-// production code.
+// T51, amended by the owner 2026-11-24 (no subagent_wait): the workflow script recipe of the README,
+// run as written in a real Pi parent with a faux provider and codemode. The script launches and
+// returns; every run that ends reaches the parent as a subagent_result message that starts a turn.
+// Children are fakes that end the way their watcher does (a published record); launch, delivery
+// and the result store are production code.
 
 type ToolCall = ReturnType<typeof fauxToolCall>;
 
@@ -50,15 +48,10 @@ function readRecipe(name: string): string {
 	return match[1];
 }
 
-function replaceOnce(source: string, from: string, to: string): string {
-	assert.equal(source.split(from).length - 1, 1, `the recipe has exactly one ${JSON.stringify(from)}`);
-	return source.replace(from, to);
-}
-
 type BatchEntry = { agent: string; name: string; title: string; task: string };
 
-/** The recipe with other inputs: a batch, a shorter wait, or a script deadline shorter than the wait. */
-function recipe(options: { batch?: BatchEntry[]; waitSeconds?: number; scriptTimeoutMs?: number } = {}): string {
+/** The recipe with another batch. */
+function recipe(options: { batch?: BatchEntry[] } = {}): string {
 	let source = readRecipe("workflow-script");
 	if (options.batch) {
 		const start = source.indexOf("const BATCH = [");
@@ -66,19 +59,7 @@ function recipe(options: { batch?: BatchEntry[]; waitSeconds?: number; scriptTim
 		assert.ok(start >= 0 && end > start, "the recipe has a BATCH input");
 		source = `${source.slice(0, start)}const BATCH = ${JSON.stringify(options.batch)};${source.slice(end)}`;
 	}
-	if (options.waitSeconds !== undefined)
-		source = replaceOnce(source, "const WAIT_SECONDS = 1500;", `const WAIT_SECONDS = ${options.waitSeconds};`);
-	if (options.scriptTimeoutMs !== undefined)
-		source = replaceOnce(source, '"timeout_ms": 1800000', `"timeout_ms": ${options.scriptTimeoutMs}`);
 	return source;
-}
-
-/** The recovery recipe with a 3-second wait; with run ids, the list in it is replaced by them. */
-function recovery(runIds: string[] = []): string {
-	const source = replaceOnce(readRecipe("recover"), "const WAIT_SECONDS = 600;", "const WAIT_SECONDS = 3;");
-	return runIds.length === 0
-		? source
-		: replaceOnce(source, "const RUN_IDS = [];", `const RUN_IDS = ${JSON.stringify(runIds)};`);
 }
 
 const NAMES = ["auth-audit", "billing-audit", "search-audit"];
@@ -126,7 +107,8 @@ function endChild(running: RunningSubagent, how: ChildEnd): SubagentResult {
 	writeFileSync(running.sessionFile, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 	const published = publishRunResult(running, {
 		exitCode: 0,
-		operatorClosed: false, closedByPerson: false,
+		operatorClosed: false,
+		closedByPerson: false,
 		stopped: false,
 		exitSignal,
 		contextUsage: {},
@@ -231,7 +213,6 @@ async function startParent(options: { deepCwd?: boolean } = {}): Promise<Parent>
 	const extension: ExtensionFactory = (pi) => {
 		registerDeliveryQueue(pi);
 		registerSubagentCoreTools(pi, () => true, runtime);
-		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
 	};
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: root,
@@ -307,238 +288,48 @@ function scriptCall(code: string, id = "workflow-1"): ToolCall[] {
 	return [fauxToolCall("codemode", { code }, { id })];
 }
 
-/** The digest the recipe returns: the JSON text after the Run ids line. */
-function digestOf(text: string): Record<string, unknown> {
+/** The JSON object the recipe returns. */
+function replyOf(text: string): Record<string, unknown> {
 	const start = text.indexOf("{");
 	assert.ok(start >= 0, `the script returned an object: ${text}`);
 	return JSON.parse(text.slice(start)) as Record<string, unknown>;
 }
 
-/** D25: a digest of at most about 1,500 tokens, at 4 characters per token. */
-const DIGEST_CHARS = 6000;
-
-type DigestRun = Record<string, unknown> & { id: string; name?: string };
-
-async function runBatch(parent: Parent, code: string, ends: (parent: Parent) => void, count = 3) {
-	const work = parent.run("work", scriptCall(code));
-	await until(
-		() => parent.runIds.length === count && parent.runIds.every(isRunEndHeld),
-		`the script waits for ${count} runs`,
-	);
-	ends(parent);
-	await work;
-	const [script] = parent.toolResults("codemode");
-	assert.ok(script && !script.isError, `the script completed: ${script?.text}`);
-	assert.doesNotMatch(script.text, /truncated output/, "codemode did not cut the digest");
-	const digest = digestOf(script.text);
-	const runs = digest.runs as DigestRun[] | undefined;
-	return {
-		text: script.text,
-		digest,
-		byName: Object.fromEntries<DigestRun>((runs ?? []).map((run) => [String(run.name), run])),
-	};
-}
-
-describe("T51: the README workflow script recipe in a real Pi session", () => {
-	it("check 1: the digest names outcome, data, the data error and the untyped run with report paths", async () => {
+describe("T51 (owner 2026-11-24): the README workflow script recipe in a real Pi session", () => {
+	it("the script launches and returns; every ended run reaches the parent as a result message that starts a turn", async () => {
 		const parent = await startParent();
 		try {
-			const { text, digest, byName } = await runBatch(parent, recipe(), (p) => {
-				p.end("auth-audit", { kind: "typed", data: { findings: 2 } });
-				p.end("billing-audit", { kind: "data-error", error: "DATA-ERROR: /findings must be integer" });
-				p.end("search-audit", { kind: "untyped", text: "UNTYPED REPORT OF search-audit" });
-			});
-			assert.match(text, new RegExp(`Run ids: ${parent.runIds.join(", ")}`));
-			assert.equal(digest.ok, false, "a data error makes the batch not ok");
-			assert.deepEqual(Object.keys(byName).sort(), [...NAMES].sort());
-			assert.equal(byName["auth-audit"]?.outcome, "done");
-			assert.deepEqual(byName["auth-audit"]?.data, { findings: 2 }, "a small value comes back whole");
-			assert.equal(byName["auth-audit"]?.check, undefined);
-			assert.match(String(byName["billing-audit"]?.check), /^data error: DATA-ERROR/);
-			assert.equal(byName["billing-audit"]?.data, undefined);
-			// T72: an untyped done run is an ordinary success; its report path is the result.
-			assert.equal(byName["search-audit"]?.check, undefined);
-			for (const run of Object.values(byName)) {
-				assert.equal(run.id, parent.idOf(String(run.name)));
-				assert.match(String(run.report), /\.md$/, "each entry names its report file");
-			}
-			assert.equal(parent.resultMessages(), 0, "the wait delivered every result");
-		} finally {
-			await parent.dispose();
-		}
-	});
-
-	it("T72 review (P1): an all-done untyped batch is ok; a failed or blocked run is not", async () => {
-		for (const [last, expected] of [
-			[{ kind: "untyped", text: "UNTYPED REPORT" }, true],
-			[{ kind: "typed", outcome: "blocked", summary: "Need a key." }, false],
-		] as const) {
-			const parent = await startParent();
-			try {
-				const { digest, byName } = await runBatch(parent, recipe(), (p) => {
-					p.end("auth-audit", { kind: "untyped", text: "UNTYPED REPORT OF auth-audit" });
-					p.end("billing-audit", { kind: "untyped", text: "UNTYPED REPORT OF billing-audit" });
-					p.end("search-audit", last);
-				});
-				for (const run of Object.values(byName)) assert.equal(run.check, undefined, "no run has a check");
-				assert.equal(digest.ok, expected);
-			} finally {
-				await parent.dispose();
-			}
-		}
-	});
-
-	it("fix round 1 (P1): a clean typed batch with one partial run is not ok; the all-done control is ok", async () => {
-		for (const [partial, expected] of [
-			[true, false],
-			[false, true],
-		] as const) {
-			const parent = await startParent();
-			try {
-				const { digest, byName } = await runBatch(parent, recipe(), (p) => {
-					p.end("auth-audit", { kind: "typed", data: { findings: 0 } });
-					p.end("billing-audit", { kind: "typed", data: { findings: 1 }, ...(partial ? { outcome: "partial" } : {}) });
-					p.end("search-audit", { kind: "typed", data: { findings: 0 } });
-				});
-				assert.equal(byName["billing-audit"]?.outcome, partial ? "partial" : "done");
-				for (const run of Object.values(byName)) assert.equal(run.check, undefined, "no run has a check");
-				assert.equal(digest.ok, expected, partial ? "a partial run makes the batch not ok" : "all done is ok");
-			} finally {
-				await parent.dispose();
-			}
-		}
-	});
-
-	it("fix round 1 (P1): a valid value longer than the data limit is omitted with a lookup by run id, never cut", async () => {
-		const parent = await startParent();
-		const modules = NAMES.map((name) => ({
-			name,
-			outcome: "done",
-			report: `/Users/someone/.pi/history/work/artifacts/01a1f251-fb3c-761f-9182-ba3c2a91028b/results/${name}/report-1.md`,
-		}));
-		try {
-			const { digest, byName } = await runBatch(parent, recipe(), (p) => {
-				p.end("auth-audit", { kind: "typed", data: { modules } });
-				p.end("billing-audit", { kind: "typed", data: {} });
-				p.end("search-audit", { kind: "typed", data: {} });
-			});
-			assert.ok(JSON.stringify({ modules }).length > 300, "the value is longer than 300 characters");
-			const auth = byName["auth-audit"];
-			assert.equal(auth?.data, undefined, "no part of the long value is in the digest");
-			const id = parent.idOf("auth-audit");
-			assert.ok(
-				String(auth?.dataOmitted).includes(`subagent_wait({ runIds: ["${id}"] })`),
-				"the entry names the lookup",
-			);
-			assert.equal(digest.ok, true, "an omitted value is complete in the record");
-			await parent.run("look up", [fauxToolCall("subagent_wait", { runIds: [id] }, { id: "lookup-1" })]);
-			const [lookup] = parent.toolResults("subagent_wait");
-			assert.ok(lookup, "the lookup ran");
-			const record = (lookup.details as unknown as SubagentWaitStructured).results[0]?.record;
-			assert.deepEqual(record?.data, { modules }, "the lookup returns the whole value");
-		} finally {
-			await parent.dispose();
-		}
-	});
-
-	it("fix round 1 (P1): 16 children with long summaries, values and report paths fit the digest budget whole", async () => {
-		const parent = await startParent({ deepCwd: true });
-		const batch = workers(16);
-		try {
-			const { text, digest } = await runBatch(
-				parent,
-				recipe({ batch }),
-				(p) => {
-					for (const child of batch)
-						p.end(child.name, { kind: "typed", summary: "s".repeat(1500), data: { findings: "f".repeat(280) } });
-				},
-				16,
-			);
-			assert.ok(text.length <= DIGEST_CHARS + 400, `the script output is ${text.length} characters`);
-			assert.ok(JSON.stringify(digest).length <= DIGEST_CHARS, "the digest is within about 1,500 tokens");
-			assert.equal(digest.ok, true);
-			const listed = JSON.stringify(digest);
-			for (const id of parent.runIds) assert.ok(listed.includes(id), `the digest names run ${id}`);
-			assert.match(String(digest.note), /subagent_wait/, "the digest says how to read what it left out");
-		} finally {
-			await parent.dispose();
-		}
-	});
-
-	it("check 1: on the wait time limit the digest returns the pending ids and says not to redo them", async () => {
-		const parent = await startParent();
-		try {
-			const work = parent.run("work", scriptCall(recipe({ waitSeconds: 0.5 })));
-			await until(() => parent.runIds.length === 3 && parent.runIds.every(isRunEndHeld), "the script waits");
-			parent.end("auth-audit", { kind: "typed", data: { findings: 0 } });
-			await work;
+			await parent.run("work", scriptCall(recipe()));
 			const [script] = parent.toolResults("codemode");
 			assert.ok(script && !script.isError, `the script completed: ${script?.text}`);
-			const digest = digestOf(script.text);
-			assert.equal(digest.ok, false);
-			const pending = digest.pending as { ids: string[]; note: string };
-			assert.deepEqual(pending.ids.sort(), [parent.idOf("billing-audit"), parent.idOf("search-audit")].sort());
-			assert.match(pending.note, /Do not redo their work/);
-			assert.equal(parent.runIds.length, 3);
-			parent.end("billing-audit", { kind: "typed", data: {} });
-			parent.end("search-audit", { kind: "typed", data: {} });
-			await until(() => parent.resultMessages() === 2, "the pending runs report by message");
-			await parent.session.waitForIdle();
-		} finally {
-			await parent.dispose();
-		}
-	});
-});
-
-describe("T51: the README recovery recipe after a forced script failure", () => {
-	async function failScript(parent: Parent): Promise<void> {
-		const work = parent.run("work", scriptCall(recipe({ scriptTimeoutMs: 1500 })));
-		await until(() => parent.runIds.length === 3 && parent.runIds.every(isRunEndHeld), "the script waits");
-		await work;
-		const [script] = parent.toolResults("codemode");
-		assert.ok(script?.isError, "the script failed on its deadline");
-		assert.match(script.text, /timed out/i);
-		assert.match(script.text, new RegExp(`Run ids: ${parent.runIds.join(", ")}`), "the partial output names every run");
-	}
-
-	it("with the run ids: the recipe returns the ended runs and waits for the one that still works; nothing is launched", async () => {
-		const parent = await startParent();
-		try {
-			await failScript(parent);
+			const reply = replyOf(script.text) as { runs: { id: string; name: string; state: string }[]; note: string };
+			assert.deepEqual(
+				reply.runs.map((run) => [run.name, run.state]),
+				NAMES.map((name) => [name, "started"]),
+			);
+			assert.deepEqual(
+				reply.runs.map((run) => run.id),
+				parent.runIds,
+			);
+			assert.match(reply.note, /arrives as a message/);
+			assert.equal(parent.resultMessages(), 0, "no run ended yet");
+			const turnsBefore = parent.session.messages.filter((message) => message.role === "assistant").length;
 			parent.end("auth-audit", { kind: "typed", data: { module: "auth" } });
-			parent.end("billing-audit", { kind: "typed", data: { module: "billing" } });
-			await until(() => parent.resultMessages() >= 1, "the ended children report by message");
+			parent.end("billing-audit", { kind: "untyped", text: "billing is fine" });
+			parent.end("search-audit", { kind: "data-error", error: "data/module must be string" });
+			const delivered = () =>
+				parent.session.messages
+					.filter((message) => message.role === "custom" && message.customType === "subagent_result")
+					.map((message) => textOf((message as { content: unknown }).content))
+					.join("\n");
+			await until(() => parent.runIds.every((id) => delivered().includes(id)), "every run reports by message");
 			await parent.session.waitForIdle();
-			const recover = parent.run("recover", scriptCall(recovery([...parent.runIds]), "recover-1"));
-			const last = parent.idOf("search-audit");
-			await until(() => isRunEndHeld(last), "the recovery waits for the run that still works");
-			parent.end("search-audit", { kind: "typed", data: { module: "search" } });
-			await recover;
-			const script = parent.toolResults("codemode")[1];
-			assert.ok(script && !script.isError, `the recovery completed: ${script?.text}`);
-			const result = digestOf(script.text) as { runs: { id: string; outcome: string }[]; pending: string[] };
-			assert.deepEqual(result.runs.map((run) => run.id).sort(), [...parent.runIds].sort());
-			for (const run of result.runs) assert.equal(run.outcome, "done");
-			assert.deepEqual(result.pending, []);
-			assert.equal(parent.runIds.length, 3, "recovery launched nothing");
-		} finally {
-			await parent.dispose();
-		}
-	});
-
-	it("with the ids lost: the recipe lists the ended runs of the session; nothing is launched", async () => {
-		const parent = await startParent();
-		try {
-			await failScript(parent);
-			for (const name of NAMES) parent.end(name, { kind: "typed", data: { module: name } });
-			await until(() => parent.resultMessages() >= 1, "the children report after the failed script");
-			await parent.session.waitForIdle();
-			await parent.run("recover", scriptCall(recovery(), "recover-1"));
-			const script = parent.toolResults("codemode")[1];
-			assert.ok(script && !script.isError, `the recovery completed: ${script?.text}`);
-			const result = digestOf(script.text) as { recent: { runId: string; outcome: string }[] };
-			assert.deepEqual(result.recent.map((run) => run.runId).sort(), [...parent.runIds].sort());
-			assert.equal(parent.runIds.length, 3, "recovery launched nothing");
+			for (const name of NAMES) assert.match(delivered(), new RegExp(name), `${name} is in a result message`);
+			assert.match(delivered(), /report/i, "a result message names the report");
+			const turnsAfter = parent.session.messages.filter((message) => message.role === "assistant").length;
+			assert.ok(turnsAfter > turnsBefore, "a result message started a parent turn");
+			assert.equal(parent.toolResults("subagent_wait").length, 0);
+			assert.equal(parent.runIds.length, 3, "nothing launched again");
 		} finally {
 			await parent.dispose();
 		}

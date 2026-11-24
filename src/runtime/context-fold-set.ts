@@ -113,7 +113,8 @@ export function messageRunIds(customType: unknown, content: unknown, details: un
 }
 
 /**
- * The runs whose finished result a launch or resume reply delivered, or a subagent_wait reply holds,
+ * The runs whose finished result a launch or resume reply delivered, or a subagent_wait reply holds
+ * (compatibility: old sessions hold replies of the wait tool the fork had until 2026-11-24),
  * read from the reply's details (a direct reply in the session, a nested one in its tool_result
  * event). A started (detached) resume and an interrupted one carry no finished status: none.
  * A verified run or provenance notice is left out: it never folds.

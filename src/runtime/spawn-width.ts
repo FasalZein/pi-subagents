@@ -1,5 +1,3 @@
-import { SUBAGENT_WAIT_TOOL_NAME } from "../tools/tool-names.ts";
-
 export const MAX_SPAWN_WIDTH = 16;
 
 let configuredWidth: number | null | undefined;
@@ -19,9 +17,10 @@ export function getEffectiveSpawnWidthLimit(configured?: number | null): number 
 }
 
 export function initializeSpawnWidthForSession(env: Record<string, string | undefined> = process.env): void {
-	const raw = env.PI_SUBAGENT_AGENT?.trim() && env.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE !== undefined
-		? env.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE
-		: env.PI_SUBAGENT_SPAWN_WIDTH;
+	const raw =
+		env.PI_SUBAGENT_AGENT?.trim() && env.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE !== undefined
+			? env.PI_SUBAGENT_SPAWN_WIDTH_EFFECTIVE
+			: env.PI_SUBAGENT_SPAWN_WIDTH;
 	configuredWidth = parseConfiguredWidth(raw);
 }
 
@@ -102,7 +101,7 @@ export function releaseSpawnWidthSlotOnCompletion<T>(owner: SlotOwner, promise: 
 	return promise.finally(() => releaseSpawnWidthSlot(owner));
 }
 
-/** Run ids of the runs that hold slots now, in claim order. Each one is registered, so subagent_wait can wait for it. */
+/** Run ids of the runs that hold slots now, in claim order. Each one ends with a result message that frees its slots. */
 function getSlotHolderRunIds(): string[] {
 	return [...slotOwners.keys()].map((owner) => owner.id);
 }
@@ -136,10 +135,22 @@ export type WidthRefusedCall = "subagent" | "subagent_resume";
 /**
  * D9/T89b: the refusal of a launch or resume that the spawn width does not admit. Every step it
  * names works when a parent follows it literally: the fit-now count uses the same slot costs as
- * admission, the wait call names only runs that subagent_wait can wait for (never a launch that is
- * still starting), and one wait is never promised to admit the rest.
+ * admission, a step names only runs whose end frees slots for this parent (never a launch that is
+ * still starting), and one run end is never promised to admit the rest.
+ *
+ * launchesWait (D15, shouldForceSynchronousLaunch): every launch of this session waits for its
+ * children (pi -p, a background child, no UI, the startup prompt). Such a parent gets no result
+ * message and has no later turn, so it must never be told to end its turn: its launch returns when
+ * its children ended, and it retries then (review of 4f7000d, P1). Otherwise (owner 2026-11-24: no
+ * wait tool) a run's end frees its slots and its result arrives as a message that starts the
+ * parent's next turn, so the next step is to end this turn.
  */
-export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: readonly number[], limit: number): string {
+export function renderSpawnWidthRefusal(
+	call: WidthRefusedCall,
+	slotCosts: readonly number[],
+	limit: number,
+	{ launchesWait }: { launchesWait: boolean },
+): string {
 	const live = getLiveSlotCount();
 	const holders = getSlotHolderRunIds();
 	const starting = getStartingSlotCount();
@@ -150,7 +161,7 @@ export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: reado
 	const firstCost = slotCosts[0] ?? 0;
 	if (firstCost > limit) {
 		const subject = slotCosts.length === 1 ? `This ${call === "subagent" ? "child" : "resume"}` : "The first child";
-		return `${head} ${subject} needs ${plural(firstCost, "slot")}, more than the whole limit of ${limit}, so no wait admits it. Nothing started.`;
+		return `${head} ${subject} needs ${plural(firstCost, "slot")}, more than the whole limit of ${limit}, so it is never admitted. Nothing started.`;
 	}
 	const parts = [head, "Nothing started."];
 	const fit = fittingPrefix(slotCosts, Math.max(0, limit - live));
@@ -159,27 +170,46 @@ export function renderSpawnWidthRefusal(call: WidthRefusedCall, slotCosts: reado
 			`The first ${plural(fit.count, "child", "children")} (${plural(fit.slots, "slot")}) ${fit.count === 1 ? "fits" : "fit"} now: call subagent with only ${fit.count === 1 ? "that child" : "those children"}.`,
 		);
 	}
-	const then = fit.count > 0 ? "Then call" : "Next call:";
+	const retry =
+		call === "subagent"
+			? "call subagent again with the children that have not started, at most as many as fit then"
+			: "call subagent_resume again";
+	if (launchesWait) {
+		// Every launch here waits: the fit-now call returns when its children ended and freed their
+		// slots; a holder belongs to another call of this parent that waits for it.
+		if (fit.count > 0)
+			parts.push(
+				`Launches in this session wait: that call returns when ${fit.count === 1 ? "the child ends" : "those children end"}, which frees ${fit.count === 1 ? "its slots" : "their slots"}. Do not end your turn: when it returns, ${retry}; repeat while it is refused.`,
+			);
+		else if (holders.length > 0)
+			parts.push(
+				`Launches in this session wait: the runs ${holders.join(", ")} belong to another call of yours that waits for them. Do not end your turn: when that call returns, ${retry}; repeat while it is refused. Or free a slot with subagent_kill on one of these runs.`,
+			);
+		if (starting > 0)
+			parts.push(
+				`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet. Retry the refused call after that launch returns.`,
+			);
+		parts.push(AUTO_EXIT_PANE_NOTE);
+		return parts.join(" ");
+	}
+	const then = fit.count > 0 ? "Then" : "Next:";
 	if (holders.length > 0) {
 		parts.push(
-			`${then} ${SUBAGENT_WAIT_TOOL_NAME}({ runIds: ${JSON.stringify(holders)}, mode: "any" }); it returns when one of these runs ends and frees its slots.`,
+			`${then} end this turn (a codemode script returns); when one of the runs ${holders.join(", ")} ends it frees its slots and its result arrives as a message that starts your next turn.`,
 		);
 	} else if (fit.count > 0) {
-		parts.push(`Then call ${SUBAGENT_WAIT_TOOL_NAME} with mode "any" and the runIds of that launch reply.`);
-	}
-	if (starting > 0) {
-		const retry = holders.length > 0 || fit.count > 0 ? "Or retry" : "Retry";
 		parts.push(
-			`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet, so ${SUBAGENT_WAIT_TOOL_NAME} cannot wait for it. ${retry} the refused call after that launch replies.`,
+			"Then end this turn (a codemode script returns); when a started child ends it frees its slots and its result arrives as a message that starts your next turn. If that call instead returned the results of its children, they freed their slots: retry at once.",
 		);
 	}
-	if (holders.length > 0 || fit.count > 0) {
-		const retry =
-			call === "subagent"
-				? "call subagent again with the children that have not started, at most as many as fit then"
-				: "call subagent_resume again";
-		parts.push(`When the wait returns, ${retry}; repeat while it is refused.`);
+	if (starting > 0) {
+		const or = holders.length > 0 || fit.count > 0 ? "Or retry" : "Retry";
+		parts.push(
+			`${plural(starting, "slot")} ${starting === 1 ? "is" : "are"} held by a launch that is still starting; it has no run id yet. ${or} the refused call after that launch replies.`,
+		);
 	}
+	if (holders.length > 0 || fit.count > 0)
+		parts.push(`When that result arrives, ${retry}; repeat while it is refused.`);
 	if (holders.length > 0) parts.push("Or free a slot with subagent_kill on one of these runs.");
 	parts.push(AUTO_EXIT_PANE_NOTE);
 	return parts.join(" ");

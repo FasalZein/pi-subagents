@@ -174,10 +174,13 @@ describe("resume by run id (D8)", () => {
 						agent: "fixture-agent",
 						sessionFile,
 						where: "headless",
+						// Owner decision 2026-11-24: the resume's new run folder, where its report lands.
+						reportFolder: join(resultsDir, started.details.id),
 						state: "started",
 					},
 				],
 			});
+			assert.ok(existsSync(join(resultsDir, started.details.id)), "the run folder exists before the reply");
 			// D23 (T28 fix round 1): the direct reply has the launch facts: new run id, agent, model, headless.
 			const text = started.content[0]?.text ?? "";
 			assert.match(

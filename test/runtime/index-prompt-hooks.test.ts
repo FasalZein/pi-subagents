@@ -46,7 +46,7 @@ function writeAgent(agentsDir: string, name: string, frontmatter: string) {
 }
 
 type ToolInfoStub = { name: string; exposure?: string };
-const MANAGEMENT = ["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"];
+const MANAGEMENT = ["subagent_resume", "subagent_kill", "subagent_agents"];
 const LOADOUT: ToolInfoStub[] = [
 	{ name: "read" },
 	{ name: "bash" },
@@ -407,11 +407,11 @@ describe("agent index at prompt start", () => {
 				"direct",
 				LOADOUT,
 				["subagent", ...MANAGEMENT],
-				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
+				"More tools: subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
 			],
 			[
 				"excluded by Pi",
-				LOADOUT.filter((t) => t.name !== "subagent_agents" && t.name !== "subagent_wait"),
+				LOADOUT.filter((t) => t.name !== "subagent_agents"),
 				["subagent", ...MANAGEMENT],
 				"More tools: subagent_resume({runId, task?}), subagent_kill({runId}).",
 			],
@@ -420,40 +420,14 @@ describe("agent index at prompt start", () => {
 				"deferred",
 				[{ name: "subagent" }, ...MANAGEMENT.map((name) => ({ name, exposure: "deferred" }))],
 				["subagent"],
-				"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
+				"More tools: subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).",
 			],
 		];
 		for (const [label, all, active, line] of cases) {
 			const { handlers, ctx } = setup({ all, active });
 			const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
 			assert.ok(section.split("\n").includes(line), `${label}\n${section}`);
-			assert.equal(section.includes("subagent_wait joins"), line.includes("subagent_wait"), label);
-			resetSubagentStateForTest();
-		}
-	});
-
-	it("tells only a codemode session what subagent_wait resolves to", async () => {
-		const deferred = MANAGEMENT.map((name) => ({ name, exposure: "deferred" }));
-		const cases: Array<[string, { all: ToolInfoStub[]; active: string[] }, boolean]> = [
-			[
-				"codemode",
-				{ all: [{ name: "codemode" }, { name: "subagent" }, ...deferred], active: ["codemode", "subagent"] },
-				true,
-			],
-			[
-				"tool search",
-				{ all: [{ name: "tool_search" }, { name: "subagent" }, ...deferred], active: ["tool_search", "subagent"] },
-				false,
-			],
-			["direct", { all: LOADOUT, active: ["subagent", ...MANAGEMENT] }, false],
-		];
-		for (const [label, tools, hinted] of cases) {
-			const { handlers, ctx } = setup(tools);
-			const section = (await promptStart(handlers.get("before_agent_start") ?? [], ctx)).section ?? "";
-			const line = hinted
-				? "More tools: subagent_wait({runIds?}) (resolves to {status, results: [{runId, name, record}], pending, missing}; the answer is record?.summary), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail)."
-				: "More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).";
-			assert.ok(section.split("\n").includes(line), `${label}\n${section}`);
+			assert.ok(!section.includes("subagent_wait"), `${label}: owner 2026-11-24, no wait tool`);
 			resetSubagentStateForTest();
 		}
 	});

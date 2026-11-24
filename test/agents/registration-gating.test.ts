@@ -95,7 +95,7 @@ function createCapturingPi(loadout: readonly string[] = ["read", "bash"]) {
 	return { captured, api, registered, startSession, active };
 }
 
-const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume", "subagent_wait"];
+const MANAGEMENT_TOOLS = ["subagent_agents", "subagent_kill", "subagent_resume"];
 
 /** Load the extension with one worker agent in a fresh config root and return the bound session. */
 function loadWithWorker() {
@@ -159,23 +159,11 @@ describe("extension registration gating", () => {
 		try {
 			const { captured, api, startSession } = createCapturingPi();
 			subagentsExtension(api);
-			// D21: all four register while the extension loads, so Pi's startup
+			// D21 (owner 2026-11-24: no subagent_wait): all four register while the extension loads, so Pi's startup
 			// decides which are active; the mock throws on the active tool list until the session starts.
-			assert.deepEqual([...captured.tools].sort(), [
-				"subagent",
-				"subagent_agents",
-				"subagent_kill",
-				"subagent_resume",
-				"subagent_wait",
-			]);
+			assert.deepEqual([...captured.tools].sort(), ["subagent", "subagent_agents", "subagent_kill", "subagent_resume"]);
 			startSession(dir);
-			assert.deepEqual([...captured.tools].sort(), [
-				"subagent",
-				"subagent_agents",
-				"subagent_kill",
-				"subagent_resume",
-				"subagent_wait",
-			]);
+			assert.deepEqual([...captured.tools].sort(), ["subagent", "subagent_agents", "subagent_kill", "subagent_resume"]);
 			assert.deepEqual(captured.commands, ["subagents"]);
 			assert.deepEqual(captured.shortcuts, ["alt+s"]);
 			assert.deepEqual([...captured.renderers].sort(), ["subagent_ping", "subagent_result"]);
@@ -239,13 +227,13 @@ describe("extension registration gating", () => {
 			process.env.PI_DENY_TOOLS = denied;
 			const { captured } = loadWithWorker();
 			assert.equal(captured.tools.includes(denied), false, `${denied} is not registered`);
-			assert.equal(captured.tools.length, 4, `the other tools stay registered when ${denied} is denied`);
+			assert.equal(captured.tools.length, 3, `the other tools stay registered when ${denied} is denied`);
 		}
 	});
 
-	it("refuses only wait and agents at call time once launch is revoked; stop and resume keep their own grants", async () => {
+	it("refuses only agents at call time once launch is revoked; stop and resume keep their own grants", async () => {
 		// A deferred tool stays callable from a codemode script while it is not
-		// active, so wait and agents read the launch grant when called. Stop and
+		// active, so agents reads the launch grant when called. Stop and
 		// resume have their own grants, as in cf6dbf4 (D07): their execute never
 		// read the launch tool (`git show cf6dbf4:src/tools/subagent-tools.ts`).
 		const { registered, active, dir } = loadWithWorker();
@@ -267,14 +255,12 @@ describe("extension registration gating", () => {
 			),
 			kill: await settle(tool("subagent_kill").execute("call-2", { runId: "worker" })),
 			agents: await settle(tool("subagent_agents").execute("call-3", {}, undefined, undefined, ctx)),
-			wait: await settle(tool("subagent_wait").execute("call-4", {}, undefined, undefined, ctx)),
 		});
 		for (const text of Object.values(await callAll())) assert.doesNotMatch(text, refusal, "launch granted");
 		// The operator deactivates the launch tool after the management tools registered.
 		active.delete("subagent");
 		const revoked = await callAll();
 		assert.match(revoked.agents, refusal, "agents: launch revoked");
-		assert.match(revoked.wait, refusal, "wait: launch revoked");
 		assert.match(revoked.resume, /Session file not found/, "resume keeps its own grant");
 		assert.match(revoked.kill, /not found|No running subagent/i, "stop keeps its own grant");
 		assert.doesNotMatch(revoked.kill, refusal);

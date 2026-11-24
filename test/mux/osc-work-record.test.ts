@@ -12,7 +12,6 @@ import { groupRunEnds, type RunEndMessage } from "../../src/runtime/run-end-mess
 import { wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { resetRuntimeStateForTest, runningSubagents } from "../../src/runtime/state.ts";
 import { registerOutstandingWorkReporting } from "../../src/runtime/work-reporting.ts";
-import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent } from "../../src/types.ts";
 import { createTestDir, recordOscOnStdout, writeExecutable } from "../support/index.ts";
 
@@ -147,43 +146,6 @@ for (const backend of ["herdr-core", "rex"] as const) {
 		}
 	});
 }
-
-test("through the subagent_wait tool: runs in a long wait count, and an aborted wait leaves its running runs counted", async () => {
-	const h = await harness("herdr-core");
-	try {
-		const tools = new Map<string, { execute: (...args: unknown[]) => Promise<{ details: { status: string } }> }>();
-		(h.pi as unknown as { registerTool: (tool: { name: string }) => void }).registerTool = (tool) =>
-			tools.set(tool.name, tool as never);
-		registerSubagentWaitTool(h.pi, () => true, { mayLaunch: () => true });
-		const never = new Promise<never>(() => {});
-		const [waited, other] = [child("waited"), child("other")].map((running) => ({
-			...running,
-			completionPromise: never,
-		}));
-		runningSubagents.set(waited.id, waited);
-		runningSubagents.set(other.id, other);
-		await h.emit("tool_result");
-		assert.equal(h.terminal.count, 2);
-		const abort = new AbortController();
-		const toolCtx = {
-			cwd: createTestDir(),
-			sessionManager: { getSessionId: () => "parent", getSessionFile: () => "" },
-		};
-		const wait = tools
-			.get("subagent_wait")!
-			.execute("wait-1", { runIds: [waited.id, other.id] }, abort.signal, undefined, toolCtx);
-		// The wait stays open across many settles: the runs it waits on still count.
-		for (let turn = 0; turn < 3; turn++) await h.emit("agent_settled");
-		assert.equal(h.terminal.count, 2);
-		abort.abort();
-		assert.equal((await wait).details.status, "interrupted");
-		await h.emit("tool_result");
-		assert.equal(runningSubagents.size, 2, "Esc stops only the wait (D16)");
-		assert.equal(h.terminal.count, 2, "an aborted wait leaves its running runs counted");
-	} finally {
-		await h.stop();
-	}
-});
 
 test("a message with one of two results releases that run once by id and leaves the sibling counted", async () => {
 	const h = await harness("rex");

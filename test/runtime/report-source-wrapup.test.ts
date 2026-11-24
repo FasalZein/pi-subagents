@@ -8,7 +8,6 @@ import { ResultStore } from "../../src/runtime/result-files.ts";
 import { publishRunResult, type WatchedEnd } from "../../src/runtime/run-result.ts";
 import { resultTextOf } from "../../src/runtime/unpublished-result.ts";
 import { selectUntypedReport } from "../../src/runtime/untyped-report.ts";
-import { joinRuns } from "../../src/runtime/wait-join.ts";
 import type { SessionEntry } from "../../src/session/session.ts";
 import { CALLER_PING_TOOL_NAME, SUBAGENT_DONE_TOOL_NAME } from "../../src/tools/tool-names.ts";
 import type { RunningSubagent } from "../../src/types.ts";
@@ -140,7 +139,7 @@ describe("D12 untyped report source (cf6dbf4)", () => {
 });
 
 describe("D12 report storage failure", () => {
-	it("delivers the whole untyped answer, so a lookup by run id adds no second copy of it", async () => {
+	it("delivers the whole untyped answer, and the stored rendering is that delivered copy", async () => {
 		const long = syntheticReport(6000);
 		const root = createTestDir();
 		dirs.push(root);
@@ -155,8 +154,6 @@ describe("D12 report storage failure", () => {
 		const record = store.read(reservation.runId);
 		assert.ok(record);
 		assert.equal(store.storedRendering(record), delivered, "a replayed copy is the delivered one");
-		const lookup = await joinRuns({ ids: [reservation.runId] }, undefined, { store, cwd: root });
-		assert.equal(lookup.results[0]?.text, delivered, "the summary is the report, so the lookup adds nothing");
 	});
 });
 

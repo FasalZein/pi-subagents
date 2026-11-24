@@ -13,7 +13,6 @@ import {
 } from "../../src/runtime/wiring.ts";
 import type { SubagentLaunchStructured } from "../../src/tools/launch-structured.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import { verifiedRunFilePaths } from "../../src/vf/run/types.ts";
 import { dropInheritedSubagentEnv } from "../support/env.ts";
 import { assert, createTestDir, ORIGINAL_ENV } from "../support/index.ts";
@@ -37,15 +36,13 @@ afterEach(() => {
 });
 
 /** Starts one verified fan-out launch of an agent that ignores the call's thinking setting; waited by default. */
-async function launchWaitedVerifiedRun(options: { detached?: boolean } = {}): Promise<{
+async function launchWaitedVerifiedRun(): Promise<{
 	text: string;
 	artifactRoot: string;
 	structured: SubagentLaunchStructured;
 	/** The launch tool's whole reply: content, details and flags. */
 	// biome-ignore lint/suspicious/noExplicitAny: the captured launch tool is probed dynamically.
 	result: any;
-	// biome-ignore lint/suspicious/noExplicitAny: the captured wait tool is probed dynamically.
-	wait: (args: unknown) => Promise<any>;
 }> {
 	const { repo, parent, fakePi, captureDir } = setupVerifiedRunFixture();
 	dirs.push(parent);
@@ -71,8 +68,8 @@ async function launchWaitedVerifiedRun(options: { detached?: boolean } = {}): Pr
 	const ctx = {
 		// The parent's real working directory, as Pi reports it, so the report locator is relative.
 		cwd: realpathSync(repo),
-		// A UI parent lets a detached launch return started; a headless parent awaits every launch.
-		hasUI: options.detached === true,
+		// A headless parent awaits every launch.
+		hasUI: false,
 		sessionManager: {
 			getSessionFile: () => join(parent, "parent-session.jsonl"),
 			getSessionId: () => "parent-session",
@@ -94,22 +91,20 @@ async function launchWaitedVerifiedRun(options: { detached?: boolean } = {}): Pr
 		wireSubagentSteerBack,
 	} as unknown as SubagentToolRuntime;
 	registerSubagentCoreTools(pi as never, () => true, runtime);
-	registerSubagentWaitTool(pi as never, () => true, { mayLaunch: () => true });
 	const child = { name: "vf-run", title: "VF run", task: "do it", agent: "vf-worker", thinking: "high" };
-	const params = { children: [{ ...child, async: options.detached === true }] };
+	const params = { children: [{ ...child, async: false }] };
 	const result = await tools.get("subagent").execute("c1", params, undefined, undefined, ctx);
 	return {
 		text: (result.content[0] as { text: string }).text,
 		artifactRoot,
 		result,
 		structured: result.structuredContent as SubagentLaunchStructured,
-		wait: (args) => tools.get("subagent_wait").execute("w1", args, undefined, undefined, ctx),
 	};
 }
 
 /** The published generation record of a verified run: its report file is the one beside record.json. */
 function assertVerifiedRecord(
-	record: SubagentWaitStructured["results"][number]["record"] | undefined,
+	record: Extract<SubagentLaunchStructured["children"][number], { state: "ended" }>["record"] | undefined,
 	runId: string,
 ): void {
 	assert.ok(record, `the verified run ${runId} carries its published record`);
@@ -130,24 +125,6 @@ describe("owner decision 2026-11-23: a script reads a verified run's published r
 		const [child] = structured.children;
 		assert.equal(child?.state, "ended");
 		assertVerifiedRecord(child?.state === "ended" ? child.record : undefined, child?.runId ?? "");
-	});
-
-	it("an authorized wait for a running verified run returns the published record", async () => {
-		const { structured, wait } = await launchWaitedVerifiedRun({ detached: true });
-		const [child] = structured.children;
-		assert.equal(child?.state, "started");
-		const waited = (await wait({ runIds: [child?.runId], timeout: 60 })).structuredContent as SubagentWaitStructured;
-		assert.equal(waited.status, "complete");
-		assert.equal(waited.results[0]?.runId, child?.runId);
-		assertVerifiedRecord(waited.results[0]?.record, child?.runId ?? "");
-	});
-
-	it("a lookup of a delivered verified run returns the published record", async () => {
-		const { structured, wait } = await launchWaitedVerifiedRun();
-		const runId = structured.children[0]?.runId ?? "";
-		const looked = (await wait({ runIds: [runId] })).structuredContent as SubagentWaitStructured;
-		assert.equal(looked.results[0]?.runId, runId);
-		assertVerifiedRecord(looked.results[0]?.record, runId);
 	});
 });
 
@@ -196,20 +173,6 @@ describe("verified fan-out replies and the settle fold", () => {
 	it("a waited verified launch reply never folds", async () => {
 		const { result, structured } = await launchWaitedVerifiedRun();
 		assertNeverFolds("subagent", result, structured.children[0]?.runId ?? "");
-	});
-
-	it("a wait join of a verified run never folds", async () => {
-		const { structured, wait } = await launchWaitedVerifiedRun({ detached: true });
-		const runId = structured.children[0]?.runId ?? "";
-		const joined = await wait({ runIds: [runId], timeout: 60 });
-		assert.equal(joined.details.status, "complete");
-		assertNeverFolds("subagent_wait", joined, runId);
-	});
-
-	it("a lookup of a delivered verified run never folds", async () => {
-		const { structured, wait } = await launchWaitedVerifiedRun();
-		const runId = structured.children[0]?.runId ?? "";
-		assertNeverFolds("subagent_wait", await wait({ runIds: [runId] }), runId);
 	});
 });
 

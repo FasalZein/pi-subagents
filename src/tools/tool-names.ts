@@ -10,7 +10,6 @@ export const SUBAGENT_TOOL_NAME = "subagent";
 export const SUBAGENT_RESUME_TOOL_NAME = "subagent_resume";
 export const SUBAGENT_KILL_TOOL_NAME = "subagent_kill";
 export const SUBAGENT_AGENTS_TOOL_NAME = "subagent_agents";
-export const SUBAGENT_WAIT_TOOL_NAME = "subagent_wait";
 export const SET_TAB_TITLE_TOOL_NAME = "set_tab_title";
 
 // Pi's built-in tools that reach tools not yet declared (D21):
@@ -36,7 +35,6 @@ export const SPAWNING_TOOL_NAMES: ReadonlySet<string> = new Set([
 	SUBAGENT_RESUME_TOOL_NAME,
 	SUBAGENT_KILL_TOOL_NAME,
 	SUBAGENT_AGENTS_TOOL_NAME,
-	SUBAGENT_WAIT_TOOL_NAME,
 ]);
 
 /**
@@ -50,6 +48,5 @@ export const PI_SUBAGENTS_INTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set([
 	SUBAGENT_RESUME_TOOL_NAME,
 	SUBAGENT_KILL_TOOL_NAME,
 	SUBAGENT_AGENTS_TOOL_NAME,
-	SUBAGENT_WAIT_TOOL_NAME,
 	SET_TAB_TITLE_TOOL_NAME,
 ]);

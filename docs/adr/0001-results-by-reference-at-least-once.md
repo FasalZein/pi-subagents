@@ -10,6 +10,8 @@ We decided that every run that ends while its parent process watches it ends in 
 
 Changed on 2026-11-18 by the owner, after two plan reviews. The first version proved receipt: a result counted as received only when a later model request held it, a failed workflow script gave its results back once, and received results shrank to stubs under context pressure. Both reviews found that Pi offers no reliable point to observe receipt. A later handler can change a request, compaction and context edits can remove the entry that carries a result, and a competing wait can claim a give-back twice. The proof cost more than the duplicates it prevented.
 
+Changed on 2026-11-24 by the owner: the wait tool (subagent_wait) is removed, as upstream removed it. A result now goes to the launch or resume call that waits for it, or else in a message; nothing else takes it. A result that the parent did not see is found by the report path that each result message and fold stub names, or in record.json of its run folder, not by a lookup tool.
+
 ## Considered options
 
 - Cap the text in each of the three existing assemblers. Rejected: it keeps two consumers and the reproduced defects.
@@ -20,7 +22,7 @@ Changed on 2026-11-18 by the owner, after two plan reviews. The first version pr
 ## Consequences
 
 - A parent that needs detail reads the report file, as a visible choice.
-- After a workflow script fails, nothing comes back by itself; the parent recovers the results by lookup.
+- After a workflow script fails, each child it started still reports by message (since 2026-11-24; before, the parent recovered the results by lookup). A result the parent no longer has in context is read by path: each launch reply names the run report folder.
 - Removing delivered results from the parent context waits until Pi offers a final read-only dispatch hook, or until measurements show that capped summaries still dominate parent input.
 - Verified fan-out keeps its v2.9.2 lease, receipt and adoption; only its text is capped. Its adoption can deliver a winner again, within the cap.
 - A child that outlives its parent gets no result record. The one exception is a verified fan-out winner, which the origin or an authorized ancestor can adopt after the origin exits.

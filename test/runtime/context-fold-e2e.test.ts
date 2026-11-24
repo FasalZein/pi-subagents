@@ -19,7 +19,6 @@ import { publishedResultFields, publishRunResult, type WatchedEnd } from "../../
 import { getLaunchedSubagentResult, wireSubagentSteerBack } from "../../src/runtime/running-registry.ts";
 import { runningSubagents } from "../../src/runtime/state.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	assert,
@@ -98,8 +97,8 @@ async function startParent(
 		refreshOnCreate: false,
 	});
 	modelRuntime.registerNativeProvider(faux.provider);
-	// The session's own results folder, written through a store that subagent_wait does not use:
-	// a lookup must read the files, as a fresh process does.
+	// The session's own results folder, written through a store of its own: a lookup reads the
+	// files, as a fresh process does.
 	let store: ResultStore | undefined;
 	const sessionStore = () => {
 		store ??= new ResultStore(getSessionResultsDir(root, session.sessionManager.getSessionId()), () => {});
@@ -167,7 +166,6 @@ async function startParent(
 		registerDeliveryQueue(pi);
 		registerContextFold(pi);
 		registerSubagentCoreTools(pi, () => true, runtime);
-		registerSubagentWaitTool(pi, () => true, { mayLaunch: () => true });
 		const annotate = options.annotate;
 		if (annotate) pi.on("tool_result", (event) => annotate(event as never) as never);
 	};
@@ -267,10 +265,6 @@ const PLAN = {
 		),
 	],
 };
-const lookupPlan = (runId: string) => ({
-	...PLAN,
-	lookup: [fauxToolCall("subagent_wait", { runIds: [runId] }, { id: "wait-1" })],
-});
 
 /** Launch, let the idle parent take the result in a new turn, and settle. */
 async function useOneRun(parent: Parent): Promise<void> {
@@ -287,7 +281,7 @@ async function useOneRun(parent: Parent): Promise<void> {
 }
 
 describe("context fold in a real Pi session", () => {
-	it("folds brief and result after the settle; a reloaded session keeps the stubs and the lookup reads the file", async () => {
+	it("folds brief and result after the settle; the stubs name the report and no wait tool; a reloaded session keeps them", async () => {
 		const parent = await startParent(PLAN);
 		let file = "";
 		let root = "";
@@ -301,8 +295,8 @@ describe("context fold in a real Pi session", () => {
 			assert.doesNotMatch(after, new RegExp(BRIEF), "after the settle the brief is a stub");
 			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the result is a stub");
 			runId = parent.runId();
-			assert.match(after, new RegExp(`Folded subagent run ${runId} \\(child-one\\): done, report /[^ ]+\\.md\\.`));
-			assert.match(after, new RegExp(`subagent_wait\\(\\{ runIds: \\[\\\\"${runId}\\\\"\\] \\}\\)`));
+			assert.match(after, new RegExp(`Folded subagent run ${runId} \\(child-one\\): done, report /[^ ]+\\.md\\]`));
+			assert.doesNotMatch(after, /subagent_wait/, "owner 2026-11-24: a stub names the report, not a wait call");
 			file = parent.session.sessionManager.getSessionFile() ?? assert.fail("no session file");
 			// The task stub names the way back to the original brief: the call's line in the session file.
 			const route = `Original text: the line with \\"launch-1\\" in ${file}.`;
@@ -319,7 +313,7 @@ describe("context fold in a real Pi session", () => {
 			await parent.dispose();
 		}
 		// A freshly bound session on the same file: no runtime state, a new result store.
-		const reloaded = await startParent(lookupPlan(runId), { resumeFile: file, root });
+		const reloaded = await startParent(PLAN, { resumeFile: file, root });
 		try {
 			await reloaded.session.prompt("again");
 			await reloaded.session.waitForIdle();
@@ -327,30 +321,6 @@ describe("context fold in a real Pi session", () => {
 			assert.doesNotMatch(request, new RegExp(BRIEF));
 			assert.doesNotMatch(request, new RegExp(REPORT));
 			assert.match(request, new RegExp(`Folded subagent run ${runId}`));
-			await reloaded.session.prompt("lookup");
-			await reloaded.session.waitForIdle();
-			const reply = reloaded.session.messages.find(
-				(message) => message.role === "toolResult" && message.toolName === "subagent_wait",
-			);
-			assert.match(
-				textOf((reply as { content?: unknown } | undefined)?.content),
-				new RegExp(REPORT),
-				"the lookup returns the stored result",
-			);
-			assert.match(reloaded.requests.at(-1) ?? "", new RegExp(REPORT), "in its own turn the lookup reply is full");
-			// D3: the settle after the turn that saw the lookup refolds the run, so the reply folds too.
-			await until(() => reloaded.foldEntries() === 2, "the refold entry of the settle");
-			await reloaded.session.prompt("next");
-			await reloaded.session.waitForIdle();
-			const after = reloaded.requests.at(-1) ?? "";
-			assert.doesNotMatch(after, new RegExp(REPORT), "after the next settle the lookup reply is a stub");
-			assert.equal(after.split(`Folded subagent run ${runId}`).length - 1, 2, "result and lookup are stubs");
-			assert.match(
-				after,
-				new RegExp(`Task text folded by the harness after run ${runId} \\(child-one\\)`),
-				"the brief is the task stub",
-			);
-			assert.equal(reloaded.foldEntries(), 2, "a settle with no newly used reply appends no entry");
 		} finally {
 			await reloaded.dispose();
 		}
@@ -414,11 +384,6 @@ describe("context fold in a real Pi session", () => {
 	const LAUNCH = `const r = await tools.subagent({ name: "child-one", task: "${BRIEF}", title: "One", agent: "worker-a" });`;
 	const WAITING_SCRIPTS: Array<[string, string, boolean]> = [
 		["a waited launch", `${LAUNCH}\nreturn r.children[0].record.summary;`, true],
-		[
-			"a launch and a subagent_wait",
-			`${LAUNCH}\nconst w = await tools.subagent_wait({ runIds: [r.children[0].runId] });\nreturn w.results[0].record.summary;`,
-			false,
-		],
 	];
 
 	it("folds the code of a launch script that waits inside itself; its result stays byte-identical (S5)", async () => {
@@ -474,27 +439,6 @@ describe("context fold in a real Pi session", () => {
 			} finally {
 				await parent.dispose();
 			}
-		}
-	});
-
-	it("a nested wait that a later handler turned into an error counts as no use, even when the script caught it", async () => {
-		const code = `${LAUNCH}\ntry {\n  await tools.subagent_wait({ runIds: [r.children[0].runId] });\n  return "no error";\n} catch {\n  return "caught";\n}`;
-		const { parent, content, isError } = await runWaitingScript(code, {
-			answer: false,
-			annotate: (event) =>
-				event.toolName === "subagent_wait" && (event as { parentToolCallId?: string }).parentToolCallId
-					? { isError: true, content: [{ type: "text", text: "denied by policy" }] }
-					: undefined,
-		});
-		try {
-			assert.equal(isError, false, "the script succeeded");
-			assert.match(content, /caught/, "the script caught the failed wait");
-			await parent.session.prompt("next");
-			await parent.session.waitForIdle();
-			assert.equal(parent.foldEntries(), 0, "the failed wait folds nothing");
-			assert.match(parent.requests.at(-1) ?? "", new RegExp(BRIEF), "the code stays whole");
-		} finally {
-			await parent.dispose();
 		}
 	});
 
@@ -562,37 +506,6 @@ describe("context fold in a real Pi session", () => {
 		}
 	});
 
-	it("folds a used subagent_wait join reply to its stub after the settle (fold-waits S2)", async () => {
-		const plan: Record<string, ToolCall[]> = { ...PLAN };
-		const parent = await startParent(plan);
-		try {
-			await parent.session.prompt("delegate");
-			await parent.session.waitForIdle();
-			plan.join = [fauxToolCall("subagent_wait", { runIds: [parent.runId()] }, { id: "wait-1" })];
-			const joined = parent.session.prompt("join");
-			await until(
-				() =>
-					parent.session.messages.some((m) => m.role === "assistant" && JSON.stringify(m.content).includes("wait-1")),
-				"the wait call",
-			);
-			parent.finish(REPORT);
-			await joined;
-			await parent.session.waitForIdle();
-			const reply = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "subagent_wait");
-			assert.match(textOf((reply as { content?: unknown } | undefined)?.content), new RegExp(REPORT));
-			assert.match(parent.requests.at(-1) ?? "", new RegExp(REPORT), "before the settle the reply is full");
-			await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
-			await parent.session.prompt("next");
-			await parent.session.waitForIdle();
-			const after = parent.requests.at(-1) ?? "";
-			assert.doesNotMatch(after, new RegExp(REPORT), "after the settle the wait reply is a stub");
-			assert.doesNotMatch(after, new RegExp(BRIEF));
-			assert.match(after, new RegExp(`Folded subagent run ${parent.runId()} \\(child-one\\): done`));
-		} finally {
-			await parent.dispose();
-		}
-	});
-
 	it("folds a used waited launch reply to its head lines and stub after the settle (fold-waits S3)", async () => {
 		const parent = await startParent(PLAN, { blocking: true });
 		try {
@@ -655,7 +568,7 @@ describe("context fold in a real Pi session", () => {
 		}
 	});
 
-	it("keeps a waited launch or join reply full when another extension changed its text", async () => {
+	it("keeps a waited launch reply full when another extension changed its text", async () => {
 		const ANNOTATION = "NOTE-FROM-ANOTHER-EXTENSION";
 		const forms: Array<[string, (text: string) => { type: string; text: string }[]]> = [
 			[
@@ -668,7 +581,7 @@ describe("context fold in a real Pi session", () => {
 			["text appended to the one block", (text) => [{ type: "text", text: `${text}\n\n${ANNOTATION}` }]],
 		];
 		for (const [form, change] of forms) {
-			for (const tool of ["subagent", "subagent_wait"] as const) {
+			for (const tool of ["subagent"] as const) {
 				const plan: Record<string, ToolCall[]> = { ...PLAN };
 				const parent = await startParent(plan, {
 					blocking: tool === "subagent",
@@ -676,26 +589,10 @@ describe("context fold in a real Pi session", () => {
 						event.toolName === tool ? { content: change(event.content.map((b) => b.text ?? "").join("")) } : undefined,
 				});
 				try {
-					if (tool === "subagent") {
-						const delegated = parent.session.prompt("delegate");
-						await until(() => parent.session.messages.some((m) => m.role === "assistant"), "the launch call");
-						parent.finish(REPORT);
-						await delegated;
-					} else {
-						await parent.session.prompt("delegate");
-						await parent.session.waitForIdle();
-						plan.join = [fauxToolCall("subagent_wait", { runIds: [parent.runId()] }, { id: "wait-1" })];
-						const joined = parent.session.prompt("join");
-						await until(
-							() =>
-								parent.session.messages.some(
-									(m) => m.role === "assistant" && JSON.stringify(m.content).includes("wait-1"),
-								),
-							"the wait call",
-						);
-						parent.finish(REPORT);
-						await joined;
-					}
+					const delegated = parent.session.prompt("delegate");
+					await until(() => parent.session.messages.some((m) => m.role === "assistant"), "the launch call");
+					parent.finish(REPORT);
+					await delegated;
 					await parent.session.waitForIdle();
 					await until(() => parent.foldEntries() === 1, "the fold entry of the settle");
 					await parent.session.prompt("next");

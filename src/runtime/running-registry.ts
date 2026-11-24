@@ -197,8 +197,7 @@ export async function getLaunchedSubagentResult(
 	const parentShouldWait = shouldAwaitSubagentLaunch(running);
 	if (!parentShouldWait) return getStartedSubagentResult(running);
 	const waited = (await runtime.waitForSubagentResult({ id: running.id }, signal)) as { details?: { error?: string } };
-	// D04a: as v2.9.2 (cf6dbf4), Esc during the wait of a launch or resume stops the child. subagent_wait
-	// keeps its own Esc, which stops only the wait. T81: the runtime records this stop as the operator's.
+	// D04a: as v2.9.2 (cf6dbf4), Esc during the wait of a launch or resume stops the child. T81: the runtime records this stop as the operator's.
 	const error = waited.details?.error;
 	if (error === "interrupted" && runningSubagents.get(running.id) === running) {
 		await runtime.stopRunningSubagent(running);
@@ -211,8 +210,9 @@ export async function getLaunchedSubagentResult(
 }
 
 /**
- * D16: the run already ended and another wait took its end (a ping leaves no cached result), so
- * the launch wait finds it neither running nor cached. Its published record still answers, as a
+ * D16: the run already ended before this launch's wait found it, and its end is neither running,
+ * cached nor queued: a ping that already went out as a message before the launch claimed the run
+ * (a ping leaves no cached result), or a cached result the person deleted in the overlay first. Its published record still answers, as a
  * lookup copy that settles nothing again.
  */
 function lookUpEnded(running: RunningSubagent) {

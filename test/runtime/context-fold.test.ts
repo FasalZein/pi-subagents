@@ -305,20 +305,17 @@ function resultMessage(details: Record<string, unknown>, content: string) {
 }
 
 describe("context fold: the provider messages", () => {
-	it("stub text names run id, name, outcome, report path and the lookup call", () => {
+	it("stub text names run id, name, outcome and report path, and no wait tool (owner 2026-11-24)", () => {
 		const stub = runStub(RUN_A);
-		assert.equal(
-			stub,
-			'[Folded subagent run aaaa0001 (one): done, report /r/one.md. Full result: subagent_wait({ runIds: ["aaaa0001"] })]',
-		);
+		assert.equal(stub, "[Folded subagent run aaaa0001 (one): done, report /r/one.md]");
 	});
 
-	it("the task stub says the harness folded the text, and names the original call and the result", () => {
+	it("the task stub says the harness folded the text, and names the original call and the report", () => {
 		// Expected text from the requirement (owner rule 2026-11-24T09:59Z, review round 1): not the task
 		// the parent sent, the child got the full text, the original is the call's line in the session file.
 		assert.equal(
 			taskStub(RUN_A, ROUTE("l1")),
-			'[Task text folded by the harness after run aaaa0001 (one) ended; the child got your full text. Original text: the line with "l1" in /s/parent.jsonl. Outcome: done, report /r/one.md. Result: subagent_wait({ runIds: ["aaaa0001"] })]',
+			'[Task text folded by the harness after run aaaa0001 (one) ended; the child got your full text. Original text: the line with "l1" in /s/parent.jsonl. Outcome: done, report /r/one.md]',
 		);
 	});
 
@@ -592,6 +589,23 @@ describe("context fold: launch and resume replies (fold-waits S3)", () => {
 		const out = fold([reply], folded(RUN_A, RUN_B));
 		const text = `${BATCH_HEAD}\n\n${runStub(RUN_A)}\n${runStub(RUN_B)}`;
 		assert.deepEqual(out[0], { ...reply, content: [{ type: "text", text }] });
+	});
+
+	it("a waited batch whose child lines carry report-folder lines (owner 2026-11-24) keeps them and folds", () => {
+		const folder = (id: string) => `  report folder: ~/.pi/history/p/artifacts/s/results/${id}`;
+		const head = `${childLine("one", A)}\n${folder(A)}\n${childLine("two", B)}\n${folder(B)}\n${WAITED}`;
+		const reply = batch([finished(A, "one"), finished(B, "two")], head);
+		const out = fold([reply], folded(RUN_A, RUN_B));
+		assert.deepEqual(out[0], {
+			...reply,
+			content: [{ type: "text", text: `${head}\n\n${runStub(RUN_A)}\n${runStub(RUN_B)}` }],
+		});
+		// Only one of two children with a folder line is no reply this tool built: it stays full.
+		const odd = batch(
+			[finished(A, "one"), finished(B, "two")],
+			`${childLine("one", A)}\n${folder(A)}\n${childLine("two", B)}\n${WAITED}`,
+		);
+		assert.equal(fold([odd], folded(RUN_A, RUN_B))[0], odd);
 	});
 
 	it("a waited resume reply folds the same way", () => {

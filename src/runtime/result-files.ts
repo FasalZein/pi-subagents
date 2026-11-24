@@ -215,11 +215,12 @@ export function readResultRecord(folder: string): ResultRecord | undefined {
  * One failed publish: its record, its full report (D12) and its rendering (D16), kept together so a
  * rendering never belongs to another revision.
  */
-type UnsavedPublish = { record: ResultRecord; report: string; rendering?: string };
+type UnsavedPublish = { record: ResultRecord; rendering?: string };
 
 /**
  * Where this process's last publish of a run went. The last failed publish stays after a later
- * publish to files, for a lookup of the unsaved record that the parent got earlier.
+ * publish to files, so a read by run id (a resume, the overlay) still finds the unsaved record that
+ * the parent got earlier.
  */
 type LastPublish = { last: "files"; unsaved?: UnsavedPublish } | { last: "memory"; unsaved: UnsavedPublish };
 
@@ -272,7 +273,7 @@ export class ResultStore {
 			entry.published = { last: "files", unsaved: entry.published?.unsaved };
 		} else {
 			// The rendering is made before the entry changes, so a throwing renderer leaves no half entry.
-			const unsaved = { record, report: result.report, rendering: render?.(record) };
+			const unsaved = { record, rendering: render?.(record) };
 			entry.published = { last: "memory", unsaved };
 			if (reservation.folder !== undefined) this.storageFailed(record.report.error);
 		}
@@ -388,14 +389,6 @@ export class ResultStore {
 		if (!record.report.saved) return this.unsavedOf(record)?.rendering;
 		// Read from the run's own folder by file name only: the record's path is not trusted.
 		return this.readContained(record.runId, basename(renderingPathFor(record.report.path)));
-	}
-
-	/**
-	 * D12: the full report of a record whose report file failed, kept in this session's memory. Only an
-	 * explicit lookup by run id returns it; ordinary deliveries carry the summary alone.
-	 */
-	unsavedReport(record: ResultRecord): string | undefined {
-		return record.report.saved ? undefined : this.unsavedOf(record)?.report;
 	}
 
 	/** The kept payload of this exact unsaved revision; an older revision's payload is gone, not the newer one. */

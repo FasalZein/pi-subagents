@@ -12,7 +12,6 @@ import {
 	tryAcquireSlots,
 } from "../../src/runtime/spawn-width.ts";
 import { registerSubagentCoreTools, type SubagentToolRuntime } from "../../src/tools/subagent-tools.ts";
-import { registerSubagentWaitTool } from "../../src/tools/wait-tool.ts";
 import type { RunningSubagent, SubagentResult } from "../../src/types.ts";
 import {
 	afterEach,
@@ -82,9 +81,9 @@ function registerToolWithRuntime(runtimeOverrides: Partial<SubagentToolRuntime> 
 	return tools.get("subagent");
 }
 
-function toolContext() {
+function toolContext(hasUI = false) {
 	return {
-		hasUI: false,
+		hasUI,
 		cwd: process.cwd(),
 		sessionManager: {
 			getSessionFile: () => "/tmp/parent.jsonl",
@@ -93,37 +92,15 @@ function toolContext() {
 	};
 }
 
-/** The wait tool's declared parameters, read from the registered tool (T89b). */
-function waitSchema(): { name: string; properties: Record<string, { anyOf?: { const?: string }[] }> } {
-	type WaitDefinition = { name: string; parameters: { properties: Record<string, { anyOf?: { const?: string }[] }> } };
-	let wait: WaitDefinition | undefined;
-	registerSubagentWaitTool({ registerTool: (definition: WaitDefinition) => (wait = definition) } as never, () => true, {
-		mayLaunch: () => true,
-	});
-	assert.ok(wait);
-	return { name: wait.name, properties: wait.parameters.properties };
-}
-
 /**
- * Every wait call a refusal names, evaluated as the literal a parent would copy. A placeholder
- * inside the call throws a SyntaxError; an argument the wait tool does not declare fails.
+ * The next step of a refusal without a wait tool (owner 2026-11-24): end the turn; a holder's end
+ * frees its slots and its result arrives as a message. The refusal names no tool the fork lacks.
  */
-function waitCallsIn(text: string): { runIds?: string[]; mode: string }[] {
-	const schema = waitSchema();
-	const calls = [...text.matchAll(new RegExp(`${schema.name}\\(([^()]*)\\)`, "g"))];
-	return calls.map((match) => {
-		const args = new Function(`return (${match[1]});`)() as { runIds?: unknown; mode?: unknown };
-		for (const key of Object.keys(args)) assert.ok(schema.properties[key], `wait declares ${key}`);
-		assert.ok(
-			schema.properties.mode?.anyOf?.some((option) => option.const === args.mode),
-			`wait declares mode ${String(args.mode)}`,
-		);
-		if (args.runIds !== undefined) {
-			assert.ok(Array.isArray(args.runIds) && args.runIds.length > 0, "runIds names at least one run");
-			for (const id of args.runIds) assert.equal(typeof id, "string");
-		}
-		return args as { runIds?: string[]; mode: string };
-	});
+const END_TURN =
+	/end this turn \(a codemode script returns\); when (one of the runs [\w, -]+|a started child) ends it frees its slots and its result arrives as a message that starts your next turn/;
+
+function assertNoWaitTool(text: string): void {
+	assert.doesNotMatch(text, /subagent_wait/);
 }
 
 /** Claims one slot for a running run with this id, as a launched child holds it. */
@@ -165,7 +142,7 @@ describe("spawn width semaphore", () => {
 	});
 
 	it("answers who holds a slot from the owner map across claim, release and reset (ticket G)", () => {
-		const holdersText = () => renderSpawnWidthRefusal("subagent", [1], 1);
+		const holdersText = () => renderSpawnWidthRefusal("subagent", [1], 1, { launchesWait: false });
 		const first = makeRunning("owner-a");
 		const firstLease = tryAcquireSlots(1, null);
 		assert.ok(firstLease);
@@ -273,11 +250,23 @@ describe("spawn width semaphore", () => {
 		assert.equal(getLiveSlotCount(), 1);
 	});
 
-	async function launchRefusal(width: string, batch: string[], overrides: Partial<SubagentToolRuntime> = {}) {
+	/** A refusal in a TUI parent by default (results arrive as messages); hasUI false: every launch waits. */
+	async function launchRefusal(
+		width: string,
+		batch: string[],
+		overrides: Partial<SubagentToolRuntime> = {},
+		hasUI = true,
+	) {
 		process.env.PI_SUBAGENT_SPAWN_WIDTH = width;
 		initializeSpawnWidthForSession();
 		const tool = registerToolWithRuntime(overrides);
-		const result = await tool.execute("call-r", { children: batch.map(child) }, undefined, undefined, toolContext());
+		const result = await tool.execute(
+			"call-r",
+			{ children: batch.map(child) },
+			undefined,
+			undefined,
+			toolContext(hasUI),
+		);
 		assert.equal(result.isError, true, "the refusal stays an error result");
 		return result.content[0].text as string;
 	}
@@ -285,19 +274,23 @@ describe("spawn width semaphore", () => {
 	const NO_REST_PROMISE = /launch the rest/;
 	const REPEAT = /repeat while it is refused/;
 
-	it("names the busy runs and the exact wait call when a launch finds every slot busy", async () => {
+	it("names the busy runs and says to end the turn when a launch finds every slot busy", async () => {
 		holdSlot("busy-a");
 		holdSlot("busy-b");
 		const text = await launchRefusal("2", ["worker-a"]);
-		assert.deepEqual(waitCallsIn(text), [{ runIds: ["busy-a", "busy-b"], mode: "any" }]);
+		assert.match(text, /held by busy-a, busy-b/);
+		assert.match(text, END_TURN);
+		assertNoWaitTool(text);
 		assert.match(text, REPEAT);
 		assert.match(text, /auto-exit: false keep their slot until the pane closes/);
 	});
 
-	it("puts no placeholder inside the wait call of an oversized batch", async () => {
+	it("names the holder and the end-turn step for an oversized batch", async () => {
 		holdSlot("busy-a");
 		const text = await launchRefusal("3", ["worker-a", "worker-b", "worker-c", "worker-d"]);
-		assert.deepEqual(waitCallsIn(text), [{ runIds: ["busy-a"], mode: "any" }]);
+		assert.match(text, /one of the runs busy-a ends/);
+		assert.match(text, END_TURN);
+		assertNoWaitTool(text);
 		assert.match(text, /batch of 4 subagents exceeds the spawn width limit of 3/);
 		assert.match(text, /The first 2 children \(2 slots\) fit now/);
 	});
@@ -316,29 +309,76 @@ describe("spawn width semaphore", () => {
 		assert.match(text, /The first 1 child \(3 slots\) fits now/);
 	});
 
-	it("says a child wider than the whole limit never starts, and names no wait", async () => {
+	it("says a child wider than the whole limit never starts, and names no end-turn step", async () => {
 		const text = await launchRefusal("2", ["worker-a"], { loadAgentDefaults: verifiedAgent });
 		assert.match(text, /needs 3 slots, more than the whole limit of 2/);
-		assert.deepEqual(waitCallsIn(text), []);
+		assert.doesNotMatch(text, END_TURN);
 	});
 
-	it("names no wait for a slot that a still-starting launch holds, and says to retry", async () => {
+	it("names no end-turn step for a slot that a still-starting launch holds, and says to retry", async () => {
 		assert.ok(tryAcquireSlots(1, null));
 		const text = await launchRefusal("1", ["worker-a"]);
-		assert.deepEqual(waitCallsIn(text), [], "a wait with no waitable run returns empty");
+		assert.doesNotMatch(text, END_TURN, "no run with a result message holds the slot");
+		assertNoWaitTool(text);
 		assert.match(text, /still starting/);
 		assert.match(text, /Retry the refused call after that launch replies/);
 	});
 
-	it("waits only for the waitable holders when a starting launch also holds a slot", async () => {
+	it("names only the holders with a run id when a starting launch also holds a slot", async () => {
 		holdSlot("busy-a");
 		assert.ok(tryAcquireSlots(1, null));
 		const text = await launchRefusal("2", ["worker-a"]);
-		assert.deepEqual(waitCallsIn(text), [{ runIds: ["busy-a"], mode: "any" }]);
+		assert.match(text, /held by busy-a\)/);
+		assert.match(text, END_TURN);
 		assert.match(text, /still starting/);
 	});
 
-	it("tells a refused resume to retry the resume, with the wait call", async () => {
+	// Review of 4f7000d (P1): a parent whose launches wait (pi -p, a background coordinator, no UI)
+	// has no later turn and gets no result message, so its refusal never says to end the turn.
+	const WAITING = /Launches in this session wait: .*Do not end your turn: when (it|that call) returns, /;
+	it("in a session whose launches wait, tells the parent to retry after the fit-now launch returns, not to end its turn", async () => {
+		const text = await launchRefusal("2", ["worker-a", "worker-b", "worker-c"], {}, false);
+		assert.match(text, /The first 2 children \(2 slots\) fit now/);
+		assert.match(text, WAITING);
+		assert.match(text, /call subagent again with the children that have not started/);
+		assert.doesNotMatch(text, END_TURN);
+		assert.doesNotMatch(text, /end this turn|arrives as a message/);
+		assertNoWaitTool(text);
+	});
+
+	it("in a session whose launches wait, names the holders of another waiting call and the retry after it", async () => {
+		holdSlot("busy-a");
+		const text = await launchRefusal("1", ["worker-a"], {}, false);
+		assert.match(text, /the runs busy-a belong to another call of yours that waits for them/);
+		assert.match(text, WAITING);
+		assert.doesNotMatch(text, /end this turn/);
+	});
+
+	it("tells a refused resume in a session whose launches wait to retry after the waiting call returns", async () => {
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
+		initializeSpawnWidthForSession();
+		holdSlot("busy-a");
+		await assert.rejects(
+			resumeSubagentSession(
+				{
+					resultsDir: "/tmp/t89b-results",
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile: "/tmp/t89b-missing-session.jsonl",
+					mode: "background",
+					launchesWait: true,
+				} as never,
+				{ runningSubagents: new Map() } as never,
+			),
+			(error: Error) => {
+				assert.match(error.message, WAITING);
+				assert.match(error.message, /call subagent_resume again/);
+				assert.doesNotMatch(error.message, /end this turn/);
+				return true;
+			},
+		);
+	});
+
+	it("tells a refused resume to end the turn and retry the resume", async () => {
 		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
 		initializeSpawnWidthForSession();
 		holdSlot("busy-a");
@@ -353,7 +393,8 @@ describe("spawn width semaphore", () => {
 				{ runningSubagents: new Map() } as never,
 			),
 			(error: Error) => {
-				assert.deepEqual(waitCallsIn(error.message), [{ runIds: ["busy-a"], mode: "any" }]);
+				assert.match(error.message, END_TURN);
+				assertNoWaitTool(error.message);
 				assert.match(error.message, /call subagent_resume again/);
 				assert.doesNotMatch(error.message, /launch again/);
 				assert.match(error.message, /auto-exit: false keep their slot until the pane closes/);

@@ -76,7 +76,3 @@ export function createManagementToolExposure(pi: ExtensionAPI) {
 	}
 	return { recordingApi, finalize };
 }
-
-export function formatLaunchGrantRefusal(toolName: string): string {
-	return `This session may not launch agents, so it may not call ${toolName}.`;
-}

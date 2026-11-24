@@ -77,7 +77,6 @@ describe("spawn-related agent fields", () => {
 			"subagent_agents",
 			"subagent_kill",
 			"subagent_resume",
-			"subagent_wait",
 		]);
 	});
 });

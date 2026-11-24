@@ -13,7 +13,6 @@ import {
 	selectIndexTargets,
 } from "../../src/agents/index-section.ts";
 import { parseSpawnEnv } from "../../src/spawn/policy.ts";
-import { SubagentWaitOutput, type SubagentWaitStructured } from "../../src/tools/wait-tool.ts";
 import { loadExtension } from "../support/extension-host.ts";
 import { afterEach, assert, createTestDir, describe, it, join, mkdirSync } from "../support/index.ts";
 
@@ -35,7 +34,7 @@ const HEADLESS: IndexLaunchPolicy = { paneAvailable: false, forcesWait: false };
 const COUNT_LINE = /^\+\d+ more: subagent_agents with a query$/;
 // T87: the call forms a parent needs, so it does not look the signatures up (audit row 7).
 const MORE_TOOLS_LINE =
-	"More tools: subagent_wait({runIds?}), subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).";
+	"More tools: subagent_resume({runId, task?}), subagent_kill({runId}), subagent_agents({query?, name?}) (search; name: full detail).";
 // D06: the cf6dbf4 routing rules in short form. Sources (git show cf6dbf4:<path>):
 // src/tools/subagent-tools.ts promptSnippet "Do small direct work yourself: ... tiny one-shot edits",
 // "include each named agent exactly once. Do not substitute one agent for another",
@@ -261,25 +260,13 @@ describe("agent index section", () => {
 		assert.deepEqual(names({}), ["coordinator", "scout"]);
 	});
 
-	it("states the codemode result of subagent_wait as SubagentWaitOutput declares it", () => {
-		// Expected shape from the output schema (src/tools/wait-tool.ts), not from the index code.
-		const schema = SubagentWaitOutput as unknown as {
-			required: string[];
-			properties: { results: { items: { properties: Record<string, unknown> } } };
-		};
-		const results = Object.keys(schema.properties.results.items.properties);
-		const shape = `{${schema.required.map((key) => (key === "results" ? `results: [{${results.join(", ")}}]` : key)).join(", ")}}`;
-		assert.ok(results.includes("record"), results.join());
-		// Compile check: a non-null record carries a string summary.
-		const summary: NonNullable<SubagentWaitStructured["results"][number]["record"]>["summary"] = "";
-		assert.equal(typeof summary, "string");
-		const section =
-			renderAgentIndexSection([entry("solo")], PANE, { callable: new Set(INDEX_MORE_TOOLS), codemode: true }) ?? "";
-		assert.ok(
-			section.includes(`subagent_wait({runIds?}) (resolves to ${shape}; the answer is record?.summary), `),
-			section,
+	it("names no wait tool: a result arrives as a message (owner 2026-11-24)", () => {
+		const section = renderAgentIndexSection([entry("solo")], PANE) ?? "";
+		assert.ok(!section.includes("subagent_wait"), section);
+		assert.equal(
+			section.split("\n")[0],
+			"Helpers: launch with subagent (a children list). A result arrives as a message. A helper sees only its task text unless marked [fork].",
 		);
-		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
 	});
 
 	it("returns no section when no agent may be launched", () => {
@@ -293,9 +280,9 @@ describe("agent index section", () => {
 			entry("bare", { description: undefined }),
 		];
 		const section =
-			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_wait", "subagent_kill"]) }) ?? "";
+			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_resume", "subagent_kill"]) }) ?? "";
 		const lines = section.split("\n");
-		assert.equal(lines[2], "More tools: subagent_wait({runIds?}), subagent_kill({runId}).");
+		assert.equal(lines[2], "More tools: subagent_resume({runId, task?}), subagent_kill({runId}).");
 		assert.ok(!section.includes("subagent_agents"), section);
 		assert.ok(renderAgentIndexRequestText(section).length <= AGENT_INDEX_MAX_CHARS);
 		// Every launchable name is in the section, on a line or on the names line, the descriptionless one too.
@@ -304,9 +291,8 @@ describe("agent index section", () => {
 		for (const { name } of entries)
 			assert.ok(lines.some((line) => line.startsWith(`- ${name}: `)) || namesLine.includes(name), name);
 		assert.ok(namesLine.includes("agent-039"), "an agent without a line is named");
-		const coded =
-			renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_kill"]), codemode: true }) ?? "";
-		assert.equal(coded.split("\n")[2], "More tools: subagent_kill({runId}).", "no wait hint without subagent_wait");
+		const coded = renderAgentIndexSection(entries, PANE, { callable: new Set(["subagent_kill"]) }) ?? "";
+		assert.equal(coded.split("\n")[2], "More tools: subagent_kill({runId}).");
 		const none = renderAgentIndexSection([entry("solo")], PANE, { callable: new Set() });
 		assert.ok(!none?.includes("More tools"), none);
 		// A lone descriptionless agent is still reachable without the lookup.
@@ -322,7 +308,7 @@ describe("agent index section", () => {
 		const forms = [...line.matchAll(/(subagent_\w+)\(\{([^}]*)\}\)/g)];
 		assert.deepEqual(
 			forms.map(([, name]) => name),
-			["subagent_wait", "subagent_resume", "subagent_kill", "subagent_agents"],
+			["subagent_resume", "subagent_kill", "subagent_agents"],
 			line,
 		);
 		for (const [form, name, args] of forms) {

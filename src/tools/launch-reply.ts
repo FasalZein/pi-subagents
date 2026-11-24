@@ -1,7 +1,26 @@
+import { homedir } from "node:os";
+import { shortestReadLocator } from "../runtime/result-render.ts";
+import { runReportFolder } from "../runtime/run-lookup.ts";
 import { getLaunchReturnLine } from "../runtime/state.ts";
 import type { RunningSubagent } from "../types.ts";
 
-type LaunchedChild = Pick<RunningSubagent, "agent" | "name" | "id" | "modelRef" | "mode">;
+type LaunchedChild = Pick<
+	RunningSubagent,
+	"agent" | "name" | "id" | "modelRef" | "mode" | "verifiedRunDir" | "resultTarget"
+>;
+
+/** The start of the line under a child line that names its report folder; the settle fold keys on it. */
+export const REPORT_FOLDER_PREFIX = "  report folder: ";
+
+/** Owner decision 2026-11-24: where the child's report lands, readable by path after a reopen. */
+function renderReportFolderLine(child: LaunchedChild): string {
+	const folder = runReportFolder(child);
+	// True for a parent whose launches wait (the result is in the reply) and for one that gets messages.
+	if (!folder)
+		return `${REPORT_FOLDER_PREFIX}none (the results folder failed; the result is kept only in this session's memory)`;
+	const locator = shortestReadLocator(folder, child.resultTarget?.parentCwd ?? process.cwd(), homedir());
+	return `${REPORT_FOLDER_PREFIX}${locator}${child.verifiedRunDir ? " (created at its first report, g<n>/report.md)" : ""}`;
+}
 
 /**
  * One child's part of the reply: its delivered report, the error of a wait that ended without a
@@ -16,7 +35,7 @@ const PARTLY_WAITED_RETURN_LINE = "Each report of a finished child follows below
 /** One line per started child: agent, name, run id, the model ref that runs, pane or headless (D23). */
 function renderLaunchChildLine(child: LaunchedChild): string {
 	const where = child.mode === "interactive" ? "pane" : "headless";
-	return `- ${child.name} (agent ${child.agent ?? "unknown"}): run ${child.id}, model ${child.modelRef ?? "not set"}, ${where}`;
+	return `- ${child.name} (agent ${child.agent ?? "unknown"}): run ${child.id}, model ${child.modelRef ?? "not set"}, ${where}\n${renderReportFolderLine(child)}`;
 }
 
 /** A quoted absolute path, spaces included, up to its closing quote. */
@@ -53,7 +72,7 @@ export function renderLaunchFailure(
 ): string {
 	return [
 		`Error: child ${failed.position} of ${total}, ${failed.name} (agent ${failed.agent}), failed to launch: ${failed.error}`,
-		"These children started; wait for them with subagent_wait or stop one that still runs with subagent_kill, by run id:",
+		"These children started; each result arrives as a message when its run ends. Stop one that still runs with subagent_kill, by run id:",
 		...started.map(renderLaunchChildLine),
 		...notes.filter(Boolean),
 	].join("\n");
