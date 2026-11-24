@@ -16,7 +16,7 @@ import { closeSurfaceAsync } from "../mux/io.ts";
 import { createSurface, currentMuxAdapter, sendShellCommand } from "../mux.ts";
 import { clearSubagentExitSidecar } from "../session/exit-sidecar.ts";
 import { getEntryCount } from "../session/session.ts";
-import { getDoneSentinelFile } from "../session/session-files.ts";
+import { buildPiPromptArgs, getDoneSentinelFile } from "../session/session-files.ts";
 import { PI_SUBAGENT_CONTEXT_WARN_STEP, PI_SUBAGENT_CONTEXT_WARN_THRESHOLD } from "../tools/context-reminders.ts";
 import {
 	formatTimeoutWarning,
@@ -215,7 +215,7 @@ export async function restartSubagentForTimeoutWrapUp(
 			running.sessionFile,
 			launch.cwd ?? process.cwd(),
 		);
-		piArgs.push(`@${taskPath}`);
+		piArgs.push(...buildPiPromptArgs([], `@${taskPath}`));
 		if (programSession) Object.assign(launch.env, programSession.childEnv);
 		if (surface) launch.env.PI_SUBAGENT_SURFACE = surface;
 		const {

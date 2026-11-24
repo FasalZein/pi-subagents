@@ -450,7 +450,7 @@ export function resolveEffectiveSessionMode(
  * as an attachment from a user and ask what to do with it.
  */
 const CHILD_TASK_FILE_NOTE =
-	"The file above is your task from the agent that launched you, not a file attached for review. Do what it says.";
+	"The file above is your task: a message from the agent that launched you, not a file attached for review. Do what it says, together with the earlier instructions in this conversation.";
 
 export function buildPiPromptArgs(skills: string[], taskArg: string): string[] {
 	const skillPrompts = skills.map((skill) => `/skill:${skill}`);
