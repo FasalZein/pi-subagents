@@ -360,6 +360,87 @@ describe("context fold in a real Pi session", () => {
 		}
 	});
 
+	/**
+	 * A codemode script that waits for its child inside itself (fold-waits S5, D4): its nested call
+	 * takes the run's end, so no result message follows. The child ends while the script waits.
+	 */
+	async function runWaitingScript(code: string, options: { blocking?: boolean } = {}) {
+		const parent = await startParent(
+			{ ...PLAN, delegate: [fauxToolCall("codemode", { code }, { id: "script-1" })] },
+			{ codemode: true, blocking: options.blocking },
+		);
+		const delegated = parent.session.prompt("delegate");
+		await until(() => runningSubagents.size > 0, "the nested launch");
+		parent.finish(REPORT);
+		await delegated;
+		await parent.session.waitForIdle();
+		const result = parent.session.messages.find((m) => m.role === "toolResult" && m.toolName === "codemode");
+		const content = JSON.stringify((result as { content?: unknown } | undefined)?.content);
+		assert.match(content, new RegExp(REPORT), "the script returned the child's answer");
+		assert.equal(
+			parent.session.messages.some((m) => m.role === "custom"),
+			false,
+			"no result message followed",
+		);
+		return { parent, content, isError: (result as { isError?: boolean } | undefined)?.isError === true };
+	}
+
+	const LAUNCH = `const r = await tools.subagent({ name: "child-one", task: "${BRIEF}", title: "One", agent: "worker-a" });`;
+	const WAITING_SCRIPTS: Array<[string, string, boolean]> = [
+		["a waited launch", `${LAUNCH}\nreturn r.children[0].record.summary;`, true],
+		[
+			"a launch and a subagent_wait",
+			`${LAUNCH}\nconst w = await tools.subagent_wait({ runIds: [r.children[0].runId] });\nreturn w.results[0].record.summary;`,
+			false,
+		],
+	];
+
+	it("folds the code of a launch script that waits inside itself; its result stays byte-identical (S5)", async () => {
+		for (const [form, code, blocking] of WAITING_SCRIPTS) {
+			const { parent, content } = await runWaitingScript(code, { blocking });
+			try {
+				assert.match(parent.requests.at(-1) ?? "", new RegExp(BRIEF), `${form}: before the settle the code is whole`);
+				const nested = parent.session.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "custom" && entry.customType === "subagent_context_fold_nested");
+				assert.equal(nested.length, 1, `${form}: one nested-result entry`);
+				assert.doesNotMatch(JSON.stringify(nested), new RegExp(`${REPORT}|${BRIEF}`), `${form}: facts only`);
+				await until(() => parent.foldEntries() === 1, `${form}: the fold entry of the settle`);
+				await parent.session.prompt("next");
+				await parent.session.waitForIdle();
+				const after = parent.requests.at(-1) ?? "";
+				assert.doesNotMatch(after, new RegExp(BRIEF), `${form}: the script's brief is gone`);
+				assert.match(after, new RegExp(`Folded launch script of runs ${parent.runId()}\\.`), form);
+				assert.ok(after.includes(content), `${form}: the script result is byte-identical`);
+			} finally {
+				await parent.dispose();
+			}
+		}
+	});
+
+	it("keeps a waiting script whole when it also calls another tool or throws after the wait (S5)", async () => {
+		const scripts: Array<[string, string]> = [
+			["a mixed script", WAITING_SCRIPTS[0][1].replace("return", 'await tools.bash({ command: "echo hi" });\nreturn')],
+			["a script that throws", `${LAUNCH}\nthrow new Error("after " + r.children[0].record.summary);`],
+		];
+		for (const [form, code] of scripts) {
+			const { parent, content, isError } = await runWaitingScript(code, { blocking: true });
+			try {
+				const before = parent.requests.at(-1) ?? "";
+				await parent.session.prompt("next");
+				await parent.session.waitForIdle();
+				const after = parent.requests.at(-1) ?? "";
+				assert.match(after, new RegExp(BRIEF), `${form}: the code stays whole`);
+				assert.ok(after.startsWith(before.slice(0, -1)), `${form}: the earlier messages are byte-identical`);
+				assert.ok(after.includes(content), `${form}: the script result stays`);
+				// A thrown script showed the model no answer: its run is not used and does not fold.
+				assert.equal(parent.foldEntries(), isError ? 0 : 1, form);
+			} finally {
+				await parent.dispose();
+			}
+		}
+	});
+
 	it("folds a used subagent_wait join reply to its stub after the settle (fold-waits S2)", async () => {
 		const plan: Record<string, ToolCall[]> = { ...PLAN };
 		const parent = await startParent(plan);

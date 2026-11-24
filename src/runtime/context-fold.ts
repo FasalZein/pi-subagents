@@ -5,6 +5,7 @@ import { type FoldedScript, readFoldedScripts, scriptKey, settleScripts } from "
 import {
 	CONTEXT_FOLD_ENTRY,
 	CONTEXT_FOLD_LAUNCH_ENTRY,
+	CONTEXT_FOLD_NESTED_ENTRY,
 	type FoldedRun,
 	isChildTranscript,
 	isRecord,
@@ -12,6 +13,7 @@ import {
 	messageRunIds,
 	readFoldedRuns,
 	replyDigest,
+	replyRunFacts,
 	settleFold,
 	str,
 } from "./context-fold-set.ts";
@@ -263,14 +265,21 @@ function isRunning(id: string): boolean {
 }
 
 export function registerContextFold(pi: ExtensionAPI): void {
-	// A script's launch call: Pi records the nested call (id, status) on the script's result but not
-	// the runs it started; this entry keeps only the run ids, never the task text.
+	// A script's nested call: Pi records it (id, status) on the script's result, but not the runs it
+	// started or the run ends it took. The launch entry keeps only the run ids, never the task text;
+	// the nested-result entry keeps only the facts a stub names, never the answer (fold-waits D4).
 	pi.on("tool_result", (event, ctx) => {
-		if (event.toolName !== "subagent" || !event.parentToolCallId || event.isError) return;
+		const { toolName, parentToolCallId: callId, toolCallId: nestedId } = event;
+		if (!callId || event.isError) return;
+		if (toolName !== "subagent" && toolName !== "subagent_resume" && toolName !== "subagent_wait") return;
 		if (isChildTranscript(ctx.sessionManager.getBranch())) return;
-		const runIds = launchChildIds((event as { details?: unknown }).details);
-		if (runIds.length === 0 || runIds.some((id) => id === undefined)) return;
-		pi.appendEntry(CONTEXT_FOLD_LAUNCH_ENTRY, { callId: event.parentToolCallId, nestedId: event.toolCallId, runIds });
+		const details = (event as { details?: unknown }).details;
+		const runIds = toolName === "subagent" ? launchChildIds(details) : [];
+		if (runIds.length > 0 && runIds.every((id) => id !== undefined)) {
+			pi.appendEntry(CONTEXT_FOLD_LAUNCH_ENTRY, { callId, nestedId, runIds });
+		}
+		const runs = replyRunFacts(toolName, details);
+		if (runs.length > 0) pi.appendEntry(CONTEXT_FOLD_NESTED_ENTRY, { callId, nestedId, runs });
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const branch = ctx.sessionManager.getBranch();

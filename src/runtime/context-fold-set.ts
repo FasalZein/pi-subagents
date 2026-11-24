@@ -12,6 +12,12 @@ import { isFinishedStatus, runEnds } from "./run-end-message.ts";
 export const CONTEXT_FOLD_ENTRY = "subagent_context_fold";
 /** The run ids one nested subagent call of a codemode script started (no task text). */
 export const CONTEXT_FOLD_LAUNCH_ENTRY = "subagent_context_fold_launch";
+/**
+ * The runs whose finished result one nested launch, resume or wait call of a codemode script took
+ * (fold-waits S5, D4): the facts a stub names, never the answer text. No result message follows such
+ * a call, so this entry is the run's commit; it counts once the script's own result is committed.
+ */
+export const CONTEXT_FOLD_NESTED_ENTRY = "subagent_context_fold_nested";
 
 /** The facts a stub names; fixed at the settle that folds the run, so every later stub is the same text. */
 export interface FoldedRun {
@@ -106,9 +112,31 @@ export function messageRunIds(customType: unknown, content: unknown, details: un
 }
 
 /**
+ * The runs whose finished result a launch or resume reply delivered, or a subagent_wait reply holds,
+ * read from the reply's details (a direct reply in the session, a nested one in its tool_result
+ * event). A started (detached) resume and an interrupted one carry no finished status: none.
+ * A verified run or provenance notice is left out: it never folds.
+ */
+export function replyRunFacts(toolName: unknown, details: unknown): RunFacts[] {
+	if (!isRecord(details)) return [];
+	const listed =
+		toolName === "subagent" || toolName === "subagent_resume"
+			? (Array.isArray(details.children) ? details.children : [details]).filter(
+					(child) => isRecord(child) && isFinishedStatus(str(child.status)),
+				)
+			: toolName === "subagent_wait" && Array.isArray(details.results)
+				? details.results
+				: [];
+	return listed.flatMap((item) => {
+		if (!isRecord(item) || isVerifiedOrNotice(item)) return [];
+		const id = str(item.id) ?? str(item.runId);
+		return id ? [runFacts(id, item)] : [];
+	});
+}
+
+/**
  * The runs whose finished result one committed session entry carries: a subagent_result or
- * subagent_ping message, a launch or resume reply that delivered a report, or a subagent_wait reply.
- * A started (detached) resume and an interrupted one carry no finished status and commit nothing.
+ * subagent_ping message, or a direct launch, resume or wait reply (replyRunFacts).
  */
 function committedResults(entry: unknown): RunFacts[] {
 	if (!isRecord(entry)) return [];
@@ -119,21 +147,47 @@ function committedResults(entry: unknown): RunFacts[] {
 		);
 	}
 	const message = entry.type === "message" && isRecord(entry.message) ? entry.message : undefined;
-	if (!message || message.role !== "toolResult" || !isRecord(message.details)) return [];
-	const details = message.details;
-	const listed =
-		message.toolName === "subagent" || message.toolName === "subagent_resume"
-			? (Array.isArray(details.children) ? details.children : [details]).filter(
-					(child) => isRecord(child) && isFinishedStatus(str(child.status)),
-				)
-			: message.toolName === "subagent_wait" && Array.isArray(details.results)
-				? details.results
-				: [];
-	return listed.flatMap((item) => {
-		if (!isRecord(item) || isVerifiedOrNotice(item)) return [];
-		const id = str(item.id) ?? str(item.runId);
-		return id ? [runFacts(id, item)] : [];
+	if (message?.role !== "toolResult") return [];
+	return replyRunFacts(message.toolName, message.details);
+}
+
+/** The outer script call id and run facts of a nested-result entry, parsed from the session file. */
+function nestedResults(entry: unknown): { callId: string; runs: RunFacts[] } | undefined {
+	if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== CONTEXT_FOLD_NESTED_ENTRY) return;
+	const data = isRecord(entry.data) ? entry.data : {};
+	const callId = str(data.callId);
+	if (!callId || !Array.isArray(data.runs)) return;
+	const runs = data.runs.flatMap((run): RunFacts[] => {
+		const id = isRecord(run) ? str(run.id) : undefined;
+		if (!id) return [];
+		return [{ id, name: str(run.name), outcome: str(run.outcome), report: str(run.report) }];
 	});
+	return { callId, runs };
+}
+
+/**
+ * The runs each entry commits, by branch index. A nested-result entry sits before its script's
+ * result (Pi appends it while the script runs): its runs commit at the script's result entry, and
+ * only when that result is no error (a script that threw showed the model none of its answers).
+ * A script without a committed result commits nothing; an assistant message ends the wait for it.
+ */
+function commitsByIndex(entries: readonly unknown[]): Array<{ index: number; isMessage: boolean; facts: RunFacts[] }> {
+	const commits: Array<{ index: number; isMessage: boolean; facts: RunFacts[] }> = [];
+	let nested = new Map<string, RunFacts[]>();
+	entries.forEach((entry, index) => {
+		const message = isRecord(entry) && entry.type === "message" && isRecord(entry.message) ? entry.message : undefined;
+		if (message?.role === "assistant") nested = new Map();
+		const pending = nestedResults(entry);
+		if (pending) nested.set(pending.callId, [...(nested.get(pending.callId) ?? []), ...pending.runs]);
+		const facts = committedResults(entry);
+		if (message?.role === "toolResult" && typeof message.toolCallId === "string") {
+			const taken = nested.get(message.toolCallId);
+			nested.delete(message.toolCallId);
+			if (taken && message.isError !== true) facts.push(...taken);
+		}
+		if (facts.length > 0) commits.push({ index, isMessage: isRecord(entry) && entry.type === "custom_message", facts });
+	});
+	return commits;
 }
 
 /** Each folded run with the branch index of the last fold entry that names it; a later entry wins. */
@@ -180,16 +234,14 @@ export function settleFold(
 	if (isChildTranscript(entries)) return [];
 	const folded = scanFoldEntries(entries);
 	const commits = new Map<string, { index: number; messageIndex: number; facts: RunFacts }>();
-	let lastRequest = -1;
-	entries.forEach((entry, index) => {
-		if (isCompletedRequest(entry)) lastRequest = index;
-		const isMessage = isRecord(entry) && entry.type === "custom_message";
-		for (const facts of committedResults(entry)) {
+	const lastRequest = entries.findLastIndex(isCompletedRequest);
+	for (const { index, isMessage, facts: list } of commitsByIndex(entries)) {
+		for (const facts of list) {
 			const known = commits.get(facts.id);
 			// The latest commit's facts only: an older report never joins a newer outcome.
 			commits.set(facts.id, { index, messageIndex: isMessage ? index : (known?.messageIndex ?? -1), facts });
 		}
-	});
+	}
 	const runs: FoldedRun[] = [];
 	for (const [id, { index, messageIndex, facts }] of commits) {
 		const fold = folded.get(id);
