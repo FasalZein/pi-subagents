@@ -182,15 +182,16 @@ export function carriers(events, parentToolAllowlist) {
 		// each with its own runId (T67: the launch children's field name); pending and
 		// missing runs carry nothing.
 		if (Array.isArray(m.details?.results)) {
-			const replyText = textOf(m.content);
-			for (const member of m.details.results)
+			const texts = waitMemberTexts(m.details.results, textOf(m.content));
+			m.details.results.forEach((member, i) =>
 				found.push({
 					kind: "tool-result",
 					index,
 					runId: typeof member?.runId === "string" ? member.runId : null,
 					tool: m.toolName,
-					text: waitMemberText(member, replyText),
-				});
+					text: texts[i],
+				}),
+			);
 			return;
 		}
 		const runs = runsOf(m.details).filter(
@@ -227,14 +228,38 @@ export function carriers(events, parentToolAllowlist) {
 }
 
 /**
- * Text one wait entry handed to the parent. 9dd9b35 entries carry their rendered text.
- * eb2e64b entries carry only the record (owner decision 2026-11-23): the reply text
- * holds each whole summary, so the summary counts only when that text contains it.
+ * Text each wait entry handed to the parent, so the strict keyed check sees only that
+ * run's visible text. 9dd9b35 entries carry their own rendered text. eb2e64b entries
+ * carry only the record (owner decision 2026-11-23); the reply content joins the
+ * entries' renderings in entry order (src/tools/wait-tool.ts replyText). A one-entry
+ * reply owns the whole content. In a longer reply an entry owns the lines from its own
+ * header (`<name> · …`) to its own run line (`run: <id> · …`, or the resume call that
+ * names its id), searched in entry order; an entry without both owns nothing. Lines
+ * outside every block (trailing footer lines, a recovered report, pending runs)
+ * belong to no run: a known false negative, chosen over crediting a sibling.
  */
-function waitMemberText(member, replyText) {
-	if (typeof member?.text === "string") return member.text;
-	const summary = member?.record?.summary;
-	return typeof summary === "string" && summary && replyText.includes(summary) ? summary : "";
+function waitMemberTexts(members, replyText) {
+	if (members.length === 1) return [typeof members[0]?.text === "string" ? members[0].text : replyText];
+	const lines = replyText.split("\n");
+	let cursor = 0;
+	return members.map((member) => {
+		if (typeof member?.text === "string") return member.text;
+		const names = [member?.name, member?.record?.name].filter((n) => typeof n === "string" && n);
+		const ids = [member?.runId, member?.record?.runId].filter((id) => typeof id === "string" && id);
+		const isHeader = (line) => names.some((name) => line.startsWith(`${name} · `));
+		const isRunLine = (line) =>
+			ids.some(
+				(id) =>
+					line === `run: ${id}` ||
+					line.startsWith(`run: ${id} · `) ||
+					(line.startsWith("resume: ") && line.includes(`runId: "${id}"`)),
+			);
+		const start = lines.findIndex((line, i) => i >= cursor && isHeader(line));
+		const end = start < 0 ? -1 : lines.findIndex((line, i) => i > start && isRunLine(line));
+		if (end < 0) return "";
+		cursor = end + 1;
+		return lines.slice(start, end + 1).join("\n");
+	});
 }
 
 /**

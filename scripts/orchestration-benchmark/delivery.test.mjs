@@ -686,8 +686,60 @@ test("a wait reply delivers a run whose record summary the parent received in th
 			[release, run(events).handover, run(events).delivered, run(events).outcome],
 			[release, "delivered", true, "clean_yield"],
 		);
-	// A record summary that the reply text does not hold did not reach the parent; neither did a null record.
+	// A one-entry reply owns its whole visible text: a record whose summary the text does not show
+	// delivers nothing, and a null record still delivers the text the parent saw (src/runtime/wait-join.ts
+	// returns queued text without a record).
 	const unsent = wait("other", { record: record("x-1") });
 	assert.deepEqual([run([unsent]).delivered, run([unsent]).outcome], [false, "auxiliary"]);
-	assert.equal(run([wait("x-1", { record: null })]).delivered, false);
+	assert.equal(run([wait("x-1", { record: null })]).delivered, true);
+});
+
+test("a records-only wait reply credits a run only for a strict keyed line inside its own block", () => {
+	// Review round 1 (2026-11-24): the kept review rep 1 reply, with the billing value extended, or with
+	// the billing line moved into the cache block, passed on f4f31ba. Only the unchanged reply may pass.
+	const scenario = { parentToolAllowlist: ["subagent", "subagent_wait"], parentLoadTool: "subagent" };
+	const keyed = (target, value) => ({
+		name: `review-${target}`,
+		role: `bench-review-${target}`,
+		contract: { returns: [value], facts: { [target]: value }, reads: [`review/${target}.md`] },
+		ended: true,
+		fulfils: { read: true, returned: true },
+	});
+	const block = (target, id, summary) =>
+		`review-${target} · bench-review-${target} · done · 8.6s · untyped\n${summary}\nrun: ${id} · results/${id}/report-1.md`;
+	const reply = (billing, cache) => ({
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent_wait",
+			content: [{ type: "text", text: [block("billing", "r1", billing), block("cache", "r2", cache)].join("\n\n") }],
+			details: {
+				status: "complete",
+				results: [
+					{ runId: "r1", name: "review-billing", record: { runId: "r1", summary: "billing: reject-5530" } },
+					{ runId: "r2", name: "review-cache", record: { runId: "r2", summary: "cache: approve-2864" } },
+				],
+				pending: [],
+				missing: [],
+			},
+		},
+	});
+	const delivered = (wait) =>
+		deliveryAccounting({
+			parentEvents: [
+				launch([
+					["r1", "review-billing"],
+					["r2", "review-cache"],
+				]),
+				wait,
+				assistant("stop", "billing: reject-5530\ncache: approve-2864"),
+			],
+			children: [keyed("billing", "reject-5530"), keyed("cache", "approve-2864")],
+			answeredAt: 2,
+			scenario,
+			workDir: WORK,
+		}).runs.map((r) => r.delivered);
+	assert.deepEqual(delivered(reply("billing: reject-5530", "cache: approve-2864")), [true, true]);
+	assert.deepEqual(delivered(reply("billing: reject-55300", "cache: approve-2864")), [false, true]);
+	assert.deepEqual(delivered(reply("omitted", "cache: approve-2864\nbilling: reject-5530")), [false, true]);
 });
