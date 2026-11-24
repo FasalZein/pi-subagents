@@ -211,9 +211,10 @@ export default function (pi: ExtensionAPI) {
  * @param {object} ctx - The context from setup()
  * @param {string} prompt - The user prompt text
  * @param {object} [extraEnv] - Extra env vars for the child
+ * @param {string[]} [extraArgs] - Extra pi CLI arguments for the parent, such as ["-e", probePath]
  * @returns {string} stdout from pi
  */
-export function runPi(ctx, prompt, extraEnv = {}) {
+export function runPi(ctx, prompt, extraEnv = {}, extraArgs = []) {
 	const envOverride = {
 		...process.env,
 		PI_PACKAGE_DIR: "",
@@ -244,7 +245,18 @@ export function runPi(ctx, prompt, extraEnv = {}) {
 
 	return execFileSync(
 		"pi",
-		["-p", "--model", ctx.model, "--no-extensions", "-e", extensionSource, "--session-dir", ctx.sessionDir, prompt],
+		[
+			"-p",
+			"--model",
+			ctx.model,
+			"--no-extensions",
+			"-e",
+			extensionSource,
+			...extraArgs,
+			"--session-dir",
+			ctx.sessionDir,
+			prompt,
+		],
 		{
 			cwd: repoRoot,
 			encoding: "utf8",

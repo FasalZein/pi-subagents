@@ -19,6 +19,7 @@
 		"test:e2e-live-deny-tools": "node scripts/test-e2e-live-deny-tools.mjs",
 		"test:e2e-live-tools": "node scripts/test-e2e-live-tools.mjs",
 		"test:e2e-live-extensions": "node scripts/test-e2e-live-extensions.mjs",
+		"test:e2e-live-root-only-context": "node scripts/test-e2e-live-root-only-context.mjs",
 		"test:e2e-live-skill-visibility": "node scripts/test-e2e-live-skill-visibility.mjs",
 		"test:e2e-live-skill-visibility-codex": "node scripts/test-e2e-live-skill-visibility-codex.mjs",
 		"test:e2e-live-stop-after-turn": "node scripts/test-e2e-live-stop-after-turn.mjs",
