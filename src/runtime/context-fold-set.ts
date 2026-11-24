@@ -90,7 +90,8 @@ export function messageRunIds(customType: unknown, content: unknown, details: un
 
 /**
  * The runs whose finished result one committed session entry carries: a subagent_result or
- * subagent_ping message, a launch reply that delivered a report, or a subagent_wait reply.
+ * subagent_ping message, a launch or resume reply that delivered a report, or a subagent_wait reply.
+ * A started (detached) resume and an interrupted one carry no finished status and commit nothing.
  */
 function committedResults(entry: unknown): RunFacts[] {
 	if (!isRecord(entry)) return [];
@@ -104,7 +105,7 @@ function committedResults(entry: unknown): RunFacts[] {
 	if (!message || message.role !== "toolResult" || !isRecord(message.details)) return [];
 	const details = message.details;
 	const listed =
-		message.toolName === "subagent"
+		message.toolName === "subagent" || message.toolName === "subagent_resume"
 			? (Array.isArray(details.children) ? details.children : [details]).filter(
 					(child) => isRecord(child) && isFinishedStatus(str(child.status)),
 				)

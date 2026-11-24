@@ -91,7 +91,7 @@ function scriptStub(script: FoldedScript, folded: ReadonlyMap<string, FoldedRun>
 
 /**
  * The provider messages with the folded runs' briefs and result messages as stubs. Only the task
- * text of a launch call, the code of a frozen launch-only script and the content of a result
+ * text of a launch or resume call, the code of a frozen launch-only script and the content of a result
  * message change; tool-call ids, results, thinking blocks and every other message stay the
  * same objects. Each call pairs with the tool results of its own turn. Without a change the same
  * list returns.
@@ -141,9 +141,10 @@ function foldMessage(
 	let turn: Map<string, Rec> | undefined;
 	const content = message.content.map((block) => {
 		if (!isRecord(block) || block.type !== "toolCall" || !isRecord(block.arguments)) return block;
-		if (block.name !== "subagent" && block.name !== "codemode") return block;
+		if (block.name !== "subagent" && block.name !== "subagent_resume" && block.name !== "codemode") return block;
 		let args = block.arguments;
-		if (block.name === "subagent") {
+		if (block.name !== "codemode") {
+			// A resume call has the single form (task, no children); its reply names the new run id.
 			turn ??= results();
 			const result = typeof block.id === "string" ? turn.get(block.id) : undefined;
 			args = foldLaunchArgs(block.arguments, launchChildIds(result?.details), folded);

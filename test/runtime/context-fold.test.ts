@@ -122,6 +122,32 @@ describe("context fold: the fold set a settle decides", () => {
 		]);
 	});
 
+	it("counts a waited resume reply with a finished status; not a started (detached) or an interrupted resume", () => {
+		const resumeReply = (callId: string, details: Record<string, unknown>) => ({
+			type: "message",
+			id: entryId(),
+			message: {
+				role: "toolResult",
+				toolName: "subagent_resume",
+				toolCallId: callId,
+				content: [{ type: "text", text: "RESUME-REPLY" }],
+				details,
+			},
+		});
+		const waited = resumeReply("r1", {
+			id: A,
+			name: "one",
+			status: "completed",
+			outcome: "done",
+			reportFile: "/r/one.md",
+		});
+		const started = resumeReply("r2", { id: B, name: "two", status: "started", deliveryState: "detached" });
+		// Esc during the wait of a resume: the wait error carries the run id and no status.
+		const interrupted = resumeReply("r3", { error: "interrupted", id: C });
+		const runs = settleFold([userEntry("x"), waited, started, interrupted, assistantEntry()], notRunning, AT, exists);
+		assert.deepEqual(runs, [{ id: A, name: "one", outcome: "done", report: "/r/one.md", foldedAt: AT }]);
+	});
+
 	it("is monotone across two settles: a folded run stays folded, the second settle adds only new runs", () => {
 		const first = [userEntry("a"), resultEntry(A, "one"), assistantEntry(), resultEntry(B, "two")];
 		const decided = settleFold(first, notRunning, AT, exists);
@@ -261,6 +287,40 @@ describe("context fold: the provider messages", () => {
 		const args = (asString[0] as { content: { arguments?: { children: string } }[] }).content[1].arguments!;
 		assert.equal(typeof args.children, "string");
 		assert.deepEqual(JSON.parse(args.children), [{ name: "one", agent: "w", task: runStub(RUN_A) }]);
+	});
+
+	it("folds the task text of a waited resume of a folded run; a started or interrupted resume stays", () => {
+		const resumeCall = (callId: string, args: Record<string, unknown>) => ({
+			role: "assistant",
+			content: [{ type: "toolCall", id: callId, name: "subagent_resume", arguments: args }],
+		});
+		const resumeReply = (callId: string, details: Record<string, unknown>) => ({
+			role: "toolResult",
+			toolCallId: callId,
+			toolName: "subagent_resume",
+			content: [{ type: "text", text: "RESUME-REPLY" }],
+			details,
+		});
+		const call = resumeCall("r1", { runId: "older01", task: "FOLLOW-UP" });
+		const reply = resumeReply("r1", { id: A, status: "completed", reportFile: "/r/one.md" });
+		const out = foldMessages([call, reply], folded(RUN_A));
+		assert.deepEqual((out[0] as { content: { arguments?: unknown }[] }).content[0].arguments, {
+			runId: "older01",
+			task: runStub(RUN_A),
+		});
+		assert.equal(out[1], reply, "the resume reply is unchanged");
+		const started = [
+			resumeCall("r2", { runId: "older01", task: "FOLLOW-UP" }),
+			resumeReply("r2", { id: B, status: "started" }),
+		];
+		assert.equal(foldMessages(started, folded(RUN_A)), started, "a started resume of an unfolded run stays");
+		const interrupted = [
+			resumeCall("r3", { runId: "older01", task: "FOLLOW-UP" }),
+			resumeReply("r3", { error: "interrupted", id: B }),
+		];
+		assert.equal(foldMessages(interrupted, folded(RUN_A)), interrupted, "an interrupted resume stays");
+		const noTask = [resumeCall("r4", { runId: "older01" }), resumeReply("r4", { id: A, status: "completed" })];
+		assert.equal(foldMessages(noTask, folded(RUN_A)), noTask, "a resume without a task has nothing to fold");
 	});
 
 	it("replaces a result message with its stub; a grouped message folds only when all its runs fold", () => {
