@@ -218,6 +218,7 @@ export function registerSubagentResumeTool(
 					mode: params.mode as "interactive" | "background" | undefined,
 					model: params.model,
 					thinking: params.thinking,
+					launchesWait: shouldForceSynchronousLaunch(ctx.hasUI),
 				},
 				runtime,
 			);

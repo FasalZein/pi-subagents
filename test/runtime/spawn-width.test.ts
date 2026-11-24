@@ -81,9 +81,9 @@ function registerToolWithRuntime(runtimeOverrides: Partial<SubagentToolRuntime> 
 	return tools.get("subagent");
 }
 
-function toolContext() {
+function toolContext(hasUI = false) {
 	return {
-		hasUI: false,
+		hasUI,
 		cwd: process.cwd(),
 		sessionManager: {
 			getSessionFile: () => "/tmp/parent.jsonl",
@@ -142,7 +142,7 @@ describe("spawn width semaphore", () => {
 	});
 
 	it("answers who holds a slot from the owner map across claim, release and reset (ticket G)", () => {
-		const holdersText = () => renderSpawnWidthRefusal("subagent", [1], 1);
+		const holdersText = () => renderSpawnWidthRefusal("subagent", [1], 1, { launchesWait: false });
 		const first = makeRunning("owner-a");
 		const firstLease = tryAcquireSlots(1, null);
 		assert.ok(firstLease);
@@ -250,11 +250,23 @@ describe("spawn width semaphore", () => {
 		assert.equal(getLiveSlotCount(), 1);
 	});
 
-	async function launchRefusal(width: string, batch: string[], overrides: Partial<SubagentToolRuntime> = {}) {
+	/** A refusal in a TUI parent by default (results arrive as messages); hasUI false: every launch waits. */
+	async function launchRefusal(
+		width: string,
+		batch: string[],
+		overrides: Partial<SubagentToolRuntime> = {},
+		hasUI = true,
+	) {
 		process.env.PI_SUBAGENT_SPAWN_WIDTH = width;
 		initializeSpawnWidthForSession();
 		const tool = registerToolWithRuntime(overrides);
-		const result = await tool.execute("call-r", { children: batch.map(child) }, undefined, undefined, toolContext());
+		const result = await tool.execute(
+			"call-r",
+			{ children: batch.map(child) },
+			undefined,
+			undefined,
+			toolContext(hasUI),
+		);
 		assert.equal(result.isError, true, "the refusal stays an error result");
 		return result.content[0].text as string;
 	}
@@ -319,6 +331,51 @@ describe("spawn width semaphore", () => {
 		assert.match(text, /held by busy-a\)/);
 		assert.match(text, END_TURN);
 		assert.match(text, /still starting/);
+	});
+
+	// Review of 4f7000d (P1): a parent whose launches wait (pi -p, a background coordinator, no UI)
+	// has no later turn and gets no result message, so its refusal never says to end the turn.
+	const WAITING = /Launches in this session wait: .*Do not end your turn: when (it|that call) returns, /;
+	it("in a session whose launches wait, tells the parent to retry after the fit-now launch returns, not to end its turn", async () => {
+		const text = await launchRefusal("2", ["worker-a", "worker-b", "worker-c"], {}, false);
+		assert.match(text, /The first 2 children \(2 slots\) fit now/);
+		assert.match(text, WAITING);
+		assert.match(text, /call subagent again with the children that have not started/);
+		assert.doesNotMatch(text, END_TURN);
+		assert.doesNotMatch(text, /end this turn|arrives as a message/);
+		assertNoWaitTool(text);
+	});
+
+	it("in a session whose launches wait, names the holders of another waiting call and the retry after it", async () => {
+		holdSlot("busy-a");
+		const text = await launchRefusal("1", ["worker-a"], {}, false);
+		assert.match(text, /the runs busy-a belong to another call of yours that waits for them/);
+		assert.match(text, WAITING);
+		assert.doesNotMatch(text, /end this turn/);
+	});
+
+	it("tells a refused resume in a session whose launches wait to retry after the waiting call returns", async () => {
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
+		initializeSpawnWidthForSession();
+		holdSlot("busy-a");
+		await assert.rejects(
+			resumeSubagentSession(
+				{
+					resultsDir: "/tmp/t89b-results",
+					parent: { parentCwd: process.cwd(), warnings: [] },
+					sessionFile: "/tmp/t89b-missing-session.jsonl",
+					mode: "background",
+					launchesWait: true,
+				} as never,
+				{ runningSubagents: new Map() } as never,
+			),
+			(error: Error) => {
+				assert.match(error.message, WAITING);
+				assert.match(error.message, /call subagent_resume again/);
+				assert.doesNotMatch(error.message, /end this turn/);
+				return true;
+			},
+		);
 	});
 
 	it("tells a refused resume to end the turn and retry the resume", async () => {

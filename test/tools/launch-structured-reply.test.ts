@@ -86,12 +86,18 @@ async function startParent(
 		failError?: string;
 		/** Runs before a child's launch returns, so a test can hold that launch. */
 		beforeLaunch?: (name: string) => Promise<void>;
+		/** A parent without a UI: every launch waits (shouldForceSynchronousLaunch), as in pi -p. */
+		headless?: boolean;
+		/** A model that answers every request; undefined falls back to the plan. */
+		respond?: (messages: { role: string; content: unknown }[]) => AssistantMessage | undefined;
 	} = {},
 ): Promise<Harness> {
 	const root = createTestDir();
 	const agentDir = join(root, "agent");
 	const faux = fauxProvider();
 	const step = (context: { messages: { role: string; content: unknown }[] }): AssistantMessage => {
+		const answered = options.respond?.(context.messages);
+		if (answered) return answered;
 		const last = context.messages.at(-1);
 		const calls = last?.role === "user" ? plan[textOf(last.content)] : undefined;
 		if (calls) return fauxAssistantMessage(calls, { stopReason: "toolUse" });
@@ -244,7 +250,7 @@ async function startParent(
 	// An interactive parent: a headless one awaits every launch.
 	// Pi spreads the UI context: a method that the parent calls (notify) must be an own key.
 	const ui = new Proxy({ notify() {} }, { get: () => () => undefined });
-	await session.bindExtensions({ uiContext: ui as never });
+	await session.bindExtensions(options.headless ? {} : { uiContext: ui as never });
 	harness = {
 		session,
 		runs,
@@ -769,6 +775,80 @@ describe("T89b, amended 2026-11-24: a parent that follows a spawn-width refusal 
 			for (const name of ["child-a", "child-b", "child-c", "child-d"]) assert.ok(harness.launched(name), name);
 			assert.ok(refusals.length >= 1, "the first batch was refused");
 		} finally {
+			await harness.dispose();
+			if (saved === undefined) delete process.env.PI_SUBAGENT_SPAWN_WIDTH;
+			else process.env.PI_SUBAGENT_SPAWN_WIDTH = saved;
+			resetSubagentStateForTest();
+		}
+	});
+});
+
+// Review of 4f7000d (P1): a parent whose launches wait (pi -p, a background coordinator child) has no
+// later turn and gets no result message. A model that follows the refusal literally: it ends its turn
+// when told to, else it launches what fits now and retries the rest after that launch returns.
+describe("D9: a parent whose launches wait follows a spawn-width refusal literally", () => {
+	it("launches the whole refused batch within one turn of a parent without a UI", async () => {
+		const saved = process.env.PI_SUBAGENT_SPAWN_WIDTH;
+		process.env.PI_SUBAGENT_SPAWN_WIDTH = "1";
+		resetSubagentStateForTest();
+		const batch = [child("child-a"), child("child-b"), child("child-c")];
+		let pending = batch;
+		let launchedNow = 0;
+		let call = 0;
+		const launch = (children: ReturnType<typeof child>[]) =>
+			fauxAssistantMessage([fauxToolCall("subagent", { children }, { id: `launch-${++call}` })], {
+				stopReason: "toolUse",
+			});
+		const respond = (messages: { role: string; content: unknown }[]): AssistantMessage | undefined => {
+			const last = messages.at(-1) as { role: string; content: unknown; isError?: boolean } | undefined;
+			if (last?.role === "user" && textOf(last.content) === "go") return launch(pending);
+			if (last?.role !== "toolResult") return undefined;
+			const text = textOf(last.content);
+			if (last.isError) {
+				// The literal reading: "end this turn" ends it; else launch only the children that fit now.
+				if (/end this turn/.test(text)) return fauxAssistantMessage("ended as told");
+				const fit = /The first (\d+) child(?:ren)? \(\d+ slots?\) fits? now/.exec(text);
+				if (
+					!fit ||
+					!/when (it|that call) returns, call subagent again with the children that have not started/.test(text)
+				)
+					return fauxAssistantMessage(`no step to follow: ${text}`);
+				launchedNow = Number(fit[1]);
+				return launch(pending.slice(0, launchedNow));
+			}
+			// The waited launch returned: those children ended and freed their slots. Retry the rest.
+			pending = pending.slice(launchedNow);
+			launchedNow = pending.length;
+			return pending.length > 0 ? launch(pending) : fauxAssistantMessage("all launched");
+		};
+		const harness = await startParent({}, { headless: true, respond });
+		// Each launched child ends on its own while its launch waits.
+		let stop = false;
+		const ender = (async () => {
+			const done = new Set<string>();
+			while (!stop) {
+				for (const name of harness.runs.keys())
+					if (harness.launched(name) && !done.has(name)) {
+						done.add(name);
+						harness.finishWithCall(name, `${name} DONE`);
+					}
+				await new Promise((resolve) => setTimeout(resolve, 5));
+			}
+		})();
+		try {
+			await harness.session.prompt("go");
+			await harness.session.waitForIdle();
+			for (const { name } of batch) assert.ok(harness.launched(name), `${name} launched`);
+			const replies = harness.toolResults("subagent");
+			assert.ok(
+				replies.some((reply) => reply.isError),
+				"the first batch was refused",
+			);
+			const last = harness.session.messages.at(-1) as { role: string; content: unknown };
+			assert.equal(textOf(last.content), "all launched");
+		} finally {
+			stop = true;
+			await ender;
 			await harness.dispose();
 			if (saved === undefined) delete process.env.PI_SUBAGENT_SPAWN_WIDTH;
 			else process.env.PI_SUBAGENT_SPAWN_WIDTH = saved;

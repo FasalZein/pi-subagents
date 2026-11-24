@@ -88,6 +88,8 @@ interface ResumeSessionInput {
 	thinking?: string;
 	/** D8: the overlay operator's explicit override of the resume guards, for this attempt only. */
 	operatorOverride?: boolean;
+	/** D9: every launch of the calling session waits (shouldForceSynchronousLaunch); shapes a refusal. */
+	launchesWait?: boolean;
 }
 
 export function resolveResumeLaunchMetadataForInvocation(
@@ -238,7 +240,9 @@ export async function resumeSubagentSession(
 	const slot = tryAcquireSlots(1, widthLimit);
 	if (!slot) {
 		releaseSession();
-		throw new Error(renderSpawnWidthRefusal("subagent_resume", [1], widthLimit));
+		throw new Error(
+			renderSpawnWidthRefusal("subagent_resume", [1], widthLimit, { launchesWait: input.launchesWait === true }),
+		);
 	}
 
 	let claimedRunning: RunningSubagent | undefined;

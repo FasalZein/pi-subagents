@@ -367,7 +367,11 @@ export function registerSubagentCoreTools(
 				const widthLimit = getSpawnWidthLimit();
 				if (children.length > widthLimit) {
 					const costs = children.map((entry) => slotCostOf(runtime.loadAgentDefaults(entry.agent, ctx.cwd)));
-					return getSpawnWidthError(renderSpawnWidthRefusal("subagent", costs, widthLimit));
+					return getSpawnWidthError(
+						renderSpawnWidthRefusal("subagent", costs, widthLimit, {
+							launchesWait: shouldForceSynchronousLaunch(ctx.hasUI),
+						}),
+					);
 				}
 				const currentAgent = parseSpawnEnv(process.env).callerAgent ?? undefined;
 				const launchable = () => runtime.listLaunchableAgents(ctx.cwd);
@@ -389,7 +393,11 @@ export function registerSubagentCoreTools(
 				const totalSlots = slotCosts.reduce((sum, cost) => sum + cost, 0);
 				const unlaunchedSlots = tryAcquireSlots(totalSlots, widthLimit);
 				if (!unlaunchedSlots) {
-					return getSpawnWidthError(renderSpawnWidthRefusal("subagent", slotCosts, widthLimit));
+					return getSpawnWidthError(
+						renderSpawnWidthRefusal("subagent", slotCosts, widthLimit, {
+							launchesWait: shouldForceSynchronousLaunch(ctx.hasUI),
+						}),
+					);
 				}
 				const hasBlockingChild = prepared.some((entry) => entry.blocking);
 				const launched: RunningSubagent[] = [];
