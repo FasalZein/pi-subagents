@@ -70,7 +70,7 @@ async function resumeAndCapture(dir: string, skills: string | undefined): Promis
 			...(skills ? { skills } : {}),
 		});
 		await resumeSubagentSession(
-			{ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Visibility env probe." },
+			{ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "Visibility env probe." },
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,

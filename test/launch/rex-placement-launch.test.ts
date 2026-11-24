@@ -211,7 +211,13 @@ describe("Rex placement at launch (T71, D28)", () => {
 		});
 		const result = async () => ({ name: "", task: "", summary: "", exitCode: 0, elapsed: 0 });
 		const running = await resumeSubagentSession(
-			{ resultsDir: testResultsDir(), parent: { parentCwd: cwd, warnings: [] }, sessionFile, task: "resume" },
+			{
+				resultsDir: testResultsDir(),
+				parentSessionId: "test-parent",
+				parent: { parentCwd: cwd, warnings: [] },
+				sessionFile,
+				task: "resume",
+			},
 			{
 				isMuxAvailable: () => true,
 				getShellReadyDelayMs: () => 0,

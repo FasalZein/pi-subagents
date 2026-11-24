@@ -114,9 +114,19 @@ class OutstandingWork {
 
 class RunningWorkMap extends Map<string, RunningSubagent> {
 	private changed: () => void;
+	/**
+	 * The owner session of each registered run id, kept after the run leaves the registry: its end
+	 * still waits in the delivery queue then (the settle fold's task end asks whose it is).
+	 */
+	private owners = new Map<string, string | undefined>();
 	constructor(changed: () => void) { super(); this.changed = changed; }
+	/** The parent session that owns this run id; undefined for an unknown run or one without an owner. */
+	ownerOf(id: string): string | undefined {
+		return this.owners.get(id);
+	}
 	override set(id: string, running: RunningSubagent): this {
 		super.set(id, running);
+		this.owners.set(id, running.parentSessionId);
 		this.changed();
 		return this;
 	}
@@ -127,6 +137,7 @@ class RunningWorkMap extends Map<string, RunningSubagent> {
 	}
 	override clear(): void {
 		super.clear();
+		this.owners.clear();
 		this.changed();
 	}
 }

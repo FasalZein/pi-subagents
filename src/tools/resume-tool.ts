@@ -210,6 +210,7 @@ export function registerSubagentResumeTool(
 				{
 					sessionFile,
 					resultsDir,
+					parentSessionId: ctx.sessionManager.getSessionId(),
 					parent: { parentCwd: ctx.cwd, warnings: launchWarningLines(warning) },
 					task: params.task,
 					name: params.name,

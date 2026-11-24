@@ -182,6 +182,7 @@ async function startBackgroundSubagent(
 	await waitForChildSpawn(child);
 	const running: RunningSubagent = {
 		id,
+		parentSessionId: ctx.sessionManager.getSessionId(),
 		name: params.name,
 		task: params.task,
 		title: getSubagentDisplayTitle(params),

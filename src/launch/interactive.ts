@@ -247,6 +247,7 @@ async function startInteractiveSubagent(
 	if (!programSession) sendShellCommand(surface, command);
 	return {
 		id,
+		parentSessionId: ctx.sessionManager.getSessionId(),
 		name: params.name,
 		task: params.task,
 		title: getSubagentDisplayTitle(params),

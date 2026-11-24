@@ -120,6 +120,7 @@ async function startParent(
 			const reservation = sessionStore().reserve();
 			const running = {
 				id: reservation.runId,
+				parentSessionId: session.sessionManager.getSessionId(),
 				name: params.name,
 				task: params.task,
 				agent: "worker-a",
@@ -303,6 +304,13 @@ describe("context fold in a real Pi session", () => {
 			assert.match(after, new RegExp(`Folded subagent run ${runId} \\(child-one\\): done, report /[^ ]+\\.md\\.`));
 			assert.match(after, new RegExp(`subagent_wait\\(\\{ runIds: \\[\\\\"${runId}\\\\"\\] \\}\\)`));
 			file = parent.session.sessionManager.getSessionFile() ?? assert.fail("no session file");
+			// The task stub names the way back to the original brief: the call's line in the session file.
+			const route = `Original text: the line with \\"launch-1\\" in ${file}.`;
+			assert.ok(after.includes(route), "the stub names the original call");
+			const line = readFileSync(file, "utf8")
+				.split("\n")
+				.find((entry) => entry.includes('"launch-1"') && entry.includes('"toolCall"'));
+			assert.match(line ?? "", new RegExp(BRIEF), "that line holds the original brief");
 			root = parent.session.sessionManager.getCwd();
 			const stored = JSON.stringify(SessionManager.open(file).getEntries());
 			assert.match(stored, new RegExp(BRIEF), "the session file keeps the brief");
@@ -363,6 +371,9 @@ describe("context fold in a real Pi session", () => {
 			assert.doesNotMatch(after, new RegExp(BRIEF), "the script's brief is gone");
 			assert.doesNotMatch(after, new RegExp(REPORT));
 			assert.match(after, new RegExp(`Folded launch script of runs ${parent.runId()}\\.`));
+			// The head names the parent's own script as folded; the children never got this script.
+			assert.match(after, /The harness folded your original script; original code: the line with \\"script-1\\" in /);
+			assert.doesNotMatch(after, /got your full code/);
 		} finally {
 			await parent.dispose();
 		}
@@ -744,6 +755,24 @@ describe("context fold in a real Pi session", () => {
 			);
 		} finally {
 			await parent.dispose();
+		}
+	});
+
+	it("another parent's running child does not keep this parent's task open (owner scope)", async () => {
+		// Review round 1: two parent sessions in one process share the registry and the queue. A's
+		// child still runs; B's task is closed, so B folds at its settle.
+		const a = await startParent(PLAN);
+		const b = await startParent(PLAN);
+		try {
+			await a.session.prompt("delegate");
+			await a.session.waitForIdle();
+			assert.ok(runningSubagents.has(a.runId()), "A's child runs");
+			await useOneRun(b);
+			await until(() => b.foldEntries() === 1, "B's fold entry while A's child runs");
+			assert.equal(a.foldEntries(), 0, "A's own running child keeps A's task open");
+		} finally {
+			await b.dispose();
+			await a.dispose();
 		}
 	});
 

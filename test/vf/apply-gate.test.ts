@@ -182,7 +182,7 @@ describe("verified fan-out apply gate (live processes)", () => {
 		process.env.PI_SUBAGENT_VF_RUN_DIR = runDir;
 		try {
 			await assert.rejects(
-				resumeSubagentSession({ resultsDir: testResultsDir(), parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "continue" }, {} as never),
+				resumeSubagentSession({ resultsDir: testResultsDir(), parentSessionId: "test-parent", parent: { parentCwd: process.cwd(), warnings: [] }, sessionFile, task: "continue" }, {} as never),
 				(error: Error) => {
 					assert.match(error.message, /cannot be resumed/);
 					assert.match(error.message, /worktree was removed after selection/);

@@ -419,6 +419,7 @@ for (const backend of BACKENDS)
 				await resumeSubagentSession(
 					{
 						resultsDir: testResultsDir(),
+						parentSessionId: "test-parent",
 						parent: { parentCwd: process.cwd(), warnings: [] },
 						sessionFile,
 						task: "Probe.",

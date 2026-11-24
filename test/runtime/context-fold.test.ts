@@ -272,11 +272,16 @@ const folded = (...runs: FoldedRun[]) => new Map(runs.map((run) => [run.id, run]
  * before its run's foldedAt was used before the fold. The context hook reads the same order from the
  * branch (readFoldOrder); context-fold-safety drives that with a clock that goes back.
  */
+const SESSION_FILE = "/s/parent.jsonl";
+/** The route to a folded call's original text, as the requirement states it. */
+const ROUTE = (callId: string) => `the line with "${callId}" in ${SESSION_FILE}`;
+
 function fold<T>(messages: T[], runs: ReadonlyMap<string, FoldedRun>): T[] {
-	return foldMessages(messages, runs, new Map(), (message, id) => {
+	const used = (message: { timestamp?: unknown }, id: string) => {
 		const run = runs.get(id);
 		return typeof message.timestamp === "number" && run !== undefined && message.timestamp <= run.foldedAt;
-	});
+	};
+	return foldMessages(messages, runs, new Map(), used, SESSION_FILE);
 }
 
 function launchCall(callId: string, args: Record<string, unknown>) {
@@ -305,6 +310,15 @@ describe("context fold: the provider messages", () => {
 		assert.equal(
 			stub,
 			'[Folded subagent run aaaa0001 (one): done, report /r/one.md. Full result: subagent_wait({ runIds: ["aaaa0001"] })]',
+		);
+	});
+
+	it("the task stub says the harness folded the text, and names the original call and the result", () => {
+		// Expected text from the requirement (owner rule 2026-11-24T09:59Z, review round 1): not the task
+		// the parent sent, the child got the full text, the original is the call's line in the session file.
+		assert.equal(
+			taskStub(RUN_A, ROUTE("l1")),
+			'[Task text folded by the harness after run aaaa0001 (one) ended; the child got your full text. Original text: the line with "l1" in /s/parent.jsonl. Outcome: done, report /r/one.md. Result: subagent_wait({ runIds: ["aaaa0001"] })]',
 		);
 	});
 
@@ -337,7 +351,7 @@ describe("context fold: the provider messages", () => {
 		assert.equal(block.id, "l1");
 		assert.equal(block.name, "subagent");
 		assert.deepEqual(block.arguments.children, [
-			{ name: "one", agent: "w", title: "One", task: taskStub(RUN_A) },
+			{ name: "one", agent: "w", title: "One", task: taskStub(RUN_A, ROUTE("l1")) },
 			{ name: "two", agent: "w", title: "Two", task: "BRIEF-TWO" },
 		]);
 		assert.equal((out[0] as typeof call).content[0], call.content[0], "the thinking block is the same object");
@@ -357,7 +371,7 @@ describe("context fold: the provider messages", () => {
 		assert.deepEqual((single[0] as { content: { arguments?: unknown }[] }).content[1].arguments, {
 			agent: "w",
 			name: "one",
-			task: taskStub(RUN_A),
+			task: taskStub(RUN_A, ROUTE("l1")),
 		});
 		const children = JSON.stringify([{ name: "one", agent: "w", task: "BRIEF" }]);
 		const asString = fold(
@@ -366,7 +380,7 @@ describe("context fold: the provider messages", () => {
 		);
 		const args = (asString[0] as { content: { arguments?: { children: string } }[] }).content[1].arguments!;
 		assert.equal(typeof args.children, "string");
-		assert.deepEqual(JSON.parse(args.children), [{ name: "one", agent: "w", task: taskStub(RUN_A) }]);
+		assert.deepEqual(JSON.parse(args.children), [{ name: "one", agent: "w", task: taskStub(RUN_A, ROUTE("l2")) }]);
 	});
 
 	it("folds the task text of a waited resume of a folded run; a started or interrupted resume stays", () => {
@@ -386,7 +400,7 @@ describe("context fold: the provider messages", () => {
 		const out = fold([call, reply], folded(RUN_A));
 		assert.deepEqual((out[0] as { content: { arguments?: unknown }[] }).content[0].arguments, {
 			runId: "older01",
-			task: taskStub(RUN_A),
+			task: taskStub(RUN_A, ROUTE("r1")),
 		});
 		assert.equal(out[1], reply, "the resume reply is unchanged");
 		const started = [

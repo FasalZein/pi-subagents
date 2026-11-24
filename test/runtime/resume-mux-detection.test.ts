@@ -81,6 +81,7 @@ describe("subagent_resume mux detection", () => {
 		const running = await resumeSubagentSession(
 			{
 				resultsDir: testResultsDir(),
+				parentSessionId: "test-parent",
 				parent: { parentCwd: process.cwd(), warnings: [] },
 				sessionFile,
 				task: "Detection probe.",

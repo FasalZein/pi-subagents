@@ -2,7 +2,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerContextFold } from "../../src/runtime/context-fold.ts";
 import { replyDigest } from "../../src/runtime/context-fold-set.ts";
-import { assert, createTestDir, describe, it } from "../support/index.ts";
+import { deliverRunEnd, settleWaitReply } from "../../src/runtime/delivery-queue.ts";
+import { runningSubagents } from "../../src/runtime/state.ts";
+import type { RunningSubagent } from "../../src/types.ts";
+import { assert, createTestDir, describe, it, resetSubagentStateForTest } from "../support/index.ts";
 
 // Review round 1 (reviewer/context-fold-settle-gpt-2026-11-23-090148.md): each case is a sequence
 // that folded something unsafe or missed a used run. Principle (owner, no regressions): when the
@@ -19,7 +22,7 @@ const C = "cccc0003";
 let n = 0;
 const entryId = () => `s${++n}`;
 
-function harness(entries: Entry[], api = "anthropic-messages") {
+function harness(entries: Entry[], api = "anthropic-messages", sessionId = "fold-parent") {
 	const handlers = new Map<string, Handler[]>();
 	const pi = {
 		on(name: string, handler: Handler) {
@@ -30,7 +33,13 @@ function harness(entries: Entry[], api = "anthropic-messages") {
 		},
 	};
 	registerContextFold(pi as never);
-	const ctx = { sessionManager: { getBranch: () => entries, getEntries: () => entries }, model: { api } };
+	const sessionManager = {
+		getBranch: () => entries,
+		getEntries: () => entries,
+		getSessionId: () => sessionId,
+		getSessionFile: () => "/s/parent.jsonl",
+	};
+	const ctx = { sessionManager, model: { api } };
 	const emit = async (name: string, event: unknown) => {
 		let result: unknown;
 		for (const handler of handlers.get(name) ?? []) result = (await handler(event, ctx)) ?? result;
@@ -114,6 +123,61 @@ const done = (id: string, name: string, reportFile = report(name)) => ({
 	status: "completed",
 	outcome: "done",
 	reportFile,
+});
+
+describe("context fold safety: the task end is per parent session", () => {
+	// Review round 1: the registry and the delivery queue are module-wide; two parent sessions in one
+	// process share them. Each parent's settle asks only about the runs it owns.
+	const ownRun = (owner: string, kind: "running" | "ended" = "running") =>
+		({ id: C, name: "other", parentSessionId: owner, phase: { kind } }) as unknown as RunningSubagent;
+	const usedSession = (sessionId: string) => {
+		const entries: Entry[] = [user("go"), resultMessage(done(A, "one"), "REPORT-one"), assistant()];
+		return harness(entries, "anthropic-messages", sessionId);
+	};
+	const holdEnd = (owner: string) => {
+		// The run registers with its owner, ends, and a wait holds its end in the queue.
+		runningSubagents.set(C, ownRun(owner));
+		runningSubagents.delete(C);
+		const sink = { sendMessage() {} };
+		const end = { customType: "subagent_result" as const, content: "ended", display: true as const, details: {} };
+		deliverRunEnd(sink as never, C, end, { heldByWait: true });
+	};
+
+	it("another parent's running child or held result does not keep this task open", async () => {
+		try {
+			const b = usedSession("parent-B");
+			runningSubagents.set(C, ownRun("parent-A"));
+			await b.settle();
+			assert.equal(b.folds(), 1, "A's running child does not block B's fold");
+			runningSubagents.delete(C);
+			const later = usedSession("parent-B");
+			holdEnd("parent-A");
+			await later.settle();
+			assert.equal(later.folds(), 1, "A's held result does not block B's fold");
+		} finally {
+			settleWaitReply([C], [C]);
+			resetSubagentStateForTest();
+		}
+	});
+
+	it("this parent's own running child or held result keeps its task open", async () => {
+		try {
+			const own = usedSession("parent-B");
+			runningSubagents.set(C, ownRun("parent-B"));
+			await own.settle();
+			assert.equal(own.folds(), 0, "B's own running child keeps the task open");
+			runningSubagents.delete(C);
+			holdEnd("parent-B");
+			await own.settle();
+			assert.equal(own.folds(), 0, "B's own held result keeps the task open");
+			settleWaitReply([C], [C]);
+			await own.settle();
+			assert.equal(own.folds(), 1, "with the end delivered the task is closed and the settle folds");
+		} finally {
+			settleWaitReply([C], [C]);
+			resetSubagentStateForTest();
+		}
+	});
 });
 
 describe("context fold safety: what folds at a settle", () => {
@@ -411,7 +475,8 @@ describe("context fold safety: codemode launch scripts (owner rule 2026-11-23T11
 		assert.equal(
 			code,
 			[
-				"// Folded launch script of runs aaaa0001, bbbb0002. The harness folded your code after the runs ended; they got your full code.",
+				// The head names the original parent script, not the children's input (review round 1).
+				'// Folded launch script of runs aaaa0001, bbbb0002. The harness folded your original script; original code: the line with "c1" in /s/parent.jsonl.',
 				`// [Folded subagent run aaaa0001 (one): done, report ${path}. Full result: subagent_wait({ runIds: ["aaaa0001"] })]`,
 				`// [Folded subagent run bbbb0002 (two): done, report ${other}. Full result: subagent_wait({ runIds: ["bbbb0002"] })]`,
 			].join("\n"),

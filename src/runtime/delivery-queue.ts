@@ -304,6 +304,10 @@ class DeliveryQueue {
 		return this.entries.size;
 	}
 
+	ids(): string[] {
+		return [...this.entries.keys()];
+	}
+
 	reset(): void {
 		this.entries.clear();
 		this.announced.clear();
@@ -334,6 +338,11 @@ export function registerDeliveryQueue(pi: ExtensionAPI): void {
 /** Run ends that the parent session has not committed yet. */
 export function pendingRunEndCount(): number {
 	return deliveryQueue.size;
+}
+
+/** Ids of every run end not committed yet: queued, held by a wait, or in flight. */
+export function pendingRunEndIds(): string[] {
+	return deliveryQueue.ids();
 }
 
 /** A queued run end not yet committed, for a wait that starts after it was queued (an early ping). */
