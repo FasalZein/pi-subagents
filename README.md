@@ -604,16 +604,30 @@ Pi hands each result over once by itself and does not check whether the model re
 
 ### Settle fold: used runs become stubs in later requests
 
-When the parent settles idle (Pi's `agent_settled`), every run that the model already used folds. A run is used when it ended, a message or reply with its finished result was committed, and a later provider request completed without error or abort. The session file keeps every message in full. Only the provider requests change, from the next request on:
+When the parent settles idle (Pi's `agent_settled`), every run that the model already used folds. A run is used when it ended, a message or reply with its finished result was committed, and a later provider request completed without error or abort. The fold happens only at a settle, never inside a turn. A `pi -p` parent settles once, after its last request, so its requests never carry stubs. The session file keeps every message in full. Only the provider requests change, from the next request on:
 
-- The task text of each folded child in a direct `subagent` call becomes a stub. The call keeps its name, agent, title and call id.
+- The task text of each folded child in a direct `subagent` call becomes a stub. The task text of a `subagent_resume` call becomes a stub when its resumed run is folded. Each call keeps its name, agent, title and call id.
 - A codemode script folds only as a whole, and only when it launches and nothing else: Pi's complete record of its nested calls holds only `subagent` and `subagent_wait` calls that succeeded, and every run that it started is folded. Its whole code then becomes stub lines that name those runs. Every other script stays unchanged. The settle that folds a script records it in its fold entry, so the decision stays fixed for that script.
 - A `subagent_result` message becomes a stub when all its runs are folded.
-- Wait replies, launch replies and other tool results do not change.
+- A launch reply that waited becomes a stub when every child in it delivered a finished report and is folded. A sync child waits, and so does every child of a batch barrier (see "Mixed sync and async batches"). The reply keeps its head lines: one line per child, then the line that says the call waited. The reports after the head become one stub per child. A `subagent_resume` reply that waited folds in the same way.
+- A `subagent_wait` reply that joined runs becomes one stub per run. The wait must be complete: no run is pending or missing.
+- A codemode script that launches or resumes a run and waits for it inside the script makes the run count as committed. For each nested call that returns a finished result, Pi writes a `subagent_context_fold_nested` entry with the facts that a stub names: run id, name, outcome and report path, never the answer. The run counts as committed when the script's own result is committed without error. A launch-only script can then fold its code by the rule above. The script result never folds, because it is script output.
+
+A later reply of a run that is already folded stays full in its turn. Examples are the stub's own lookup and a lookup copy in a launch reply. The next settle folds the run again with the same stub facts, and from then on that reply is a stub too. Earlier stubs keep their text, so each lookup breaks the prompt cache once.
 
 A stub names the run id, the name, the outcome, the report path and the lookup, for example `[Folded subagent run 1a2b3c4d (auth-scout): done, report <path>/report-1.md. Full result: subagent_wait({ runIds: ["1a2b3c4d"] })]`. To get the result again, call `subagent_wait({ runIds })` or read the report path. The original brief is only in the session file.
 
-A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker). Each settle writes one `subagent_context_fold` entry, so the fold set survives `/reload` and resume. For each launch inside a codemode script, Pi also writes a `subagent_context_fold_launch` entry with the run ids only, never the task text.
+A run stays full when the fold cannot prove that it is safe: a run without a saved report file on disk, a verified fan-out run or its provenance notice, a grouped message with an unidentified member, and every child session (`PI_SUBAGENT_SESSION` set, or a transcript with the child launch marker).
+
+A reply also stays full in these cases:
+
+- The reply is an error, such as a launch failure or a wait that you stopped with `Esc`.
+- A wait timed out, left a run pending or missing, found nothing to wait for, or listed `recent` runs.
+- A launch reply has a child that did not deliver a finished report, such as a started child in a partly waited batch, or its head holds another line, such as a warning or a wait error.
+- A resume started its run and did not wait for it.
+- The reply content is no longer the text that the tool built: more than one block, an image, or text that another extension changed. The tool stores a digest of its text in `details.replyDigest`, and the reply folds only while the text matches it.
+- The reply was created after the settle that folded its runs. It folds at a later settle.
+- The reply is a codemode script result or the reply of any other tool. Each settle writes one `subagent_context_fold` entry, so the fold set survives `/reload` and resume. For each launch inside a codemode script, Pi also writes a `subagent_context_fold_launch` entry with the run ids only, never the task text.
 
 Folding runs only for the Anthropic messages API (`anthropic-messages`) and the OpenAI Responses API (`openai-responses`). Other APIs, such as Bedrock Converse and Google, can bind earlier messages to a signature, so their requests stay full. When the session switches to an API that does not fold, its requests carry every folded item in full again. A switch back applies the same fold entries again. The fold is a `context` hook of the agent loop: compaction, `/tree` branch summaries and cache-warmer replays read the session or an earlier request and are not folded.
 
