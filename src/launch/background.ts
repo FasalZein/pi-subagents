@@ -123,7 +123,8 @@ export async function buildBackgroundLaunchPlan(
 	args.push(...getFlagsLaunchArgs(prepared.agentDefs?.flags));
 
 	const taskArg = options.frozenTaskArg ?? `@${writeTaskArtifact(params.name, fullTask, ctx)}`;
-	for (const promptArg of buildPiPromptArgs(getPreparedSkillList(prepared), taskArg, directTask)) {
+	const promptFile = { kind: directTask ? "fork-task" : "task", path: taskArg.slice(1), text: fullTask } as const;
+	for (const promptArg of buildPiPromptArgs(getPreparedSkillList(prepared), promptFile)) {
 		args.push(promptArg);
 	}
 

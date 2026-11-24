@@ -191,7 +191,11 @@ async function startInteractiveSubagent(
 	};
 
 	const taskArg = `@${writeTaskArtifact(params.name, fullTask, ctx)}`;
-	const promptArgs = buildPiPromptArgs(getPreparedSkillList(prepared), taskArg, directTask);
+	const promptArgs = buildPiPromptArgs(getPreparedSkillList(prepared), {
+		kind: directTask ? "fork-task" : "task",
+		path: taskArg.slice(1),
+		text: fullTask,
+	});
 	traceSubagentLaunch("interactive.promptArgs", {
 		id,
 		name: params.name,

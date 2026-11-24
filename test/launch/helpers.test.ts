@@ -23,20 +23,20 @@ describe("launch helpers", () => {
 		assert.equal(getShellReadyDelayMs(), 500);
 	});
 
-	it("inserts a separator before skill prompts for artifact-backed launches", () => {
-		assert.deepEqual(buildPiPromptArgsForTest(["debugger", "pua"], "@/tmp/task.md", false), [
+	// Pi glues the first plain argument to the @file block: that argument is the task-file note
+	// (test/launch/first-message.test.ts), or "" for an empty file, so no skill prompt lands in the
+	// first message; the file comes first, so no flag before it can take the note as its value.
+	it("puts the file, then one plain message, then skill prompts", () => {
+		const task = { kind: "task", path: "/tmp/task.md", text: "do work" } as const;
+		const [file, note, ...rest] = buildPiPromptArgsForTest(["debugger", "pua"], task);
+		assert.equal(file, "@/tmp/task.md");
+		assert.ok(note && !note.startsWith("@") && !note.startsWith("/") && !note.startsWith("-"), note);
+		assert.deepEqual(rest, ["/skill:debugger", "/skill:pua"]);
+		assert.deepEqual(buildPiPromptArgsForTest(["debugger"], { ...task, text: "" }), [
+			"@/tmp/task.md",
 			"",
 			"/skill:debugger",
-			"/skill:pua",
-			"@/tmp/task.md",
 		]);
-		assert.deepEqual(buildPiPromptArgsForTest(["debugger"], "do work", true), ["/skill:debugger", "do work"]);
-		assert.deepEqual(buildPiPromptArgsForTest(["research"], "@/tmp/fork-task.md", true), [
-			"",
-			"/skill:research",
-			"@/tmp/fork-task.md",
-		]);
-		assert.deepEqual(buildPiPromptArgsForTest([], "@/tmp/task.md", true), ["", "@/tmp/task.md"]);
 	});
 
 	it("registers set_tab_title only when explicitly enabled", () => {

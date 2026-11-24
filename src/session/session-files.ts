@@ -444,11 +444,40 @@ export function resolveEffectiveSessionMode(
 	return "lineage-only";
 }
 
-export function buildPiPromptArgs(skills: string[], taskArg: string, directTask: boolean): string[] {
+/** The file a child's first message carries; its kind decides the note after it. */
+export interface ChildPromptFile {
+	/**
+	 * task: a task from the launching agent, after the child's own instructions.
+	 * fork-task: a fork child's task; the conversation before it is the parent's, not the child's.
+	 * wrap-up: the runtime's report-only prompt at the time limit.
+	 */
+	kind: "task" | "fork-task" | "wrap-up";
+	path: string;
+	/** The file's content: Pi leaves an empty file out of the message. */
+	text: string;
+}
+
+/**
+ * Pi appends the first plain prompt argument to the `<file>` block of an `@file` argument, and
+ * sends the rest as later messages. Without a note some models (gpt) read their own task file as
+ * an attachment from a user and ask what to do with it.
+ */
+const CHILD_PROMPT_FILE_NOTES: Record<ChildPromptFile["kind"], string> = {
+	task: "The file above is your task: a message from the agent that launched you, not a file attached for review. Do what it says, together with the earlier instructions in this conversation.",
+	"fork-task":
+		"The file above is your task: a message from the agent that launched you, not a file attached for review. Do what it says.",
+	"wrap-up":
+		"The file above is a message from the runtime, not a file attached for review and not a new task: your time limit is near. Do what it says and write your final report now.",
+};
+
+/**
+ * The file argument comes first: Pi takes the next plain argument as the value of an unknown long
+ * flag (an agent's `flags:`), and never an `@` argument. The note, or "" for an empty file, then
+ * opens the message list, so no skill prompt joins the first message.
+ */
+export function buildPiPromptArgs(skills: string[], file: ChildPromptFile): string[] {
 	const skillPrompts = skills.map((skill) => `/skill:${skill}`);
-	const isArtifactTask = taskArg.startsWith("@");
-	const needsSeparator = isArtifactTask && (skillPrompts.length > 0 || directTask);
-	return [...(needsSeparator ? [""] : []), ...skillPrompts, taskArg];
+	return [`@${file.path}`, file.text === "" ? "" : CHILD_PROMPT_FILE_NOTES[file.kind], ...skillPrompts];
 }
 
 export function buildIdentityBlock(agentDefs: AgentDefaults | null, systemPrompt?: string): string {
