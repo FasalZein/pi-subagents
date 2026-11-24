@@ -230,7 +230,7 @@ test("[T59a] a kept attempt copy holds known session and run evidence paths only
 	}
 });
 
-test("[T59a] the workflow arm keeps the 8 targets, children and verdicts of scenario (b), with codemode, a workflow and a declared digest", () => {
+test("[T59a] the workflow arm keeps the 8 targets, children and verdicts of scenario (b), with codemode, a workflow and no wait tool", () => {
 	assert.deepEqual(reviewWorkflow.expectedFacts, review.expectedFacts);
 	assert.deepEqual(reviewWorkflow.childResults, review.childResults);
 	assert.equal(reviewWorkflow.parentTools, "+codemode");
@@ -238,7 +238,9 @@ test("[T59a] the workflow arm keeps the 8 targets, children and verdicts of scen
 	const launchNames = [...reviewWorkflow.prompt.matchAll(/name "([^"]+)"/g)].map((m) => m[1]);
 	assert.equal(launchNames.length, 8);
 	assert.deepEqual(reviewWorkflow.workflow, { toolName: "codemode", launches: launchNames });
-	assert.deepEqual(reviewWorkflow.digestOperations, [{ toolName: "codemode", covers: launchNames }]);
+	assert.deepEqual(reviewWorkflow.digestOperations, []);
+	assert.deepEqual(reviewWorkflow.parentToolAllowlist, ["codemode", "subagent"]);
+	assert.doesNotMatch(reviewWorkflow.prompt, /subagent_wait/);
 	for (const sub of ["agents", "workspace/review"])
 		for (const name of readdirSync(join(HERE, "scenarios", "review", sub)))
 			assert.equal(

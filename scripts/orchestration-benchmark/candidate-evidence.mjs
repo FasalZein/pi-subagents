@@ -174,10 +174,34 @@ export function scriptCoverage(events, runFolders = [], launchTool = "subagent")
 	return scripts;
 }
 
+/** Whether the parent called a tool by this name, directly or nested in a script, whatever its status. */
+function calledTool(events, name) {
+	const direct = events.some(
+		(e) =>
+			e?.type === "message" &&
+			e.message?.role === "assistant" &&
+			(e.message.content ?? []).some((part) => part.type === "toolCall" && part.name === name),
+	);
+	return direct || nestedCalls(events).some((call) => call.name === name);
+}
+
+/** Run ids that a subagent_result message names, also each member of a grouped message (D15). */
+function resultMessageRunIds(events) {
+	const ids = new Set();
+	for (const e of events) {
+		if (e?.type !== "custom_message" || e.customType !== "subagent_result") continue;
+		const members = Array.isArray(e.details?.results) ? e.details.results.map((m) => m?.details) : [e.details];
+		for (const d of members) if (typeof d?.id === "string") ids.add(d.id);
+	}
+	return ids;
+}
+
 /**
- * The workflow gate (G2.1 (b), candidate arm): one successful script launched and
- * joined a run of every declared launch name, and the parent made no direct launch.
- * null for a scenario without a declared workflow.
+ * The workflow gate (G2.1 (b), candidate arm), for the message flow (owner 2026-11-24: no wait
+ * tool): one successful script launched a run of every declared launch name, the result message
+ * of each of those runs reached the parent, the parent made no direct launch, and it called no
+ * wait tool (directly or in a script). That the parent's digest names each run is the scenario's
+ * keyed answer check. null for a scenario without a declared workflow.
  * @param {{workflow?: {toolName: string, launches: string[]}, parentLoadTool: string}} scenario
  */
 export function workflowScript(events, scenario, runFolders = []) {
@@ -190,7 +214,8 @@ export function workflowScript(events, scenario, runFolders = []) {
 				(part) => part.type === "toolCall" && part.name === scenario.parentLoadTool,
 			),
 	);
-	if (directLaunch) return false;
+	if (directLaunch || calledTool(events, WAIT_TOOL)) return false;
+	const messaged = resultMessageRunIds(events);
 	const coverage = scriptCoverage(events, runFolders, scenario.parentLoadTool);
 	return [...coverage.entries()].some(
 		([index, script]) =>
@@ -198,10 +223,7 @@ export function workflowScript(events, scenario, runFolders = []) {
 			events[index]?.message?.toolName === scenario.workflow.toolName &&
 			scenario.workflow.launches.every((name) =>
 				runFolders.some(
-					(f) =>
-						f.name === name &&
-						script.launched.has(f.runId) &&
-						script.joined.has(f.runId),
+					(f) => f.name === name && script.launched.has(f.runId) && messaged.has(f.runId),
 				),
 			),
 	);
